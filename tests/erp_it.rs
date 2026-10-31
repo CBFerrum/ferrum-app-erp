@@ -1402,29 +1402,25 @@ async fn scenario() {
     assert_eq!((changed["items"][0]["uom"].clone(), dec(&changed["items"][0]["price_list_rate"])), (nos["id"].clone(), n("150")));
 
     // ───────────── a company outside India, in the same workspace ─────────────
-    // India's rules act only for companies of its country. Until ERP's hand-over the rules that run
-    // are ferrum-domain's, from before countries counted.
-    if ferrum_app_erp::handed_over() {
-        let gmbh = uid(&t
-            .insert("Company", json!({"company_name": "Test Industries GmbH", "abbr": "TIG", "default_currency": inr["id"], "country": "Germany"}))
-            .await);
-        let of_gmbh = |entity: &'static str, more: Value| {
-            let mut f = json!({"company": gmbh.to_string()});
-            f.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap_or_default());
-            let k = t.k.clone();
-            let ctx = t.ctx.clone();
-            async move { k.list(&ctx, entity, &ListQuery { filters: ferrum_kernel::query::parse_filters(&f).unwrap(), ..Default::default() }).await.unwrap().rows }
-        };
-        assert!(!of_gmbh("Account", json!({"account_name": "Debtors"})).await.is_empty(), "the standard chart");
-        assert!(of_gmbh("Account", json!({"account_name": "CGST Output"})).await.is_empty(), "no GST accounts outside India");
-        assert!(of_gmbh("TaxTemplate", json!({})).await.is_empty(), "no GST templates outside India");
-        let advice = uid(&t
-            .insert("Item", json!({"item_code": "ADVICE", "item_name": "Advice", "item_group": products["id"], "stock_uom": nos["id"], "is_stock_item": false, "standard_rate": "100"}))
-            .await);
-        let si = t
-            .insert("SalesInvoice", json!({"company": gmbh.to_string(), "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]}))
-            .await;
-        assert!(si["tax_template"].is_null() && si["taxes"].as_array().is_none_or(|t| t.is_empty()), "no GST on its sales: {si:?}");
-        assert_eq!(dec(&t.submit("SalesInvoice", uid(&si)).await["grand_total"]), n("100"), "submitted without HSN/SAC codes");
-    }
+    // India's rules act only for companies of its country.
+    let gmbh =
+        uid(&t.insert("Company", json!({"company_name": "Test Industries GmbH", "abbr": "TIG", "default_currency": inr["id"], "country": "Germany"})).await);
+    let of_gmbh = |entity: &'static str, more: Value| {
+        let mut f = json!({"company": gmbh.to_string()});
+        f.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap_or_default());
+        let k = t.k.clone();
+        let ctx = t.ctx.clone();
+        async move { k.list(&ctx, entity, &ListQuery { filters: ferrum_kernel::query::parse_filters(&f).unwrap(), ..Default::default() }).await.unwrap().rows }
+    };
+    assert!(!of_gmbh("Account", json!({"account_name": "Debtors"})).await.is_empty(), "the standard chart");
+    assert!(of_gmbh("Account", json!({"account_name": "CGST Output"})).await.is_empty(), "no GST accounts outside India");
+    assert!(of_gmbh("TaxTemplate", json!({})).await.is_empty(), "no GST templates outside India");
+    let advice = uid(&t
+        .insert("Item", json!({"item_code": "ADVICE", "item_name": "Advice", "item_group": products["id"], "stock_uom": nos["id"], "is_stock_item": false, "standard_rate": "100"}))
+        .await);
+    let si = t
+        .insert("SalesInvoice", json!({"company": gmbh.to_string(), "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]}))
+        .await;
+    assert!(si["tax_template"].is_null() && si["taxes"].as_array().is_none_or(|t| t.is_empty()), "no GST on its sales: {si:?}");
+    assert_eq!(dec(&t.submit("SalesInvoice", uid(&si)).await["grand_total"]), n("100"), "submitted without HSN/SAC codes");
 }

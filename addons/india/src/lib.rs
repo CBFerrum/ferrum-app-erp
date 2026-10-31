@@ -22,12 +22,8 @@ pub const MANIFEST: &str = include_str!("../app.yaml");
 /// India's package (`india`): what switches its rules on in a workspace.
 pub const PACKAGE: &str = "india";
 
-/// India's metadata package, embedded at build time. Empty while the ferrum-domain this is built
-/// with still has it (ERP's hand-over, [`ferrum_app_erp::handed_over`]).
+/// India's metadata package, embedded at build time.
 pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta::MetaError> {
-    if !ferrum_app_erp::handed_over() {
-        return Ok(Vec::new());
-    }
     ferrum_meta::catalog::load_embedded(EMBEDDED)
 }
 
@@ -35,9 +31,6 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
 /// IRP connector, and its localization for ERP's taxes and company set-up. Its document hooks run
 /// only where its package is installed.
 pub fn register(h: &mut HookRegistry) {
-    if !ferrum_app_erp::handed_over() {
-        return;
-    }
     ferrum_app_erp::localization::add(Arc::new(gst::India));
     h.scoped(&[PACKAGE.to_string()], |h| {
         h.register("Company", Arc::new(gst::PartyGstHook))
@@ -62,7 +55,7 @@ pub async fn maintenance(_k: &Kernel) -> Result<()> {
 mod tests {
     #[test]
     fn the_manifest_is_india() {
-        assert!(super::MANIFEST.contains("id: india"));
+        assert!(super::MANIFEST.contains("id: india") && super::MANIFEST.contains("parent: erp"), "ERP's add-on");
         assert!(super::MANIFEST.contains("packages: [india]"), "packing a bundle takes the packages app.yaml lists");
         assert!(super::EMBEDDED.iter().any(|(p, f, _)| *p == super::PACKAGE && *f == "package.yaml"));
     }
