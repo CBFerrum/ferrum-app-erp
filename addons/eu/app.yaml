@@ -1,0 +1,14 @@
+# ERP's add-on for the European Union: the rules member states share (VAT numbers in VIES, supplies
+# within the EU, the One-Stop Shop, exports, EN 16931 e-invoices). Member states' own mandates are
+# add-ons on it (Ferrum docs/plan/localization.md, L1 and L2).
+id: eu
+name: European Union
+version: 0.1.0
+publisher: cbferrum
+summary: EU VAT for ERP. VIES, intra-EU supplies, the One-Stop Shop, EN 16931 e-invoices
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [eu]

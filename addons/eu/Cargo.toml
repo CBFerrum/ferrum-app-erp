@@ -1,0 +1,31 @@
+[package]
+name = "ferrum-eu"
+description = "The European Union for Ferrum ERP: VAT numbers in VIES, intra-EU supplies and the One-Stop Shop, the member states' rates from TEDB, EN 16931 (Peppol BIS Billing 3.0) e-invoices, the EC sales list and the OSS return"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+# VIES (JSON) and TEDB (SOAP) over HTTPS; TEDB's answers are XML.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+quick-xml = "0.37"
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+axum = "0.8"
+
+[lints]
+workspace = true

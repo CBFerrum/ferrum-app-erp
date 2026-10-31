@@ -1,0 +1,28 @@
+- name: EuVatRate
+  # A member state's VAT rate from a day on: the Commission's TEDB keeps them (and the goods and
+  # services each reduced rate is for); "Update EU VAT Rates" on a company fetches them.
+  label: EU VAT Rate
+  kind: master
+  module: accounting
+  title_field: member_state
+  search_fields: [category]
+  fields:
+    - {name: member_state, type: data, required: true, max_length: 2, in_list: true, in_filter: true, description: "As VIES and TEDB write it (Greece is EL)"}
+    - {name: kind, type: select, options: [Standard, Reduced, Super Reduced, Parking, Zero Rated, Exempt], required: true, in_list: true, in_filter: true}
+    - {name: rate, type: decimal, required: true, min: "0", max: "100", in_list: true}
+    - {name: valid_from, type: date, required: true, in_list: true, in_filter: true}
+    - {name: category, type: data, max_length: 500, description: "TEDB's category of goods or services"}
+    - {name: cn_codes, type: text, label: CN Codes, description: "The goods (Combined Nomenclature codes) the rate is for, one per line"}
+    - {name: cpa_codes, type: text, label: CPA Codes, description: "The services (CPA codes) the rate is for, one per line"}
+    - {name: comment, type: text}
+    - {name: source, type: data, in_list: true}
+  list: {columns: [member_state, kind, rate, valid_from, category, source], sort: member_state asc}
+
+- name: EuItemRate
+  # An item's rate in one member state (a reduced rate, which depends on the country).
+  label: EU Item Rate
+  kind: child
+  fields:
+    - {name: member_state, type: data, required: true, max_length: 2, in_list: true}
+    - {name: rate, type: decimal, required: true, min: "0", max: "100", in_list: true}
+    - {name: note, type: data, max_length: 500, in_list: true}

@@ -26,6 +26,27 @@ pub trait Localization: Send + Sync {
         Ok(())
     }
 
+    /// After a document's lines and tax rows are known, before the calculation: each line's own
+    /// rates for the tax rows (`rates[i]` for `lines[i]`, whose item is `items[i]`), as rows like
+    /// an item's tax rates (`tax_account`, `rate`, `category`, `exemption_reason`). They hold the
+    /// items' own when it is called, as earlier countries left them. The EU sets the rate of the
+    /// country whose VAT applies.
+    #[allow(clippy::too_many_arguments)]
+    async fn line_rates(
+        &self,
+        _k: &Kernel,
+        _ctx: &Ctx,
+        _tx: &mut Tx,
+        _doc: &Doc,
+        _lines: &[Doc],
+        _items: &[Doc],
+        _taxes: &[Doc],
+        _rates: &mut [Vec<Doc>],
+        _side: Side,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Before a priced document is submitted (India: HSN/SAC codes on outward supplies).
     async fn check(&self, _hc: &mut HookCtx<'_>, _doc: &Doc, _side: Side) -> Result<()> {
         Ok(())
@@ -57,6 +78,25 @@ fn installed(ctx: &Ctx) -> Vec<Arc<dyn Localization>> {
 pub(crate) async fn determine(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<()> {
     for l in installed(ctx) {
         l.determine(k, ctx, tx, ent, doc, side).await?;
+    }
+    Ok(())
+}
+
+/// Every installed country's [`Localization::line_rates`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn line_rates(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    doc: &Doc,
+    lines: &[Doc],
+    items: &[Doc],
+    taxes: &[Doc],
+    rates: &mut [Vec<Doc>],
+    side: Side,
+) -> Result<()> {
+    for l in installed(ctx) {
+        l.line_rates(k, ctx, tx, doc, lines, items, taxes, rates, side).await?;
     }
     Ok(())
 }
