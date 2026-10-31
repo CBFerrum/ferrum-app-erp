@@ -37,8 +37,9 @@ pub fn ecb_encrypt(key: &[u8; 32], data: &[u8]) -> Vec<u8> {
     let pad = 16 - data.len() % 16;
     let mut out = data.to_vec();
     out.extend(std::iter::repeat_n(pad as u8, pad));
-    for chunk in out.chunks_exact_mut(16) {
-        let mut block = Array::from(<[u8; 16]>::try_from(&*chunk).expect("16 bytes"));
+    // A whole number of blocks: padded above, or checked.
+    for chunk in out.as_chunks_mut::<16>().0 {
+        let mut block = Array::from(*chunk);
         cipher.encrypt_block(&mut block);
         chunk.copy_from_slice(&block);
     }
@@ -53,8 +54,9 @@ pub fn ecb_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     }
     let cipher = aes::Aes256::new(&Array::from(*key));
     let mut out = data.to_vec();
-    for chunk in out.chunks_exact_mut(16) {
-        let mut block = Array::from(<[u8; 16]>::try_from(&*chunk).expect("16 bytes"));
+    // A whole number of blocks: padded above, or checked.
+    for chunk in out.as_chunks_mut::<16>().0 {
+        let mut block = Array::from(*chunk);
         cipher.decrypt_block(&mut block);
         chunk.copy_from_slice(&block);
     }
