@@ -5,7 +5,7 @@
   <img alt="Ferrum ERP" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.2.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.1%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.3.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.1%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -28,7 +28,7 @@ build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.2.0` (its add-ons `0.1.1`) |
+| 📦 Version | `0.3.0` (India `0.2.0`, the other add-ons `0.1.1`) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
@@ -57,7 +57,7 @@ build on its engine.
 
 | | Add-on | What it adds |
 |---|---|---|
-| 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
+| 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
 | 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
@@ -279,6 +279,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.3.0** | What every country's rules build on: tax categories and exemption reasons with a tax breakdown per category and rate (EN 16931), taxes per unit, reverse charge, tax rounding line by line, and party and ship-to addresses on documents. India 0.2.0 follows a company's ISO country code and handles reverse-charge purchases. |
 | **0.2.0** | ERP's own repository holds all of it: its manifest, interface, packages and engine, which other apps build on, and its add-ons. Countries plug in through `localization`, India first as the add-on `ferrum-india`. Earlier history is in Ferrum and Ferrum-Frontend. |
 
 Every version is in [CHANGELOG.md](CHANGELOG.md).
