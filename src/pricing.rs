@@ -2,7 +2,7 @@
 //! (the same engine the browser can run as WASM), so every total is exact and reproducible.
 
 use crate::util::{Company, b, company, d, date, exchange_rate, find, get, id, money, rows, s, set, to_stock};
-use ferrum_calc::{CalcInput, ChargeType, DocDiscount, LineIn, TaxIn};
+use ferrum_calc::{CalcInput, CalcOutput, ChargeType, DocDiscount, LineIn, TaxIn, TaxRounding};
 use ferrum_kernel::{Ctx, Doc, Error, FieldError, Filter, Kernel, Op, Result, Tx};
 use ferrum_meta::{EffEntity, Expr, Scope};
 use rust_decimal::Decimal;
@@ -42,6 +42,7 @@ fn charge_type(s: &str) -> ChargeType {
         "On Previous Row Amount" => ChargeType::OnPreviousRowAmount,
         "On Previous Row Total" => ChargeType::OnPreviousRowTotal,
         "Actual" => ChargeType::Actual,
+        "On Item Quantity" => ChargeType::OnItemQuantity,
         _ => ChargeType::OnNetTotal,
     }
 }
@@ -217,7 +218,21 @@ fn copy_tax_rows(template: &Doc) -> Vec<Value> {
         .into_iter()
         .map(|r| {
             let mut out = Map::new();
-            for k in ["charge_type", "account", "description", "rate", "amount", "row_ref", "included_in_price", "deduct", "cost_center"] {
+            for k in [
+                "charge_type",
+                "account",
+                "description",
+                "rate",
+                "amount",
+                "row_ref",
+                "included_in_price",
+                "deduct",
+                "reverse_charge",
+                "reverse_charge_account",
+                "category",
+                "exemption_reason",
+                "cost_center",
+            ] {
                 if let Some(v) = r.get(k) {
                     out.insert(k.into(), v.clone());
                 }
@@ -245,6 +260,7 @@ pub fn tax_in(taxes: &[Doc]) -> Vec<TaxIn> {
             row_ref: t.get("row_ref").and_then(Value::as_i64).filter(|r| *r >= 1).map(|r| (r - 1) as usize),
             included_in_price: b(t, "included_in_price"),
             deduct: b(t, "deduct"),
+            reverse_charge: b(t, "reverse_charge"),
             ..Default::default()
         })
         .collect()
@@ -283,6 +299,8 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
             price: d(r, "price_list_rate"),
             discount_percent: d(r, "discount_percent"),
             tax_rates: line_tax_rates(r, taxes),
+            // Per-unit taxes count stock units.
+            tax_qty: r.get("stock_qty").is_some_and(|v| !v.is_null()).then(|| d(r, "stock_qty")),
             ..Default::default()
         })
         .collect();
@@ -295,14 +313,16 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
         taxes: tax_in(taxes),
         discount: (discount_percent > Decimal::ZERO).then_some(DocDiscount::Percent { value: discount_percent }),
         round_total_to: if rounded_total { co.round_total_to } else { None },
+        tax_rounding: if s(&co.doc, "tax_rounding") == Some("Per Line") { TaxRounding::PerLine } else { TaxRounding::PerDocument },
         ..Default::default()
     }
 }
 
 /// Fills prices, discounts, item tax rates, taxes and totals. Returns the company for reuse.
 pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<Company> {
-    // The countries' rules first (India: the GST template for the place of supply), so the taxes
-    // calculated below are the ones they chose.
+    // The addresses the countries' rules read, then their rules (India: the GST template for the
+    // place of supply), so the taxes calculated below are the ones they chose.
+    crate::localization::fill_addresses(k, ctx, tx, ent, doc, side).await?;
     crate::localization::determine(k, ctx, tx, ent, doc, side).await?;
     let company_id = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
     let co = company(k, ctx, tx, company_id).await?;
@@ -350,12 +370,18 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let has_child = |f: &str| child_ent.as_ref().is_some_and(|c| c.field(f).is_some());
     let mut item_cache: HashMap<Uuid, Doc> = HashMap::new();
     let mut items = rows(doc, "items");
+    // Each line's item tax rates (by tax account), for the tax breakdown's categories.
+    let mut line_rates: Vec<Vec<Doc>> = Vec::with_capacity(items.len());
     for (i, row) in items.iter_mut().enumerate() {
-        let Some(item_id) = id(row, "item") else { continue };
+        let Some(item_id) = id(row, "item") else {
+            line_rates.push(Vec::new());
+            continue;
+        };
         if let std::collections::hash_map::Entry::Vacant(e) = item_cache.entry(item_id) {
             e.insert(get(k, ctx, tx, "Item", item_id).await?);
         }
         let item = item_cache[&item_id].clone();
+        line_rates.push(rows(&item, "tax_rates"));
         let qty = d(row, "qty");
         // Units: quantities and prices are per the line's unit; stock moves count stock units.
         let item_changed = s(row, "price_basis").and_then(parse_basis).is_some_and(|(was, ..)| was != item_id);
@@ -471,6 +497,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         set(t, "base_tax_amount", money(o.base_tax_amount));
         set(t, "base_total", money(o.base_total));
     }
+    if ent.field("tax_breakdown").is_some() {
+        set(doc, "tax_breakdown", Value::Array(tax_breakdown(&input, &taxes, &line_rates, &out).into_iter().map(Value::Object).collect()));
+    }
     set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
     if ent.field("taxes").is_some() {
         set(doc, "taxes", Value::Array(taxes.into_iter().map(Value::Object).collect()));
@@ -493,6 +522,79 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         }
     }
     Ok(co)
+}
+
+/// The category a line falls in for a tax row: its item's for the row's account, else the row's
+/// (when the item keeps the row's rate), else what the rate says.
+fn category_of(row: &Doc, item_rate: Option<&Doc>, rate: Decimal) -> String {
+    let rows_own = s(row, "category").filter(|_| item_rate.is_none_or(|r| d(r, "rate") == d(row, "rate")));
+    match item_rate.and_then(|r| s(r, "category")).or(rows_own) {
+        Some(c) => c.to_string(),
+        None if b(row, "reverse_charge") => "Reverse Charge".into(),
+        None if rate > Decimal::ZERO => "Standard".into(),
+        None => "Zero Rated".into(),
+    }
+}
+
+/// What a document's taxes come to per tax row, category, rate and exemption reason (EN 16931's
+/// VAT breakdown, BG-23): the taxable amount (what the row is charged on: the lines' net amounts,
+/// or the earlier row's amounts or totals it refers to) and the tax, in the document's and the
+/// company's currency. Fixed (Actual) charges have no rate and are left out. `line_rates`: each
+/// line's item tax rates.
+pub fn tax_breakdown(input: &CalcInput, taxes: &[Doc], line_rates: &[Vec<Doc>], out: &CalcOutput) -> Vec<Doc> {
+    // Of a row's earlier rows, what each adds to a running total: nothing when reverse-charged.
+    let signed = |q: usize, v: Decimal| {
+        if b(&taxes[q], "reverse_charge") {
+            Decimal::ZERO
+        } else if b(&taxes[q], "deduct") {
+            -v
+        } else {
+            v
+        }
+    };
+    let mut groups: BTreeMap<(usize, String, Decimal, String), [Decimal; 4]> = BTreeMap::new();
+    for (k, (row, tin)) in taxes.iter().zip(&input.taxes).enumerate() {
+        if tin.charge_type == ChargeType::Actual {
+            continue;
+        }
+        let account = s(row, "account");
+        for (i, (line, lin)) in out.lines.iter().zip(&input.lines).enumerate() {
+            let rate = lin.tax_rates.get(&tin.key).copied().unwrap_or(tin.rate);
+            let item_rate = line_rates.get(i).and_then(|rs| rs.iter().find(|r| account.is_some() && s(r, "tax_account") == account));
+            let reason = item_rate.and_then(|r| s(r, "exemption_reason")).or_else(|| s(row, "exemption_reason")).unwrap_or_default().to_string();
+            let (taxable, base_taxable) = match (tin.charge_type, tin.row_ref) {
+                (ChargeType::OnPreviousRowAmount, Some(j)) => (line.taxes[j], line.base_taxes[j]),
+                (ChargeType::OnPreviousRowTotal, Some(j)) => {
+                    (0..=j).fold((line.net_amount, line.base_net_amount), |(t, bt), q| (t + signed(q, line.taxes[q]), bt + signed(q, line.base_taxes[q])))
+                }
+                _ => (line.net_amount, line.base_net_amount),
+            };
+            let g = groups.entry((k, category_of(row, item_rate, rate), rate.normalize(), reason)).or_default();
+            g[0] += taxable;
+            g[1] += line.taxes[k];
+            g[2] += base_taxable;
+            g[3] += line.base_taxes[k];
+        }
+    }
+    groups
+        .into_iter()
+        .map(|((k, category, rate, reason), [taxable, tax, base_taxable, base_tax])| {
+            let row = &taxes[k];
+            let mut g = Doc::new();
+            g.insert("id".into(), json!(Uuid::now_v7().to_string()));
+            g.insert("description".into(), json!(s(row, "description")));
+            g.insert("account".into(), json!(s(row, "account")));
+            g.insert("category".into(), json!(category));
+            g.insert("rate".into(), money(rate));
+            g.insert("exemption_reason".into(), if reason.is_empty() { Value::Null } else { json!(reason) });
+            g.insert("reverse_charge".into(), json!(b(row, "reverse_charge")));
+            g.insert("taxable_amount".into(), money(taxable));
+            g.insert("tax_amount".into(), money(tax));
+            g.insert("base_taxable_amount".into(), money(base_taxable));
+            g.insert("base_tax_amount".into(), money(base_tax));
+            g
+        })
+        .collect()
 }
 
 /// Re-reads the per-line and per-tax breakup computed by `calculate` for postings.

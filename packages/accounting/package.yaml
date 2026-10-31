@@ -25,6 +25,8 @@ overlays:
       - {op: add_field, column: true, after: exchange_gain_loss_account, field: {name: retained_earnings_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: retained_earnings_account, field: {name: opening_balance_account, type: link, to: Account, link_filters: {is_group: false}, description: Offset for opening stock and balances}}
       - {op: add_field, column: true, after: opening_balance_account, field: {name: overhead_absorbed_account, type: link, to: Account, link_filters: {is_group: false}, label: Manufacturing Overheads Absorbed Account}}
+      - {op: add_field, column: true, after: round_total_to, field: {name: tax_rounding, type: select, options: [Per Document, Per Line], default: Per Document,
+          description: "Each tax worked out once on the document's lines together (EN 16931), or line by line and added up"}}
       - {op: add_action, action: {name: setup_chart_of_accounts, label: Create Standard Chart of Accounts, permission: write, confirm: 'Create the standard chart of accounts for this company?'}}
   - entity: Customer
     ops:

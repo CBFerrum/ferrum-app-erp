@@ -460,6 +460,18 @@ impl DocHook for InvoiceHook {
 
     async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         crate::localization::check(hc, doc, self.0).await?;
+        if self.0 == Side::Buying {
+            // A reverse charge on a purchase is owed by the company: it needs the account it is owed on.
+            let missing: Vec<FieldError> = rows(doc, "taxes")
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| b(t, "reverse_charge") && id(t, "reverse_charge_account").is_none())
+                .map(|(i, _)| FieldError::new("reverse_charge_account", "is required for a reverse charge").in_row("taxes", i))
+                .collect();
+            if !missing.is_empty() {
+                return Err(Error::Validation(missing));
+            }
+        }
         if self.0 != Side::Selling || b(doc, "is_return") {
             return Ok(());
         }
@@ -569,7 +581,18 @@ impl DocHook for InvoiceHook {
         }
         for (t, base) in &bk.taxes {
             let acc = id(t, "account").ok_or_else(|| Error::field("taxes", "a tax row has no account"))?;
-            entry.lines.push(Line::new(acc, -sign * *base, &co.currency_code).cost_center(id(t, "cost_center")).remarks(s(t, "description").unwrap_or("Tax")));
+            let memo = s(t, "description").unwrap_or("Tax");
+            if b(t, "reverse_charge") {
+                // The buyer accounts for it: a purchase books it as input tax and as tax owed, which
+                // leaves the supplier's credit at the net; a sale books nothing.
+                if self.0 == Side::Buying && !base.is_zero() {
+                    let owed = id(t, "reverse_charge_account").ok_or_else(|| Error::field("taxes", "a reverse-charge row needs the account it is owed on"))?;
+                    entry.lines.push(Line::new(acc, *base, &co.currency_code).cost_center(id(t, "cost_center")).remarks(memo));
+                    entry.lines.push(Line::new(owed, -*base, &co.currency_code).cost_center(id(t, "cost_center")).remarks(format!("{memo} (reverse charge)")));
+                }
+                continue;
+            }
+            entry.lines.push(Line::new(acc, -sign * *base, &co.currency_code).cost_center(id(t, "cost_center")).remarks(memo));
         }
         let adj = total_base - d(doc, "base_grand_total");
         if !adj.is_zero() {

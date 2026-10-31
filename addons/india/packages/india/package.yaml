@@ -37,9 +37,12 @@ overlays:
       - {op: add_field, after: tax_id, field: {name: in_gstin, type: data, label: GSTIN, max_length: 15}}
       - {op: add_field, after: in_gstin, field: {name: in_gst_category, type: select, label: GST Category, options: [Registered, Unregistered, Overseas, SEZ], default: Registered}}
       - {op: add_field, after: in_gst_category, field: {name: in_state_code, type: data, label: GST State Code, max_length: 2}}
+      - {op: add_field, after: in_state_code, field: {name: in_reverse_charge, type: check, label: Reverse Charge (RCM),
+          description: "Their supplies to you are under reverse charge (a GTA, an advocate, notified goods): you pay the GST, with the reverse-charge purchase templates"}}
   - entity: TaxTemplate
     ops:
       - {op: add_field, after: kind, field: {name: in_supply_type, type: select, label: GST Supply Type, options: [Intra-State, Inter-State, Export, Exempt]}}
+      - {op: add_field, after: in_supply_type, field: {name: in_reverse_charge, type: check, label: Reverse Charge (RCM), description: For purchases from suppliers marked reverse charge}}
   - entity: Uom
     ops:
       - {op: add_field, after: uom_name, field: {name: in_uqc, type: select, label: GST Unit Code (UQC), description: "The unit e-invoices and e-way bills use; guessed from the name when empty (Nos, Kg, Box…), otherwise OTH", options: [BAG, BAL, BDL, BKL, BOU, BOX, BTL, BUN, CAN, CBM, CCM, CMS, CTN, DOZ, DRM, GGK, GMS, GRS, GYD, KGS, KLR, KME, LTR, MLT, MTR, MTS, NOS, OTH, PAC, PCS, PRS, QTL, ROL, SET, SQF, SQM, SQY, TBS, TGM, THD, TON, TUB, UGS, UNT, YDS]}}

@@ -170,7 +170,8 @@ fn kind(side: Side) -> &'static str {
 }
 
 /// The GST accounts a company in India keeps beside the standard chart: (number, name, parent,
-/// root type).
+/// root type). The RCM accounts hold the GST it owes on purchases under reverse charge (paid in
+/// cash, not from input credit).
 const GST_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("1153", "CGST Input", "Tax Assets", "Asset"),
     ("1154", "SGST Input", "Tax Assets", "Asset"),
@@ -178,12 +179,20 @@ const GST_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("2133", "CGST Output", "Duties and Taxes", "Liability"),
     ("2134", "SGST Output", "Duties and Taxes", "Liability"),
     ("2135", "IGST Output", "Duties and Taxes", "Liability"),
+    ("2136", "CGST RCM Payable", "Duties and Taxes", "Liability"),
+    ("2137", "SGST RCM Payable", "Duties and Taxes", "Liability"),
+    ("2138", "IGST RCM Payable", "Duties and Taxes", "Liability"),
 ];
 
-/// Whether a company is one India's rules are for: one whose country is India, or that names no
-/// country (before countries were set, every company of a workspace with India was Indian).
+/// Whether a company is one India's rules are for: its country is India (by its ISO code), or it
+/// names no country (before countries were set, every company of a workspace with India was
+/// Indian). Without a code (a platform from before codes, a name the code list does not know) the
+/// name decides.
 fn indian(company: &Doc) -> bool {
-    s(company, "country").is_none_or(|c| matches!(c.trim().to_ascii_lowercase().as_str(), "" | "in" | "ind" | "india" | "bharat"))
+    match s(company, "country_code") {
+        Some(code) => code == "IN",
+        None => s(company, "country").is_none_or(|c| matches!(c.trim().to_ascii_lowercase().as_str(), "" | "in" | "ind" | "india" | "bharat")),
+    }
 }
 
 /// India's rules for ERP (its localization): the GST template for the place of supply on sales
@@ -209,10 +218,19 @@ impl Localization for India {
         let Some(home) = state_of(&company) else { return Ok(()) };
         let party = get(k, ctx, tx, party_of(side).1, pid).await?;
         let category = s(&party, "in_gst_category").unwrap_or("Unregistered");
+        // A purchase under reverse charge (from a supplier marked so: a GTA, an advocate, notified
+        // goods, services from abroad; or an invoice marked so) takes the company's reverse-charge
+        // templates; others keep whichever of the supply type is chosen.
+        let rcm = side == Side::Buying && (b(&party, "in_reverse_charge") || b(doc, "in_reverse_charge"));
+        if rcm && ent.field("in_reverse_charge").is_some() {
+            set(doc, "in_reverse_charge", true);
+        }
         let has_pos = ent.field("in_place_of_supply").is_some();
         let given = if has_pos { normalize(doc, "in_place_of_supply") } else { None };
         let pos = match given {
             Some(p) => p,
+            // Services from abroad are supplied where the company is.
+            None if category == "Overseas" && rcm => home.clone(),
             None if category == "Overseas" => FOREIGN.to_string(),
             None => state_of(&party).unwrap_or_else(|| home.clone()),
         };
@@ -224,7 +242,9 @@ impl Localization for India {
         }
         let supply = match (side, category) {
             (Side::Selling, "Overseas") => "Export",
-            // Imports carry no GST on the supplier's invoice (it is paid at customs).
+            // An import of services: IGST, which the company pays.
+            (Side::Buying, "Overseas") if rcm => "Inter-State",
+            // Imports of goods carry no GST on the supplier's invoice (it is paid at customs).
             (Side::Buying, "Overseas") => return Ok(()),
             (_, "SEZ") => "Inter-State",
             _ if pos == home => "Intra-State",
@@ -232,7 +252,7 @@ impl Localization for India {
         };
         if let Some(current) = id(doc, "tax_template") {
             let t = get(k, ctx, tx, "TaxTemplate", current).await?;
-            if s(&t, "in_supply_type").is_none_or(|x| x == supply) {
+            if s(&t, "in_supply_type").is_none_or(|x| x == supply) && (!rcm || b(&t, "in_reverse_charge")) {
                 return Ok(());
             }
         }
@@ -247,11 +267,19 @@ impl Localization for India {
                 50,
             )
             .await?;
-        let chosen = candidates.iter().find(|t| b(t, "is_default")).or(candidates.first());
+        let candidates: Vec<&Doc> = candidates.iter().filter(|t| b(t, "in_reverse_charge") == rcm).collect();
+        let chosen = candidates.iter().find(|t| b(t, "is_default")).or(candidates.first()).copied();
         match chosen {
             Some(t) => {
                 set(doc, "tax_template", s(t, "id").unwrap_or_default().to_string());
                 doc.remove("taxes");
+            }
+            // A reverse-charge supplier's purchase never takes the ordinary GST templates.
+            None if rcm => {
+                return Err(Error::field(
+                    "tax_template",
+                    format!("this supplier's supplies are under reverse charge: create an {supply} purchase template marked reverse charge"),
+                ));
             }
             None if id(doc, "tax_template").is_some() => {
                 return Err(Error::field(
@@ -309,20 +337,43 @@ impl Localization for India {
             ids.insert(name, s(&created, "id").unwrap_or_default().to_string());
         }
         let row = |acc: &str, desc: &str, rate: &str| json!({"charge_type": "On Net Total", "account": ids.get(acc), "description": desc, "rate": rate});
+        // Input tax the company claims, owed in cash on the RCM account.
+        let rcm = |acc: &str, owed: &str, desc: &str, rate: &str| {
+            json!({"charge_type": "On Net Total", "account": ids.get(acc), "description": desc, "rate": rate, "reverse_charge": true,
+                   "reverse_charge_account": ids.get(owed), "category": "Reverse Charge"})
+        };
         let templates = [
-            ("GST 18% Intra-State (Sales)", "Sales", "Intra-State", true, vec![row("CGST Output", "CGST 9%", "9"), row("SGST Output", "SGST 9%", "9")]),
-            ("GST 18% Inter-State (Sales)", "Sales", "Inter-State", false, vec![row("IGST Output", "IGST 18%", "18")]),
-            ("GST Export (Sales)", "Sales", "Export", false, vec![row("IGST Output", "IGST 0% (LUT)", "0")]),
-            ("GST 18% Intra-State (Purchase)", "Purchase", "Intra-State", true, vec![row("CGST Input", "CGST 9%", "9"), row("SGST Input", "SGST 9%", "9")]),
-            ("GST 18% Inter-State (Purchase)", "Purchase", "Inter-State", false, vec![row("IGST Input", "IGST 18%", "18")]),
+            ("GST 18% Intra-State (Sales)", "Sales", "Intra-State", true, false, vec![row("CGST Output", "CGST 9%", "9"), row("SGST Output", "SGST 9%", "9")]),
+            ("GST 18% Inter-State (Sales)", "Sales", "Inter-State", false, false, vec![row("IGST Output", "IGST 18%", "18")]),
+            ("GST Export (Sales)", "Sales", "Export", false, false, vec![row("IGST Output", "IGST 0% (LUT)", "0")]),
+            (
+                "GST 18% Intra-State (Purchase)",
+                "Purchase",
+                "Intra-State",
+                true,
+                false,
+                vec![row("CGST Input", "CGST 9%", "9"), row("SGST Input", "SGST 9%", "9")],
+            ),
+            ("GST 18% Inter-State (Purchase)", "Purchase", "Inter-State", false, false, vec![row("IGST Input", "IGST 18%", "18")]),
+            (
+                "GST 18% Intra-State RCM (Purchase)",
+                "Purchase",
+                "Intra-State",
+                false,
+                true,
+                vec![rcm("CGST Input", "CGST RCM Payable", "CGST 9% (RCM)", "9"), rcm("SGST Input", "SGST RCM Payable", "SGST 9% (RCM)", "9")],
+            ),
+            ("GST 18% Inter-State RCM (Purchase)", "Purchase", "Inter-State", false, true, vec![rcm("IGST Input", "IGST RCM Payable", "IGST 18% (RCM)", "18")]),
         ];
-        for (title, kind, supply, default, rows_) in templates {
+        for (title, kind, supply, default, reverse_charge, rows_) in templates {
             let mut t = Doc::new();
             t.insert("title".into(), json!(title));
             t.insert("company".into(), json!(company.to_string()));
             t.insert("kind".into(), json!(kind));
+            // The RCM templates are chosen by the supplier's flag, never as a plain default.
             t.insert("is_default".into(), json!(default));
             t.insert("in_supply_type".into(), json!(supply));
+            t.insert("in_reverse_charge".into(), json!(reverse_charge));
             t.insert("rows".into(), Value::Array(rows_));
             hc.kernel.insert_tx(&sctx, hc.tx, "TaxTemplate", t).await?;
         }

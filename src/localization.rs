@@ -5,9 +5,11 @@
 //! can keep companies in several countries.
 
 use crate::pricing::Side;
+use crate::util::{find, id, set};
 use async_trait::async_trait;
-use ferrum_kernel::{Ctx, Doc, HookCtx, Kernel, Result, Tx};
+use ferrum_kernel::{Ctx, Doc, Filter, HookCtx, Kernel, Result, Tx};
 use ferrum_meta::EffEntity;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
@@ -64,6 +66,57 @@ pub(crate) async fn determine(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntit
 pub async fn check(hc: &mut HookCtx<'_>, doc: &Doc, side: Side) -> Result<()> {
     for l in installed(hc.ctx) {
         l.check(hc, doc, side).await?;
+    }
+    Ok(())
+}
+
+/// Where a document's goods go, as countries' rules read it (`country_code`, `state`,
+/// `postal_code`, `city` of an Address): its ship-to, else the party's address on it.
+pub async fn ship_to(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Option<Doc>> {
+    let Some(address) = ["ship_to", "customer_address", "supplier_address"].into_iter().find_map(|f| id(doc, f)) else { return Ok(None) };
+    address_of(k, ctx, tx, address).await
+}
+
+async fn address_of(k: &Kernel, ctx: &Ctx, tx: &mut Tx, address: Uuid) -> Result<Option<Doc>> {
+    Ok(find(k, ctx, tx, "Address", vec![Filter::eq("id", address.to_string())], None, 1).await?.into_iter().next())
+}
+
+/// A draft's addresses: the party's (customer's billing, supplier's) and, on sales, the ship-to.
+/// One not chosen is the party's primary address of that type; one that belongs to another party
+/// (the party changed) gives way to the new party's.
+pub(crate) async fn fill_addresses(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<()> {
+    if doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        return Ok(());
+    }
+    let (party_field, slots): (&str, &[(&str, &str)]) = match side {
+        Side::Selling => ("customer", &[("customer_address", "Billing"), ("ship_to", "Shipping")]),
+        Side::Buying => ("supplier", &[("supplier_address", "Billing")]),
+    };
+    let Some(party) = id(doc, party_field) else { return Ok(()) };
+    for (field, kind) in slots {
+        if ent.field(field).is_none() {
+            continue;
+        }
+        if let Some(chosen) = id(doc, field) {
+            match address_of(k, ctx, tx, chosen).await? {
+                // The party's, or no one's in particular (a site, a warehouse); one that does not
+                // exist is the kernel's to report.
+                Some(a) if id(&a, party_field).is_none_or(|p| p == party) => continue,
+                None => continue,
+                Some(_) => {}
+            }
+        }
+        let primary = find(
+            k,
+            ctx,
+            tx,
+            "Address",
+            vec![Filter::eq(party_field, party.to_string()), Filter::eq("address_type", *kind), Filter::eq("is_primary", true)],
+            Some("created_at asc"),
+            1,
+        )
+        .await?;
+        set(doc, field, primary.first().and_then(|a| id(a, "id")).map_or(Value::Null, |a| json!(a.to_string())));
     }
     Ok(())
 }

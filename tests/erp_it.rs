@@ -425,7 +425,7 @@ async fn scenario() {
     let stores = uid(&t.find_one("Warehouse", json!({"warehouse_name": "Stores", "company": cid.to_string()})).await);
     let fg = uid(&t.find_one("Warehouse", json!({"warehouse_name": "Finished Goods", "company": cid.to_string()})).await);
     let templates = t.k.list(&t.ctx, "TaxTemplate", &ListQuery::default()).await.unwrap();
-    assert_eq!(templates.rows.len(), 5, "GST templates created");
+    assert_eq!(templates.rows.len(), 7, "GST templates created, two of them for purchases under reverse charge");
     let bank = company["default_bank_account"].as_str().unwrap().to_string();
 
     // ───────────── masters ─────────────
@@ -1423,4 +1423,182 @@ async fn scenario() {
         .await;
     assert!(si["tax_template"].is_null() && si["taxes"].as_array().is_none_or(|t| t.is_empty()), "no GST on its sales: {si:?}");
     assert_eq!(dec(&t.submit("SalesInvoice", uid(&si)).await["grand_total"]), n("100"), "submitted without HSN/SAC codes");
+
+    // ───────────── what every country builds on (Ferrum docs/plan/localization.md, L0) ─────────────
+    assert_eq!(t.get("Company", gmbh).await["country_code"], json!("DE"), "the country's ISO code follows its name");
+    let parent = |name: &'static str| {
+        let k = t.k.clone();
+        let ctx = t.ctx.clone();
+        async move {
+            let f = json!({"company": gmbh.to_string(), "account_name": name});
+            k.list(&ctx, "Account", &ListQuery { filters: ferrum_kernel::query::parse_filters(&f).unwrap(), ..Default::default() }).await.unwrap().rows[0]["id"]
+                .clone()
+        }
+    };
+    let duties = parent("Duties and Taxes").await;
+    let tax_assets = parent("Tax Assets").await;
+    let mut accounts = HashMap::new();
+    for (name, under, root) in [
+        ("VAT Output", &duties, "Liability"),
+        ("VAT Owed (reverse charge)", &duties, "Liability"),
+        ("Packaging Levy", &duties, "Liability"),
+        ("VAT Input", &tax_assets, "Asset"),
+    ] {
+        let a = t
+            .insert(
+                "Account",
+                json!({"account_name": name, "company": gmbh.to_string(), "parent_account": under, "root_type": root, "account_type": "Tax", "is_group": false}),
+            )
+            .await;
+        accounts.insert(name, a["id"].as_str().unwrap().to_string());
+    }
+    t.insert(
+        "TaxTemplate",
+        json!({"title": "VAT (Sales)", "company": gmbh.to_string(), "kind": "Sales", "is_default": true, "rows": [
+            {"charge_type": "On Net Total", "account": accounts["VAT Output"], "description": "VAT", "rate": "19", "category": "Standard"},
+            {"charge_type": "On Item Quantity", "account": accounts["Packaging Levy"], "description": "Packaging levy", "rate": "0"}]}),
+    )
+    .await;
+    let item = |code: &'static str, rate: &'static str, tax_rates: Value| {
+        let (k, ctx, group, unit) = (t.k.clone(), t.ctx.clone(), products["id"].clone(), nos["id"].clone());
+        async move {
+            let v = json!({"item_code": code, "item_name": code, "item_group": group, "stock_uom": unit, "is_stock_item": false, "standard_rate": rate, "tax_rates": tax_rates});
+            uid(&k.insert(&ctx, "Item", obj(v)).await.unwrap_or_else(|e| panic!("item {code}: {e:?}")))
+        }
+    };
+    let book = item(
+        "BOOK",
+        "20",
+        json!([{"tax_account": accounts["VAT Output"], "rate": "7", "category": "Reduced"}, {"tax_account": accounts["Packaging Levy"], "rate": "0.25"}]),
+    )
+    .await;
+    let cover =
+        item("COVER", "50", json!([{"tax_account": accounts["VAT Output"], "rate": "0", "category": "Exempt", "exemption_reason": "VATEX-EU-132-1E"}])).await;
+    let sticker = item("STICKER", "0.25", json!([])).await;
+    // A customer with a billing address in Germany and goods shipped to Austria (the code typed).
+    let kunde = uid(&t.insert("Customer", json!({"customer_name": "Kunde AG"})).await);
+    let billing = t
+        .insert(
+            "Address",
+            json!({"address_type": "Billing", "address_line1": "Hauptstr. 1", "city": "Berlin", "country": "Deutschland", "is_primary": true, "customer": kunde.to_string()}),
+        )
+        .await;
+    let shipping = t
+        .insert(
+            "Address",
+            json!({"address_type": "Shipping", "address_line1": "Ring 2", "city": "Wien", "country": "at", "is_primary": true, "customer": kunde.to_string()}),
+        )
+        .await;
+    assert_eq!((billing["country_code"].clone(), shipping["country"].clone(), shipping["country_code"].clone()), (json!("DE"), json!("Austria"), json!("AT")));
+
+    // Standard, reduced and exempt lines, and a levy per unit.
+    let si = t
+        .insert(
+            "SalesInvoice",
+            json!({"company": gmbh.to_string(), "customer": kunde.to_string(), "items": [
+                {"item": advice.to_string(), "qty": "2"}, {"item": book.to_string(), "qty": "10"}, {"item": cover.to_string(), "qty": "1"}]}),
+        )
+        .await;
+    assert_eq!((si["customer_address"].clone(), si["ship_to"].clone()), (billing["id"].clone(), shipping["id"].clone()), "the customer's primary addresses");
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    let to = ferrum_app_erp::localization::ship_to(&t.k, &t.ctx, &mut tx, &si).await.unwrap().expect("a ship-to");
+    tx.commit().await.unwrap();
+    assert_eq!(to["country_code"], json!("AT"), "the rules read where the goods go");
+    let taxes = si["taxes"].as_array().unwrap();
+    assert_eq!((dec(&taxes[0]["tax_amount"]), dec(&taxes[1]["tax_amount"])), (n("52"), n("2.5")), "19% of 200, 7% of 200; 0.25 on each of 10 books");
+    assert_eq!((dec(&si["net_total"]), dec(&si["grand_total"])), (n("450"), n("504.5")));
+    let breakdown: Vec<(String, Decimal, Decimal, Decimal, Value)> = si["tax_breakdown"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|g| g["account"] == json!(accounts["VAT Output"]))
+        .map(|g| {
+            (g["category"].as_str().unwrap().to_string(), dec(&g["rate"]), dec(&g["taxable_amount"]), dec(&g["tax_amount"]), g["exemption_reason"].clone())
+        })
+        .collect();
+    assert_eq!(
+        breakdown,
+        vec![
+            ("Exempt".into(), n("0"), n("50"), n("0"), json!("VATEX-EU-132-1E")),
+            ("Reduced".into(), n("7"), n("200"), n("14"), Value::Null),
+            ("Standard".into(), n("19"), n("200"), n("38"), Value::Null),
+        ],
+        "VAT per category and rate"
+    );
+    let levy: Vec<(Decimal, Decimal)> = si["tax_breakdown"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|g| g["account"] == json!(accounts["Packaging Levy"]) && !dec(&g["tax_amount"]).is_zero())
+        .map(|g| (dec(&g["rate"]), dec(&g["tax_amount"])))
+        .collect();
+    assert_eq!(levy, vec![(n("0.25"), n("2.5"))]);
+    let si = t.submit("SalesInvoice", uid(&si)).await;
+    assert_eq!(si["tax_breakdown"].as_array().map(Vec::len), Some(5), "kept on the submitted invoice");
+    assert_eq!((t.gl("VAT Output").await, t.gl("Packaging Levy").await), (n("-52"), n("-2.5")));
+
+    // Each line's tax rounded on its own when the company says so: 3 × 19% of 0.25 is 0.1425
+    // together (0.14), 0.0475 → 0.05 a line (0.15).
+    let stickers = json!({"company": gmbh.to_string(), "customer": kunde.to_string(), "items": [
+        {"item": sticker.to_string(), "qty": "1"}, {"item": sticker.to_string(), "qty": "1"}, {"item": sticker.to_string(), "qty": "1"}]});
+    assert_eq!(dec(&t.insert("SalesInvoice", stickers.clone()).await["taxes"][0]["tax_amount"]), n("0.14"));
+    t.k.update(&t.ctx, "Company", gmbh, obj(json!({"tax_rounding": "Per Line"})), None).await.expect("per line");
+    assert_eq!(dec(&t.insert("SalesInvoice", stickers).await["taxes"][0]["tax_amount"]), n("0.15"));
+
+    // A service bought from abroad under reverse charge: the company owes the VAT and claims it,
+    // and owes the supplier the net alone.
+    let cloud = uid(&t.insert("Supplier", json!({"supplier_name": "Cloud Services Ltd"})).await);
+    let hosting = item("HOSTING", "0", json!([])).await;
+    let rc = t
+        .insert(
+            "TaxTemplate",
+            json!({"title": "VAT reverse charge (Purchase)", "company": gmbh.to_string(), "kind": "Purchase", "rows": [
+                {"charge_type": "On Net Total", "account": accounts["VAT Input"], "description": "VAT 19% (reverse charge)", "rate": "19", "reverse_charge": true,
+                 "reverse_charge_account": accounts["VAT Owed (reverse charge)"]}]}),
+        )
+        .await;
+    let bill = |no: &str, taxes: Value| {
+        let mut v = json!({"company": gmbh.to_string(), "supplier": cloud.to_string(), "bill_no": no, "items": [{"item": hosting.to_string(), "qty": "1", "price_list_rate": "1000"}]});
+        if taxes.is_null() {
+            v["tax_template"] = rc["id"].clone();
+        } else {
+            v["taxes"] = taxes;
+        }
+        v
+    };
+    let unowed = t
+        .insert(
+            "PurchaseInvoice",
+            bill("CS-0", json!([{"charge_type": "On Net Total", "account": accounts["VAT Input"], "rate": "19", "reverse_charge": true}])),
+        )
+        .await;
+    let refused = t.k.submit(&t.ctx, "PurchaseInvoice", uid(&unowed), None).await;
+    assert!(matches!(refused, Err(Error::Validation(ref e)) if e.iter().any(|f| f.field == "reverse_charge_account")), "{refused:?}");
+    let pi = t.insert("PurchaseInvoice", bill("CS-1", Value::Null)).await;
+    assert_eq!((dec(&pi["taxes"][0]["tax_amount"]), dec(&pi["total_taxes"]), dec(&pi["grand_total"])), (n("190"), n("0"), n("1000")));
+    assert_eq!(pi["tax_breakdown"][0]["category"], json!("Reverse Charge"));
+    let pi = t.submit("PurchaseInvoice", uid(&pi)).await;
+    assert_eq!(dec(&pi["outstanding_amount"]), n("1000"), "nothing extra payable to the supplier");
+    assert_eq!((t.gl("VAT Input").await, t.gl("VAT Owed (reverse charge)").await), (n("190"), n("-190")));
+
+    // India's reverse charge: a GTA's freight takes the RCM template, owed in cash.
+    let gta = uid(&t.insert("Supplier", json!({"supplier_name": "Speedy Transport", "in_gstin": gstin("27AAACS2222D1Z"), "in_reverse_charge": true})).await);
+    let freight = uid(&t
+        .insert("Item", json!({"item_code": "FREIGHT", "item_name": "Freight", "item_group": products["id"], "stock_uom": nos["id"], "is_stock_item": false, "hsn_code": "9965"}))
+        .await);
+    let cgst_before = t.gl("CGST Input").await;
+    let pi = t
+        .insert(
+            "PurchaseInvoice",
+            json!({"company": cid.to_string(), "supplier": gta.to_string(), "bill_no": "GTA/1", "items": [{"item": freight.to_string(), "qty": "1", "price_list_rate": "1000"}]}),
+        )
+        .await;
+    assert_eq!(pi["in_reverse_charge"], json!(true));
+    let template: Uuid = pi["tax_template"].as_str().unwrap().parse().unwrap();
+    assert_eq!(t.get("TaxTemplate", template).await["title"], json!("GST 18% Intra-State RCM (Purchase)"));
+    assert_eq!(dec(&pi["grand_total"]), n("1000"));
+    let pi = t.submit("PurchaseInvoice", uid(&pi)).await;
+    assert_eq!(dec(&pi["outstanding_amount"]), n("1000"));
+    assert_eq!(t.gl("CGST Input").await - cgst_before, n("90"));
+    assert_eq!((t.gl("CGST RCM Payable").await, t.gl("SGST RCM Payable").await), (n("-90"), n("-90")));
 }
