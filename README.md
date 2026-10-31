@@ -23,18 +23,19 @@ an append-only ledger with moving-average and FIFO cost layers (a backdated entr
 nothing is ever reposted), and every figure the reports show comes from the same ledger. Its
 add-ons bring budgets and bank reconciliation, procurement, stock operations and manufacturing
 operations. A country's taxes and rules are an add-on too, on one localization seam: India's (GST,
-e-invoices and e-way bills) and the European Union's (VAT, VIES, the One-Stop Shop, EN 16931
-e-invoices over Peppol) are built. Point of Sale, Commerce, Assets, Field Service, HR and CRM
+e-invoices and e-way bills), the European Union's (VAT, VIES, the One-Stop Shop, EN 16931
+e-invoices over Peppol) and Germany's (XRechnung, small businesses, the domestic reverse charge)
+are built. Point of Sale, Commerce, Assets, Field Service, HR and CRM
 build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.4.0` (the European Union `0.1.0`, India `0.2.1`, the other add-ons `0.1.1`) |
+| 📦 Version | `0.4.0` (Germany `0.1.0`, the European Union `0.1.1`, India `0.2.1`, the other add-ons `0.1.1`) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
-| 🧩 Add-ons | the European Union, India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
-| 🌍 Countries | add-ons on the localization seam: India and the European Union built; the EU's members, the UK, the US, Canada, South East Asia and the rest follow ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
+| 🧩 Add-ons | the European Union, Germany, India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
+| 🌍 Countries | add-ons on the localization seam: India, the European Union and Germany built; the other EU members, the UK, the US, Canada, South East Asia and the rest follow ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
 | 🔌 Built on by | Point of Sale, Commerce, Assets, Field Service, HR and CRM |
 | 👥 Roles | Accounts, Sales, Purchase, Stock and Manufacturing managers and users |
 
@@ -59,6 +60,7 @@ build on its engine.
 | | Add-on | What it adds |
 |---|---|---|
 | 🇪🇺 | **European Union** (`ferrum-eu`) | EU VAT for a company in a member state: home rates, intra-Community supplies and reverse charge with VAT numbers confirmed in VIES, the One-Stop Shop for sales to consumers elsewhere in the EU, exports and acquisitions; rates from the Commission's TEDB; EN 16931 e-invoices (Peppol BIS Billing 3.0) handed to the company's Peppol access point; the EC sales list and the OSS return |
+| 🇩🇪 | **Germany** (`ferrum-de`, on the EU's) | XRechnung 3.0 e-invoices checked against KoSIT's rules (a public buyer's Leitweg-ID, a valid IBAN, both electronic addresses), small businesses (§ 19 UStG) invoicing without VAT, and the domestic reverse charge (§ 13b UStG) |
 | 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
 | 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | material requests, requests for quotation, supplier quotations and scorecards |
@@ -79,7 +81,9 @@ companies of its country, so one workspace can keep companies in several countri
 | `check` | before a priced document is submitted | HSN/SAC codes on outward supplies | the company's VAT number, and the customer's confirmed in VIES before a supply without VAT |
 | `setup_company` | after a new company's chart of accounts | GST accounts and tax templates | VAT accounts for a company in a member state |
 
-E-invoices, returns, legal print content and withheld taxes use what the platform already has:
+A member state's add-on builds on the EU's: Germany's (`ferrum-de`) adds XRechnung and its own
+VAT rules on top of the EU's. E-invoices, returns, legal print content and withheld taxes use what
+the platform already has:
 hooks and the outbox, report sources, print formats and deducted tax rows. How each region's taxes
 map onto the seam is in [the plan](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/erp-repo.md#every-country-as-an-add-on).
 
@@ -151,7 +155,7 @@ flowchart LR
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
         ENG["ERP's engine<br/><small>ledger · stock · pricing · flow</small>"]
-        ADD["Add-ons<br/><small>European Union · India · Finance · Procurement<br/>Stock Operations · Manufacturing Operations</small>"]
+        ADD["Add-ons<br/><small>European Union · Germany · India · Finance<br/>Procurement · Stock Operations · Manufacturing Operations</small>"]
         CORE["Shared core<br/><small>ferrum-domain</small>"]
         OB[("Outbox")]
     end
@@ -180,7 +184,7 @@ flowchart BT
     CORE["ferrum-domain<br/><small>Ferrum: the shared core</small>"]
     subgraph REPO["this repository"]
         APP["ferrum-app-erp<br/><small>app.yaml · packages/ · the engine · ui/dist</small>"]
-        ADD["addons/<br/><small>European Union (ferrum-eu) · India (ferrum-india)<br/>Finance · Procurement · Stock Operations<br/>Manufacturing Operations</small>"]
+        ADD["addons/<br/><small>European Union (ferrum-eu) · Germany (ferrum-de)<br/>India (ferrum-india) · Finance · Procurement<br/>Stock Operations · Manufacturing Operations</small>"]
     end
     APPS["Point of Sale · Commerce · Assets<br/>Field Service · HR · CRM"]
     SRV["ferrum-server<br/><small>Ferrum: compiles them all in</small>"]
@@ -242,11 +246,12 @@ and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in erp eu finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
+for db in erp eu de finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
 cargo test --workspace
 ```
 
-`FERRUM_ERP_TEST_DATABASE_URL`, `FERRUM_EU_TEST_DATABASE_URL`, `FERRUM_FINANCE_TEST_DATABASE_URL`,
+`FERRUM_ERP_TEST_DATABASE_URL`, `FERRUM_EU_TEST_DATABASE_URL`, `FERRUM_DE_TEST_DATABASE_URL`,
+`FERRUM_FINANCE_TEST_DATABASE_URL`,
 `FERRUM_PROCUREMENT_TEST_DATABASE_URL`, `FERRUM_STOCK_OPS_TEST_DATABASE_URL` and
 `FERRUM_MFG_OPS_TEST_DATABASE_URL` override the URLs. ERP's end-to-end test (`tests/erp_it.rs`)
 walks a GST-registered company through opening stock, procure-to-pay, order-to-cash with a fake
@@ -273,8 +278,8 @@ src/             the engine (ledger, stock, pricing, trade, manufacturing, set-u
                  localization), the manifest's entry points and the embedded interface
 tests/           the end-to-end scenario against a real PostgreSQL
 ui/              ERP's interface (React + Vite), built into ui/dist
-addons/          the European Union and India (each with its app.yaml), Finance, Procurement,
-                 Stock Operations, Manufacturing Operations
+addons/          the European Union, Germany and India (each with its app.yaml), Finance,
+                 Procurement, Stock Operations, Manufacturing Operations
 CHANGELOG.md     what changed in each version
 ```
 
@@ -282,6 +287,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **Germany 0.1.0** | Germany's add-on on the EU's: XRechnung 3.0 to KoSIT's rules, small businesses (§ 19 UStG) and the domestic reverse charge (§ 13b UStG). The EU 0.1.1 puts a company's invoice address, contact, IBAN and tax number on its e-invoices. |
 | **0.4.0** | The European Union's add-on (`ferrum-eu` 0.1.0): EU VAT with VIES, intra-Community supplies, the One-Stop Shop, exports and acquisitions; rates from TEDB; EN 16931 e-invoices with the Peppol hand-over; the EC sales list and the OSS return. India 0.2.1 follows NIC's reverse-charge rules on e-invoices. |
 | **0.3.0** | What every country's rules build on: tax categories and exemption reasons with a tax breakdown per category and rate (EN 16931), taxes per unit, reverse charge, tax rounding line by line, and party and ship-to addresses on documents. India 0.2.0 follows a company's ISO country code and handles reverse-charge purchases. |
 | **0.2.0** | ERP's own repository holds all of it: its manifest, interface, packages and engine, which other apps build on, and its add-ons. Countries plug in through `localization`, India first as the add-on `ferrum-india`. Earlier history is in Ferrum and Ferrum-Frontend. |
