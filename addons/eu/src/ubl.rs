@@ -46,6 +46,8 @@ pub struct Party {
     pub contact: Option<(String, String, String)>,
     /// The national tax registration number (BT-32), where there is no VAT number.
     pub tax_number: Option<String>,
+    /// The country subdivision (BT-39, BT-54): a county or region, as national profiles code it.
+    pub subdivision: Option<String>,
 }
 
 /// How to pay: a UNCL4461 code (58: SEPA credit transfer) to an account.
@@ -263,6 +265,9 @@ fn party(out: &mut String, tag: &str, p: &Party) {
     if let Some(v) = &p.postal {
         let _ = write!(out, "<cbc:PostalZone>{}</cbc:PostalZone>", esc(v));
     }
+    if let Some(v) = &p.subdivision {
+        let _ = write!(out, "<cbc:CountrySubentity>{}</cbc:CountrySubentity>", esc(v));
+    }
     let _ = write!(
         out,
         "<cac:Country><cbc:IdentificationCode>{}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>",
@@ -448,6 +453,7 @@ fn from_address(p: &mut Party, a: &Doc) {
     p.city = s(a, "city").map(str::to_string);
     p.postal = s(a, "postal_code").map(str::to_string);
     p.country = s(a, "country_code").map(str::to_string);
+    p.subdivision = s(a, "state").map(str::to_string);
 }
 
 /// The EN 16931 invoice of a submitted sales invoice, from what was stored when it was submitted.
@@ -732,6 +738,7 @@ mod tests {
             endpoint: endpoint(Some(ep)),
             contact: None,
             tax_number: None,
+            subdivision: None,
         };
         Invoice {
             number: "SINV-26-00001".into(),

@@ -1,0 +1,31 @@
+package: ro
+version: 0.1.0
+label: Romania
+description: "Romania for ERP, on the EU's VAT. Every invoice goes to ANAF's e-Factura as a CIUS-RO UBL invoice: written from the invoice with ISO 3166-2:RO counties and Bucharest's sectors, checked against CIUS-RO's rules, queued for the company's ANAF connection and ANAF's answer recorded; CIFs checked; the small business exemption (article 310) and the domestic reverse charge (article 331)."
+depends: [eu]
+field_prefix: ro_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: ro_county, type: data, label: County (Județ), max_length: 30, visible_if: "doc.country_code == 'RO'",
+          description: "Its county, e.g. Cluj (RO-CJ); in Bucharest (RO-B) its town is its sector, e.g. Sector 3"}}
+      - {op: add_field, after: ro_county, field: {name: ro_efactura_on_submit, type: check, default: true, label: Upload Invoices to e-Factura on Submit, visible_if: "doc.country_code == 'RO'"}}
+      - {op: add_field, after: ro_efactura_on_submit, field: {name: ro_small_business, type: check, label: Small Business Exemption (article 310), visible_if: "doc.country_code == 'RO'",
+          description: "Regim special de scutire: no VAT on its sales, and its invoices say why"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: ro_reverse_charge, type: check, label: Reverse Charge (Romania),
+          description: "Taxare inversă (article 331: cereals, wood, scrap, buildings...): a VAT-registered customer in Romania accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: eu_peppol_status, field: {name: ro_efactura_status, type: select, label: e-Factura, options: [Pending, Uploaded, Validated, Rejected],
+          read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: ro_efactura_status, field: {name: ro_upload_index, type: data, label: ANAF Upload Index, read_only: true, no_copy: true}}
+      - {op: add_field, after: ro_upload_index, field: {name: ro_download_id, type: data, label: ANAF Download ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: ro_download_id, field: {name: ro_efactura_error, type: text, label: ANAF Message, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: ro_efactura, group: e-Invoice, label: Download e-Factura (CIUS-RO), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: ro_upload_efactura, group: e-Invoice, label: Upload to e-Factura, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status != 'Validated'"}}
+      - {op: add_action, action: {name: ro_record_anaf, group: e-Invoice, label: Record ANAF's Answer, docstatus: [1], permission: submit,
+          params: [{name: upload_index, label: Upload Index (index_incarcare), type: data}, {name: state, label: State, type: select, options: [ok, nok, in prelucrare]},
+                   {name: download_id, label: Download ID (id_descarcare), type: data}, {name: message, label: ANAF's Message, type: text}]}}

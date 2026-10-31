@@ -1,6 +1,6 @@
 //! EU member states on the European Union's add-on (Ferrum docs/plan/localization.md, L2), each its
-//! own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI) and Poland (FA(3)
-//! through KSeF), with what member states add to the EU's VAT at home ([`member`]: small
+//! own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI), Poland (FA(3)
+//! through KSeF) and Romania (CIUS-RO through ANAF's e-Factura), with what member states add to the EU's VAT at home ([`member`]: small
 //! businesses' exemptions, the domestic reverse charge). Germany has its own crate (`ferrum-de`).
 //!
 //! Each module is an app as Ferrum compiles them in (`MANIFEST`, `packages`, `register`,
@@ -11,6 +11,7 @@ pub mod member;
 pub mod be;
 pub mod it;
 pub mod pl;
+pub mod ro;
 
 pub(crate) use ferrum_domain::util;
 
@@ -55,7 +56,7 @@ pub(crate) use app;
 mod tests {
     #[test]
     fn every_package_fits_the_eu_and_erp() {
-        for code in ["be", "it", "pl"] {
+        for code in ["be", "it", "pl", "ro"] {
             let mine = super::packages_of(code).unwrap_or_else(|e| panic!("{code}: {e}"));
             assert_eq!(mine.len(), 1, "{code}");
             let mut all = ferrum_domain::packages().expect("the shared packages");
