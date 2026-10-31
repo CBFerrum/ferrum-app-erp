@@ -5,13 +5,18 @@
 //! reverse charge; Italian FatturaPA queued for SDI with Natura, stamp duty and SDI's receipts;
 //! Polish FA(3) queued for KSeF, its number recorded and a correction citing it.
 
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::{get, post};
+use axum::{Form, Json, Router};
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 fn obj(v: Value) -> Doc {
@@ -160,12 +165,61 @@ fn member_states_end_to_end() {
     rt.block_on(async { tokio::spawn(scenario()).await.unwrap() });
 }
 
+type Uploads = Arc<Mutex<Vec<(HashMap<String, String>, String)>>>;
+
+/// ANAF as far as Ferrum uses it: the token for the sign-in's code, uploads with the right token,
+/// and the verdict on them.
+async fn fake_anaf(uploads: Uploads) -> String {
+    async fn token(Form(form): Form<HashMap<String, String>>) -> (StatusCode, Json<Value>) {
+        let ok = match form.get("grant_type").map(String::as_str) {
+            Some("authorization_code") => form.get("code").map(String::as_str) == Some("CODE-RO"),
+            Some("refresh_token") => form.get("refresh_token").map(String::as_str) == Some("ro-refresh"),
+            _ => false,
+        };
+        if !ok || form.get("client_id").map(String::as_str) != Some("ro-app") {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_grant"})));
+        }
+        (StatusCode::OK, Json(json!({"access_token": "ro-token", "refresh_token": "ro-refresh", "expires_in": 7776000, "token_type": "Bearer"})))
+    }
+    async fn upload(State(uploads): State<Uploads>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>, body: String) -> (StatusCode, String) {
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer ro-token") {
+            return (StatusCode::UNAUTHORIZED, String::new());
+        }
+        uploads.lock().unwrap().push((q, body));
+        (StatusCode::OK, r#"<?xml version="1.0" encoding="UTF-8"?><header xmlns="mfp:anaf:dgti:spv:respUploadFisier:v1" dateResponse="202611011200" ExecutionStatus="0" index_incarcare="5004321"/>"#.into())
+    }
+    async fn status(Query(q): Query<HashMap<String, String>>) -> (StatusCode, String) {
+        let ok = q.get("id_incarcare").map(String::as_str) == Some("5004321");
+        (
+            StatusCode::OK,
+            if ok {
+                r#"<header xmlns="mfp:anaf:dgti:efactura:stareMesajFactura:v1" stare="ok" id_descarcare="3001234"/>"#.into()
+            } else {
+                r#"<header stare="nok"/>"#.into()
+            },
+        )
+    }
+    let app = Router::new()
+        .route("/anaf-oauth2/v1/token", post(token))
+        .route("/FCTEL/rest/upload", post(upload))
+        .route("/FCTEL/rest/stareMesaj", get(status))
+        .with_state(uploads);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
 async fn scenario() {
+    let uploads: Uploads = Arc::default();
+    let anaf = fake_anaf(uploads.clone()).await;
+    // SAFETY: set before any connector runs, in this test's own process.
+    unsafe { std::env::set_var("FERRUM_RO_ANAF_URL", &anaf) };
     let k = fresh_kernel().await;
     belgium(&k).await;
     italy(&k).await;
     poland(&k).await;
-    romania(&k).await;
+    romania(&k, &uploads).await;
     spain(&k).await;
     france(&k).await;
 }
@@ -315,7 +369,7 @@ async fn spain(k: &Arc<Kernel>) {
     assert_eq!((dec(&si["total_taxes"]), si["tax_breakdown"][0]["category"].clone()), (Decimal::ZERO, json!("Export")), "outside the EU's VAT area");
 }
 
-async fn romania(k: &Arc<Kernel>) {
+async fn romania(k: &Arc<Kernel>, uploads: &Uploads) {
     let t = T::workspace(k, "ro").await;
     let ron = match t.list("Currency", json!({"code": "RON"})).await.into_iter().next() {
         Some(c) => c["id"].clone(),
@@ -362,6 +416,47 @@ async fn romania(k: &Arc<Kernel>) {
         (json!("Validated"), json!("5004321"), json!("3001234"))
     );
     assert!(t.k.cancel(&t.ctx, "SalesInvoice", uid(&si), None).await.is_err(), "ANAF has it: a storno, not a cancellation");
+
+    // Connected to ANAF: the sign-in's callback takes the tokens; uploads and verdicts follow on their own.
+    let linked = t
+        .insert(
+            "Company",
+            json!({"company_name": "Conectat SRL", "abbr": "CS", "default_currency": ron, "country": "Romania", "eu_vat_number": "RO16341004",
+                   "eu_street": "Str. Lunga 2", "eu_city": "Brașov", "eu_postal_code": "500001", "ro_county": "Brașov", "ro_anaf_mode": "Test",
+                   "ro_anaf_client_id": "ro-app", "ro_anaf_client_secret": "ro-secret", "ro_anaf_redirect_uri": "https://ferrum.test/api/app/ro/anaf/callback"}),
+        )
+        .await;
+    let lid = uid(&linked);
+    let started = t.k.run_action(&t.ctx, "Company", lid, "ro_connect_anaf", json!({})).await.expect("connect");
+    let url = started["url"].as_str().unwrap().to_string();
+    assert!(url.contains("/anaf-oauth2/v1/authorize?response_type=code&client_id=ro-app") && url.contains("token_content_type=jwt"), "{url}");
+    let state = url.split("state=").nth(1).unwrap().split('&').next().unwrap().replace("%2E", ".").to_string();
+    let site = ferrum_eu_members::anaf::AnafSite;
+    let request = |query: Value| ferrum_kernel::SiteRequest {
+        tenant: t.ctx.tenant,
+        user: Some(t.ctx.clone()),
+        method: "GET".into(),
+        path: "/anaf/callback".into(),
+        query: query.as_object().cloned().unwrap_or_default(),
+        headers: Default::default(),
+        body: Vec::new(),
+        client_ip: "198.51.100.7".into(),
+    };
+    use ferrum_kernel::Site;
+    let forged = site.handle(&t.k, request(json!({"code": "CODE-RO", "state": format!("{lid}.forged")}))).await.unwrap();
+    assert_eq!(forged.status, 400, "a state Ferrum did not issue is refused");
+    let back = site.handle(&t.k, request(json!({"code": "CODE-RO", "state": state}))).await.unwrap();
+    assert_eq!(back.status, 200, "{}", String::from_utf8_lossy(&back.body));
+    let si = t.submit("SalesInvoice", uid(&t.invoice(lid, buyer, goods).await)).await;
+    while t.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let done = t.get("SalesInvoice", uid(&si)).await;
+    assert_eq!(
+        (done["ro_efactura_status"].clone(), done["ro_upload_index"].clone(), done["ro_download_id"].clone()),
+        (json!("Validated"), json!("5004321"), json!("3001234"))
+    );
+    let (query, xml) = uploads.lock().unwrap().first().cloned().expect("uploaded");
+    assert_eq!((query.get("standard").cloned(), query.get("cif").cloned()), (Some("UBL".into()), Some("16341004".into())));
+    assert!(xml.contains("CIUS-RO:1.0.1") && xml.contains("<cbc:CountrySubentity>RO-BV</cbc:CountrySubentity>"), "{xml}");
 }
 
 async fn belgium(k: &Arc<Kernel>) {
