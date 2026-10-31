@@ -47,10 +47,20 @@ overlays:
   - entity: Company
     ops:
       - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix (DE123456789); invoices carry it"}}
-      - {op: add_field, after: eu_vat_number, field: {name: eu_distance_sales, type: select, label: Sales to Consumers Elsewhere in the EU, options: ["Home Country's VAT", "Destination's VAT (OSS)"], default: "Home Country's VAT",
+      - {op: add_field, after: eu_vat_number, field: {name: eu_tax_number, type: data, label: Tax Number, max_length: 30, description: "The national tax registration number, which invoices carry where there is no VAT number"}}
+      - {op: add_field, after: eu_tax_number, field: {name: eu_distance_sales, type: select, label: Sales to Consumers Elsewhere in the EU, options: ["Home Country's VAT", "Destination's VAT (OSS)"], default: "Home Country's VAT",
           description: "Above 10,000 euros a year across the EU, or by choice: each destination's VAT, declared through the One-Stop Shop"}}
       - {op: add_field, after: eu_distance_sales, field: {name: eu_peppol_id, type: data, label: Peppol ID, max_length: 60, description: "scheme:identifier, e.g. 0088:4000001000005 or 9930:DE123456789"}}
-      - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_distance_sales, eu_peppol_id]}}
+      - {op: add_field, after: eu_peppol_id, field: {name: eu_street, type: data, label: Street (Invoices), max_length: 200, description: "The address invoices give for the company (Article 226 of Directive 2006/112/EC)"}}
+      - {op: add_field, after: eu_street, field: {name: eu_city, type: data, label: City (Invoices), max_length: 100}}
+      - {op: add_field, after: eu_city, field: {name: eu_postal_code, type: data, label: Post Code (Invoices), max_length: 20}}
+      - {op: add_field, after: eu_postal_code, field: {name: eu_contact_name, type: data, label: Invoice Contact, max_length: 100}}
+      - {op: add_field, after: eu_contact_name, field: {name: eu_contact_phone, type: phone, label: Invoice Contact Phone}}
+      - {op: add_field, after: eu_contact_phone, field: {name: eu_contact_email, type: email, label: Invoice Contact Email}}
+      - {op: add_field, after: eu_contact_email, field: {name: eu_iban, type: data, label: IBAN for Payments, max_length: 42, description: "Invoices ask for payment by SEPA credit transfer to it"}}
+      - {op: add_field, after: eu_iban, field: {name: eu_bic, type: data, label: BIC, max_length: 11}}
+      - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_tax_number, eu_distance_sales, eu_peppol_id, eu_street, eu_city, eu_postal_code,
+          eu_contact_name, eu_contact_phone, eu_contact_email, eu_iban, eu_bic]}}
       - {op: add_action, action: {name: eu_setup_vat, label: Set Up EU VAT Accounts, permission: write, confirm: "Create this company's accounts for VAT owed through the One-Stop Shop and under reverse charge?"}}
       - {op: add_action, action: {name: eu_update_rates, label: Update EU VAT Rates (TEDB), permission: write, confirm: "Fetch the member states' current VAT rates from the Commission's TEDB?"}}
   - entity: Customer

@@ -1,0 +1,23 @@
+package: de
+version: 0.1.0
+label: Germany
+description: Germany for ERP. XRechnung e-invoices (CIUS of EN 16931, KoSIT's rules), small businesses (§ 19 UStG) and the domestic reverse charge (§ 13b UStG).
+depends: [eu]
+field_prefix: de_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: de_small_business, type: check, label: Small Business (§ 19 UStG), visible_if: "doc.country_code == 'DE'",
+          description: "Kleinunternehmer: no VAT on its sales, and its invoices say why"}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: eu_peppol_id, field: {name: de_leitweg_id, type: data, label: Leitweg-ID, max_length: 46,
+          description: "A German public buyer's routing ID: the buyer reference (BT-10) and electronic address of its XRechnung invoices"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: de_reverse_charge, type: check, label: Customer Owes the VAT (§ 13b UStG),
+          description: "Construction work, scrap metal, mobile phones and the like: a business customer in Germany accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_action, action: {name: de_xrechnung, group: e-Invoice, label: Download XRechnung, docstatus: [1], permission: read, read_only: true}}

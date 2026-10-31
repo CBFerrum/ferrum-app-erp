@@ -1,0 +1,14 @@
+# ERP's add-on for Germany, on the European Union's: XRechnung e-invoices to KoSIT's rules (the
+# format of the e-invoicing mandate, receiving since 2025, issuing from 2027 and 2028), small
+# businesses (§ 19 UStG) and the domestic reverse charge (§ 13b UStG). Ferrum localization.md L2.
+id: de
+name: Germany
+version: 0.1.0
+publisher: cbferrum
+summary: XRechnung, small businesses and the domestic reverse charge for ERP in Germany
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4", eu: ">=0.1"}
+parent: erp
+packages: [de]
