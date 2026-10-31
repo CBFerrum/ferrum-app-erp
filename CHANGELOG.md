@@ -1,5 +1,18 @@
 # Changelog
 
+## Singapore, Australia, New Zealand, Japan and the UAE 0.1.1, and the European Union 0.1.6
+
+- Peppol PINT e-invoices (`ferrum-countries`, `pint`): Singapore (PINT SG for InvoiceNow,
+  `urn:peppol:pint:billing-1@sg-1`), Australia and New Zealand (PINT A-NZ, `@aunz-1`), Japan
+  (JP PINT, `@jp-1`) and the UAE (PINT AE, `@ae-1`, transaction type 00000000), on the business
+  process `urn:peppol:bis:billing`, with each country's tax scheme (GST; VAT in Japan and the UAE),
+  its tax category codes (Singapore's SR, ZR, ESN33, OS; Japan's AA for the reduced rate; the
+  UAE's Z for exports) and its participants' electronic addresses (UEN 0195, ABN 0151, NZBN 0088,
+  the T-number 0221, the TIN 0235 from the TRN's first ten digits), checked against PINT's rules
+  and sent through the company's Peppol access point on submit (to customers on Peppol) or by
+  action; the access point's answer recorded; the companies' addresses and Peppol IDs.
+- The EU's UBL writer takes a profile's business process, transaction type and tax scheme.
+
 ## France 0.1.0, and the European Union 0.1.5
 
 - France (`fr`, in `ferrum-eu-members`): the e-invoicing reform (receiving for all and issuing

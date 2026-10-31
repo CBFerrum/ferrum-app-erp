@@ -1,5 +1,5 @@
 package: jp
-version: 0.1.0
+version: 0.1.1
 label: "Japan"
 description: "Japan's consumption tax for ERP. 10% and the reduced 8% (food, newspapers), each worked out once per invoice, the qualified invoice issuer's registration number, export and non-taxable sales, the reverse charge, and the return's figures."
 depends: [selling, buying]
@@ -10,10 +10,16 @@ overlays:
     ops:
       - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30, description: "T and 13 digits: on the invoices that charge Consumption Tax"}}
       - {op: add_field, after: jp_registration_number, field: {name: jp_reverse_charge, type: check, label: "Reverse Charge on Specified Services", description: "Taxable sales ratio under 95%: specified services bought from abroad are reverse-charged"}}
-      - {op: add_section, after: tax_id, section: {label: "Japan Consumption Tax", collapsible: true, fields: [jp_registration_number, jp_reverse_charge]}}
+      - {op: add_field, after: jp_reverse_charge, field: {name: jp_street, type: data, label: "Street (Japan)", max_length: 140}}
+      - {op: add_field, after: jp_street, field: {name: jp_city, type: data, label: "City (Japan)", max_length: 80}}
+      - {op: add_field, after: jp_city, field: {name: jp_postal_code, type: data, label: "Postal Code (Japan)", max_length: 20}}
+      - {op: add_field, after: jp_postal_code, field: {name: jp_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
+      - {op: add_field, after: jp_peppol_id, field: {name: jp_peppol_on_submit, type: check, label: "Send E-invoices through Peppol on Submit"}}
+      - {op: add_section, after: tax_id, section: {label: "Japan Consumption Tax", collapsible: true, fields: [jp_registration_number, jp_reverse_charge, jp_street, jp_city, jp_postal_code, jp_peppol_id, jp_peppol_on_submit]}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30}}
+      - {op: add_field, after: jp_registration_number, field: {name: jp_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30}}
@@ -23,3 +29,12 @@ overlays:
           description: "Standard (10%); Reduced (8%: food and drink other than alcohol and dining out, subscribed newspapers)"}}
       - {op: add_field, after: jp_tax_category, field: {name: jp_kind, type: select, label: "Goods or Services (Japan)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: customer_name, field: {name: jp_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: jp_peppol_status, field: {name: jp_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: jp_peppol_message_id, field: {name: jp_peppol_error, type: text, label: Peppol Error, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: jp_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: jp_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.jp_peppol_status != 'Sent'"}}
+      - {op: add_action, action: {name: jp_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
+          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}

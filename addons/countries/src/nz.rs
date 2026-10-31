@@ -86,7 +86,7 @@ fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource
     vec![std::sync::Arc::new(Return { name: "nz_gst101a", label: "GST Return (GST101A)", country: &COUNTRY, boxes: gst101a })]
 }
 
-crate::app!("nz");
+crate::app!("nz", crate::pint::NZ);
 
 #[cfg(test)]
 mod tests {

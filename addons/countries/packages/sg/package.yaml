@@ -1,5 +1,5 @@
 package: sg
-version: 0.1.0
+version: 0.1.1
 label: "Singapore"
 description: "Singapore GST for ERP. Standard-rated (9%), zero-rated (exports, international services) and exempt supplies, the reverse charge on imported services for RC Businesses, and the GST F5 return."
 depends: [selling, buying]
@@ -10,10 +10,16 @@ overlays:
     ops:
       - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30, description: "The UEN or GST M-number: on the invoices that charge GST"}}
       - {op: add_field, after: sg_gst_number, field: {name: sg_reverse_charge, type: check, label: "Reverse Charge on Imported Services", description: "An RC Business: not entitled to claim all its input tax (banks, holding companies, developers of residential property, charities)"}}
-      - {op: add_section, after: tax_id, section: {label: "Singapore GST", collapsible: true, fields: [sg_gst_number, sg_reverse_charge]}}
+      - {op: add_field, after: sg_reverse_charge, field: {name: sg_street, type: data, label: "Street (Singapore)", max_length: 140}}
+      - {op: add_field, after: sg_street, field: {name: sg_city, type: data, label: "City (Singapore)", max_length: 80}}
+      - {op: add_field, after: sg_city, field: {name: sg_postal_code, type: data, label: "Postal Code (Singapore)", max_length: 20}}
+      - {op: add_field, after: sg_postal_code, field: {name: sg_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
+      - {op: add_field, after: sg_peppol_id, field: {name: sg_peppol_on_submit, type: check, label: "Send E-invoices through Peppol on Submit"}}
+      - {op: add_section, after: tax_id, section: {label: "Singapore GST", collapsible: true, fields: [sg_gst_number, sg_reverse_charge, sg_street, sg_city, sg_postal_code, sg_peppol_id, sg_peppol_on_submit]}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30}}
+      - {op: add_field, after: sg_gst_number, field: {name: sg_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30}}
@@ -23,3 +29,12 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where GST is not charged"}}
       - {op: add_field, after: sg_gst_category, field: {name: sg_kind, type: select, label: "Goods or Services (Singapore)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: customer_name, field: {name: sg_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: sg_peppol_status, field: {name: sg_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: sg_peppol_message_id, field: {name: sg_peppol_error, type: text, label: Peppol Error, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: sg_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: sg_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.sg_peppol_status != 'Sent'"}}
+      - {op: add_action, action: {name: sg_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
+          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}

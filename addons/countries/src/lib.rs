@@ -7,6 +7,7 @@
 //! `reports`, `maintenance`): its manifest is `apps/<code>.yaml` and its package `packages/<code>`.
 
 pub mod engine;
+pub mod pint;
 
 pub mod ae;
 pub mod au;
@@ -33,9 +34,18 @@ pub(crate) fn packages_of(name: &str) -> std::result::Result<Vec<ferrum_meta::Pa
 }
 
 /// A country's app around its `COUNTRY` and its `reports_list()`: its manifest and package, its
-/// rules on ERP's seam, its registration numbers' check, and its returns.
+/// rules on ERP's seam, its registration numbers' check, its returns, and, with its PINT
+/// specialization, its Peppol e-invoices.
 macro_rules! app {
     ($code:literal) => {
+        crate::app!(@base $code, |_h: &mut ferrum_kernel::HookRegistry| {});
+    };
+    ($code:literal, $pint:expr) => {
+        crate::app!(@base $code, |h: &mut ferrum_kernel::HookRegistry| {
+            h.register("SalesInvoice", std::sync::Arc::new(crate::pint::PintHook(&COUNTRY, &$pint)));
+        });
+    };
+    (@base $code:literal, $extra:expr) => {
         /// The app's `app.yaml`.
         pub const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/apps/", $code, ".yaml"));
         /// The app's package.
@@ -51,6 +61,7 @@ macro_rules! app {
                 for entity in ["Company", "Customer", "Supplier"] {
                     h.register(entity, std::sync::Arc::new(crate::engine::NumberHook(&COUNTRY)));
                 }
+                ($extra)(h);
             });
         }
 

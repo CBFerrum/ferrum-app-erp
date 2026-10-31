@@ -1,5 +1,5 @@
 package: ae
-version: 0.1.0
+version: 0.1.1
 label: "United Arab Emirates"
 description: "The UAE's VAT for ERP. 5%, zero-rated and exempt supplies, the reverse charge on imported services, and the VAT 201 return."
 depends: [selling, buying]
@@ -10,10 +10,16 @@ overlays:
     ops:
       - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30, description: "15 digits: on the invoices that charge VAT"}}
       - {op: add_field, after: ae_trn, field: {name: ae_emirate, type: select, label: Emirate, options: [Abu Dhabi, Dubai, Sharjah, Ajman, Umm Al Quwain, Ras Al Khaimah, Fujairah], default: Dubai, description: "Where the company is established: its standard-rated supplies go on this emirate's line of the VAT 201"}}
-      - {op: add_section, after: tax_id, section: {label: "United Arab Emirates VAT", collapsible: true, fields: [ae_trn, ae_emirate]}}
+      - {op: add_field, after: ae_emirate, field: {name: ae_street, type: data, label: "Street (United Arab Emirates)", max_length: 140}}
+      - {op: add_field, after: ae_street, field: {name: ae_city, type: data, label: "City (United Arab Emirates)", max_length: 80}}
+      - {op: add_field, after: ae_city, field: {name: ae_postal_code, type: data, label: "Postal Code (United Arab Emirates)", max_length: 20}}
+      - {op: add_field, after: ae_postal_code, field: {name: ae_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
+      - {op: add_field, after: ae_peppol_id, field: {name: ae_peppol_on_submit, type: check, label: "Send E-invoices through Peppol on Submit"}}
+      - {op: add_section, after: tax_id, section: {label: "United Arab Emirates VAT", collapsible: true, fields: [ae_trn, ae_emirate, ae_street, ae_city, ae_postal_code, ae_peppol_id, ae_peppol_on_submit]}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30}}
+      - {op: add_field, after: ae_trn, field: {name: ae_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30}}
@@ -23,3 +29,12 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
       - {op: add_field, after: ae_vat_category, field: {name: ae_kind, type: select, label: "Goods or Services (United Arab Emirates)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: customer_name, field: {name: ae_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: ae_peppol_status, field: {name: ae_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: ae_peppol_message_id, field: {name: ae_peppol_error, type: text, label: Peppol Error, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: ae_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: ae_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.ae_peppol_status != 'Sent'"}}
+      - {op: add_action, action: {name: ae_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
+          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}

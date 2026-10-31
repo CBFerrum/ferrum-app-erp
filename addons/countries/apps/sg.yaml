@@ -1,7 +1,7 @@
 # ERP's add-on for Singapore: gST at 9%, zero-rated exports, exempt supplies, the reverse charge and the GST F5 return for ERP in Singapore. Ferrum localization.md.
 id: sg
 name: "Singapore"
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: "GST at 9%, zero-rated exports, exempt supplies, the reverse charge and the GST F5 return for ERP in Singapore"
 categories: [finance]
