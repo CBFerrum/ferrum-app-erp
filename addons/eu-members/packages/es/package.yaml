@@ -1,0 +1,33 @@
+package: es
+version: 0.1.0
+label: Spain
+description: "Spain for ERP, on the EU's VAT. Every submitted invoice gets its VERI*FACTU invoicing record, its fingerprint chained to the company's previous record as AEAT computes it, and the QR code's address for AEAT's verification; cancelling adds a cancellation record; records go to AEAT when the company sends them (VERI*FACTU). Retailers under the recargo de equivalencia pay its surcharge; the Canary Islands, Ceuta and Melilla are outside the VAT area."
+depends: [eu]
+field_prefix: es_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: es_verifactu, type: check, label: Send Invoicing Records to AEAT (VERI*FACTU), visible_if: "doc.country_code == 'ES'",
+          description: "Its records go to AEAT's web service through its connection with its certificate, and its invoices say VERI*FACTU"}}
+      - {op: add_field, after: es_verifactu, field: {name: es_verifactu_env, type: select, label: AEAT Environment, options: [Test, Production], default: Test, visible_if: "doc.country_code == 'ES'"}}
+      - {op: add_field, after: es_verifactu_env, field: {name: es_last_huella, type: data, label: Last Record's Fingerprint, max_length: 64, read_only: true, hidden: true}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: eu_peppol_id, field: {name: es_recargo_equivalencia, type: check, label: Recargo de Equivalencia,
+          description: "A retailer under the equivalence surcharge: its purchases carry 5.2%, 1.4% or 0.5% with the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: eu_peppol_status, field: {name: es_tipo_factura, type: data, label: Invoice Type (VERI*FACTU), max_length: 2, read_only: true, no_copy: true}}
+      - {op: add_field, column: true, after: es_tipo_factura, field: {name: es_fecha_gen, type: data, label: Record Generated, max_length: 30, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_fecha_gen, field: {name: es_huella, type: data, label: Record Fingerprint, max_length: 64, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_huella, field: {name: es_huella_anterior, type: data, label: Previous Fingerprint, max_length: 64, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_huella_anterior, field: {name: es_huella_anulacion, type: data, label: Cancellation Record Fingerprint, max_length: 64, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_huella_anulacion, field: {name: es_qr_url, type: data, label: QR Code, max_length: 300, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_qr_url, field: {name: es_qr_text, type: data, label: Below the QR Code, max_length: 60, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_qr_text, field: {name: es_verifactu_status, type: select, label: AEAT, options: [Pending, Accepted, Rejected], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: es_verifactu_status, field: {name: es_csv, type: data, label: AEAT's CSV, read_only: true, no_copy: true}}
+      - {op: add_field, after: es_csv, field: {name: es_verifactu_error, type: text, label: AEAT's Message, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: es_record_aeat, group: e-Invoice, label: Record AEAT's Answer, docstatus: [1, 2], permission: submit,
+          params: [{name: state, label: State, type: select, options: [Correcto, AceptadoConErrores, Incorrecto], required: true}, {name: csv, label: CSV, type: data},
+                   {name: message, label: AEAT's Message, type: text}]}}
