@@ -49,6 +49,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
         }};
     }
     add!(ferrum_eu_members::be);
+    add!(ferrum_eu_members::es);
     add!(ferrum_eu_members::it);
     add!(ferrum_eu_members::pl);
     add!(ferrum_eu_members::ro);
@@ -161,6 +162,88 @@ async fn scenario() {
     italy(&k).await;
     poland(&k).await;
     romania(&k).await;
+    spain(&k).await;
+}
+
+async fn spain(k: &Arc<Kernel>) {
+    let t = T::workspace(k, "es").await;
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Iberia Comercial SL", "abbr": "IC", "default_currency": t.eur, "country": "Spain", "eu_vat_number": "ESB12345674",
+                   "eu_street": "Calle Mayor 1", "eu_city": "Madrid", "eu_postal_code": "28013", "es_verifactu": true}),
+        )
+        .await;
+    let cid = uid(&co);
+    assert!(
+        t.k.insert(&t.ctx, "Customer", obj(json!({"customer_name": "NIF malo", "eu_vat_number": "ES12345678A"}))).await.is_err(),
+        "a NIF whose letter does not hold"
+    );
+    let madrid = t
+        .customer(
+            "Cliente SA",
+            json!({"eu_vat_number": "ES12345678Z", "customer_type": "Company"}),
+            json!({"address_line1": "Gran Vía 1", "city": "Madrid", "postal_code": "28013", "country": "Spain"}),
+        )
+        .await;
+    let goods = t.item("MESA", json!({"eu_kind": "Goods"})).await;
+    let first = t.submit("SalesInvoice", uid(&t.invoice(cid, madrid, goods).await)).await;
+    let first = t.get("SalesInvoice", uid(&first)).await;
+    assert_eq!(dec(&first["total_taxes"]), Decimal::from(21), "Spain's 21%");
+    let h1 = first["es_huella"].as_str().unwrap().to_string();
+    assert_eq!(
+        (h1.len(), first["es_huella_anterior"].clone(), first["es_tipo_factura"].clone()),
+        (64, Value::Null, json!("F1")),
+        "the first record of the chain"
+    );
+    // The fingerprint is AEAT's, from the record's own fields.
+    let expect = ferrum_eu_members::es::huella_alta(
+        "B12345674",
+        first["number"].as_str().unwrap(),
+        &ferrum_eu_members::es::day(first["posting_date"].as_str().unwrap()),
+        "F1",
+        "21.00",
+        "121.00",
+        "",
+        first["es_fecha_gen"].as_str().unwrap(),
+    );
+    assert_eq!(h1, expect);
+    assert!(
+        first["es_qr_url"].as_str().unwrap().starts_with("https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B12345674&numserie="),
+        "{:?}",
+        first["es_qr_url"]
+    );
+    assert_eq!((first["es_qr_text"].clone(), first["es_verifactu_status"].clone()), (json!("VERI*FACTU"), json!("Pending")));
+    let second = t.submit("SalesInvoice", uid(&t.invoice(cid, madrid, goods).await)).await;
+    let second = t.get("SalesInvoice", uid(&second)).await;
+    assert_eq!(second["es_huella_anterior"], json!(h1), "chained to the one before");
+    t.k.cancel(&t.ctx, "SalesInvoice", uid(&second), None).await.expect("cancel");
+    let cancelled = t.get("SalesInvoice", uid(&second)).await;
+    let annul = cancelled["es_huella_anulacion"].as_str().unwrap().to_string();
+    assert_eq!(t.get("Company", cid).await["es_last_huella"], json!(annul), "the cancellation record is the chain's last");
+    t.action(uid(&first), "es_record_aeat", json!({"state": "Correcto", "csv": "A-XYZ123"})).await;
+    assert_eq!(t.get("SalesInvoice", uid(&first)).await["es_verifactu_status"], json!("Accepted"));
+
+    // A retailer under the recargo de equivalencia; goods to the Canary Islands are exports.
+    let tienda = t
+        .customer(
+            "Tienda Pepe",
+            json!({"eu_vat_number": "ESX1234567L", "es_recargo_equivalencia": true}),
+            json!({"address_line1": "Calle Sol 2", "city": "Sevilla", "postal_code": "41001", "country": "Spain"}),
+        )
+        .await;
+    let si = t.invoice(cid, tienda, goods).await;
+    let recargo = si["taxes"].as_array().unwrap().iter().find(|r| r["description"] == json!("Recargo de equivalencia")).cloned().expect("the surcharge row");
+    assert_eq!((dec(&recargo["tax_amount"]), dec(&si["grand_total"])), (Decimal::new(52, 1), Decimal::new(12620, 2)));
+    let canarias = t
+        .customer(
+            "Islas SL",
+            json!({"eu_vat_number": "ESB12345674", "customer_type": "Company"}),
+            json!({"address_line1": "Calle Triana 3", "city": "Las Palmas", "postal_code": "35002", "country": "Spain"}),
+        )
+        .await;
+    let si = t.invoice(cid, canarias, goods).await;
+    assert_eq!((dec(&si["total_taxes"]), si["tax_breakdown"][0]["category"].clone()), (Decimal::ZERO, json!("Export")), "outside the EU's VAT area");
 }
 
 async fn romania(k: &Arc<Kernel>) {

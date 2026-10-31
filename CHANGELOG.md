@@ -1,5 +1,19 @@
 # Changelog
 
+## Spain 0.1.0
+
+- Spain (`es`, in `ferrum-eu-members`): VERI*FACTU invoicing records (RD 1007/2023; systems
+  adapted before 1 January 2027 for companies, 1 July 2027 for others, RDL 15/2025). Each
+  submitted invoice gets its record (F1, F2 without the customer's NIF, R1 and R5 corrections),
+  its SHA-256 fingerprint chained to the company's previous record exactly as AEAT's
+  specification computes it (its three test vectors pass), and the QR code's address for AEAT's
+  verification service (test or production, parameters URL-encoded) with "VERI*FACTU" below it;
+  cancelling adds a cancellation record to the chain; with VERI*FACTU on, records (breakdown by
+  S1, S2, N2, E1–E6) go to the company's AEAT connection through the outbox and AEAT's answer is
+  recorded. NIFs checked (DNI, NIE, entities). The recargo de equivalencia (5.2%, 1.4%, 0.5%) on
+  sales to retailers under it; the Canary Islands, Ceuta and Melilla outside the VAT area (goods
+  exported, services to businesses there not subject).
+
 ## Romania 0.1.0, and the European Union 0.1.4
 
 - Romania (`ro`, in `ferrum-eu-members`): every invoice to ANAF's e-Factura as CIUS-RO
