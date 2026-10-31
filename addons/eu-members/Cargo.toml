@@ -1,6 +1,6 @@
 [package]
 name = "ferrum-eu-members"
-description = "EU member states for Ferrum ERP on the European Union's add-on, each its own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI) and Poland (FA(3) through KSeF)"
+description = "EU member states for Ferrum ERP on the European Union's add-on, each its own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI), Poland (FA(3) through KSeF) and Romania (CIUS-RO through e-Factura)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

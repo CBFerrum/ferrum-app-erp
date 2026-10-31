@@ -1,5 +1,16 @@
 # Changelog
 
+## Romania 0.1.0, and the European Union 0.1.4
+
+- Romania (`ro`, in `ferrum-eu-members`): every invoice to ANAF's e-Factura as CIUS-RO
+  (`urn:efactura.mfinante.ro:CIUS-RO:1.0.1`): counties coded ISO 3166-2:RO (RO-CJ; RO-B for
+  Bucharest, whose town is its sector, SECTOR1 to SECTOR6), checked against CIUS-RO's rules,
+  queued for the company's ANAF connection on submit; ANAF's upload index, verdict and download
+  ID recorded; a validated invoice is corrected by a storno, not cancelled; CIFs checked (key
+  753217532); the small business exemption (article 310) and the domestic reverse charge
+  (article 331).
+- The EU's UBL writes the parties' country subdivision (BT-39, BT-54) from their addresses' state.
+
 ## Belgium, Italy and Poland 0.1.0, and the European Union 0.1.3
 
 - `ferrum-eu-members` (`addons/eu-members`, Ferrum localization.md L2): member states on the EU's

@@ -51,6 +51,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     add!(ferrum_eu_members::be);
     add!(ferrum_eu_members::it);
     add!(ferrum_eu_members::pl);
+    add!(ferrum_eu_members::ro);
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
@@ -159,6 +160,56 @@ async fn scenario() {
     belgium(&k).await;
     italy(&k).await;
     poland(&k).await;
+    romania(&k).await;
+}
+
+async fn romania(k: &Arc<Kernel>) {
+    let t = T::workspace(k, "ro").await;
+    let ron = match t.list("Currency", json!({"code": "RON"})).await.into_iter().next() {
+        Some(c) => c["id"].clone(),
+        None => t.insert("Currency", json!({"code": "RON", "currency_name": "Romanian Leu", "symbol": "lei", "precision": 2})).await["id"].clone(),
+    };
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Transilvania SRL", "abbr": "TS", "default_currency": ron, "country": "Romania", "eu_vat_number": "RO18547290",
+                   "eu_street": "Str. Memorandumului 1", "eu_city": "Cluj-Napoca", "eu_postal_code": "400001", "ro_county": "Cluj"}),
+        )
+        .await;
+    assert_eq!(co["ro_county"], json!("RO-CJ"));
+    let cid = uid(&co);
+    let bad = t.k.insert(&t.ctx, "Customer", obj(json!({"customer_name": "CIF greșit", "eu_vat_number": "RO18547291"}))).await;
+    assert!(bad.is_err(), "a CIF whose check digit does not hold");
+    let buyer = t
+        .customer(
+            "Capitala SA",
+            json!({"eu_vat_number": "RO14399840", "customer_type": "Company"}),
+            json!({"address_line1": "Bd. Unirii 1", "city": "Sector 3", "state": "București", "postal_code": "030119", "country": "Romania"}),
+        )
+        .await;
+    let goods = t.item("MARFA", json!({"eu_kind": "Goods"})).await;
+    let si = t.invoice(cid, buyer, goods).await;
+    assert_eq!(dec(&si["total_taxes"]), Decimal::from(21), "Romania's 21% since August 2025");
+    let si = t.submit("SalesInvoice", uid(&si)).await;
+    assert_eq!(t.get("SalesInvoice", uid(&si)).await["ro_efactura_status"], json!("Pending"), "queued for e-Factura on submit");
+    let xml = t.action(uid(&si), "ro_efactura", json!({})).await["file"]["content"].as_str().unwrap().to_string();
+    for part in [
+        "<cbc:CustomizationID>urn:cen.eu:en16931:2017#compliant#urn:efactura.mfinante.ro:CIUS-RO:1.0.1</cbc:CustomizationID>",
+        "<cbc:CityName>Cluj-Napoca</cbc:CityName><cbc:PostalZone>400001</cbc:PostalZone><cbc:CountrySubentity>RO-CJ</cbc:CountrySubentity>",
+        "<cbc:CityName>SECTOR3</cbc:CityName><cbc:PostalZone>030119</cbc:PostalZone><cbc:CountrySubentity>RO-B</cbc:CountrySubentity>",
+        "<cbc:CompanyID>RO14399840</cbc:CompanyID>",
+    ] {
+        assert!(xml.contains(part), "{part} in {xml}");
+    }
+    t.action(uid(&si), "ro_record_anaf", json!({"upload_index": "5004321"})).await;
+    assert_eq!(t.get("SalesInvoice", uid(&si)).await["ro_efactura_status"], json!("Uploaded"));
+    t.action(uid(&si), "ro_record_anaf", json!({"state": "ok", "download_id": "3001234"})).await;
+    let done = t.get("SalesInvoice", uid(&si)).await;
+    assert_eq!(
+        (done["ro_efactura_status"].clone(), done["ro_upload_index"].clone(), done["ro_download_id"].clone()),
+        (json!("Validated"), json!("5004321"), json!("3001234"))
+    );
+    assert!(t.k.cancel(&t.ctx, "SalesInvoice", uid(&si), None).await.is_err(), "ANAF has it: a storno, not a cancellation");
 }
 
 async fn belgium(k: &Arc<Kernel>) {
