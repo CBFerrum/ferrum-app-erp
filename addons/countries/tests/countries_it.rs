@@ -662,4 +662,15 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
     for (b, want) in case.boxes {
         assert_eq!(got.get(*b).copied(), Some(Decimal::from(*want)), "{code}: box {b} of {:?}", report["rows"]);
     }
+    if code == "sg" {
+        // A rate kept as data wins over the built-in 9%, and stops when it ends.
+        let r = insert("TaxRate", json!({"country": "SG", "category": "Standard", "rate": "10", "valid_from": "2026-01-01"})).await;
+        assert_eq!(dec(&sale(home).await["total_taxes"]), Decimal::from(10), "sg: the Tax Rate record's 10%");
+        k.update(&ctx, "TaxRate", uid(&r), obj(json!({"valid_to": "2026-01-31"})), None).await.expect("end the rate");
+        assert_eq!(dec(&sale(home).await["total_taxes"]), Decimal::from(9), "sg: back to the built-in 9%");
+        assert!(
+            k.insert(&ctx, "TaxRate", obj(json!({"country": "sg", "category": "Standard", "rate": "5", "valid_from": "2026-02-01"}))).await.is_err(),
+            "a code in capitals"
+        );
+    }
 }

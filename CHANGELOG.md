@@ -1,5 +1,13 @@
 # Changelog
 
+## ERP 0.4.1: tax rates as data
+
+- Tax Rate (Accounting): a country's rate for a tax category from a day (and, optionally, to a
+  day, for a state or province), kept as a record. Localizations prefer it to their built-in
+  rates (`localization::rates`), so a new rate needs no release: the thirteen countries of
+  `ferrum-countries` read it now. Codes are checked (ISO 3166-1 capitals), rates are at most 100%
+  and cannot end before they start.
+
 ## Portugal 0.1.0
 
 - Portugal (`ferrum-eu-members`, `pt`), on the European Union's add-on: invoices from certified

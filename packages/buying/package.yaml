@@ -39,6 +39,7 @@ roles:
       - {entity: Currency, read: true}
       - {entity: Uom, read: true}
       - {entity: TaxTemplate, read: true}
+      - {entity: TaxRate, read: true}
       - {entity: Project, read: true}
       - {entity: CostCenter, read: true}
       - {entity: Account, read: true}

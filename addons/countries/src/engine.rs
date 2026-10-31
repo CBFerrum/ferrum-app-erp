@@ -134,6 +134,9 @@ pub struct Plan {
     pub reverse: bool,
     /// The company is on the country's simplified method.
     pub simplified: bool,
+    /// Rates kept as data (Tax Rate records) on the day, by category in lower case: they win
+    /// over the built-in ones.
+    pub rates: HashMap<String, Decimal>,
 }
 
 impl Country {
@@ -146,6 +149,15 @@ impl Country {
             }
         }
         found.map(|(row, _, rate)| (row, rate))
+    }
+
+    /// A category's rate for a plan: a Tax Rate record's when there is one, else the built-in.
+    pub fn rate_for(&self, plan: &Plan, category: &str) -> Option<(usize, Decimal)> {
+        let built = self.rate(category, &plan.on);
+        match plan.rates.get(&category.to_lowercase()) {
+            Some(rate) => Some((built.map_or(0, |(row, _)| row), *rate)),
+            None => built,
+        }
     }
 
     /// The categories an item's field offers: the rated ones, then the built-in.
@@ -189,7 +201,7 @@ impl Country {
         }
         if plan.simplified && !matches!(category, ZERO_RATED | EXEMPT | OUT_OF_SCOPE) {
             if let (Side::Selling, Some((_, simple))) = (plan.side, self.simplified)
-                && let Some((row, rate)) = self.rate(simple, &plan.on)
+                && let Some((row, rate)) = self.rate_for(plan, simple)
             {
                 return on_row(row, Treatment { rate, category: simple.to_string(), reason: None });
             }
@@ -201,7 +213,7 @@ impl Country {
             ZERO_RATED => on_row(0, Treatment::zero(ZERO_RATED, None)),
             EXEMPT => on_row(0, Treatment::zero(EXEMPT, Some(self.exempt_reason.into()))),
             OUT_OF_SCOPE => on_row(0, Treatment::zero(OUT_OF_SCOPE, None)),
-            c => match self.rate(c, &plan.on) {
+            c => match self.rate_for(plan, c) {
                 Some((row, rate)) => {
                     let reverse = plan.side == Side::Buying && abroad;
                     on_row(row, Treatment { rate, category: if reverse { REVERSE_CHARGED.into() } else { c.to_string() }, reason: None })
@@ -254,7 +266,8 @@ pub async fn plan(c: &Country, k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, si
         ReverseCharge::When(field) => b(&company, field),
     };
     let simplified = c.simplified.is_some_and(|(field, _)| b(&company, field));
-    Ok(Some((Plan { side, on, goods_abroad, services_abroad, reverse, simplified }, company)))
+    let rates = ferrum_app_erp::localization::rates(k, ctx, tx, c.country, None, &on).await?;
+    Ok(Some((Plan { side, on, goods_abroad, services_abroad, reverse, simplified, rates }, company)))
 }
 
 pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
@@ -671,7 +684,15 @@ mod tests {
         assert_eq!(TEST.rate("Services", "2026-10-31"), Some((1, n("8"))));
         assert_eq!(TEST.rate("Services", "2010-01-01"), None);
         assert_eq!(TEST.categories(), vec!["Services", ZERO_RATED, EXEMPT, OUT_OF_SCOPE], "the simplified method's category is not an item's");
-        let home = Plan { side: Side::Selling, on: "2026-10-31".into(), goods_abroad: false, services_abroad: false, reverse: true, simplified: false };
+        let home = Plan {
+            side: Side::Selling,
+            on: "2026-10-31".into(),
+            goods_abroad: false,
+            services_abroad: false,
+            reverse: true,
+            simplified: false,
+            rates: Default::default(),
+        };
         let goods = TEST.treat(&home, &item(json!({"xx_kind": "Goods"})));
         assert_eq!((goods[0].rate, goods[1].reason.as_deref()), (n("10"), Some("Not subject to Service Tax")));
         let service = TEST.treat(&home, &item(json!({"xx_kind": "Services", "xx_category": "Services"})));
@@ -686,7 +707,15 @@ mod tests {
 
     #[test]
     fn purchases_from_abroad() {
-        let import = Plan { side: Side::Buying, on: "2026-10-31".into(), goods_abroad: true, services_abroad: true, reverse: true, simplified: false };
+        let import = Plan {
+            side: Side::Buying,
+            on: "2026-10-31".into(),
+            goods_abroad: true,
+            services_abroad: true,
+            reverse: true,
+            simplified: false,
+            rates: Default::default(),
+        };
         let goods = TEST.treat(&import, &item(json!({"xx_kind": "Goods"})));
         assert_eq!((goods[0].category.as_str(), goods[0].rate), (OUT_OF_SCOPE, Decimal::ZERO));
         let services = TEST.treat(&import, &item(json!({"xx_kind": "Services", "xx_category": "Services"})));
