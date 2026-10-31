@@ -121,11 +121,13 @@ struct Item {
     igst: Decimal,
     cess_rate: Decimal,
     cess: Decimal,
+    /// Cess per unit (non ad valorem): an On Item Quantity cess row.
+    cess_non_advol: Decimal,
 }
 
 impl Item {
     fn value(&self) -> Decimal {
-        self.assessable + self.cgst + self.sgst + self.igst + self.cess
+        self.assessable + self.cgst + self.sgst + self.igst + self.cess + self.cess_non_advol
     }
 }
 
@@ -137,7 +139,12 @@ struct Values {
     sgst: Decimal,
     igst: Decimal,
     cess: Decimal,
+    /// Of `cess`, what is per unit.
+    cess_non_advol: Decimal,
     other: Decimal,
+    /// Of the taxes, what the buyer pays under reverse charge: reported, not in `total`.
+    reverse: Decimal,
+    reverse_charge: bool,
     round_off: Decimal,
     total: Decimal,
     /// The total in the invoice's own currency, when that is not rupees.
@@ -212,7 +219,9 @@ impl Sources {
         let inv = &self.invoice;
         let fx = Some(d(inv, "conversion_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or(Decimal::ONE);
         for (tax, h) in &self.taxes {
-            if *h != Head::Other && s(tax, "charge_type").unwrap_or("On Net Total") != "On Net Total" {
+            let charge = s(tax, "charge_type").unwrap_or("On Net Total");
+            // A cess may be per unit (non ad valorem); GST itself is on the net total.
+            if *h != Head::Other && charge != "On Net Total" && !(*h == Head::Cess && charge == "On Item Quantity") {
                 problems.push(format!("the tax row '{}' must be charged on the net total for e-invoicing", text(tax, "description")));
             }
         }
@@ -252,12 +261,19 @@ impl Sources {
                 igst: Decimal::ZERO,
                 cess_rate: Decimal::ZERO,
                 cess: Decimal::ZERO,
+                cess_non_advol: Decimal::ZERO,
             };
             if item.desc.chars().count() < 3 {
                 item.desc = format!("{:<3}", item.desc);
             }
             for (tax, h) in &self.taxes {
                 let rate = self.rate_of(row, tax);
+                if *h == Head::Cess && s(tax, "charge_type") == Some("On Item Quantity") {
+                    // Per stock unit, in the invoice's currency.
+                    let units = if row.get("stock_qty").is_some_and(|v| !v.is_null()) { d(row, "stock_qty") } else { d(row, "qty") };
+                    item.cess_non_advol += r2(units.abs() * rate * fx);
+                    continue;
+                }
                 let amount = r2(assessable * rate / Decimal::ONE_HUNDRED);
                 match h {
                     Head::Cgst => (item.cgst, item.gst_rate) = (item.cgst + amount, item.gst_rate + rate),
@@ -270,6 +286,7 @@ impl Sources {
             items.push(item);
         }
         let mut heads = [Decimal::ZERO; 5];
+        let (mut reverse, mut reverse_charge) = (Decimal::ZERO, false);
         for (tax, h) in &self.taxes {
             let amount = match tax.get("base_tax_amount") {
                 Some(v) if !v.is_null() => d(tax, "base_tax_amount"),
@@ -278,13 +295,17 @@ impl Sources {
             .abs();
             let signed = if tax.get("deduct").and_then(Value::as_bool).unwrap_or(false) { -amount } else { amount };
             heads[*h as usize] += r2(signed);
+            if tax.get("reverse_charge").and_then(Value::as_bool).unwrap_or(false) {
+                reverse += r2(signed);
+                reverse_charge = true;
+            }
         }
         let [cgst, sgst, igst, cess, other] = heads;
         for (label, doc_total, lines_total) in [
             ("CGST", cgst, items.iter().map(|i| i.cgst).sum::<Decimal>()),
             ("SGST", sgst, items.iter().map(|i| i.sgst).sum()),
             ("IGST", igst, items.iter().map(|i| i.igst).sum()),
-            ("cess", cess, items.iter().map(|i| i.cess).sum()),
+            ("cess", cess, items.iter().map(|i| i.cess + i.cess_non_advol).sum()),
         ] {
             if (doc_total - lines_total).abs() > Decimal::ONE {
                 problems.push(format!("the invoice's {label} ({doc_total}) differs from its lines' ({lines_total}) by more than ₹1"));
@@ -293,13 +314,29 @@ impl Sources {
         let assessable: Decimal = items.iter().map(|i| i.assessable).sum();
         let rounded = d(inv, "base_rounded_total").abs();
         let total = r2(if rounded.is_zero() { d(inv, "base_grand_total").abs() } else { rounded });
-        let round_off = r2(total - (assessable + cgst + sgst + igst + cess + other));
+        // The total leaves out what the buyer pays under reverse charge.
+        let round_off = r2(total - (assessable + cgst + sgst + igst + cess + other - reverse));
         if round_off.abs() > Decimal::TEN {
             problems.push(format!("the invoice total {total} does not add up to its lines and taxes (off by {round_off})"));
         }
         let foreign = self.currency != "INR";
         let own_total = if d(inv, "rounded_total").is_zero() { d(inv, "grand_total") } else { d(inv, "rounded_total") };
-        Values { items, assessable, cgst, sgst, igst, cess, other, round_off, total, total_foreign: foreign.then(|| r2(own_total.abs())) }
+        let cess_non_advol = items.iter().map(|i| i.cess_non_advol).sum();
+        Values {
+            items,
+            assessable,
+            cgst,
+            sgst,
+            igst,
+            cess,
+            cess_non_advol,
+            other,
+            reverse,
+            reverse_charge,
+            round_off,
+            total,
+            total_foreign: foreign.then(|| r2(own_total.abs())),
+        }
     }
 
     fn party(&self, doc: &Doc, whose: &str, problems: &mut Vec<String>, name_field: &str, address_field: &str) -> Map<String, Value> {
@@ -398,7 +435,7 @@ impl Sources {
                     "SlNo": (i + 1).to_string(), "PrdDesc": it.desc, "IsServc": if it.service { "Y" } else { "N" }, "HsnCd": it.hsn,
                     "Qty": num(it.qty), "FreeQty": 0, "Unit": it.unit, "UnitPrice": num(it.unit_price), "TotAmt": num(it.total), "Discount": num(it.discount),
                     "PreTaxVal": 0, "AssAmt": num(it.assessable), "GstRt": num(it.gst_rate), "IgstAmt": num(it.igst), "CgstAmt": num(it.cgst), "SgstAmt": num(it.sgst),
-                    "CesRt": num(it.cess_rate), "CesAmt": num(it.cess), "CesNonAdvlAmt": 0, "StateCesRt": 0, "StateCesAmt": 0, "StateCesNonAdvlAmt": 0,
+                    "CesRt": num(it.cess_rate), "CesAmt": num(it.cess), "CesNonAdvlAmt": num(it.cess_non_advol), "StateCesRt": 0, "StateCesAmt": 0, "StateCesNonAdvlAmt": 0,
                     "OthChrg": 0, "TotItemVal": num(it.value()),
                 })
             })
@@ -409,7 +446,8 @@ impl Sources {
         });
         let mut out = json!({
             "Version": "1.1",
-            "TranDtls": {"TaxSch": "GST", "SupTyp": supply, "RegRev": "N", "IgstOnIntra": "N"},
+            // Under reverse charge the buyer pays the tax: shown, and the total may leave it out.
+            "TranDtls": {"TaxSch": "GST", "SupTyp": supply, "RegRev": if v.reverse_charge { "Y" } else { "N" }, "IgstOnIntra": "N"},
             "DocDtls": {"Typ": if credit_note { "CRN" } else { "INV" }, "No": number, "Dt": day.map(dmy).unwrap_or_default()},
             "SellerDtls": seller,
             "BuyerDtls": buyer,
@@ -527,7 +565,7 @@ impl Sources {
                 let (half, igst) = if it.igst > Decimal::ZERO { (Decimal::ZERO, it.gst_rate) } else { (it.gst_rate / Decimal::TWO, Decimal::ZERO) };
                 json!({
                     "productName": it.desc, "productDesc": it.desc, "hsnCode": it.hsn.parse::<u64>().unwrap_or_default(), "quantity": num(it.qty), "qtyUnit": it.unit,
-                    "cgstRate": num(half), "sgstRate": num(half), "igstRate": num(igst), "cessRate": num(it.cess_rate), "cessNonadvol": 0, "taxableAmount": num(it.assessable),
+                    "cgstRate": num(half), "sgstRate": num(half), "igstRate": num(igst), "cessRate": num(it.cess_rate), "cessNonadvol": num(it.cess_non_advol), "taxableAmount": num(it.assessable),
                 })
             })
             .collect();
@@ -539,7 +577,8 @@ impl Sources {
             "toGstin": if registered { text(&self.customer, "in_gstin") } else { "URP".to_string() }, "toTrdName": to["LglNm"], "toAddr1": to["Addr1"],
             "toAddr2": to.get("Addr2").cloned().unwrap_or(json!("")), "toPlace": to["Loc"], "toPincode": to_pin, "toStateCode": to_state, "actToStateCode": to_state,
             "transactionType": 1, "otherValue": num(v.other + v.round_off), "totalValue": num(v.assessable), "cgstValue": num(v.cgst), "sgstValue": num(v.sgst),
-            "igstValue": num(v.igst), "cessValue": num(v.cess), "cessNonAdvolValue": 0, "totInvValue": num(v.total),
+            // An e-way bill knows no reverse charge: the consignment's value is with all its taxes.
+            "igstValue": num(v.igst), "cessValue": num(v.cess - v.cess_non_advol), "cessNonAdvolValue": num(v.cess_non_advol), "totInvValue": num(v.total + v.reverse),
             "transMode": t["TransMode"], "transDistance": t["Distance"].to_string(), "itemList": items,
         });
         for (theirs, ours) in [

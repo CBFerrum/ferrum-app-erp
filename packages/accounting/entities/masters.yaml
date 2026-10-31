@@ -65,25 +65,48 @@
   kind: child
   fields:
     - {name: tax_account, type: link, to: Account, required: true, link_filters: {account_type: Tax}, in_list: true}
-    - {name: rate, type: percent, required: true, min: "0", max: "100", in_list: true}
+    - {name: rate, type: percent, required: true, min: "0", in_list: true, description: "The item's rate for this tax; for an On Item Quantity tax, the amount per stock unit"}
+    - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], in_list: true, description: "The item's tax category for this tax; its tax row's when empty"}
+    - {name: exemption_reason, type: data, description: "Why it is exempt or zero-rated: a code (VATEX-EU-132-1I) or the law's words"}
 
 - name: TaxRow
   label: Tax Row
   kind: child
   fields:
-    - {name: charge_type, type: select, options: [On Net Total, On Previous Row Amount, On Previous Row Total, Actual], required: true, default: On Net Total, in_list: true}
+    - {name: charge_type, type: select, options: [On Net Total, On Previous Row Amount, On Previous Row Total, Actual, On Item Quantity], required: true, default: On Net Total, in_list: true,
+       description: "On Item Quantity: the rate is an amount per stock unit (excise, eco and packaging fees)"}
     - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
     - {name: description, type: data, in_list: true}
-    - {name: rate, type: percent, min: "0", max: "1000", in_list: true}
+    - {name: rate, type: percent, min: "0", in_list: true, description: "A percentage (at most 1000); for On Item Quantity, the amount per stock unit"}
     - {name: amount, type: currency, description: Fixed amount for Actual charges}
     - {name: row_ref, type: int, min: 1, label: Reference Row, description: For "previous row" charges (1-based)}
     - {name: included_in_price, type: check, label: Included in Rate}
     - {name: deduct, type: check, description: Withholding taxes are deducted}
+    - {name: reverse_charge, type: check, description: "The buyer accounts for this tax: worked out and reported, never charged to the party. A purchase posts it to this row's account and to the reverse-charge account; a sale posts nothing"}
+    - {name: reverse_charge_account, type: link, to: Account, link_filters: {is_group: false}, visible_if: "doc.reverse_charge", description: "Purchases: the tax owed account the reverse charge is credited to"}
+    - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], description: "For tax reports and e-invoices. When empty: Reverse Charge for a reverse charge, Standard above a zero rate, Zero Rated at zero"}
+    - {name: exemption_reason, type: data, description: "Why it is exempt or zero-rated: a code (VATEX-EU-132-1I) or the law's words"}
     - {name: cost_center, type: link, to: CostCenter}
     - {name: tax_amount, type: currency, read_only: true, in_list: true}
     - {name: total, type: currency, read_only: true, in_list: true}
     - {name: base_tax_amount, type: currency, read_only: true}
     - {name: base_total, type: currency, read_only: true}
+
+# What an invoice's taxes come to per tax, category and rate (EN 16931's VAT breakdown, BG-23).
+- name: TaxBreakdown
+  label: Tax Breakdown
+  kind: child
+  fields:
+    - {name: description, type: data, read_only: true, in_list: true}
+    - {name: account, type: link, to: Account, read_only: true}
+    - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], read_only: true, in_list: true}
+    - {name: rate, type: decimal, read_only: true, in_list: true, description: "A percentage, or an amount per stock unit for On Item Quantity taxes"}
+    - {name: exemption_reason, type: data, read_only: true}
+    - {name: reverse_charge, type: check, read_only: true}
+    - {name: taxable_amount, type: currency, read_only: true, in_list: true}
+    - {name: tax_amount, type: currency, read_only: true, in_list: true}
+    - {name: base_taxable_amount, type: currency, read_only: true}
+    - {name: base_tax_amount, type: currency, read_only: true}
 
 - name: TaxTemplate
   label: Tax Template

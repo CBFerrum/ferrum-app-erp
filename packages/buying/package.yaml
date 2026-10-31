@@ -28,6 +28,7 @@ roles:
       - {entity: PurchaseReceipt, read: true, write: true, create: true, delete: true, submit: true, cancel: true}
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true}
       - {entity: Supplier, read: true, write: true, create: true}
+      - {entity: Address, read: true}
       - {entity: SupplierGroup, read: true}
       - {entity: Item, read: true}
       - {entity: ItemGroup, read: true}

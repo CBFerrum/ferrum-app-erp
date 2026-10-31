@@ -25,6 +25,7 @@ roles:
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true}
       - {entity: PricingRule, read: true}
       - {entity: Customer, read: true, write: true, create: true}
+      - {entity: Address, read: true}
       - {entity: CustomerGroup, read: true}
       - {entity: Item, read: true}
       - {entity: ItemGroup, read: true}

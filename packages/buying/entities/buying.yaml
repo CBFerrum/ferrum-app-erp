@@ -35,6 +35,8 @@
     - {name: supplier_name, type: data, fetch_from: supplier.supplier_name, read_only: true, in_list: true}
     - {name: posting_date, type: date, required: true, default_expr: today, label: Order Date, in_list: true, in_filter: true}
     - {name: schedule_date, type: date, label: Required By}
+    - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
+    - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
@@ -104,6 +106,8 @@
     - {name: supplier_delivery_note, type: data}
     - {name: is_return, type: check, in_filter: true}
     - {name: return_against, type: link, to: PurchaseReceipt, visible_if: "doc.is_return"}
+    - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
+    - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
@@ -173,6 +177,8 @@
     - {name: due_date, type: date, in_list: true}
     - {name: is_return, type: check, label: Is Return (Debit Note), in_filter: true}
     - {name: return_against, type: link, to: PurchaseInvoice, visible_if: "doc.is_return"}
+    - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
+    - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
     - {name: update_stock, type: check, description: Receive stock with this invoice}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.update_stock"}
     - {name: currency, type: link, to: Currency}
@@ -180,6 +186,7 @@
     - {name: tax_template, type: link, to: TaxTemplate}
     - {name: items, type: table, of: PurchaseInvoiceItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
+    - {name: tax_breakdown, type: table, of: TaxBreakdown, read_only: true, label: Tax Breakdown}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}

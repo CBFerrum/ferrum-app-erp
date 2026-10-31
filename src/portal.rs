@@ -150,7 +150,11 @@ async fn detail(k: &Kernel, user: &Ctx, invoice: Uuid) -> Result<Value> {
     let taxes: Vec<Value> = rows(&inv, "taxes")
         .iter()
         .filter(|t| !d(t, "tax_amount").is_zero())
-        .map(|t| json!({"description": s(t, "description"), "amount": (if b(t, "deduct") { -d(t, "tax_amount") } else { d(t, "tax_amount") }).normalize().to_string()}))
+        .map(|t| {
+            // A reverse charge is the customer's to account for: shown, not charged.
+            let description = s(t, "description").map(|x| if b(t, "reverse_charge") { format!("{x} (reverse charge)") } else { x.to_string() });
+            json!({"description": description, "amount": (if b(t, "deduct") { -d(t, "tax_amount") } else { d(t, "tax_amount") }).normalize().to_string()})
+        })
         .collect();
     let more = json!({
         "company": titled(&inv, "company"),
