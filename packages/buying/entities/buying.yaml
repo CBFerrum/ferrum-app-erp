@@ -20,6 +20,7 @@
     - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: PurchaseOrder
   label: Purchase Order
@@ -88,6 +89,7 @@
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: PurchaseReceipt
   label: Purchase Receipt
@@ -156,6 +158,7 @@
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: PurchaseInvoice
   label: Purchase Invoice

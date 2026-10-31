@@ -1,0 +1,114 @@
+package: eu
+version: 0.1.0
+label: European Union
+description: EU VAT for ERP. VAT numbers checked in VIES, supplies within the EU (reverse charge, intra-Community, the One-Stop Shop), exports, the member states' rates from the Commission's TEDB, EN 16931 (Peppol BIS Billing 3.0) e-invoices, the EC sales list and the OSS return.
+depends: [selling, buying]
+field_prefix: eu_
+
+# The member states' standard rates from the Commission's TEDB (retrieveVatRates, 2024 to
+# 2026-10-31), each from the day it took effect; "Update EU VAT Rates" on a company adds the rest.
+seed:
+  - entity: EuVatRate
+    key: [member_state, kind, rate, valid_from]
+    records:
+      - {member_state: AT, kind: Standard, rate: "20", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: BE, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: BG, kind: Standard, rate: "20", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: CY, kind: Standard, rate: "19", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: CZ, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: DE, kind: Standard, rate: "19", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: DK, kind: Standard, rate: "25", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: EE, kind: Standard, rate: "22", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: EE, kind: Standard, rate: "24", valid_from: "2025-07-01", source: "TEDB, 2025-07-01"}
+      - {member_state: EL, kind: Standard, rate: "24", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: ES, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: FI, kind: Standard, rate: "24", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: FI, kind: Standard, rate: "25.5", valid_from: "2024-09-01", source: "TEDB, 2024-09-01"}
+      - {member_state: FR, kind: Standard, rate: "20", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: HR, kind: Standard, rate: "25", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: HU, kind: Standard, rate: "27", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: IE, kind: Standard, rate: "23", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: IT, kind: Standard, rate: "22", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: LT, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: LU, kind: Standard, rate: "17", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: LV, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: MT, kind: Standard, rate: "18", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: NL, kind: Standard, rate: "21", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: PL, kind: Standard, rate: "23", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: PT, kind: Standard, rate: "23", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: RO, kind: Standard, rate: "19", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: RO, kind: Standard, rate: "21", valid_from: "2025-08-01", source: "TEDB, 2025-08-01"}
+      - {member_state: SE, kind: Standard, rate: "25", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: SI, kind: Standard, rate: "22", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: SK, kind: Standard, rate: "20", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
+      - {member_state: SK, kind: Standard, rate: "23", valid_from: "2025-01-01", source: "TEDB, 2025-01-01"}
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix (DE123456789); invoices carry it"}}
+      - {op: add_field, after: eu_vat_number, field: {name: eu_distance_sales, type: select, label: Sales to Consumers Elsewhere in the EU, options: ["Home Country's VAT", "Destination's VAT (OSS)"], default: "Home Country's VAT",
+          description: "Above 10,000 euros a year across the EU, or by choice: each destination's VAT, declared through the One-Stop Shop"}}
+      - {op: add_field, after: eu_distance_sales, field: {name: eu_peppol_id, type: data, label: Peppol ID, max_length: 60, description: "scheme:identifier, e.g. 0088:4000001000005 or 9930:DE123456789"}}
+      - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_distance_sales, eu_peppol_id]}}
+      - {op: add_action, action: {name: eu_setup_vat, label: Set Up EU VAT Accounts, permission: write, confirm: "Create this company's accounts for VAT owed through the One-Stop Shop and under reverse charge?"}}
+      - {op: add_action, action: {name: eu_update_rates, label: Update EU VAT Rates (TEDB), permission: write, confirm: "Fetch the member states' current VAT rates from the Commission's TEDB?"}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix (FR12345678901); checked in VIES when it changes"}}
+      - {op: add_field, after: eu_vat_number, field: {name: eu_peppol_id, type: data, label: Peppol ID, max_length: 60, description: "scheme:identifier their e-invoices go to"}}
+      - {op: add_field, after: eu_peppol_id, field: {name: eu_vies_valid, type: check, label: Valid in VIES, read_only: true, in_filter: true}}
+      - {op: add_field, after: eu_vies_valid, field: {name: eu_vies_name, type: data, label: Name in VIES, read_only: true}}
+      - {op: add_field, after: eu_vies_name, field: {name: eu_vies_address, type: text, label: Address in VIES, read_only: true}}
+      - {op: add_field, after: eu_vies_address, field: {name: eu_vies_checked_at, type: datetime, label: Checked in VIES, read_only: true}}
+      - {op: add_field, after: eu_vies_checked_at, field: {name: eu_vies_consultation, type: data, label: VIES Consultation Number, read_only: true}}
+      - {op: add_field, after: eu_vies_consultation, field: {name: eu_vies_error, type: text, label: VIES Answer, read_only: true}}
+      - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_peppol_id, eu_vies_valid, eu_vies_name, eu_vies_address, eu_vies_checked_at, eu_vies_consultation, eu_vies_error]}}
+      - {op: add_action, action: {name: eu_check_vat, label: Check VAT Number (VIES), permission: write, condition: "doc.eu_vat_number != null"}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: eu_vat_category, type: select, label: EU VAT Category, options: [Standard, Reduced, Zero Rated, Exempt], default: Standard,
+          description: "Reduced: its rate in each country it is taxed in is set in EU Rates (Suggest EU Rates fills them from its CN code)"}}
+      - {op: add_field, after: eu_vat_category, field: {name: eu_kind, type: select, label: Goods or Services (EU), options: [Goods, Services, Digital Services],
+          description: "Digital services (telecommunications, broadcasting, electronic) are taxed where the consumer is. Empty: goods when it is a stock item, else services"}}
+      - {op: add_field, after: eu_kind, field: {name: eu_cn_code, type: data, label: CN Code, max_length: 10, description: "Its Combined Nomenclature code (8 digits)"}}
+      - {op: add_field, after: eu_cn_code, field: {name: eu_exemption_reason, type: data, label: EU Exemption Reason, max_length: 120, description: "Exempt or zero-rated: a VATEX code (VATEX-EU-132-1E) or the law's words"}}
+      - {op: add_field, after: eu_exemption_reason, field: {name: eu_rates, type: table, of: EuItemRate, label: EU Rates by Country}}
+      - {op: add_action, action: {name: eu_suggest_rates, label: Suggest EU Rates (TEDB), permission: write, condition: "doc.eu_cn_code != null"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: customer_name, field: {name: eu_supply, type: select, label: EU Supply, read_only: true, in_filter: true,
+          options: [Domestic, Intra-EU B2B, "Intra-EU B2C (home VAT)", "Intra-EU B2C (OSS)", Export]}}
+      - {op: add_field, column: true, after: eu_supply, field: {name: eu_destination, type: data, label: Taxed In, read_only: true, max_length: 2, in_filter: true}}
+      - {op: add_field, column: true, after: eu_destination, field: {name: eu_customer_vat, type: data, label: Customer's VAT Number, read_only: true, max_length: 16}}
+      - {op: add_field, column: true, after: eu_customer_vat, field: {name: eu_vies_consultation, type: data, label: VIES Consultation Number, read_only: true, no_copy: true}}
+      - {op: add_field, after: eu_vies_consultation, field: {name: eu_legal_text, type: text, label: VAT Notes, read_only: true}}
+      - {op: add_field, column: true, after: eu_legal_text, field: {name: eu_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: eu_peppol_status, field: {name: eu_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: eu_peppol_message_id, field: {name: eu_peppol_error, type: text, label: Peppol Answer, read_only: true, no_copy: true}}
+      - {op: add_section, after: return_against, section: {label: EU VAT, collapsible: true, fields: [eu_supply, eu_destination, eu_customer_vat, eu_vies_consultation, eu_legal_text, eu_peppol_status, eu_peppol_message_id, eu_peppol_error]}}
+      - {op: add_action, action: {name: eu_ubl, group: e-Invoice, label: Download e-Invoice (UBL), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: eu_send_peppol, group: e-Invoice, label: Send via Peppol, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status != 'Sent'",
+          confirm: "Send this invoice to the customer's Peppol ID through your access point?"}}
+      - {op: add_action, action: {name: eu_record_peppol, group: e-Invoice, label: Record Peppol Delivery, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status == 'Pending'",
+          params: [{name: message_id, label: The access point's message ID, type: data, required: true}]}}
+      - {op: add_action, action: {name: eu_record_peppol_failure, group: e-Invoice, label: Record Peppol Failure, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status == 'Pending'",
+          params: [{name: message, label: What went wrong, type: text, required: true}]}}
+  - entity: PurchaseInvoice
+    ops:
+      - {op: add_field, column: true, after: supplier_name, field: {name: eu_supply, type: select, label: EU Supply, read_only: true, in_filter: true, options: [Domestic, Intra-EU Acquisition, Import]}}
+      - {op: add_field, column: true, after: eu_supply, field: {name: eu_origin, type: data, label: Supplied From, read_only: true, max_length: 2}}
+
+roles:
+  - name: Accounts Manager
+    permissions:
+      - {entity: EuVatRate, read: true, write: true, create: true, delete: true, import: true, export: true}
+  - name: Sales User
+    permissions:
+      - {entity: EuVatRate, read: true}
+  - name: Purchase User
+    permissions:
+      - {entity: EuVatRate, read: true}

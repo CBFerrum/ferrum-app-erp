@@ -424,11 +424,6 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         if has_child("price_basis") {
             set(row, "price_basis", price_basis(item_id, uom, factor, d(row, "price_list_rate")));
         }
-        let tax_rates: Map<String, Value> =
-            rows(&item, "tax_rates").iter().filter_map(|r| Some((s(r, "tax_account")?.to_string(), json!(d(r, "rate").to_string())))).collect();
-        if has_child("item_tax_rates") {
-            set(row, "item_tax_rates", Value::Object(tax_rates));
-        }
         match side {
             Side::Selling if has_child("income_account") && id(row, "income_account").is_none() => {
                 let acc = id(&item, "income_account").or(co.account("default_income_account"));
@@ -477,6 +472,27 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         }
     }
     let mut taxes = rows(doc, "taxes");
+
+    // Each line's own rates: its item's, as the countries' rules leave them (the EU: the rate of
+    // the country whose VAT applies, for the line's category).
+    let item_docs: Vec<Doc> = items.iter().map(|row| id(row, "item").and_then(|it| item_cache.get(&it)).cloned().unwrap_or_default()).collect();
+    crate::localization::line_rates(k, ctx, tx, doc, &items, &item_docs, &taxes, &mut line_rates, side).await?;
+    for (i, row) in items.iter_mut().enumerate() {
+        if has_child("item_tax_rates") {
+            let own: Map<String, Value> =
+                line_rates[i].iter().filter_map(|r| Some((s(r, "tax_account")?.to_string(), json!(d(r, "rate").to_string())))).collect();
+            set(row, "item_tax_rates", Value::Object(own));
+        }
+        if has_child("tax_categories") {
+            // What e-invoices say of each line: its category and exemption reason per tax account.
+            let own: Map<String, Value> = line_rates[i]
+                .iter()
+                .filter(|r| s(r, "category").is_some() || s(r, "exemption_reason").is_some())
+                .filter_map(|r| Some((s(r, "tax_account")?.to_string(), json!({"category": s(r, "category"), "exemption_reason": s(r, "exemption_reason")}))))
+                .collect();
+            set(row, "tax_categories", Value::Object(own));
+        }
+    }
 
     // Calculation.
     let input = calc_input(&items, &taxes, d(doc, "discount_percent"), &co, precision, rate, ent.field("rounded_total").is_some());

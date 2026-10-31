@@ -44,6 +44,7 @@
     - {name: delivered_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: SalesOrder
   label: Sales Order
@@ -114,6 +115,7 @@
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: DeliveryNote
   label: Delivery Note
@@ -186,6 +188,7 @@
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
+    - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
 - name: SalesInvoice
   label: Sales Invoice

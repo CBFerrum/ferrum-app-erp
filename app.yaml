@@ -5,7 +5,7 @@
 # Recorded as installed in every workspace that has accounting; India is its add-on (addons/india).
 id: erp
 name: ERP
-version: 0.3.0
+version: 0.4.0
 publisher: cbferrum
 summary: Accounting, selling, buying, stock and manufacturing
 categories: [finance, inventory, manufacturing]
