@@ -9,7 +9,7 @@
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
-[Overview](#overview) · [Modules](#modules) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Repository](#this-repository) · [Install](#install) · [Develop](#develop) · [Changelog](#changelog)
+[Overview](#overview) · [Modules](#modules) · [Countries](#every-country-as-an-add-on) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Repository](#this-repository) · [Install](#install) · [Develop](#develop) · [Changelog](#changelog)
 
 </div>
 
@@ -22,21 +22,26 @@ is append-only and balanced in the database. Documents carry exact tax maths, st
 an append-only ledger with moving-average and FIFO cost layers (a backdated entry posts forward;
 nothing is ever reposted), and every figure the reports show comes from the same ledger. Its
 add-ons bring budgets and bank reconciliation, procurement, stock operations and manufacturing
-operations, and India's localisation brings GST, e-invoices and e-way bills.
+operations. A country's taxes and rules are an add-on too, on one localization seam: India's (GST,
+e-invoices and e-way bills) is the first. Point of Sale, Commerce, Assets, Field Service, HR and CRM
+build on its engine.
 
 | At a glance | |
 |---|---|
 | 📦 Version | `0.2.0` (its add-ons `0.1.1`) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
-| 🗃️ Packages | accounting, selling, buying, inventory, manufacturing; India as its add-on |
-| 🧩 Add-ons | Finance, Procurement, Stock Operations, Manufacturing Operations |
+| 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
+| 🧩 Add-ons | India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
+| 🌍 Countries | add-ons on the localization seam: India built, every other country its own add-on |
+| 🔌 Built on by | Point of Sale, Commerce, Assets, Field Service, HR and CRM |
 | 👥 Roles | Accounts, Sales, Purchase, Stock and Manufacturing managers and users |
 
 > [!NOTE]
-> ERP's packages and their logic still live in the platform (`ferrum-domain`), which other apps
-> build on: Point of Sale, Commerce, payroll, Assets, Bookings and Field Service post through
-> it. They move here in stage 3 of [the plan](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/erp-repo.md).
+> Everything ERP is lives here: its manifest, interface, packages, engine and add-ons. The
+> platform keeps only what every app shares (`ferrum-domain`: helpers, the report framework,
+> document helpers and the shared packages), and the apps that post to the books or move stock
+> call this crate's `ledger`, `stock`, `pricing` and `flow`.
 
 ## Modules
 
@@ -47,16 +52,33 @@ operations, and India's localisation brings GST, e-invoices and e-way bills.
 | 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts | payables, purchase register |
 | 📦 | **Inventory** | warehouses and stock entries on an append-only stock ledger with moving-average and FIFO cost layers | stock balance, stock ledger |
 | 🏭 | **Manufacturing** | multi-level bills of materials with revisions, work orders with actual costing, an MRP run that proposes purchases and production | stock balance |
-| 🇮🇳 | **India** | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN on lines, GST e-invoices (IRN, signed QR) and e-way bills | |
 
 ### Add-ons
 
 | | Add-on | What it adds |
 |---|---|---|
+| 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
 | 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | workstations, operations, routings, job cards, production planning and subcontracting |
+
+### Every country as an add-on
+
+The engine knows no country. A country's add-on brings the fields it needs through its package
+(prefixed with its code, such as `in_gstin`) and plugs its rules into one seam,
+`ferrum_app_erp::localization`. Its rules act only where its package is installed and only for
+companies of its country, so one workspace can keep companies in several countries.
+
+| The seam | When it runs | India |
+|---|---|---|
+| `determine` | inside `pricing::calculate`, before prices and taxes: ERP's documents, CRM's quotations, POS's sales and Commerce's carts alike | the GST template for the place of supply |
+| `check` | before a priced document is submitted | HSN/SAC codes on outward supplies |
+| `setup_company` | after a new company's chart of accounts | GST accounts and tax templates |
+
+E-invoices, returns, legal print content and withheld taxes use what the platform already has:
+hooks and the outbox, report sources, print formats and deducted tax rows. How each region's taxes
+map onto the seam is in [the plan](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/erp-repo.md#every-country-as-an-add-on).
 
 ## Screenshots
 
@@ -125,19 +147,22 @@ flowchart LR
     subgraph Server["Ferrum server"]
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
-        DOM["Business engine<br/><small>ferrum-domain: ERP's packages and logic</small>"]
-        ADD["ERP's add-ons<br/><small>this repository</small>"]
+        ENG["ERP's engine<br/><small>ledger · stock · pricing · flow</small>"]
+        ADD["Add-ons<br/><small>India · Finance · Procurement<br/>Stock Operations · Manufacturing Operations</small>"]
+        CORE["Shared core<br/><small>ferrum-domain</small>"]
         OB[("Outbox")]
     end
     DB[("PostgreSQL")]
     UI --> API --> K --> DB
     BAR --> API
-    K <--> DOM
+    K <--> ENG
     K <--> ADD
+    ADD -->|localization · hooks| ENG
+    ENG --> CORE
     K --> OB --> EV["Notifications · webhooks<br/>automations"]
-    APPS["POS · Commerce · HR payroll<br/>Assets · Bookings · Field Service"] -. post through .-> DOM
+    APPS["POS · Commerce · Assets<br/>Field Service · HR · CRM"] -. post through .-> ENG
     classDef erp fill:#2f5bea,color:#fff,stroke:#2f5bea
-    class UI,ADD erp
+    class UI,ENG,ADD erp
 ```
 
 Everything ERP adds is ordinary Ferrum metadata and Rust: its records get lists, forms, search,
@@ -147,38 +172,39 @@ them under the same rules as people.
 ## This repository
 
 ```mermaid
-flowchart TB
-    subgraph REPO["ferrum-app-erp"]
-        APP["ferrum-app-erp crate<br/><small>app.yaml · india/app.yaml · ui/dist embedded</small>"]
-        F["addons/finance"]
-        P["addons/procurement"]
-        S["addons/stock-ops"]
-        M["addons/mfg-ops"]
+flowchart BT
+    KER["ferrum-kernel · meta · calc<br/><small>Ferrum</small>"]
+    CORE["ferrum-domain<br/><small>Ferrum: the shared core</small>"]
+    subgraph REPO["this repository"]
+        APP["ferrum-app-erp<br/><small>app.yaml · packages/ · the engine · ui/dist</small>"]
+        ADD["addons/<br/><small>India (ferrum-india) · Finance · Procurement<br/>Stock Operations · Manufacturing Operations</small>"]
     end
-    subgraph FERRUM["Ferrum (platform)"]
-        KER["ferrum-kernel · meta · calc"]
-        DOM2["ferrum-domain<br/><small>ERP's packages and logic until stage 3</small>"]
-        SRV["ferrum-server<br/><small>compiles them in</small>"]
-    end
+    APPS["Point of Sale · Commerce · Assets<br/>Field Service · HR · CRM"]
+    SRV["ferrum-server<br/><small>Ferrum: compiles them all in</small>"]
     FE["Ferrum-Frontend<br/><small>@ferrum/kit · client · records/frame</small>"]
-    APP --> SRV
-    F & P & S & M --> SRV
-    F & P & S & M --> DOM2
-    DOM2 --> KER
+    KER --> CORE --> APP
+    APP --> ADD
+    APP --> APPS
+    ADD --> SRV
+    APPS --> SRV
     FE -. builds ui/ .-> APP
+    classDef erp fill:#2f5bea,color:#fff,stroke:#2f5bea
+    class APP,ADD erp
 ```
+
+Each arrow points from a crate to what builds on it, so nothing below ERP depends on it.
 
 | Stage | What | Status |
 |---|---|---|
 | 1 | The app and its interface: manifests and `ui/`, compiled into this crate | ✅ built |
 | 2 | The add-ons: Finance, Procurement, Stock Operations, Manufacturing Operations | ✅ built |
-| 3 | The packages and the engine, with the apps that build on them | 🗺️ planned ([erp-repo.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/erp-repo.md)) |
+| 3 | The packages and the engine, India as an add-on on the localization seam, and the apps that build on them | ✅ built |
 
 ## Install
 
 ERP ships in the official Ferrum server image and is recorded as installed in every workspace
-that has accounting; its add-ons and India install from **Apps** (`/store/`) in Ferrum, where an
-administrator also upgrades ERP when a new version arrives. Everything it adds is available to AI
+that has accounting; India and the other add-ons install from **Apps** (`/store/`) in Ferrum, where
+an administrator also upgrades ERP when a new version arrives. Everything it adds is available to AI
 agents over Ferrum's MCP server, within each person's permissions.
 
 ## Develop
@@ -201,19 +227,28 @@ ferrum-meta = { path = "../ferrum/crates/meta" }
 ferrum-domain = { path = "../ferrum/crates/domain" }
 ferrum-calc = { path = "../ferrum/crates/calc" }
 ferrum-apps = { path = "../ferrum/crates/apps" }
+ferrum-plugins = { path = "../ferrum/crates/plugins" }
 ```
 
-The add-ons' tests need PostgreSQL with an ordinary (non-superuser) role, so row-level security
-applies, and a database each (they reset it first):
+Apps that build on ERP (Point of Sale, Commerce, Assets, Field Service, HR, CRM and the store)
+take this repository from GitHub; to work on both at once, clone it beside them and add
+`[patch."https://github.com/CBFerrum/ferrum-app-erp"]` with `ferrum-app-erp = { path = "../ferrum-app-erp" }`.
+
+The tests need PostgreSQL with an ordinary (non-superuser) role, so row-level security applies,
+and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
+for db in erp finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
 cargo test --workspace
 ```
 
-`FERRUM_FINANCE_TEST_DATABASE_URL`, `FERRUM_PROCUREMENT_TEST_DATABASE_URL`,
-`FERRUM_STOCK_OPS_TEST_DATABASE_URL` and `FERRUM_MFG_OPS_TEST_DATABASE_URL` override the URLs.
+`FERRUM_ERP_TEST_DATABASE_URL`, `FERRUM_FINANCE_TEST_DATABASE_URL`,
+`FERRUM_PROCUREMENT_TEST_DATABASE_URL`, `FERRUM_STOCK_OPS_TEST_DATABASE_URL` and
+`FERRUM_MFG_OPS_TEST_DATABASE_URL` override the URLs. ERP's end-to-end test (`tests/erp_it.rs`)
+walks a GST-registered company through opening stock, procure-to-pay, order-to-cash with a fake
+IRP, payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues, and a
+company outside India that gets none of India's rules.
 
 The interface lives in `ui/` and builds with Ferrum-Frontend's packages:
 
@@ -230,10 +265,13 @@ from Vite behind the real bar and session, with hot reload.
 
 ```text
 app.yaml         ERP's manifest: its packages, interface, launcher entry and portal page
-india/app.yaml   India's manifest, ERP's add-on
-src/             the crate: the manifests and the embedded interface
+packages/        accounting, buying, inventory, manufacturing, selling
+src/             the engine (ledger, stock, pricing, trade, manufacturing, set-up, reports,
+                 localization), the manifest's entry points and the embedded interface
+tests/           the end-to-end scenario against a real PostgreSQL
 ui/              ERP's interface (React + Vite), built into ui/dist
-addons/          Finance, Procurement, Stock Operations, Manufacturing Operations
+addons/          India (with its app.yaml), Finance, Procurement, Stock Operations,
+                 Manufacturing Operations
 CHANGELOG.md     what changed in each version
 ```
 
@@ -241,7 +279,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
-| **0.2.0** | ERP has a repository of its own: its manifests, its interface (now on `@ferrum/records/frame`) and its add-ons, with their tests. Earlier history is in Ferrum and Ferrum-Frontend. |
+| **0.2.0** | ERP's own repository holds all of it: its manifest, interface, packages and engine, which other apps build on, and its add-ons. Countries plug in through `localization`, India first as the add-on `ferrum-india`. Earlier history is in Ferrum and Ferrum-Frontend. |
 
 Every version is in [CHANGELOG.md](CHANGELOG.md).
 
