@@ -1,0 +1,13 @@
+{
+  "name": "ferrum-app-erp-ui",
+  "private": true,
+  "type": "module",
+  "description": "ERP's own interface at /erp/ (and the portal's invoices), built with Ferrum-Frontend's packages from the sibling checkout (../../ferrum/web)",
+  "scripts": {
+    "build": "node ../../ferrum/web/packages/build/cli.mjs build",
+    "check": "node ../../ferrum/web/packages/build/cli.mjs check",
+    "typecheck": "node ../../ferrum/web/packages/build/cli.mjs typecheck",
+    "test": "node ../../ferrum/web/packages/build/cli.mjs test",
+    "dev": "node ../../ferrum/web/packages/build/cli.mjs dev"
+  }
+}

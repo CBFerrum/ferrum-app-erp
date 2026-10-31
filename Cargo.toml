@@ -1,0 +1,59 @@
+# ERP and its add-ons (Ferrum docs/plan/erp-repo.md): the app itself (this crate: its manifest,
+# India's, and its interface) and Finance, Procurement, Stock Operations and Manufacturing
+# Operations (addons/). The Ferrum server compiles them in; their packages and logic build on the
+# platform's crates, taken from Ferrum's main.
+[workspace]
+resolver = "3"
+members = [".", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/CBFerrum/ferrum-app-erp"
+
+[workspace.dependencies]
+ferrum-kernel = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-apps = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+tokio = { version = "1.45", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tracing = "0.1"
+async-trait = "0.1"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "chrono", "rust_decimal", "json", "migrate", "macros"] }
+
+[workspace.lints.clippy]
+# Deliberate patterns shared with the platform: sqlx row tuples, index-based maths, engine entry points.
+type_complexity = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+large_enum_variant = "allow"
+
+[package]
+name = "ferrum-app-erp"
+description = "ERP for Ferrum: accounting, selling, buying, stock and manufacturing; its manifest and its own interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[dev-dependencies]
+ferrum-apps = { workspace = true }
+
+[lints]
+workspace = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
