@@ -26,18 +26,19 @@ operations. A country's taxes and rules are an add-on too, on one localization s
 e-invoices and e-way bills), the European Union's (VAT, VIES, the One-Stop Shop, EN 16931
 e-invoices over Peppol), Germany's (XRechnung, small businesses, the domestic reverse charge), the
 United Kingdom's (VAT, the CIS reverse charge, Making Tax Digital returns), Canada's (GST/HST,
-PST and QST by province) and the United States' (sales and use tax by destination, exemption
-certificates, AvaTax reporting, economic nexus, Forms 1099) are built. Point of Sale, Commerce, Assets, Field Service, HR and CRM
+PST and QST by province), the United States' (sales and use tax by destination, exemption
+certificates, AvaTax reporting, economic nexus, Forms 1099) and thirteen more on one VAT/GST
+engine (South East Asia, the Gulf, Australia, New Zealand, Japan, Mexico and China) are built. Point of Sale, Commerce, Assets, Field Service, HR and CRM
 build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.4.0` (the United States `0.1.0`, Canada `0.1.0`, the United Kingdom `0.1.0`, Germany `0.1.0`, the European Union `0.1.2`, India `0.2.1`, the other add-ons `0.1.1`) |
+| 📦 Version | `0.4.0` (the thirteen of `ferrum-countries` `0.1.0`, the United States `0.1.0`, Canada `0.1.0`, the United Kingdom `0.1.0`, Germany `0.1.0`, the European Union `0.1.2`, India `0.2.1`, the other add-ons `0.1.1`) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
-| 🧩 Add-ons | the European Union, Germany, the United Kingdom, the United States, Canada, India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
-| 🌍 Countries | add-ons on the localization seam: India, the European Union, Germany, the United Kingdom, the United States and Canada built; the other EU members, South East Asia and the rest follow ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
+| 🧩 Add-ons | the European Union, Germany, the United Kingdom, the United States, Canada, thirteen more countries, India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
+| 🌍 Countries | add-ons on the localization seam: 19 built (India, the European Union, Germany, the United Kingdom, the United States, Canada, and Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China); the other EU members' own mandates follow ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
 | 🔌 Built on by | Point of Sale, Commerce, Assets, Field Service, HR and CRM |
 | 👥 Roles | Accounts, Sales, Purchase, Stock and Manufacturing managers and users |
 
@@ -65,12 +66,34 @@ build on its engine.
 | 🇩🇪 | **Germany** (`ferrum-de`, on the EU's) | XRechnung 3.0 e-invoices checked against KoSIT's rules (a public buyer's Leitweg-ID, a valid IBAN, both electronic addresses), small businesses (§ 19 UStG) invoicing without VAT, and the domestic reverse charge (§ 13b UStG) |
 | 🇬🇧 | **United Kingdom** (`ferrum-gb`) | UK VAT (20%, 5%, zero-rated, exempt), the construction industry's reverse charge (CIS), exports and services abroad, reverse-charged services from abroad, VAT numbers checked by HMRC's check digits, and VAT returns (the nine boxes) filed through HMRC's Making Tax Digital API |
 | 🇺🇸 | **United States** (`ferrum-us`) | Sales tax by destination (by origin within origin-based states) at the ZIP code's combined rate from the states' rate tables, only where the company is registered; marketplace facilitators, exemption certificates and product taxability by state; use tax on untaxed purchases; sales reported to Avalara AvaTax; sales tax by jurisdiction, economic nexus and Forms 1099 reports |
+| 🌏 | **Thirteen more countries** (`ferrum-countries`) | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
 | 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | workstations, operations, routings, job cards, production planning and subcontracting |
+
+<details>
+<summary><b>The thirteen countries of <code>ferrum-countries</code></b></summary>
+
+| | Country | Tax | Return |
+|---|---|---|---|
+| 🇸🇬 | Singapore | GST 9% (8% in 2023, 7% before), the reverse charge for RC businesses | GST F5 |
+| 🇲🇾 | Malaysia | sales tax 10% and 5%, service tax 8% and 6%, not recovered; service tax on imported services | SST-02 |
+| 🇮🇩 | Indonesia | PPN 12% on 11/12 of the price, luxury goods at 12%; the 16-digit NPWP | SPT Masa PPN |
+| 🇹🇭 | Thailand | VAT 7%; the 13-digit tax ID's check digit | PP.30 |
+| 🇵🇭 | The Philippines | VAT 12% | 2550Q |
+| 🇻🇳 | Vietnam | VAT 10%, 5% and the temporary 8% | 01/GTGT |
+| 🇸🇦 | Saudi Arabia | VAT 15% (5% before July 2020) | ZATCA's VAT return |
+| 🇦🇪 | The United Arab Emirates | VAT 5% | VAT 201, by emirate |
+| 🇦🇺 | Australia | GST 10%, GST-free and input-taxed supplies; the ABN's check | the BAS's GST labels |
+| 🇳🇿 | New Zealand | GST 15%; the IRD number's check | GST101A |
+| 🇯🇵 | Japan | consumption tax 10% and the reduced 8%, once per rate per invoice (qualified invoices); the T-number | national and local parts |
+| 🇲🇽 | Mexico | IVA 16%, the border regions' 8%, 0% and exempt; the RFC | IVA, on a cash basis |
+| 🇨🇳 | China | VAT 13%, 9% and 6%; small-scale taxpayers' 1% without input credit; the unified social credit code | — |
+
+</details>
 
 ### Every country as an add-on
 
@@ -160,7 +183,7 @@ flowchart LR
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
         ENG["ERP's engine<br/><small>ledger · stock · pricing · flow</small>"]
-        ADD["Add-ons<br/><small>European Union · Germany · United Kingdom<br/>United States · Canada · India<br/>Finance · Procurement · Stock Operations · Manufacturing Operations</small>"]
+        ADD["Add-ons<br/><small>European Union · Germany · United Kingdom<br/>United States · Canada · India · 13 more countries<br/>Finance · Procurement · Stock Operations · Manufacturing Operations</small>"]
         CORE["Shared core<br/><small>ferrum-domain</small>"]
         OB[("Outbox")]
     end
@@ -189,7 +212,7 @@ flowchart BT
     CORE["ferrum-domain<br/><small>Ferrum: the shared core</small>"]
     subgraph REPO["this repository"]
         APP["ferrum-app-erp<br/><small>app.yaml · packages/ · the engine · ui/dist</small>"]
-        ADD["addons/<br/><small>European Union (ferrum-eu) · Germany (ferrum-de)<br/>United Kingdom (ferrum-gb) · United States (ferrum-us)<br/>Canada (ferrum-ca) · India (ferrum-india)<br/>Finance · Procurement · Stock Operations<br/>Manufacturing Operations</small>"]
+        ADD["addons/<br/><small>European Union (ferrum-eu) · Germany (ferrum-de)<br/>United Kingdom (ferrum-gb) · United States (ferrum-us)<br/>Canada (ferrum-ca) · India (ferrum-india)<br/>13 more countries (ferrum-countries)<br/>Finance · Procurement · Stock Operations<br/>Manufacturing Operations</small>"]
     end
     APPS["Point of Sale · Commerce · Assets<br/>Field Service · HR · CRM"]
     SRV["ferrum-server<br/><small>Ferrum: compiles them all in</small>"]
@@ -251,12 +274,12 @@ and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in erp eu de gb ca us finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
+for db in erp eu de gb ca us countries finance procurement stock_ops mfg_ops; do createdb -O ferrum ferrum_${db}_test; done
 cargo test --workspace
 ```
 
 `FERRUM_ERP_TEST_DATABASE_URL`, `FERRUM_EU_TEST_DATABASE_URL`, `FERRUM_DE_TEST_DATABASE_URL`,
-`FERRUM_GB_TEST_DATABASE_URL`, `FERRUM_CA_TEST_DATABASE_URL`, `FERRUM_US_TEST_DATABASE_URL`,
+`FERRUM_GB_TEST_DATABASE_URL`, `FERRUM_CA_TEST_DATABASE_URL`, `FERRUM_US_TEST_DATABASE_URL`, `FERRUM_COUNTRIES_TEST_DATABASE_URL`,
 `FERRUM_FINANCE_TEST_DATABASE_URL`,
 `FERRUM_PROCUREMENT_TEST_DATABASE_URL`, `FERRUM_STOCK_OPS_TEST_DATABASE_URL` and
 `FERRUM_MFG_OPS_TEST_DATABASE_URL` override the URLs. ERP's end-to-end test (`tests/erp_it.rs`)
@@ -285,7 +308,8 @@ src/             the engine (ledger, stock, pricing, trade, manufacturing, set-u
 tests/           the end-to-end scenario against a real PostgreSQL
 ui/              ERP's interface (React + Vite), built into ui/dist
 addons/          the European Union, Germany, the United Kingdom, the United States, Canada
-                 and India (each with its app.yaml), Finance, Procurement, Stock Operations,
+                 and India (each with its app.yaml), thirteen more countries (countries/, an
+                 app each under apps/), Finance, Procurement, Stock Operations,
                  Manufacturing Operations
 CHANGELOG.md     what changed in each version
 ```
@@ -294,6 +318,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **Thirteen countries 0.1.0** | `ferrum-countries`: Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China, each its own app on one VAT/GST engine, with dated rates, its registration number's check and its return. |
 | **United States 0.1.0** | The United States' add-on: sales tax by destination at ZIP codes' rates where the company is registered, exemption certificates, marketplace facilitators, product taxability, use tax, AvaTax reporting, and sales tax, economic nexus and Form 1099 reports. |
 | **Canada 0.1.0** | Canada's add-on: GST/HST, PST/RST and QST by province of supply with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST and QST returns. |
 | **United Kingdom 0.1.0** | The UK's add-on: UK VAT with the CIS reverse charge, exports and services abroad, and VAT returns filed through HMRC's Making Tax Digital API. The EU 0.1.2 reads TEDB with an updated XML parser (two advisories fixed). |
