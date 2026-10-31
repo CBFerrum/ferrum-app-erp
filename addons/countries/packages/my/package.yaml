@@ -1,5 +1,5 @@
 package: my
-version: 0.1.0
+version: 0.1.1
 label: "Malaysia"
 description: "Malaysia's sales and service tax for ERP. Sales tax on taxable goods (10%, 5%), service tax on taxable services (8%, or 6% for food and beverage, telecommunications, parking, logistics, construction, healthcare and education), service tax on imported taxable services, and the SST-02 figures."
 depends: [selling, buying]
@@ -9,10 +9,27 @@ overlays:
   - entity: Company
     ops:
       - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30, description: "e.g. W10-1808-32000001: on the invoices that charge SST"}}
-      - {op: add_section, after: tax_id, section: {label: "Malaysia SST", collapsible: true, fields: [my_sst_number]}}
+      - {op: add_field, after: my_sst_number, field: {name: my_tin, type: data, label: "TIN (LHDN)", max_length: 14}}
+      - {op: add_field, after: my_tin, field: {name: my_brn, type: data, label: "Business Registration Number (BRN)", max_length: 20}}
+      - {op: add_field, after: my_brn, field: {name: my_msic_code, type: data, label: "MSIC Code", max_length: 5, description: "Its business activity, five digits (e.g. 46510)"}}
+      - {op: add_field, after: my_msic_code, field: {name: my_msic_name, type: data, label: "MSIC Description", max_length: 300}}
+      - {op: add_field, after: my_msic_name, field: {name: my_phone, type: phone, label: "Telephone (e-invoices)"}}
+      - {op: add_field, after: my_phone, field: {name: my_street, type: data, label: "Street (Malaysia)", max_length: 150}}
+      - {op: add_field, after: my_street, field: {name: my_city, type: data, label: "City (Malaysia)", max_length: 50}}
+      - {op: add_field, after: my_city, field: {name: my_postal_code, type: data, label: "Postcode", max_length: 10}}
+      - {op: add_field, after: my_postal_code, field: {name: my_state, type: select, label: "State (Malaysia)", options: [Johor, Kedah, Kelantan, Melaka, Negeri Sembilan, Pahang, Pulau Pinang, Perak, Perlis, Selangor, Terengganu, Sabah, Sarawak, Wilayah Persekutuan Kuala Lumpur, Wilayah Persekutuan Labuan, Wilayah Persekutuan Putrajaya]}}
+      - {op: add_field, after: my_state, field: {name: my_myinvois_mode, type: select, label: "Send E-invoices to MyInvois", options: ["Off", Sandbox, Production], default: "Off"}}
+      - {op: add_field, after: my_myinvois_mode, field: {name: my_client_id, type: data, label: "MyInvois Client ID", max_length: 100}}
+      - {op: add_field, after: my_client_id, field: {name: my_client_secret, type: secret, label: "MyInvois Client Secret"}}
+      - {op: add_field, after: my_client_secret, field: {name: my_access_token, type: secret, label: "MyInvois Access Token"}}
+      - {op: add_field, after: my_access_token, field: {name: my_token_expires, type: datetime, label: "MyInvois Token Until", read_only: true}}
+      - {op: add_section, after: tax_id, section: {label: "Malaysia SST", collapsible: true, fields: [my_sst_number, my_tin, my_brn, my_msic_code, my_msic_name, my_phone, my_street, my_city, my_postal_code, my_state, my_myinvois_mode, my_client_id, my_client_secret]}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30}}
+      - {op: add_field, after: my_sst_number, field: {name: my_tin, type: data, label: "TIN (LHDN)", max_length: 14, description: "Empty: consumers buy under the general public's TIN (EI00000000010), buyers abroad under EI00000000020"}}
+      - {op: add_field, after: my_tin, field: {name: my_brn, type: data, label: "Business Registration Number (BRN)", max_length: 20}}
+      - {op: add_field, after: my_brn, field: {name: my_phone, type: phone, label: "Telephone (e-invoices)"}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30}}
@@ -20,5 +37,15 @@ overlays:
     ops:
       - {op: add_field, after: tax_rates, field: {name: my_sst_category, type: select, label: "SST Category", options: ["Sales Tax 10%", "Sales Tax 5%", "Service Tax", "Service Tax 6%", "Zero Rated", "Exempt", "Out of Scope"], default: "Out of Scope",
           description: "Sales Tax on taxable goods sold by a registered manufacturer; Service Tax (8%) or Service Tax 6% on taxable services; Out of Scope (the default) for everything else"}}
-      - {op: add_field, after: my_sst_category, field: {name: my_kind, type: select, label: "Goods or Services (Malaysia)", options: [Goods, Services],
+      - {op: add_field, after: my_sst_category, field: {name: my_classification, type: data, label: "MyInvois Classification", max_length: 3, default: "022", description: "LHDN's classification code (022: others)"}}
+      - {op: add_field, after: my_classification, field: {name: my_kind, type: select, label: "Goods or Services (Malaysia)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: customer_name, field: {name: my_einvoice_status, type: select, label: MyInvois, options: [Pending, Submitted, Valid, Invalid, Cancelled, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: my_einvoice_status, field: {name: my_submission_uid, type: data, label: MyInvois Submission, read_only: true, no_copy: true}}
+      - {op: add_field, after: my_submission_uid, field: {name: my_uuid, type: data, label: MyInvois UUID, read_only: true, no_copy: true}}
+      - {op: add_field, after: my_uuid, field: {name: my_long_id, type: data, label: MyInvois Long ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: my_long_id, field: {name: my_validation_url, type: data, label: Validation Link (QR Code), max_length: 300, read_only: true, no_copy: true}}
+      - {op: add_field, after: my_validation_url, field: {name: my_validated_at, type: data, label: Validated At, read_only: true, no_copy: true}}
+      - {op: add_field, after: my_validated_at, field: {name: my_einvoice_error, type: text, label: MyInvois Errors, read_only: true, no_copy: true}}

@@ -66,7 +66,7 @@ fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource
     vec![std::sync::Arc::new(Return { name: "my_sst02", label: "SST-02 Return (Summary)", country: &COUNTRY, boxes: sst02 })]
 }
 
-crate::app!("my");
+crate::app!("my", hooks = crate::myinvois::register);
 
 #[cfg(test)]
 mod tests {
