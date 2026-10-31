@@ -6,6 +6,7 @@
 //! Each module is an app as Ferrum compiles them in (`MANIFEST`, `packages`, `register`,
 //! `reports`, `maintenance`): its manifest is `apps/<code>.yaml` and its package `packages/<code>`.
 
+pub mod anaf;
 pub mod member;
 
 pub mod be;

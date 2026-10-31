@@ -1,5 +1,15 @@
 # Changelog
 
+## Romania 0.1.1
+
+- Romania's connection to ANAF's e-Factura (`ferrum-eu-members`, `anaf`): Connect to ANAF starts
+  ANAF's OAuth sign-in with the company's qualified certificate (`logincert.anaf.ro`); ANAF returns
+  the user to `/api/app/ro/anaf/callback`, which checks the state it issued and takes the tokens
+  (sealed, refreshed when they lapse). Queued CIUS-RO invoices are uploaded to e-Factura (test or
+  production, `upload?standard=UBL&cif=`), ANAF's upload index recorded, and ANAF asked after them
+  (`stareMesaj`) until it says ok (with the download ID of the signed invoice) or nok (with its
+  errors). With the connection Off, invoices wait for their answer to be recorded by hand.
+
 ## Malaysia 0.1.1, with fixes to the United States and the United Kingdom
 
 - Malaysia's e-invoices through LHDN's MyInvois (`ferrum-countries`, `myinvois`): a submitted

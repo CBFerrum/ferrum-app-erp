@@ -1,5 +1,5 @@
 package: ro
-version: 0.1.0
+version: 0.1.1
 label: Romania
 description: "Romania for ERP, on the EU's VAT. Every invoice goes to ANAF's e-Factura as a CIUS-RO UBL invoice: written from the invoice with ISO 3166-2:RO counties and Bucharest's sectors, checked against CIUS-RO's rules, queued for the company's ANAF connection and ANAF's answer recorded; CIFs checked; the small business exemption (article 310) and the domestic reverse charge (article 331)."
 depends: [eu]
@@ -11,7 +11,19 @@ overlays:
       - {op: add_field, after: eu_bic, field: {name: ro_county, type: data, label: County (Județ), max_length: 30, visible_if: "doc.country_code == 'RO'",
           description: "Its county, e.g. Cluj (RO-CJ); in Bucharest (RO-B) its town is its sector, e.g. Sector 3"}}
       - {op: add_field, after: ro_county, field: {name: ro_efactura_on_submit, type: check, default: true, label: Upload Invoices to e-Factura on Submit, visible_if: "doc.country_code == 'RO'"}}
-      - {op: add_field, after: ro_efactura_on_submit, field: {name: ro_small_business, type: check, label: Small Business Exemption (article 310), visible_if: "doc.country_code == 'RO'",
+      - {op: add_field, after: ro_efactura_on_submit, field: {name: ro_anaf_mode, type: select, label: ANAF Connection, options: ["Off", Test, Production], default: "Off", visible_if: "doc.country_code == 'RO'",
+          description: "Off: e-invoices are written and queued here and their answer recorded by hand"}}
+      - {op: add_field, after: ro_anaf_mode, field: {name: ro_anaf_client_id, type: data, label: ANAF Application Client ID, max_length: 100, visible_if: "doc.country_code == 'RO'"}}
+      - {op: add_field, after: ro_anaf_client_id, field: {name: ro_anaf_client_secret, type: secret, label: ANAF Application Client Secret}}
+      - {op: add_field, after: ro_anaf_client_secret, field: {name: ro_anaf_redirect_uri, type: url, label: ANAF Redirect URI,
+          description: "The address registered with your ANAF application: https://<your Ferrum>/api/app/ro/anaf/callback"}}
+      - {op: add_field, after: ro_anaf_redirect_uri, field: {name: ro_anaf_access_token, type: secret, label: ANAF Access Token}}
+      - {op: add_field, after: ro_anaf_access_token, field: {name: ro_anaf_refresh_token, type: secret, label: ANAF Refresh Token}}
+      - {op: add_field, after: ro_anaf_refresh_token, field: {name: ro_anaf_state, type: secret, label: ANAF Sign-in State}}
+      - {op: add_field, after: ro_anaf_state, field: {name: ro_anaf_token_expires, type: datetime, label: ANAF Access Until, read_only: true}}
+      - {op: add_field, after: ro_anaf_token_expires, field: {name: ro_anaf_connected_at, type: datetime, label: Connected to ANAF, read_only: true}}
+      - {op: add_action, action: {name: ro_connect_anaf, label: Connect to ANAF, permission: write, condition: "doc.ro_anaf_mode != 'Off'"}}
+      - {op: add_field, after: ro_anaf_connected_at, field: {name: ro_small_business, type: check, label: Small Business Exemption (article 310), visible_if: "doc.country_code == 'RO'",
           description: "Regim special de scutire: no VAT on its sales, and its invoices say why"}}
   - entity: Item
     ops:

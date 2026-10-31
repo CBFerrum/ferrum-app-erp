@@ -5,7 +5,7 @@
 //! ISO 3166-2:RO (RO-B for Bucharest, whose town is its sector, SECTOR1 to SECTOR6), checked
 //! against CIUS-RO's rules, and queued for the company's ANAF connection (OAuth with its
 //! qualified certificate) through the outbox; the connection records ANAF's upload index and
-//! verdict. CIFs are checked (key 753217532). Small businesses under article 310 charge no VAT;
+//! verdict ([`crate::anaf`] uploads and asks after them). CIFs are checked (key 753217532). Small businesses under article 310 charge no VAT;
 //! the domestic reverse charge (article 331: cereals, wood, scrap, buildings...) is the item's.
 
 use crate::member::{Member, Rules};
@@ -285,6 +285,9 @@ fn hooks(h: &mut ferrum_kernel::HookRegistry) {
     for entity in ["Company", "Customer", "Supplier", "SalesInvoice"] {
         h.register(entity, std::sync::Arc::new(EfacturaHook));
     }
+    h.register("Company", std::sync::Arc::new(crate::anaf::AnafHook));
+    h.add_event_sink(std::sync::Arc::new(crate::anaf::Anaf::default()));
+    h.add_site(PACKAGE, std::sync::Arc::new(crate::anaf::AnafSite));
 }
 
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
