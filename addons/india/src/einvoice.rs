@@ -123,11 +123,15 @@ struct Item {
     cess: Decimal,
     /// Cess per unit (non ad valorem): an On Item Quantity cess row.
     cess_non_advol: Decimal,
+    /// Of its taxes, what the buyer pays under reverse charge.
+    reverse: Decimal,
 }
 
 impl Item {
+    /// The item's total: under reverse charge without the tax the buyer pays, as the invoice's
+    /// total leaves it out (the IRP takes an item's total with or without it).
     fn value(&self) -> Decimal {
-        self.assessable + self.cgst + self.sgst + self.igst + self.cess + self.cess_non_advol
+        self.assessable + self.cgst + self.sgst + self.igst + self.cess + self.cess_non_advol - self.reverse
     }
 }
 
@@ -262,19 +266,28 @@ impl Sources {
                 cess_rate: Decimal::ZERO,
                 cess: Decimal::ZERO,
                 cess_non_advol: Decimal::ZERO,
+                reverse: Decimal::ZERO,
             };
             if item.desc.chars().count() < 3 {
                 item.desc = format!("{:<3}", item.desc);
             }
             for (tax, h) in &self.taxes {
                 let rate = self.rate_of(row, tax);
+                let reverse = tax.get("reverse_charge").and_then(Value::as_bool).unwrap_or(false) && *h != Head::Other;
                 if *h == Head::Cess && s(tax, "charge_type") == Some("On Item Quantity") {
                     // Per stock unit, in the invoice's currency.
                     let units = if row.get("stock_qty").is_some_and(|v| !v.is_null()) { d(row, "stock_qty") } else { d(row, "qty") };
-                    item.cess_non_advol += r2(units.abs() * rate * fx);
+                    let amount = r2(units.abs() * rate * fx);
+                    item.cess_non_advol += amount;
+                    if reverse {
+                        item.reverse += amount;
+                    }
                     continue;
                 }
                 let amount = r2(assessable * rate / Decimal::ONE_HUNDRED);
+                if reverse {
+                    item.reverse += amount;
+                }
                 match h {
                     Head::Cgst => (item.cgst, item.gst_rate) = (item.cgst + amount, item.gst_rate + rate),
                     Head::Sgst => (item.sgst, item.gst_rate) = (item.sgst + amount, item.gst_rate + rate),
@@ -409,6 +422,9 @@ impl Sources {
         let v = self.values(&mut problems);
         if v.items.is_empty() {
             problems.push("the invoice has no lines".into());
+        }
+        if v.reverse_charge && cat == "Overseas" {
+            problems.push("reverse charge applies to supplies to registered businesses and SEZ units, not to exports".into());
         }
         let day = s(inv, "posting_date").and_then(|t| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
         let credit_note = inv.get("is_return").and_then(Value::as_bool).unwrap_or(false);
@@ -1053,6 +1069,32 @@ mod tests {
             json!({"AssVal": 1700.0, "CgstVal": 153.0, "SgstVal": 153.0, "IgstVal": 0.0, "CesVal": 0.0, "StCesVal": 0,
                                            "Discount": 0, "OthChrg": 0.0, "RndOffAmt": 0.0, "TotInvVal": 2006.0})
         );
+    }
+
+    /// Under reverse charge the buyer pays the tax: it is reported, and the items' and the
+    /// invoice's totals leave it out alike (NIC: "may be included or excluded").
+    #[test]
+    fn a_reverse_charge_invoice_reports_the_tax_outside_the_total() {
+        let mut s = intra_state();
+        for (t, _) in &mut s.taxes {
+            t.insert("reverse_charge".into(), json!(true));
+        }
+        for f in ["base_grand_total", "base_rounded_total", "grand_total", "rounded_total"] {
+            s.invoice.insert(f.into(), json!("1700"));
+        }
+        let out = s.e_invoice().unwrap();
+        assert_eq!(out["TranDtls"]["RegRev"], json!("Y"));
+        let first = &out["ItemList"][0];
+        assert_eq!((&first["CgstAmt"], &first["SgstAmt"], &first["TotItemVal"]), (&json!(81.0), &json!(81.0), &json!(900.0)));
+        assert_eq!(
+            (&out["ValDtls"]["CgstVal"], &out["ValDtls"]["RndOffAmt"], &out["ValDtls"]["TotInvVal"]),
+            (&json!(153.0), &json!(0.0), &json!(1700.0)),
+            "the total is the items' totals"
+        );
+        let mut export = intra_state();
+        export.taxes[0].0.insert("reverse_charge".into(), json!(true));
+        export.customer.insert("in_gst_category".into(), json!("Overseas"));
+        assert!(export.e_invoice().unwrap_err().to_string().contains("not to exports"));
     }
 
     #[test]

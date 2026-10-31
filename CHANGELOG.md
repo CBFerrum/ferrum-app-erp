@@ -1,5 +1,11 @@
 # Changelog
 
+## India 0.2.1
+
+- e-Invoices under reverse charge follow NIC's rules: an item's total leaves out the tax the buyer
+  pays, as the invoice's total does (the IRP takes either, but the invoice's total must be its
+  items'), and reverse charge is refused on exports (NIC allows it on B2B and SEZ invoices only).
+
 ## 0.3.0
 
 What every country's rules build on (Ferrum docs/plan/localization.md, L0); needs Ferrum b5b2d3f
