@@ -81,7 +81,7 @@ fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource
     vec![std::sync::Arc::new(Return { name: "jp_consumption_tax", label: "Consumption Tax Return (Summary)", country: &COUNTRY, boxes: ct_return })]
 }
 
-crate::app!("jp");
+crate::app!("jp", crate::pint::JP);
 
 #[cfg(test)]
 mod tests {

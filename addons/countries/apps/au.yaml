@@ -1,7 +1,7 @@
 # ERP's add-on for Australia: gST at 10%, GST-free and input-taxed supplies, and the BAS's GST labels for ERP in Australia. Ferrum localization.md.
 id: au
 name: "Australia"
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: "GST at 10%, GST-free and input-taxed supplies, and the BAS's GST labels for ERP in Australia"
 categories: [finance]

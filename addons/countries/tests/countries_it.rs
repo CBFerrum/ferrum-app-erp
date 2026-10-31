@@ -95,6 +95,9 @@ struct Case {
     i: i64,
     r: i64,
     boxes: &'static [(&'static str, i64)],
+    /// The local customer's own fields, and for PINT countries what its e-invoice says.
+    buyer: Value,
+    pint: Option<&'static [&'static str]>,
 }
 
 fn cases() -> Vec<Case> {
@@ -111,8 +114,10 @@ fn cases() -> Vec<Case> {
         i,
         r,
         boxes,
+        buyer: json!({}),
+        pint: None,
     };
-    vec![
+    let mut all = vec![
         c(
             "sg",
             "Singapore",
@@ -269,7 +274,71 @@ fn cases() -> Vec<Case> {
             6,
             &[("13", 100), ("EXP", 100), ("OUT", 13), ("IN", 19), ("DUE", -6)],
         ),
-    ]
+    ];
+    // Peppol PINT: the company's address and Peppol on submit; the local customer's number.
+    let pint: [(&str, Value, &'static [&'static str]); 5] = [
+        (
+            "sg",
+            json!({"sg_gst_number": "53123456A"}),
+            &[
+                "<cbc:CustomizationID>urn:peppol:pint:billing-1@sg-1</cbc:CustomizationID>",
+                "<cbc:ProfileID>urn:peppol:bis:billing</cbc:ProfileID>",
+                "<cbc:EndpointID schemeID=\"0195\">201912345K</cbc:EndpointID>",
+                "<cbc:ID>SR</cbc:ID><cbc:Percent>9</cbc:Percent><cac:TaxScheme><cbc:ID>GST</cbc:ID>",
+            ],
+        ),
+        (
+            "au",
+            json!({"au_abn": "53004085616"}),
+            &[
+                "<cbc:CustomizationID>urn:peppol:pint:billing-1@aunz-1</cbc:CustomizationID>",
+                "<cbc:EndpointID schemeID=\"0151\">51824753556</cbc:EndpointID>",
+                "<cbc:EndpointID schemeID=\"0151\">53004085616</cbc:EndpointID>",
+                "<cbc:ID>S</cbc:ID><cbc:Percent>10</cbc:Percent><cac:TaxScheme><cbc:ID>GST</cbc:ID>",
+            ],
+        ),
+        (
+            "nz",
+            json!({"nz_peppol_id": "0088:9429041000000"}),
+            &[
+                "<cbc:CustomizationID>urn:peppol:pint:billing-1@aunz-1</cbc:CustomizationID>",
+                "<cbc:EndpointID schemeID=\"0088\">9429041000000</cbc:EndpointID>",
+                "<cbc:ID>S</cbc:ID><cbc:Percent>15</cbc:Percent>",
+            ],
+        ),
+        (
+            "jp",
+            json!({"jp_registration_number": "T1180301018771"}),
+            &[
+                "<cbc:CustomizationID>urn:peppol:pint:billing-1@jp-1</cbc:CustomizationID>",
+                "<cbc:EndpointID schemeID=\"0221\">T1180301018771</cbc:EndpointID>",
+                "<cbc:ID>S</cbc:ID><cbc:Percent>10</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID>",
+            ],
+        ),
+        (
+            "ae",
+            json!({"ae_trn": "100987654321003"}),
+            &[
+                "<cbc:CustomizationID>urn:peppol:pint:billing-1@ae-1</cbc:CustomizationID>",
+                "<cbc:ProfileExecutionID>00000000</cbc:ProfileExecutionID>",
+                "<cbc:EndpointID schemeID=\"0235\">1009876543</cbc:EndpointID>",
+                "<cbc:ID>S</cbc:ID><cbc:Percent>5</cbc:Percent>",
+            ],
+        ),
+    ];
+    for (code, buyer, expect) in pint {
+        let case = all.iter_mut().find(|c| c.code == code).unwrap();
+        let company = case.company.as_object_mut().unwrap();
+        for (f, v) in [("street", json!("1 Main Road")), ("city", json!("Capital")), ("postal_code", json!("100001")), ("peppol_on_submit", json!(true))] {
+            company.insert(format!("{code}_{f}"), v);
+        }
+        if code == "nz" {
+            company.insert("nz_peppol_id".into(), json!("0088:9429041000001"));
+        }
+        case.buyer = buyer;
+        case.pint = Some(expect);
+    }
+    all
 }
 
 #[test]
@@ -348,6 +417,9 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
         p
     };
     let home = party("Customer", "Local Buyer", case.country).await;
+    if let Some(more) = case.buyer.as_object().filter(|m| !m.is_empty()) {
+        k.update(&ctx, "Customer", home, more.clone(), None).await.unwrap_or_else(|e| panic!("{code}: customer: {e:?}"));
+    }
     let abroad = party("Customer", "Overseas Buyer", "United States").await;
     let sale = async |customer: Uuid| -> Doc {
         insert("SalesInvoice", json!({"company": cid.to_string(), "customer": customer.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]})).await
@@ -355,6 +427,15 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
     let si = sale(home).await;
     assert_eq!(dec(&si["total_taxes"]), Decimal::from(case.t), "{code}: the sale at home");
     let si = k.submit(&ctx, "SalesInvoice", uid(&si), None).await.unwrap_or_else(|e| panic!("{code}: submit: {e:?}"));
+    if let Some(expect) = case.pint {
+        let sent = k.get(&ctx, "SalesInvoice", uid(&si), false).await.unwrap();
+        assert_eq!(sent[&format!("{code}_peppol_status")], json!("Pending"), "{code}: sent through Peppol on submit");
+        let x = k.run_action(&ctx, "SalesInvoice", uid(&si), &format!("{code}_pint"), json!({})).await.unwrap_or_else(|e| panic!("{code}: PINT: {e:?}"));
+        let xml = x["file"]["content"].as_str().unwrap();
+        for part in expect {
+            assert!(xml.contains(part), "{code}: {part} in {xml}");
+        }
+    }
     let export = sale(abroad).await;
     assert_eq!((dec(&export["total_taxes"]), export["tax_breakdown"][0]["category"].clone()), (Decimal::ZERO, json!("Export")), "{code}: the export");
     k.submit(&ctx, "SalesInvoice", uid(&export), None).await.unwrap_or_else(|e| panic!("{code}: submit export: {e:?}"));

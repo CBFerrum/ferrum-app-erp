@@ -1,5 +1,5 @@
 package: au
-version: 0.1.0
+version: 0.1.1
 label: "Australia"
 description: "Australia's GST for ERP. 10% on taxable supplies, GST-free supplies (Zero Rated), input-taxed supplies (Exempt), the reverse charge, and the BAS's GST labels."
 depends: [selling, buying]
@@ -10,10 +10,16 @@ overlays:
     ops:
       - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30, description: "11 digits: on the invoices that charge GST"}}
       - {op: add_field, after: au_abn, field: {name: au_reverse_charge, type: check, label: "Reverse Charge on Imported Services", description: "Not entitled to full input tax credits for services bought from abroad (Division 84)"}}
-      - {op: add_section, after: tax_id, section: {label: "Australia GST", collapsible: true, fields: [au_abn, au_reverse_charge]}}
+      - {op: add_field, after: au_reverse_charge, field: {name: au_street, type: data, label: "Street (Australia)", max_length: 140}}
+      - {op: add_field, after: au_street, field: {name: au_city, type: data, label: "City (Australia)", max_length: 80}}
+      - {op: add_field, after: au_city, field: {name: au_postal_code, type: data, label: "Postal Code (Australia)", max_length: 20}}
+      - {op: add_field, after: au_postal_code, field: {name: au_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
+      - {op: add_field, after: au_peppol_id, field: {name: au_peppol_on_submit, type: check, label: "Send E-invoices through Peppol on Submit"}}
+      - {op: add_section, after: tax_id, section: {label: "Australia GST", collapsible: true, fields: [au_abn, au_reverse_charge, au_street, au_city, au_postal_code, au_peppol_id, au_peppol_on_submit]}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30}}
+      - {op: add_field, after: au_abn, field: {name: au_peppol_id, type: data, label: "Peppol ID", max_length: 100, description: "scheme:identifier; empty: from the registration number"}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30}}
@@ -23,3 +29,12 @@ overlays:
           description: "Taxable (10%); Zero Rated: GST-free (basic food, health, education, exports); Exempt: input taxed (financial supplies, residential rent)"}}
       - {op: add_field, after: au_gst_category, field: {name: au_kind, type: select, label: "Goods or Services (Australia)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: customer_name, field: {name: au_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: au_peppol_status, field: {name: au_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
+      - {op: add_field, after: au_peppol_message_id, field: {name: au_peppol_error, type: text, label: Peppol Error, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: au_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: au_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.au_peppol_status != 'Sent'"}}
+      - {op: add_action, action: {name: au_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
+          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}

@@ -102,6 +102,13 @@ pub struct Invoice {
     pub order_reference: Option<String>,
     /// A national profile's specification identifier instead of EN 16931's or Peppol's.
     pub customization: Option<String>,
+    /// A profile's business process (ProfileID) instead of Peppol BIS Billing's.
+    pub profile: Option<String>,
+    /// A profile's transaction type code (ProfileExecutionID: the UAE's).
+    pub execution_id: Option<String>,
+    /// The tax scheme the parties' tax numbers and the categories are under: VAT, else as a
+    /// profile says (GST in Singapore, Australia and New Zealand).
+    pub tax_scheme: Option<String>,
     pub payment: Option<Payment>,
     pub notes: Vec<String>,
     pub seller: Party,
@@ -252,7 +259,7 @@ fn num(v: Decimal) -> String {
     v.normalize().to_string()
 }
 
-fn party(out: &mut String, tag: &str, p: &Party) {
+fn party(out: &mut String, tag: &str, p: &Party, scheme: &str) {
     let _ = write!(out, "<cac:{tag}><cac:Party>");
     if let Some((scheme, ident)) = &p.endpoint {
         let _ = write!(out, "<cbc:EndpointID schemeID=\"{}\">{}</cbc:EndpointID>", esc(scheme), esc(ident));
@@ -278,8 +285,9 @@ fn party(out: &mut String, tag: &str, p: &Party) {
     if let Some(vat) = &p.vat {
         let _ = write!(
             out,
-            "<cac:PartyTaxScheme><cbc:CompanyID>{}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>",
-            esc(vat)
+            "<cac:PartyTaxScheme><cbc:CompanyID>{}</cbc:CompanyID><cac:TaxScheme><cbc:ID>{}</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>",
+            esc(vat),
+            esc(scheme)
         );
     }
     if let Some(n) = &p.tax_number {
@@ -303,7 +311,7 @@ fn party(out: &mut String, tag: &str, p: &Party) {
     let _ = write!(out, "</cac:Party></cac:{tag}>");
 }
 
-fn tax_category(out: &mut String, tag: &str, category: &str, percent: Decimal, reason: Option<(&Option<String>, &Option<String>)>) {
+fn tax_category(out: &mut String, tag: &str, category: &str, percent: Decimal, reason: Option<(&Option<String>, &Option<String>)>, scheme: &str) {
     let _ = write!(out, "<cac:{tag}><cbc:ID>{category}</cbc:ID>");
     if category != "O" {
         let _ = write!(out, "<cbc:Percent>{}</cbc:Percent>", num(percent));
@@ -316,7 +324,7 @@ fn tax_category(out: &mut String, tag: &str, category: &str, percent: Decimal, r
             let _ = write!(out, "<cbc:TaxExemptionReason>{}</cbc:TaxExemptionReason>", esc(t));
         }
     }
-    let _ = write!(out, "<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:{tag}>");
+    let _ = write!(out, "<cac:TaxScheme><cbc:ID>{}</cbc:ID></cac:TaxScheme></cac:{tag}>", esc(scheme));
 }
 
 /// The invoice as UBL 2.1 (an Invoice, or a CreditNote for a credit note).
@@ -336,9 +344,19 @@ pub fn to_xml(inv: &Invoice) -> String {
     );
     let customization = inv.customization.as_deref().unwrap_or(if inv.peppol() { PEPPOL_CUSTOMIZATION } else { EN16931 });
     let _ = write!(o, "<cbc:CustomizationID>{}</cbc:CustomizationID>", esc(customization));
-    if inv.peppol() {
-        let _ = write!(o, "<cbc:ProfileID>{PEPPOL_PROFILE}</cbc:ProfileID>");
+    match &inv.profile {
+        Some(p) => {
+            let _ = write!(o, "<cbc:ProfileID>{}</cbc:ProfileID>", esc(p));
+        }
+        None if inv.peppol() => {
+            let _ = write!(o, "<cbc:ProfileID>{PEPPOL_PROFILE}</cbc:ProfileID>");
+        }
+        None => {}
     }
+    if let Some(x) = &inv.execution_id {
+        let _ = write!(o, "<cbc:ProfileExecutionID>{}</cbc:ProfileExecutionID>", esc(x));
+    }
+    let scheme = inv.tax_scheme.as_deref().unwrap_or("VAT");
     let _ = write!(o, "<cbc:ID>{}</cbc:ID><cbc:IssueDate>{}</cbc:IssueDate>", esc(&inv.number), esc(&inv.issue_date));
     if let (Some(due), false) = (&inv.due_date, inv.credit_note) {
         let _ = write!(o, "<cbc:DueDate>{}</cbc:DueDate>", esc(due));
@@ -362,8 +380,8 @@ pub fn to_xml(inv: &Invoice) -> String {
             esc(day)
         );
     }
-    party(&mut o, "AccountingSupplierParty", &inv.seller);
-    party(&mut o, "AccountingCustomerParty", &inv.buyer);
+    party(&mut o, "AccountingSupplierParty", &inv.seller, scheme);
+    party(&mut o, "AccountingCustomerParty", &inv.buyer, scheme);
     if inv.delivery_country.is_some() || inv.delivery_date.is_some() {
         o.push_str("<cac:Delivery>");
         if let Some(day) = &inv.delivery_date {
@@ -399,7 +417,7 @@ pub fn to_xml(inv: &Invoice) -> String {
              <cbc:Amount currencyID=\"{cur}\">{}</cbc:Amount>",
             amt(a.amount)
         );
-        tax_category(&mut o, "TaxCategory", a.category, a.percent, None);
+        tax_category(&mut o, "TaxCategory", a.category, a.percent, None, scheme);
         o.push_str("</cac:AllowanceCharge>");
     }
     let _ = write!(o, "<cac:TaxTotal><cbc:TaxAmount currencyID=\"{cur}\">{}</cbc:TaxAmount>", amt(inv.tax_total));
@@ -410,7 +428,7 @@ pub fn to_xml(inv: &Invoice) -> String {
             amt(t.taxable),
             amt(t.tax)
         );
-        tax_category(&mut o, "TaxCategory", t.category, t.percent, Some((&t.reason_code, &t.reason)));
+        tax_category(&mut o, "TaxCategory", t.category, t.percent, Some((&t.reason_code, &t.reason)), scheme);
         o.push_str("</cac:TaxSubtotal>");
     }
     o.push_str("</cac:TaxTotal>");
@@ -440,7 +458,7 @@ pub fn to_xml(inv: &Invoice) -> String {
             amt(l.net),
             esc(&l.name)
         );
-        tax_category(&mut o, "ClassifiedTaxCategory", l.category, l.percent, None);
+        tax_category(&mut o, "ClassifiedTaxCategory", l.category, l.percent, None, scheme);
         let _ = write!(o, "</cac:Item><cac:Price><cbc:PriceAmount currencyID=\"{cur}\">{}</cbc:PriceAmount></cac:Price></cac:{line_tag}>", num(l.price));
     }
     let _ = write!(o, "</{root}>");
@@ -612,6 +630,9 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
         buyer_reference: po.clone().unwrap_or_else(|| s(&customer, "customer_name").unwrap_or("").to_string()),
         order_reference: po,
         customization: None,
+        profile: None,
+        execution_id: None,
+        tax_scheme: None,
         payment,
         notes,
         seller,
@@ -757,6 +778,9 @@ mod tests {
             buyer_reference: "PO-7".into(),
             order_reference: Some("PO-7".into()),
             customization: None,
+            profile: None,
+            execution_id: None,
+            tax_scheme: None,
             payment: Some(Payment { code: "58".into(), iban: Some("DE89370400440532013000".into()), bic: None, account_name: None }),
             notes: vec![],
             seller: party("Seller GmbH", "DE123456789", "DE", "9930:DE123456789"),

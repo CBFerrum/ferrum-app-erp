@@ -11,6 +11,7 @@ ferrum-kernel = { workspace = true }
 ferrum-meta = { workspace = true }
 ferrum-domain = { workspace = true }
 ferrum-app-erp = { path = "../.." }
+ferrum-eu = { path = "../eu" }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
