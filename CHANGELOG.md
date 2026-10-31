@@ -1,5 +1,18 @@
 # Changelog
 
+## Portugal 0.1.0
+
+- Portugal (`ferrum-eu-members`, `pt`), on the European Union's add-on: invoices from certified
+  software. Each invoice takes the next number of a series communicated to the AT (PT Series:
+  FT, FS, FR, NC, ND, with the AT's validation code) and its ATCUD; it is signed (RSA, SHA-1,
+  Despacho n.º 8632/2014) over date, system entry (Lisbon time), number, gross total and the
+  series' previous signature, so the series forms a hash chain; it carries the four hash
+  characters with the certificate's mention and the QR code's message (Portaria 195/2020: A to S,
+  VAT by band, consumer NIF 999999990); cancelling marks it A. NIFs are checked; the small
+  business exemption (article 53) and the construction reverse charge carry their legal texts.
+  The producer's key and certificate number come from `FERRUM_PT_SIGNING_KEY` (PEM),
+  `FERRUM_PT_CERTIFICATE` and `FERRUM_PT_KEY_VERSION`; without them submitting refuses.
+
 ## Romania 0.1.1
 
 - Romania's connection to ANAF's e-Factura (`ferrum-eu-members`, `anaf`): Connect to ANAF starts

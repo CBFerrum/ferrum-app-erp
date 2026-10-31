@@ -1,6 +1,6 @@
 [package]
 name = "ferrum-eu-members"
-description = "EU member states for Ferrum ERP on the European Union's add-on, each its own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI), Poland (FA(3) through KSeF), Romania (CIUS-RO through e-Factura), Spain (VERI*FACTU records) and France (e-invoices through the PA, e-reporting)"
+description = "EU member states for Ferrum ERP on the European Union's add-on, each its own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI), Poland (FA(3) through KSeF), Romania (CIUS-RO through e-Factura), Spain (VERI*FACTU records) France (e-invoices through the PA, e-reporting) and Portugal (certified invoices: ATCUD, signatures, QR codes)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,9 @@ uuid = { workspace = true }
 sha2 = { workspace = true }
 sqlx = { workspace = true }
 hex = { workspace = true }
+base64 = "0.22"
+rsa = { version = "0.9", features = ["sha1"] }
+sha1 = { version = "0.10", features = ["oid"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [dev-dependencies]
