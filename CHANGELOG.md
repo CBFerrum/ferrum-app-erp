@@ -1,5 +1,19 @@
 # Changelog
 
+## France 0.1.0, and the European Union 0.1.5
+
+- France (`fr`, in `ferrum-eu-members`): the e-invoicing reform (receiving for all and issuing
+  for large and mid-sized businesses since 1 September 2026, the rest from 1 September 2027):
+  invoices to French businesses queued on submit for the company's plateforme agréée as EN 16931
+  UBL with both parties' SIREN (BT-30, BT-47, scheme 0002), the PA's lifecycle statuses recorded,
+  an e-invoice corrected by an avoir rather than cancelled; the e-reporting report of the other
+  sales (consumers, abroad) by day and rate; the invoice's mentions (the category of the
+  operation, the option for VAT on debits, and between businesses the late-payment penalties and
+  the €40 recovery indemnity); SIREN and SIRET checked (Luhn; La Poste's by its digits' sum), a
+  French VAT number's key checked against its SIREN and the SIREN taken from it; the franchise en
+  base (article 293 B) and the reverse charge on subcontracting in construction (283-2 nonies).
+- The EU's UBL writes the parties' legal registration identifier (BT-30, BT-47) with its scheme.
+
 ## Spain 0.1.0
 
 - Spain (`es`, in `ferrum-eu-members`): VERI*FACTU invoicing records (RD 1007/2023; systems

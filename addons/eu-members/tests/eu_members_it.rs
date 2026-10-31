@@ -46,10 +46,14 @@ async fn fresh_kernel() -> Arc<Kernel> {
             use $app as app;
             packages.extend(app::packages().expect("a member state's package"));
             hooks.scoped(&[app::PACKAGE.to_string()], |h| app::register(h));
+            for source in app::reports() {
+                ferrum_domain::reports::add_source(source);
+            }
         }};
     }
     add!(ferrum_eu_members::be);
     add!(ferrum_eu_members::es);
+    add!(ferrum_eu_members::fr);
     add!(ferrum_eu_members::it);
     add!(ferrum_eu_members::pl);
     add!(ferrum_eu_members::ro);
@@ -163,6 +167,71 @@ async fn scenario() {
     poland(&k).await;
     romania(&k).await;
     spain(&k).await;
+    france(&k).await;
+}
+
+async fn france(k: &Arc<Kernel>) {
+    let t = T::workspace(k, "fr").await;
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Société Exemple SA", "abbr": "SE", "default_currency": t.eur, "country": "France", "eu_vat_number": "FR44732829320",
+                   "eu_street": "1 rue de Rivoli", "eu_city": "Paris", "eu_postal_code": "75001", "fr_vat_on_debits": true}),
+        )
+        .await;
+    assert_eq!(co["fr_siren"], json!("732829320"), "from the VAT number");
+    let cid = uid(&co);
+    assert!(
+        t.k.insert(&t.ctx, "Customer", obj(json!({"customer_name": "Mauvais", "fr_siren": "732829321"}))).await.is_err(),
+        "a SIREN whose check does not hold"
+    );
+    let client = t
+        .customer(
+            "Client SARL",
+            json!({"eu_vat_number": "FR13542107651", "customer_type": "Company"}),
+            json!({"address_line1": "2 avenue Foch", "city": "Lyon", "postal_code": "69006", "country": "France"}),
+        )
+        .await;
+    let goods = t.item("CHAISE", json!({"eu_kind": "Goods"})).await;
+    let si = t.invoice(cid, client, goods).await;
+    assert_eq!(dec(&si["total_taxes"]), Decimal::from(20), "France's 20%");
+    let text = si["eu_legal_text"].as_str().unwrap().to_string();
+    for part in [
+        "Catégorie de l'opération : livraison de biens.",
+        "Option pour le paiement de la taxe d'après les débits.",
+        "indemnité forfaitaire pour frais de recouvrement de 40 €",
+    ] {
+        assert!(text.contains(part), "{part} in {text}");
+    }
+    let si = t.submit("SalesInvoice", uid(&si)).await;
+    assert_eq!(t.get("SalesInvoice", uid(&si)).await["fr_pa_status"], json!("Pending"), "an e-invoice through the PA");
+    let xml = t.action(uid(&si), "fr_ubl", json!({})).await["file"]["content"].as_str().unwrap().to_string();
+    for part in ["<cbc:CompanyID schemeID=\"0002\">732829320</cbc:CompanyID>", "<cbc:CompanyID schemeID=\"0002\">542107651</cbc:CompanyID>"] {
+        assert!(xml.contains(part), "{part} in {xml}");
+    }
+    t.action(uid(&si), "fr_record_pa", json!({"status": "Deposited", "pa_id": "PA-1"})).await;
+    assert_eq!(t.get("SalesInvoice", uid(&si)).await["fr_pa_status"], json!("Deposited"));
+
+    // A consumer's purchase is e-reported, not e-invoiced, and carries no business mentions.
+    let person = t
+        .customer(
+            "Marie Martin",
+            json!({"customer_type": "Individual"}),
+            json!({"address_line1": "3 rue Victor Hugo", "city": "Nantes", "postal_code": "44000", "country": "France"}),
+        )
+        .await;
+    let si = t.invoice(cid, person, goods).await;
+    assert!(!si["eu_legal_text"].as_str().unwrap().contains("40 €"), "the indemnity is between businesses");
+    let si = t.submit("SalesInvoice", uid(&si)).await;
+    assert_eq!(t.get("SalesInvoice", uid(&si)).await["fr_pa_status"], Value::Null);
+    let mut p = std::collections::HashMap::new();
+    p.insert("company".to_string(), cid.to_string());
+    p.insert("from_date".to_string(), "2000-01-01".to_string());
+    p.insert("to_date".to_string(), "2100-12-31".to_string());
+    let report = ferrum_domain::reports::run(&t.k, &t.ctx, "fr_e_reporting", &p).await.expect("e-reporting");
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!((dec(&rows[0]["taxable"]), dec(&rows[0]["tax"])), (Decimal::from(100), Decimal::from(20)));
 }
 
 async fn spain(k: &Arc<Kernel>) {
