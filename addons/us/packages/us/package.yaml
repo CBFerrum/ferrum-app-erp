@@ -1,0 +1,74 @@
+package: us
+version: 0.1.0
+label: United States
+description: US sales and use tax for ERP. Sales are taxed where the goods go (within an origin-based state, where they ship from) at the ZIP code's combined rate from the state's rate table, in the states where the company is registered; exemption certificates, marketplace facilitators and products' taxability by state; use tax accrued on purchases; sales reported to Avalara AvaTax; the sales tax, economic nexus and Form 1099 reports.
+depends: [selling, buying]
+field_prefix: us_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: us_state, type: select, label: State (US),
+          options: [AL, AK, AZ, AR, CA, CO, CT, DE, DC, FL, GA, HI, ID, IL, IN, IA, KS, KY, LA, ME, MD, MA, MI, MN, MS, MO, MT, NE, NV, NH, NJ, NM, NY, NC, ND, OH, OK, OR, PA, RI, SC, SD, TN, TX, UT, VT, VA, WA, WV, WI, WY],
+          description: "Where the company ships from: a sale within an origin-based state (Texas, Ohio, Pennsylvania...) takes this location's rate"}}
+      - {op: add_field, after: us_state, field: {name: us_zip, type: data, label: ZIP Code (US), max_length: 10, description: "The ship-from location's ZIP code: its rate for sales within an origin-based state and for use tax"}}
+      - {op: add_field, after: us_zip, field: {name: us_registered_states, type: data, label: Collects Sales Tax In, max_length: 200,
+          description: "The states where the company is registered to collect sales tax, e.g. CA, NY, TX. Sales into other states carry none: the Economic Nexus report says when to register"}}
+      - {op: add_field, after: us_registered_states, field: {name: us_avatax_mode, type: select, label: Report Sales to AvaTax, options: ["Off", Sandbox, Production], default: "Off",
+          description: "Submitted invoices are recorded in Avalara AvaTax (for its returns) with the tax they charged; cancelled ones are voided there"}}
+      - {op: add_field, after: us_avatax_mode, field: {name: us_avatax_account_id, type: data, label: AvaTax Account ID, max_length: 20}}
+      - {op: add_field, after: us_avatax_account_id, field: {name: us_avatax_license_key, type: secret, label: AvaTax License Key}}
+      - {op: add_field, after: us_avatax_license_key, field: {name: us_avatax_company_code, type: data, label: AvaTax Company Code, max_length: 50}}
+      - {op: add_section, after: tax_id, section: {label: US Sales Tax, collapsible: true, fields: [us_state, us_zip, us_registered_states, us_avatax_mode, us_avatax_account_id,
+          us_avatax_license_key, us_avatax_company_code]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: us_marketplace_facilitator, type: check, label: Marketplace Facilitator,
+          description: "A marketplace (Amazon, eBay, Etsy...) that collects the sales tax on what is sold through it: sales to it carry none"}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, column: true, after: tax_id, field: {name: us_1099_form, type: select, label: Form 1099,
+          options: [NEC, MISC Rents, MISC Royalties, MISC Other Income, MISC Medical, MISC Legal],
+          description: "Payments to it are reported on this form (NEC: nonemployee compensation). Empty: none"}}
+      - {op: add_field, column: true, after: us_1099_form, field: {name: us_tin_type, type: select, label: TIN Type, options: [EIN, SSN, ITIN]}}
+      - {op: add_field, after: us_tin_type, field: {name: us_tin, type: secret, label: Taxpayer Identification Number, description: "From its Form W-9; kept sealed"}}
+      - {op: add_field, column: true, after: us_tin, field: {name: us_w9_received, type: date, label: W-9 Received}}
+      - {op: add_field, column: true, after: us_w9_received, field: {name: us_backup_withholding, type: check, label: Backup Withholding,
+          description: "No TIN, or the IRS said it is wrong: 24% of payments is withheld"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: us_tax_code, type: data, label: Tax Code (US), max_length: 25,
+          description: "Its kind for US sales tax, as Avalara codes it: P0000000 tangible goods (the default), NT not taxable, SW054000 software as a service. Taxability by state comes from US Product Taxability"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: customer_name, field: {name: us_state, type: data, label: Sales Tax State, max_length: 2, read_only: true, in_filter: true}}
+      - {op: add_field, column: true, after: us_state, field: {name: us_jurisdiction, type: data, label: Sales Tax Jurisdiction, max_length: 140, read_only: true}}
+      - {op: add_field, after: us_jurisdiction, field: {name: us_rate, type: decimal, label: Sales Tax Rate %, read_only: true}}
+      - {op: add_field, after: us_rate, field: {name: us_rate_source, type: data, label: Rate From, max_length: 140, read_only: true}}
+      - {op: add_field, after: us_rate_source, field: {name: us_exemption_certificate, type: link, to: UsExemptionCertificate, label: Exemption Certificate, read_only: true}}
+      - {op: add_field, after: us_exemption_certificate, field: {name: us_avatax_status, type: select, label: AvaTax, options: [Pending, Committed, Differs, Voided, Failed],
+          read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: us_avatax_status, field: {name: us_avatax_tax, type: currency, label: Tax by AvaTax, read_only: true, no_copy: true,
+          description: "What AvaTax works out for the invoice; the invoice records the tax it charged"}}
+      - {op: add_field, after: us_avatax_tax, field: {name: us_avatax_error, type: text, label: AvaTax Error, read_only: true, no_copy: true}}
+  - entity: PurchaseInvoice
+    ops:
+      - {op: add_field, after: supplier_name, field: {name: us_accrue_use_tax, type: check, label: Accrue Use Tax,
+          description: "The supplier charged no sales tax on taxable goods used here: the company owes use tax at its location's rate"}}
+  - entity: PaymentEntry
+    ops:
+      - {op: add_field, column: true, after: reference_date, field: {name: us_card_payment, type: check, label: Paid by Card or Payment Network,
+          description: "Reported on Form 1099-K by the payment processor, not on Form 1099-NEC or 1099-MISC"}}
+
+roles:
+  - name: Accounts Manager
+    permissions:
+      - {entity: UsTaxRate, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: UsRateTable, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: UsTaxability, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: UsExemptionCertificate, read: true, write: true, create: true, delete: true, export: true}
+  - name: Sales User
+    permissions:
+      - {entity: UsExemptionCertificate, read: true, write: true, create: true}
+      - {entity: UsTaxRate, read: true}
+      - {entity: UsTaxability, read: true}

@@ -1,0 +1,28 @@
+[package]
+name = "ferrum-us"
+description = "The United States for Ferrum ERP: sales and use tax by destination from rate tables, exemption certificates, marketplace facilitators, Avalara AvaTax reporting, the economic nexus report and Forms 1099"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+axum = "0.8"
+
+[lints]
+workspace = true
