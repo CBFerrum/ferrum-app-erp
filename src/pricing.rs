@@ -228,50 +228,62 @@ fn copy_tax_rows(template: &Doc) -> Vec<Value> {
         .collect()
 }
 
-/// The engine's input for a document's priced lines (prices, line discounts, item tax rates) and
-/// tax rows: what [`calculate`] computes totals from, and what a register prices with offline (the
-/// same engine in the browser, `ferrum-calc` built for WASM). `rounded_total`: the document has a
-/// cash-rounded total.
-pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &Company, precision: u32, rate: Decimal, rounded_total: bool) -> CalcInput {
-    let tax_keys: Vec<String> = taxes.iter().enumerate().map(|(i, t)| s(t, "id").map(str::to_string).unwrap_or_else(|| format!("t{i}"))).collect();
-    let tax_in: Vec<TaxIn> = taxes
+/// The engine's tax rows for a document's tax rows (`taxes`), keyed by each row's id (`t{i}` for
+/// rows not saved yet). Apps that price with ERP's tax templates (Commerce's catalog) use it too,
+/// so a tax row means the same everywhere.
+// The engine's inputs gain fields over time; those not named here take their defaults.
+#[allow(clippy::needless_update)]
+pub fn tax_in(taxes: &[Doc]) -> Vec<TaxIn> {
+    taxes
         .iter()
         .enumerate()
         .map(|(i, t)| TaxIn {
-            key: tax_keys[i].clone(),
+            key: tax_key(t, i),
             charge_type: charge_type(s(t, "charge_type").unwrap_or("On Net Total")),
             rate: d(t, "rate"),
             amount: d(t, "amount"),
             row_ref: t.get("row_ref").and_then(Value::as_i64).filter(|r| *r >= 1).map(|r| (r - 1) as usize),
             included_in_price: b(t, "included_in_price"),
             deduct: b(t, "deduct"),
+            ..Default::default()
         })
-        .collect();
-    let account_of_tax: Vec<Option<String>> = taxes.iter().map(|t| s(t, "account").map(str::to_string)).collect();
+        .collect()
+}
+
+fn tax_key(t: &Doc, i: usize) -> String {
+    s(t, "id").map(str::to_string).unwrap_or_else(|| format!("t{i}"))
+}
+
+/// A line's own rates for the document's tax rows, from its item's tax rates (by tax account),
+/// keyed like [`tax_in`].
+pub fn line_tax_rates(line: &Doc, taxes: &[Doc]) -> BTreeMap<String, Decimal> {
+    let Some(m) = line.get("item_tax_rates").and_then(Value::as_object) else { return BTreeMap::new() };
+    taxes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            let rate = m.get(s(t, "account")?)?.as_str()?.parse().ok()?;
+            Some((tax_key(t, i), rate))
+        })
+        .collect()
+}
+
+/// The engine's input for a document's priced lines (prices, line discounts, item tax rates) and
+/// tax rows: what [`calculate`] computes totals from, and what a register prices with offline (the
+/// same engine in the browser, `ferrum-calc` built for WASM). `rounded_total`: the document has a
+/// cash-rounded total.
+// The engine's inputs gain fields over time; those not named here take their defaults.
+#[allow(clippy::needless_update)]
+pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &Company, precision: u32, rate: Decimal, rounded_total: bool) -> CalcInput {
     let lines: Vec<LineIn> = items
         .iter()
-        .map(|r| {
-            let overrides: BTreeMap<String, Decimal> = r
-                .get("item_tax_rates")
-                .and_then(Value::as_object)
-                .map(|m| {
-                    account_of_tax
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, acc)| {
-                            let rate = m.get(acc.as_deref()?)?.as_str()?.parse().ok()?;
-                            Some((tax_keys[i].clone(), rate))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            LineIn {
-                key: s(r, "id").unwrap_or_default().to_string(),
-                qty: d(r, "qty"),
-                price: d(r, "price_list_rate"),
-                discount_percent: d(r, "discount_percent"),
-                tax_rates: overrides,
-            }
+        .map(|r| LineIn {
+            key: s(r, "id").unwrap_or_default().to_string(),
+            qty: d(r, "qty"),
+            price: d(r, "price_list_rate"),
+            discount_percent: d(r, "discount_percent"),
+            tax_rates: line_tax_rates(r, taxes),
+            ..Default::default()
         })
         .collect();
     CalcInput {
@@ -280,9 +292,10 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
         conversion_rate: rate,
         rounding: co.rounding,
         lines,
-        taxes: tax_in,
+        taxes: tax_in(taxes),
         discount: (discount_percent > Decimal::ZERO).then_some(DocDiscount::Percent { value: discount_percent }),
         round_total_to: if rounded_total { co.round_total_to } else { None },
+        ..Default::default()
     }
 }
 
