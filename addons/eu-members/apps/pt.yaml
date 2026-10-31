@@ -1,0 +1,12 @@
+# ERP's add-on for Portugal, on the European Union's: certified invoices (series and ATCUD, the signed hash chain, the QR code), NIF checks, the small business exemption and the construction reverse charge. Ferrum localization.md L2.
+id: pt
+name: "Portugal"
+version: 0.1.0
+publisher: cbferrum
+summary: "Certified invoices (series and ATCUD, the signed hash chain, the QR code), NIF checks, article 53 and the construction reverse charge for ERP in Portugal"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4", eu: ">=0.1"}
+parent: erp
+packages: [pt]

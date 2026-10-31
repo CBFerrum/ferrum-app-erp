@@ -14,6 +14,7 @@ pub mod es;
 pub mod fr;
 pub mod it;
 pub mod pl;
+pub mod pt;
 pub mod ro;
 
 pub(crate) use ferrum_domain::util;
@@ -59,7 +60,7 @@ pub(crate) use app;
 mod tests {
     #[test]
     fn every_package_fits_the_eu_and_erp() {
-        for code in ["be", "es", "fr", "it", "pl", "ro"] {
+        for code in ["be", "es", "fr", "it", "pl", "pt", "ro"] {
             let mine = super::packages_of(code).unwrap_or_else(|e| panic!("{code}: {e}"));
             assert_eq!(mine.len(), 1, "{code}");
             let mut all = ferrum_domain::packages().expect("the shared packages");

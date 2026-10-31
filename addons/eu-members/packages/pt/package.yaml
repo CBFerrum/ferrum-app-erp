@@ -1,0 +1,31 @@
+package: pt
+version: 0.1.0
+label: Portugal
+description: "Portugal for ERP, on the EU's VAT. Invoices from certified software: each takes the next number of its series communicated to the AT and its ATCUD, is signed (RSA, SHA-1) in a hash chain with the series' previous document, and carries its four hash characters, the certificate's mention and the QR code's message; NIFs checked; the small business exemption (article 53) and the construction reverse charge."
+depends: [eu]
+field_prefix: pt_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: pt_small_business, type: check, label: Small Business Exemption (article 53), visible_if: "doc.country_code == 'PT'",
+          description: "Regime especial de isenção: no VAT on its sales, and its invoices say why"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: pt_reverse_charge, type: check, label: Reverse Charge (Portugal),
+          description: "Construction services for a VAT-registered customer (article 2(1)(j) of the CIVA): the customer accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: eu_peppol_status, field: {name: pt_document_no, type: data, label: Document Number (AT), max_length: 60, read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: pt_document_no, field: {name: pt_atcud, type: data, label: ATCUD, max_length: 70, read_only: true, no_copy: true}}
+      - {op: add_field, after: pt_atcud, field: {name: pt_status, type: select, label: Status (AT), options: [N, A], read_only: true, no_copy: true, description: "N: normal; A: cancelled (anulado)"}}
+      - {op: add_field, after: pt_status, field: {name: pt_system_entry, type: data, label: System Entry, max_length: 19, read_only: true, no_copy: true}}
+      - {op: add_field, after: pt_system_entry, field: {name: pt_hash, type: text, label: Signature (Hash), read_only: true, no_copy: true}}
+      - {op: add_field, after: pt_hash, field: {name: pt_key_version, type: data, label: Key Version, max_length: 10, read_only: true, no_copy: true}}
+      - {op: add_field, after: pt_key_version, field: {name: pt_hash_mention, type: data, label: Certified Software Mention, max_length: 100, read_only: true, no_copy: true}}
+      - {op: add_field, after: pt_hash_mention, field: {name: pt_qr, type: text, label: QR Code, read_only: true, no_copy: true}}
+
+roles:
+  - name: Accounts Manager
+    permissions:
+      - {entity: PtSeries, read: true, write: true, create: true, delete: true, export: true}

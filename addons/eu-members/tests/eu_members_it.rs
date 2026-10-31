@@ -61,6 +61,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     add!(ferrum_eu_members::fr);
     add!(ferrum_eu_members::it);
     add!(ferrum_eu_members::pl);
+    add!(ferrum_eu_members::pt);
     add!(ferrum_eu_members::ro);
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
@@ -215,6 +216,11 @@ async fn scenario() {
     let anaf = fake_anaf(uploads.clone()).await;
     // SAFETY: set before any connector runs, in this test's own process.
     unsafe { std::env::set_var("FERRUM_RO_ANAF_URL", &anaf) };
+    // SAFETY: as above; a throwaway key standing in for a certified producer's.
+    unsafe {
+        std::env::set_var("FERRUM_PT_SIGNING_KEY", include_str!("data/pt_test_key.pem"));
+        std::env::set_var("FERRUM_PT_CERTIFICATE", "9999");
+    }
     let k = fresh_kernel().await;
     belgium(&k).await;
     italy(&k).await;
@@ -222,6 +228,91 @@ async fn scenario() {
     romania(&k, &uploads).await;
     spain(&k).await;
     france(&k).await;
+    portugal(&k).await;
+}
+
+async fn portugal(k: &Arc<Kernel>) {
+    use rsa::pkcs8::DecodePublicKey;
+    use rsa::signature::Verifier;
+    let public = rsa::RsaPublicKey::from_public_key_pem(include_str!("data/pt_test_key.pub")).unwrap();
+    let verify = |text: &str, hash: &str| {
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, hash).unwrap();
+        let sig = rsa::pkcs1v15::Signature::try_from(bytes.as_slice()).unwrap();
+        rsa::pkcs1v15::VerifyingKey::<sha1::Sha1>::new(public.clone()).verify(text.as_bytes(), &sig).is_ok()
+    };
+    // The Despacho's first record, signed by openssl with the same key: the same 172 characters.
+    let (key, _, _) = ferrum_eu_members::pt::signing().unwrap();
+    let text = ferrum_eu_members::pt::message("2010-05-18", "2010-05-18T11:22:19", "FAC 001/14", Decimal::new(312, 2), "");
+    let ours = ferrum_eu_members::pt::sign(&key, &text);
+    assert_eq!(ours.len(), 172);
+    assert_eq!(
+        ours,
+        "qZ01CPPdn6Mt+hH4A7DfpWRjD94oWE72GCQPFNeWmmOn9eOYPOtxY9FBsdcebTYpjayvLyRvz2HoJB2Cmdk4b3jwzCZ4J+wNFquHY5IkflJ1mxIqBuD9OX8uUlnZcgFK+jDDWZ3ZqTk0lSuTwXNduA48EOFlW6hvM1cpY5ZxHf8="
+    );
+
+    let t = T::workspace(k, "pt").await;
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Lusitana Lda", "abbr": "LL", "default_currency": t.eur, "country": "Portugal", "eu_vat_number": "PT501964843",
+                   "eu_street": "Rua Augusta 1", "eu_city": "Lisboa", "eu_postal_code": "1100-048"}),
+        )
+        .await;
+    let cid = uid(&co);
+    assert!(
+        t.k.insert(&t.ctx, "Customer", obj(json!({"customer_name": "NIF errado", "eu_vat_number": "PT501964844"}))).await.is_err(),
+        "a NIF whose check digit does not hold"
+    );
+    let firm = t
+        .customer(
+            "Cliente SA",
+            json!({"eu_vat_number": "PT509442013", "customer_type": "Company"}),
+            json!({"address_line1": "Avenida da Boavista 1", "city": "Porto", "postal_code": "4100-111", "country": "Portugal"}),
+        )
+        .await;
+    let goods = t.item("MESA", json!({"eu_kind": "Goods"})).await;
+    let none = t.k.submit(&t.ctx, "SalesInvoice", uid(&t.invoice(cid, firm, goods).await), None).await;
+    assert!(format!("{none:?}").contains("PT Series"), "no series communicated yet: {none:?}");
+    t.insert("PtSeries", json!({"company": cid.to_string(), "document_type": "FT", "series": "2026", "validation_code": "CSDF7T5H"})).await;
+    t.insert("PtSeries", json!({"company": cid.to_string(), "document_type": "NC", "series": "2026", "validation_code": "NCDF7T5H"})).await;
+    let first = t.submit("SalesInvoice", uid(&t.invoice(cid, firm, goods).await)).await;
+    assert_eq!(dec(&first["total_taxes"]), Decimal::from(23), "Portugal's 23%");
+    assert_eq!((first["pt_document_no"].clone(), first["pt_atcud"].clone(), first["pt_status"].clone()), (json!("FT 2026/1"), json!("CSDF7T5H-1"), json!("N")));
+    let h1 = first["pt_hash"].as_str().unwrap().to_string();
+    let entry = first["pt_system_entry"].as_str().unwrap();
+    let date = first["posting_date"].as_str().unwrap();
+    assert!(verify(&format!("{date};{entry};FT 2026/1;123.00;"), &h1), "signed over the AT's fields, the first of its series");
+    let second = t.submit("SalesInvoice", uid(&t.invoice(cid, firm, goods).await)).await;
+    let entry2 = second["pt_system_entry"].as_str().unwrap();
+    assert!(verify(&format!("{date};{entry2};FT 2026/2;123.00;{h1}"), second["pt_hash"].as_str().unwrap()), "chained to the series' previous document");
+    let four = ferrum_eu_members::pt::four(&h1);
+    assert_eq!(first["pt_hash_mention"], json!(format!("{four}-Processado por programa certificado n.º 9999/AT")));
+    assert_eq!(
+        first["pt_qr"],
+        json!(format!(
+            "A:501964843*B:509442013*C:PT*D:FT*E:N*F:{}*G:FT 2026/1*H:CSDF7T5H-1*I1:PT*I7:100.00*I8:23.00*N:23.00*O:123.00*Q:{four}*R:9999",
+            date.replace('-', "")
+        ))
+    );
+    // A consumer is 999999990; a credit note takes the NC series; a cancelled invoice says A.
+    let person = t
+        .customer(
+            "Joana Silva",
+            json!({"customer_type": "Individual"}),
+            json!({"address_line1": "Rua do Carmo 2", "city": "Lisboa", "postal_code": "1200-093", "country": "Portugal"}),
+        )
+        .await;
+    let si = t.submit("SalesInvoice", uid(&t.invoice(cid, person, goods).await)).await;
+    assert!(si["pt_qr"].as_str().unwrap().starts_with("A:501964843*B:999999990*C:PT*D:FT"), "{:?}", si["pt_qr"]);
+    let nc = t
+        .insert("SalesInvoice", json!({"company": cid.to_string(), "customer": firm.to_string(), "is_return": true, "return_against": first["id"], "items": [{"item": goods.to_string(), "qty": "-1"}]}))
+        .await;
+    let nc = t.submit("SalesInvoice", uid(&nc)).await;
+    assert_eq!((nc["pt_document_no"].clone(), nc["pt_atcud"].clone()), (json!("NC 2026/1"), json!("NCDF7T5H-1")));
+    t.k.cancel(&t.ctx, "SalesInvoice", uid(&si), None).await.expect("cancel");
+    let cancelled = t.get("SalesInvoice", uid(&si)).await;
+    assert_eq!(cancelled["pt_status"], json!("A"));
+    assert!(cancelled["pt_qr"].as_str().unwrap().contains("*E:A*"));
 }
 
 async fn france(k: &Arc<Kernel>) {

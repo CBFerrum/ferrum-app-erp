@@ -1,0 +1,18 @@
+- name: PtSeries
+  # A document series communicated to the AT, with the validation code the AT gave it: the
+  # documents of its type take its numbers and ATCUDs, and its hash chain.
+  label: PT Series
+  kind: master
+  module: accounting
+  title_field: series
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true, in_filter: true}
+    - {name: document_type, type: select, options: [FT, FS, FR, NC, ND], required: true, in_list: true, in_filter: true,
+       description: "FT invoice, FS simplified invoice, FR invoice-receipt, NC credit note, ND debit note"}
+    - {name: series, type: data, required: true, max_length: 35, in_list: true, description: "As communicated to the AT, e.g. 2026"}
+    - {name: validation_code, type: data, required: true, max_length: 60, in_list: true, description: "The AT's code for the series (its ATCUD prefix)"}
+    - {name: last_number, type: int, read_only: true, in_list: true}
+    - {name: last_hash, type: text, read_only: true}
+    - {name: disabled, type: check, in_filter: true}
+  unique: [[company, document_type, series]]
+  list: {columns: [company, document_type, series, validation_code, last_number], sort: series asc}
