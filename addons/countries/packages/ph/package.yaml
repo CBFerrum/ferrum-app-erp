@@ -1,0 +1,24 @@
+package: ph
+version: 0.1.0
+label: "Philippines"
+description: "The Philippines' VAT for ERP. 12%, zero-rated export sales, exempt sales, VAT on services by non-residents, and the quarterly 2550Q figures."
+depends: [selling, buying]
+field_prefix: ph_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ph_tin, type: data, label: "TIN (Philippines)", max_length: 30, description: "Nine digits and the branch code: on the invoices that charge VAT"}}
+      - {op: add_section, after: tax_id, section: {label: "Philippines VAT", collapsible: true, fields: [ph_tin]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ph_tin, type: data, label: "TIN (Philippines)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ph_tin, type: data, label: "TIN (Philippines)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: ph_vat_category, type: select, label: "VAT Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: ph_vat_category, field: {name: ph_kind, type: select, label: "Goods or Services (Philippines)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

@@ -1,0 +1,25 @@
+package: jp
+version: 0.1.0
+label: "Japan"
+description: "Japan's consumption tax for ERP. 10% and the reduced 8% (food, newspapers), each worked out once per invoice, the qualified invoice issuer's registration number, export and non-taxable sales, the reverse charge, and the return's figures."
+depends: [selling, buying]
+field_prefix: jp_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30, description: "T and 13 digits: on the invoices that charge Consumption Tax"}}
+      - {op: add_field, after: jp_registration_number, field: {name: jp_reverse_charge, type: check, label: "Reverse Charge on Specified Services", description: "Taxable sales ratio under 95%: specified services bought from abroad are reverse-charged"}}
+      - {op: add_section, after: tax_id, section: {label: "Japan Consumption Tax", collapsible: true, fields: [jp_registration_number, jp_reverse_charge]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: jp_registration_number, type: data, label: "Registration Number (Qualified Invoice)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: jp_tax_category, type: select, label: "Consumption Tax Category", options: ["Standard", "Reduced", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Standard (10%); Reduced (8%: food and drink other than alcohol and dining out, subscribed newspapers)"}}
+      - {op: add_field, after: jp_tax_category, field: {name: jp_kind, type: select, label: "Goods or Services (Japan)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

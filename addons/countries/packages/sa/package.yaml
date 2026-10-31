@@ -1,0 +1,24 @@
+package: sa
+version: 0.1.0
+label: "Saudi Arabia"
+description: "Saudi Arabia's VAT for ERP. 15%, zero-rated exports and supplies, exempt supplies, the reverse charge on services from abroad, and ZATCA's VAT return boxes."
+depends: [selling, buying]
+field_prefix: sa_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sa_vat_number, type: data, label: "VAT Number (Saudi Arabia)", max_length: 30, description: "15 digits, beginning and ending with 3: on the invoices that charge VAT"}}
+      - {op: add_section, after: tax_id, section: {label: "Saudi Arabia VAT", collapsible: true, fields: [sa_vat_number]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sa_vat_number, type: data, label: "VAT Number (Saudi Arabia)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sa_vat_number, type: data, label: "VAT Number (Saudi Arabia)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: sa_vat_category, type: select, label: "VAT Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: sa_vat_category, field: {name: sa_kind, type: select, label: "Goods or Services (Saudi Arabia)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

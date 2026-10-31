@@ -1,0 +1,12 @@
+# ERP's add-on for United Arab Emirates: vAT at 5%, zero-rated and exempt supplies, the reverse charge and the VAT 201 return for ERP in the UAE. Ferrum localization.md.
+id: ae
+name: "United Arab Emirates"
+version: 0.1.0
+publisher: cbferrum
+summary: "VAT at 5%, zero-rated and exempt supplies, the reverse charge and the VAT 201 return for ERP in the UAE"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [ae]

@@ -1,0 +1,25 @@
+package: cn
+version: 0.1.0
+label: "China"
+description: "China's VAT for ERP. 13%, 9% and 6% for general taxpayers, the small-scale taxpayers' levy, exports at 0%, exempt supplies, VAT withheld on services from abroad, and the return's figures."
+depends: [selling, buying]
+field_prefix: cn_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: cn_tax_id, type: data, label: "Unified Social Credit Code", max_length: 30, description: "18 characters: on the invoices that charge VAT"}}
+      - {op: add_field, after: cn_tax_id, field: {name: cn_small_scale, type: check, label: "Small-Scale Taxpayer", description: "Levies 1% (3% from 2028) on its taxable sales and credits no input tax"}}
+      - {op: add_section, after: tax_id, section: {label: "China VAT", collapsible: true, fields: [cn_tax_id, cn_small_scale]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: cn_tax_id, type: data, label: "Unified Social Credit Code", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: cn_tax_id, type: data, label: "Unified Social Credit Code", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: cn_vat_category, type: select, label: "VAT Category", options: ["13%", "9%", "6%", "Zero Rated", "Exempt", "Out of Scope"], default: "13%",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: cn_vat_category, field: {name: cn_kind, type: select, label: "Goods or Services (China)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

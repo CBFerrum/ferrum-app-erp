@@ -1,0 +1,12 @@
+# ERP's add-on for Mexico: iVA at 16%, 8% and 0%, exempt acts, and the cash-basis IVA return for ERP in Mexico. Ferrum localization.md.
+id: mx
+name: "Mexico"
+version: 0.1.0
+publisher: cbferrum
+summary: "IVA at 16%, 8% and 0%, exempt acts, and the cash-basis IVA return for ERP in Mexico"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [mx]

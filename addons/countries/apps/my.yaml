@@ -1,0 +1,12 @@
+# ERP's add-on for Malaysia: sales and service tax (SST) and the SST-02 summary for ERP in Malaysia. Ferrum localization.md.
+id: my
+name: "Malaysia"
+version: 0.1.0
+publisher: cbferrum
+summary: "Sales and service tax (SST) and the SST-02 summary for ERP in Malaysia"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [my]
