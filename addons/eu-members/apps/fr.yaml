@@ -1,0 +1,12 @@
+# ERP's add-on for France, on the European Union's: e-invoices through the company's plateforme agréée, e-reporting, the invoice mentions, SIREN and SIRET checks, the franchise en base and the construction reverse charge. Ferrum localization.md L2.
+id: fr
+name: "France"
+version: 0.1.0
+publisher: cbferrum
+summary: "E-invoices through the plateforme agréée, e-reporting, the invoice mentions, SIREN and SIRET, the franchise en base and the construction reverse charge for ERP in France"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4", eu: ">=0.1"}
+parent: erp
+packages: [fr]

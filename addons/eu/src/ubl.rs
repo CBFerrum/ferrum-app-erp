@@ -48,6 +48,8 @@ pub struct Party {
     pub tax_number: Option<String>,
     /// The country subdivision (BT-39, BT-54): a county or region, as national profiles code it.
     pub subdivision: Option<String>,
+    /// The legal registration identifier (BT-30, BT-47) and its scheme (France's SIREN: 0002).
+    pub legal_id: Option<(String, String)>,
 }
 
 /// How to pay: a UNCL4461 code (58: SEPA credit transfer) to an account.
@@ -284,7 +286,11 @@ fn party(out: &mut String, tag: &str, p: &Party) {
         let _ =
             write!(out, "<cac:PartyTaxScheme><cbc:CompanyID>{}</cbc:CompanyID><cac:TaxScheme><cbc:ID>FC</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>", esc(n));
     }
-    let _ = write!(out, "<cac:PartyLegalEntity><cbc:RegistrationName>{}</cbc:RegistrationName></cac:PartyLegalEntity>", esc(&p.name));
+    let _ = write!(out, "<cac:PartyLegalEntity><cbc:RegistrationName>{}</cbc:RegistrationName>", esc(&p.name));
+    if let Some((scheme, ident)) = &p.legal_id {
+        let _ = write!(out, "<cbc:CompanyID schemeID=\"{}\">{}</cbc:CompanyID>", esc(scheme), esc(ident));
+    }
+    out.push_str("</cac:PartyLegalEntity>");
     if let Some((name, phone, email)) = &p.contact {
         let _ = write!(
             out,
@@ -739,6 +745,7 @@ mod tests {
             contact: None,
             tax_number: None,
             subdivision: None,
+            legal_id: None,
         };
         Invoice {
             number: "SINV-26-00001".into(),

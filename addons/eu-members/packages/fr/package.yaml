@@ -1,0 +1,41 @@
+package: fr
+version: 0.1.0
+label: France
+description: "France for ERP, on the EU's VAT. Invoices between French businesses go to the company's plateforme agréée as EN 16931 e-invoices with both SIRENs, the PA's statuses recorded; the e-reporting report sums the other sales; invoices carry the category of the operation, the option for VAT on debits, and between businesses the late-payment penalties and the €40 indemnity; SIREN, SIRET and French VAT numbers checked; the franchise en base (293 B) and the construction reverse charge (283-2 nonies)."
+depends: [eu]
+field_prefix: fr_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: fr_siren, type: data, label: SIREN, max_length: 11, visible_if: "doc.country_code == 'FR'", description: "Taken from the French VAT number when empty"}}
+      - {op: add_field, after: fr_siren, field: {name: fr_siret, type: data, label: SIRET, max_length: 17, visible_if: "doc.country_code == 'FR'"}}
+      - {op: add_field, after: fr_siret, field: {name: fr_rcs, type: data, label: RCS, max_length: 80, visible_if: "doc.country_code == 'FR'", description: "e.g. RCS Paris B 732 829 320"}}
+      - {op: add_field, after: fr_rcs, field: {name: fr_penalty_rate, type: data, label: Late-Payment Penalty Rate, max_length: 100, visible_if: "doc.country_code == 'FR'",
+          description: "As its terms state it; empty: three times the legal interest rate"}}
+      - {op: add_field, after: fr_penalty_rate, field: {name: fr_vat_on_debits, type: check, label: VAT on Debits (option), visible_if: "doc.country_code == 'FR'",
+          description: "Pays VAT on services when invoiced, not when paid: its invoices say so"}}
+      - {op: add_field, after: fr_vat_on_debits, field: {name: fr_franchise, type: check, label: Franchise en Base (article 293 B), visible_if: "doc.country_code == 'FR'",
+          description: "No VAT on its sales, and its invoices say why"}}
+      - {op: add_field, after: fr_franchise, field: {name: fr_pa_on_submit, type: check, default: true, label: Send E-invoices to the PA on Submit, visible_if: "doc.country_code == 'FR'"}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: eu_peppol_id, field: {name: fr_siren, type: data, label: SIREN, max_length: 11}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: eu_vat_number, field: {name: fr_siren, type: data, label: SIREN, max_length: 11}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: fr_reverse_charge, type: check, label: Reverse Charge (France),
+          description: "Subcontracting in construction (283-2 nonies du CGI): the contractor accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: eu_peppol_status, field: {name: fr_pa_status, type: select, label: Plateforme Agréée, options: [Pending, Deposited, Rejected, Refused, Disputed, Approved, Paid],
+          read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: fr_pa_status, field: {name: fr_pa_id, type: data, label: PA Reference, read_only: true, no_copy: true}}
+      - {op: add_field, after: fr_pa_id, field: {name: fr_pa_error, type: text, label: PA Message, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: fr_ubl, group: e-Invoice, label: Download E-invoice (UBL), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: fr_send_pa, group: e-Invoice, label: Send to the PA, docstatus: [1], permission: submit, condition: "doc.fr_pa_status != 'Deposited'"}}
+      - {op: add_action, action: {name: fr_record_pa, group: e-Invoice, label: Record the PA's Status, docstatus: [1], permission: submit,
+          params: [{name: status, label: Status, type: select, options: [Deposited, Rejected, Refused, Disputed, Approved, Paid], required: true}, {name: pa_id, label: PA Reference, type: data},
+                   {name: message, label: Message, type: text}]}}
