@@ -1,0 +1,13 @@
+# ERP's add-on for Canada: GST/HST by province of supply, provincial sales taxes (PST, RST, QST)
+# where the company is registered, and the GST/HST return. Ferrum localization.md L5.
+id: ca
+name: Canada
+version: 0.1.0
+publisher: cbferrum
+summary: GST/HST, PST and QST by province for ERP in Canada
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [ca]

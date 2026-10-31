@@ -1,5 +1,19 @@
 # Changelog
 
+## Canada 0.1.0
+
+- Canada's add-on, `ferrum-ca` (`addons/ca`, Ferrum localization.md L5), for a company in Canada,
+  with the CRA's rates as dated data: GST 5%; HST 13% (Ontario), 15% (New Brunswick,
+  Newfoundland and Labrador, Prince Edward Island), 14% in Nova Scotia from 1 April 2025 (15%
+  before); PST 7% (British Columbia), RST 7% (Manitoba), PST 6% (Saskatchewan); QST 9.975%.
+  - Each line is taxed in its province of supply: goods where delivered (the ship-to), services by
+    the customer's address; outside Canada, a zero-rated export.
+  - PST or RST where the company collects it (its registrations), unless the item is not subject
+    to it or the customer buys for resale; QST in Quebec when the company is registered.
+  - Zero-rated and exempt items carry no GST/HST.
+  - Purchases: the GST/HST (and QST in Quebec) the company recovers.
+  - The GST/HST return (GST34 lines 101, 103, 106, 109) and the QST return, from the books.
+
 ## The United Kingdom 0.1.0
 
 - The UK's add-on, `ferrum-gb` (`addons/gb`, Ferrum localization.md L3), for a company in the UK:
