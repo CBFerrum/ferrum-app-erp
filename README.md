@@ -31,12 +31,12 @@ invoicing records, the recargo de equivalencia), the United Kingdom's (VAT, the 
 charge, Making Tax Digital returns), Canada's (GST/HST, PST and QST by province), the United
 States' (sales and use tax by destination, exemption certificates, AvaTax reporting, economic
 nexus, Forms 1099) and thirteen more on one VAT/GST engine (South East Asia, the Gulf, Australia,
-New Zealand, Japan, Mexico and China) are built. Point of Sale, Commerce, Assets, Field Service,
+New Zealand, Japan, Mexico and China, five with Peppol PINT e-invoices) are built. Point of Sale, Commerce, Assets, Field Service,
 HR and CRM build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.4.0` (the thirteen of `ferrum-countries` `0.1.0`, the United States `0.1.0`, Canada `0.1.0`, the United Kingdom `0.1.0`, Germany `0.1.0`, Belgium, Italy, Poland, Romania, Spain and France `0.1.0`, the European Union `0.1.5`, India `0.2.1`, the other add-ons `0.1.1`) |
+| 📦 Version | `0.4.0` (the thirteen of `ferrum-countries` `0.1.0`, Singapore, Australia, New Zealand, Japan and the UAE `0.1.1`, the United States `0.1.0`, Canada `0.1.0`, the United Kingdom `0.1.0`, Germany `0.1.0`, Belgium, Italy, Poland, Romania, Spain and France `0.1.0`, the European Union `0.1.6`, India `0.2.1`, the other add-ons `0.1.1`) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
@@ -70,7 +70,7 @@ HR and CRM build on its engine.
 | 🇪🇺 | **Belgium, Italy, Poland, Romania, Spain, France** (`ferrum-eu-members`, on the EU's) | Each country's e-invoicing mandate and home rules: Belgium's Peppol between businesses (enterprise numbers as 0208 IDs); Italy's FatturaPA through SDI (Natura, the virtual stamp duty, SDI's receipts); Poland's FA(3) through KSeF (corrections citing KSeF numbers); Romania's CIUS-RO through ANAF's e-Factura (storno corrections); Spain's VERI\*FACTU invoicing records (each chained to the last by AEAT's SHA-256 fingerprint, with the verification QR code, sent to AEAT through the outbox), the recargo de equivalencia, and the Canary Islands, Ceuta and Melilla outside the VAT area; France's e-invoices through the company's plateforme agréée (both parties' SIRENs, the platform's statuses, corrections by avoir), e-reporting of the other sales, and the invoice's mandatory mentions. Small businesses' exemptions and the domestic reverse charge in all but Spain |
 | 🇬🇧 | **United Kingdom** (`ferrum-gb`) | UK VAT (20%, 5%, zero-rated, exempt), the construction industry's reverse charge (CIS), exports and services abroad, reverse-charged services from abroad, VAT numbers checked by HMRC's check digits, and VAT returns (the nine boxes) filed through HMRC's Making Tax Digital API |
 | 🇺🇸 | **United States** (`ferrum-us`) | Sales tax by destination (by origin within origin-based states) at the ZIP code's combined rate from the states' rate tables, only where the company is registered; marketplace facilitators, exemption certificates and product taxability by state; use tax on untaxed purchases; sales reported to Avalara AvaTax; sales tax by jurisdiction, economic nexus and Forms 1099 reports |
-| 🌏 | **Thirteen more countries** (`ferrum-countries`) | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return (below) |
+| 🌏 | **Thirteen more countries** (`ferrum-countries`) | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; Peppol PINT e-invoices for Singapore (InvoiceNow), Australia, New Zealand, Japan and the UAE, checked against PINT's rules and sent through the company's access point on submit (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
 | 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
@@ -81,21 +81,21 @@ HR and CRM build on its engine.
 <details>
 <summary><b>The thirteen countries of <code>ferrum-countries</code></b></summary>
 
-| | Country | Tax | Return |
-|---|---|---|---|
-| 🇸🇬 | Singapore | GST 9% (8% in 2023, 7% before), the reverse charge for RC businesses | GST F5 |
-| 🇲🇾 | Malaysia | sales tax 10% and 5%, service tax 8% and 6%, not recovered; service tax on imported services | SST-02 |
-| 🇮🇩 | Indonesia | PPN 12% on 11/12 of the price, luxury goods at 12%; the 16-digit NPWP | SPT Masa PPN |
-| 🇹🇭 | Thailand | VAT 7%; the 13-digit tax ID's check digit | PP.30 |
-| 🇵🇭 | The Philippines | VAT 12% | 2550Q |
-| 🇻🇳 | Vietnam | VAT 10%, 5% and the temporary 8% | 01/GTGT |
-| 🇸🇦 | Saudi Arabia | VAT 15% (5% before July 2020) | ZATCA's VAT return |
-| 🇦🇪 | The United Arab Emirates | VAT 5% | VAT 201, by emirate |
-| 🇦🇺 | Australia | GST 10%, GST-free and input-taxed supplies; the ABN's check | the BAS's GST labels |
-| 🇳🇿 | New Zealand | GST 15%; the IRD number's check | GST101A |
-| 🇯🇵 | Japan | consumption tax 10% and the reduced 8%, once per rate per invoice (qualified invoices); the T-number | national and local parts |
-| 🇲🇽 | Mexico | IVA 16%, the border regions' 8%, 0% and exempt; the RFC | IVA, on a cash basis |
-| 🇨🇳 | China | VAT 13%, 9% and 6%; small-scale taxpayers' 1% without input credit; the unified social credit code | — |
+| | Country | Tax | Return | E-invoices |
+|---|---|---|---|---|
+| 🇸🇬 | Singapore | GST 9% (8% in 2023, 7% before), the reverse charge for RC businesses | GST F5 | PINT SG through InvoiceNow (UEN) |
+| 🇲🇾 | Malaysia | sales tax 10% and 5%, service tax 8% and 6%, not recovered; service tax on imported services | SST-02 | — |
+| 🇮🇩 | Indonesia | PPN 12% on 11/12 of the price, luxury goods at 12%; the 16-digit NPWP | SPT Masa PPN | — |
+| 🇹🇭 | Thailand | VAT 7%; the 13-digit tax ID's check digit | PP.30 | — |
+| 🇵🇭 | The Philippines | VAT 12% | 2550Q | — |
+| 🇻🇳 | Vietnam | VAT 10%, 5% and the temporary 8% | 01/GTGT | — |
+| 🇸🇦 | Saudi Arabia | VAT 15% (5% before July 2020) | ZATCA's VAT return | — |
+| 🇦🇪 | The United Arab Emirates | VAT 5% | VAT 201, by emirate | PINT AE (the TIN from the TRN) |
+| 🇦🇺 | Australia | GST 10%, GST-free and input-taxed supplies; the ABN's check | the BAS's GST labels | PINT A-NZ (ABN) |
+| 🇳🇿 | New Zealand | GST 15%; the IRD number's check | GST101A | PINT A-NZ (NZBN) |
+| 🇯🇵 | Japan | consumption tax 10% and the reduced 8%, once per rate per invoice (qualified invoices); the T-number | national and local parts | JP PINT (T-number) |
+| 🇲🇽 | Mexico | IVA 16%, the border regions' 8%, 0% and exempt; the RFC | IVA, on a cash basis | — |
+| 🇨🇳 | China | VAT 13%, 9% and 6%; small-scale taxpayers' 1% without input credit; the unified social credit code | — | — |
 
 </details>
 
@@ -327,6 +327,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **Singapore, Australia, New Zealand, Japan, UAE 0.1.1** | Peppol PINT e-invoices in `ferrum-countries`: PINT SG for InvoiceNow, PINT A-NZ, JP PINT and PINT AE, each with its tax scheme, category codes and participants' electronic addresses (UEN, ABN, NZBN, the T-number, the TIN), checked against PINT's rules and sent through the company's Peppol access point on submit, the access point's answer recorded. The EU 0.1.6's UBL writer takes a profile, transaction type and tax scheme. |
 | **France 0.1.0** | France in `ferrum-eu-members`, for the e-invoicing reform: invoices to French businesses queued on submit for the company's plateforme agréée as EN 16931 UBL with both parties' SIRENs, the platform's lifecycle statuses recorded, corrections by avoir; e-reporting of the other sales by day and rate; the invoice's mandatory mentions; SIREN, SIRET and VAT number keys checked; the franchise en base (article 293 B) and the construction reverse charge (283-2 nonies). The EU 0.1.5 writes the parties' legal registration identifiers. |
 | **Spain 0.1.0** | Spain in `ferrum-eu-members`: VERI\*FACTU invoicing records chained by AEAT's SHA-256 fingerprint (AEAT's test vectors pass), cancellation records, the verification QR code, and records sent to AEAT through the outbox when the company uses VERI\*FACTU; NIFs checked; the recargo de equivalencia; the Canary Islands, Ceuta and Melilla outside the VAT area. |
 | **Belgium, Italy, Poland, Romania 0.1.0** | `ferrum-eu-members` on the EU's add-on: Belgium's Peppol between businesses, Italy's FatturaPA through SDI, Poland's FA(3) through KSeF and Romania's CIUS-RO through ANAF's e-Factura, with each country's small business exemption and domestic reverse charge. The EU 0.1.4 writes the parties' country subdivisions. |
