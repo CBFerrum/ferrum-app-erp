@@ -1,0 +1,48 @@
+package: it
+version: 0.1.0
+label: Italy
+description: "Italy for ERP, on the EU's VAT. Every invoice is a FatturaPA (FPR12) cleared through the Sistema di Interscambio: written from the invoice with the Natura of lines without VAT, checked against SDI's rules, queued for the company's SDI channel and its receipts recorded; the virtual stamp duty; the regime forfettario; the domestic reverse charge."
+depends: [eu]
+field_prefix: it_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: it_codice_fiscale, type: data, label: Codice Fiscale, max_length: 16, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_codice_fiscale, field: {name: it_regime_fiscale, type: select, label: Regime Fiscale, default: RF01, visible_if: "doc.country_code == 'IT'",
+          options: [RF01, RF02, RF04, RF05, RF06, RF07, RF08, RF09, RF10, RF11, RF12, RF13, RF14, RF15, RF16, RF17, RF18, RF19, RF20],
+          description: "RF01: regime ordinario; RF19: regime forfettario"}}
+      - {op: add_field, after: it_regime_fiscale, field: {name: it_forfettario, type: check, label: Regime Forfettario, visible_if: "doc.country_code == 'IT'",
+          description: "No VAT on its sales (art. 1, commi 54-89, L. 190/2014): its invoices say so (Natura N2.2, RF19)"}}
+      - {op: add_field, after: it_forfettario, field: {name: it_provincia, type: data, label: Provincia, max_length: 2, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_provincia, field: {name: it_rea_ufficio, type: data, label: REA Office (Provincia), max_length: 2, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_rea_ufficio, field: {name: it_rea_numero, type: data, label: REA Number, max_length: 20, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_rea_numero, field: {name: it_in_liquidazione, type: check, label: In Liquidation, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_in_liquidazione, field: {name: it_bollo_virtuale, type: check, label: Virtual Stamp Duty, visible_if: "doc.country_code == 'IT'",
+          description: "Authorised to pay stamp duty virtually: invoices with more than €77.47 not subject to VAT carry the €2 bollo"}}
+      - {op: add_field, after: it_bollo_virtuale, field: {name: it_sdi_on_submit, type: check, default: true, label: Send Invoices to SDI on Submit, visible_if: "doc.country_code == 'IT'"}}
+      - {op: add_field, after: it_sdi_on_submit, field: {name: it_sdi_counter, type: int, label: SDI Transmissions, read_only: true, hidden: true}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: eu_peppol_id, field: {name: it_codice_destinatario, type: data, label: Codice Destinatario, max_length: 7,
+          description: "The 7-character code of its SDI channel; empty: its PEC, else 0000000 (Italy) or XXXXXXX (abroad)"}}
+      - {op: add_field, after: it_codice_destinatario, field: {name: it_pec, type: email, label: PEC}}
+      - {op: add_field, after: it_pec, field: {name: it_codice_fiscale, type: data, label: Codice Fiscale, max_length: 16}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: it_natura, type: select, label: Natura (Italy),
+          options: [N1, N2.1, N2.2, N3.1, N3.2, N3.3, N3.4, N3.5, N3.6, N4, N5, N6.1, N6.2, N6.3, N6.4, N6.5, N6.6, N6.7, N6.8, N6.9, N7],
+          description: "Its FatturaPA Natura when sold without VAT, where the category does not tell it (N4 exempt, N6.x the reverse charge's case)"}}
+      - {op: add_field, after: it_natura, field: {name: it_reverse_charge, type: check, label: Reverse Charge (Italy),
+          description: "Subcontracting in construction, scrap, buildings and the like: a VAT-registered customer accounts for the VAT (art. 17, comma 6)"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: eu_peppol_status, field: {name: it_sdi_status, type: select, label: SDI, options: [Pending, Sent, Delivered, Rejected, Not Delivered],
+          read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, after: it_sdi_status, field: {name: it_sdi_file, type: data, label: SDI File, read_only: true, no_copy: true}}
+      - {op: add_field, after: it_sdi_file, field: {name: it_sdi_id, type: data, label: SDI Identifier, read_only: true, no_copy: true}}
+      - {op: add_field, after: it_sdi_id, field: {name: it_sdi_error, type: text, label: SDI Message, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: it_fatturapa, group: e-Invoice, label: Download FatturaPA, docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: it_send_sdi, group: e-Invoice, label: Send to SDI, docstatus: [1], permission: submit, condition: "doc.it_sdi_status != 'Delivered'"}}
+      - {op: add_action, action: {name: it_record_sdi, group: e-Invoice, label: Record SDI Receipt, docstatus: [1], permission: submit,
+          params: [{name: receipt, label: SDI's Receipt, type: select, options: [RC, NS, MC, AT, DT, NE, EC], required: true}, {name: sdi_id, label: SDI Identifier, type: data}, {name: message, label: SDI's Message, type: text}]}}

@@ -1,5 +1,28 @@
 # Changelog
 
+## Belgium, Italy and Poland 0.1.0, and the European Union 0.1.3
+
+- `ferrum-eu-members` (`addons/eu-members`, Ferrum localization.md L2): member states on the EU's
+  add-on, each its own app, with what they add to the EU's VAT at home (small businesses'
+  exemptions and the domestic reverse charge, each with its note on the invoice):
+  - Belgium (`be`): invoices to Belgian VAT-registered businesses go through Peppol on submit
+    (mandatory since 1 January 2026; one without both parties' Peppol IDs is refused); enterprise
+    numbers (KBO/BCE) checked (modulo 97) and turned into 0208 Peppol IDs; the small business
+    franchise (article 56bis) and the contractors' reverse charge, in French and Dutch.
+  - Italy (`it`): FatturaPA (FPR12, schema 1.2.3) from the EN 16931 model with the Italian data
+    (codice fiscale, regime fiscale, REA, codice destinatario or PEC; XXXXXXX and CAP 00000
+    abroad), the Natura of lines without VAT (exports N3.1, intra-Community N3.2, services abroad
+    N2.1, exempt N4, the reverse charge N6.x), the €2 virtual stamp duty over €77.47 not subject to
+    VAT, checked against SDI's rules and queued for the company's SDI channel with the next
+    progressive; SDI's receipts recorded; a delivered invoice is corrected by a credit note, not
+    cancelled; partite IVA checked; the regime forfettario (RF19, N2.2).
+  - Poland (`pl`): FA(3) structured invoices for KSeF (namespace of 25 June 2025, variant 3) with
+    the rate codes (23, 8, 5, 0 KR, 0 WDT, 0 EX, zw, np I, np II, oo) and amounts by rate, the
+    annotations, payment by transfer; corrections (KOR) cite the corrected invoice's KSeF number;
+    queued for the company's KSeF channel; KSeF numbers recorded after their CRC-8 check; NIPs
+    checked; the small business exemption (article 113).
+- The EU's Peppol hand-over is a function (`ubl::send_peppol`) that member states call on submit.
+
 ## South East Asia, the Gulf, Australia, New Zealand, Japan, Mexico and China 0.1.0
 
 - `ferrum-countries` (`addons/countries`, Ferrum localization.md L6 and L7): thirteen apps, one per

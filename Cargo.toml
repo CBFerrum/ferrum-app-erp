@@ -4,7 +4,7 @@
 # platform's crates, taken from Ferrum's main, and other apps build on this one.
 [workspace]
 resolver = "3"
-members = [".", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
+members = [".", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/eu-members", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
 
 [workspace.package]
 version = "0.1.0"

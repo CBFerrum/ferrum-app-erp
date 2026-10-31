@@ -1,0 +1,27 @@
+[package]
+name = "ferrum-eu-members"
+description = "EU member states for Ferrum ERP on the European Union's add-on, each its own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI) and Poland (FA(3) through KSeF)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+ferrum-eu = { path = "../eu" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+
+[lints]
+workspace = true

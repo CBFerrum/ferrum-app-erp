@@ -1,0 +1,12 @@
+# ERP's add-on for Belgium, on the European Union's: Peppol e-invoices between Belgian businesses, enterprise numbers, the small business franchise and the construction reverse charge. Ferrum localization.md L2.
+id: be
+name: "Belgium"
+version: 0.1.0
+publisher: cbferrum
+summary: "Peppol e-invoices between Belgian businesses, enterprise numbers, the small business franchise and the construction reverse charge for ERP in Belgium"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4", eu: ">=0.1"}
+parent: erp
+packages: [be]

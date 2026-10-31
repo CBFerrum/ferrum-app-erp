@@ -624,6 +624,33 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
     Ok(inv)
 }
 
+/// Queues a submitted invoice for the company's Peppol access point (`inv`: the invoice as a
+/// national profile writes it, else EN 16931's).
+pub async fn send_peppol(hc: &mut HookCtx<'_>, doc: &Doc, inv: Option<Invoice>) -> Result<Value> {
+    if matches!(s(doc, "eu_peppol_status"), Some("Sent" | "Pending")) {
+        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "eu_peppol_status").unwrap_or_default().to_lowercase())));
+    }
+    let inv = match inv {
+        Some(i) => i,
+        None => invoice(hc, doc).await?,
+    };
+    if !inv.peppol() {
+        return Err(Error::invalid("the company and the customer both need a Peppol ID (scheme:identifier) to send through Peppol"));
+    }
+    let xml = to_xml(&inv);
+    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
+    let (scheme, ident) = inv.buyer.endpoint.clone().unwrap_or_default();
+    let (s_scheme, s_ident) = inv.seller.endpoint.clone().unwrap_or_default();
+    let event = json!({
+        "invoice": iid, "number": s(doc, "number"), "company": s(doc, "company"),
+        "sender": format!("{s_scheme}:{s_ident}"), "receiver": format!("{scheme}:{ident}"),
+        "document_type": if inv.credit_note { "credit_note" } else { "invoice" }, "ubl": xml,
+    });
+    EInvoiceHook::save(hc, doc, json!({"eu_peppol_status": "Pending", "eu_peppol_error": null, "eu_peppol_message_id": null})).await?;
+    outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
+    Ok(json!({"status": "Pending"}))
+}
+
 /// A sales invoice's e-invoice actions.
 pub struct EInvoiceHook;
 
@@ -664,27 +691,7 @@ impl DocHook for EInvoiceHook {
                 let xml = to_xml(&inv);
                 Ok(Some(json!({"peppol": inv.peppol(), "file": {"name": format!("{number}.xml"), "type": "application/xml", "content": xml}})))
             }
-            "eu_send_peppol" => {
-                if matches!(s(doc, "eu_peppol_status"), Some("Sent" | "Pending")) {
-                    return Err(Error::invalid(format!("the invoice is already {}", s(doc, "eu_peppol_status").unwrap_or_default().to_lowercase())));
-                }
-                let inv = invoice(hc, doc).await?;
-                if !inv.peppol() {
-                    return Err(Error::invalid("the company and the customer both need a Peppol ID (scheme:identifier) to send through Peppol"));
-                }
-                let xml = to_xml(&inv);
-                let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-                let (scheme, ident) = inv.buyer.endpoint.clone().unwrap_or_default();
-                let (s_scheme, s_ident) = inv.seller.endpoint.clone().unwrap_or_default();
-                let event = json!({
-                    "invoice": iid, "number": s(doc, "number"), "company": s(doc, "company"),
-                    "sender": format!("{s_scheme}:{s_ident}"), "receiver": format!("{scheme}:{ident}"),
-                    "document_type": if inv.credit_note { "credit_note" } else { "invoice" }, "ubl": xml,
-                });
-                Self::save(hc, doc, json!({"eu_peppol_status": "Pending", "eu_peppol_error": null, "eu_peppol_message_id": null})).await?;
-                outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-                Ok(Some(json!({"status": "Pending"})))
-            }
+            "eu_send_peppol" => send_peppol(hc, doc, None).await.map(Some),
             "eu_record_peppol" => {
                 if s(doc, "eu_peppol_status") != Some("Pending") {
                     return Err(Error::invalid("only an invoice waiting for its access point is recorded as sent"));
