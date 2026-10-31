@@ -22,27 +22,21 @@ is append-only and balanced in the database. Documents carry exact tax maths, st
 an append-only ledger with moving-average and FIFO cost layers (a backdated entry posts forward;
 nothing is ever reposted), and every figure the reports show comes from the same ledger. Its
 add-ons bring budgets and bank reconciliation, procurement, stock operations and manufacturing
-operations. A country's taxes and rules are an add-on too, on one localization seam: India's (GST,
-e-invoices and e-way bills), the European Union's (VAT, VIES, the One-Stop Shop, EN 16931
-e-invoices over Peppol), Germany's (XRechnung, small businesses, the domestic reverse charge),
-Belgium's, Italy's, Poland's and Romania's (their e-invoicing mandates: Peppol, SDI, KSeF,
-e-Factura), France's (e-invoices through a plateforme agréée, e-reporting), Spain's (VERI\*FACTU
-invoicing records, the recargo de equivalencia), Portugal's (certified invoices: the ATCUD, the
-signed hash chain, the QR code), the United Kingdom's (VAT, the CIS reverse charge, Making Tax
-Digital returns), Canada's (GST/HST, PST and QST by province), the United States' (sales and use
-tax by destination, exemption certificates, AvaTax reporting, economic nexus, Forms 1099) and
-thirteen more on one VAT/GST engine (South East Asia, the Gulf, Australia, New Zealand, Japan,
-Mexico and China, six of them with e-invoices) are built. Point of Sale, Commerce, Assets, Field
-Service, HR and CRM build on its engine.
+operations. A country's taxes and rules are an add-on too, on one localization seam, and 26 are
+built: India's GST with e-invoices and e-way bills, the European Union's VAT with eight member
+states' e-invoicing and invoice rules, the United Kingdom's VAT with Making Tax Digital, sales and
+use tax across the United States, Canada's GST/HST, PST and QST, and thirteen more countries on
+one VAT/GST engine, six of them with e-invoices. Point of Sale, Commerce, Assets, Field Service, HR
+and CRM build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.4.0` (the thirteen of `ferrum-countries` `0.1.0`, Singapore, Malaysia, Australia, New Zealand, Japan and the UAE `0.1.1`, the United States `0.1.0`, Canada `0.1.0`, the United Kingdom `0.1.0`, Germany `0.1.0`, Belgium, Italy, Poland, Spain, France and Portugal `0.1.0`, Romania `0.1.1`, the European Union `0.1.6`, India `0.2.1`, the other add-ons `0.1.1`) |
+| 📦 Version | `0.4.0`, with each add-on's own version in [the add-ons table](#add-ons) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
-| 🧩 Add-ons | the European Union, Germany, Belgium, Italy, Poland, Romania, Spain, France, Portugal, the United Kingdom, the United States, Canada, thirteen more countries, India, Finance, Procurement, Stock Operations, Manufacturing Operations (`addons/`) |
-| 🌍 Countries | add-ons on the localization seam: 26 built (India, the European Union, Germany, Belgium, Italy, Poland, Romania, Spain, France, Portugal, the United Kingdom, the United States, Canada, and Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China); the mandates of Croatia, Greece and Hungary follow ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
+| 🧩 Add-ons | Finance, Procurement, Stock Operations and Manufacturing Operations, and every country's (`addons/`) |
+| 🌍 Countries | 26 on the localization seam: India, the European Union and eight of its members, the United Kingdom, the United States, Canada, and thirteen more in South East Asia, the Gulf, Oceania, East Asia and Mexico; next, Croatia, Greece and Hungary ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
 | 🔌 Built on by | Point of Sale, Commerce, Assets, Field Service, HR and CRM |
 | 👥 Roles | Accounts, Sales, Purchase, Stock and Manufacturing managers and users |
 
@@ -64,20 +58,35 @@ Service, HR and CRM build on its engine.
 
 ### Add-ons
 
-| | Add-on | What it adds |
-|---|---|---|
-| 🇪🇺 | **European Union** (`ferrum-eu`) | EU VAT for a company in a member state: home rates, intra-Community supplies and reverse charge with VAT numbers confirmed in VIES, the One-Stop Shop for sales to consumers elsewhere in the EU, exports and acquisitions; rates from the Commission's TEDB; EN 16931 e-invoices (Peppol BIS Billing 3.0) handed to the company's Peppol access point; the EC sales list and the OSS return |
-| 🇩🇪 | **Germany** (`ferrum-de`, on the EU's) | XRechnung 3.0 e-invoices checked against KoSIT's rules (a public buyer's Leitweg-ID, a valid IBAN, both electronic addresses), small businesses (§ 19 UStG) invoicing without VAT, and the domestic reverse charge (§ 13b UStG) |
-| 🇪🇺 | **Belgium, Italy, Poland, Romania, Spain, France, Portugal** (`ferrum-eu-members`, on the EU's) | Each country's e-invoicing mandate and home rules: Belgium's Peppol between businesses (enterprise numbers as 0208 IDs); Italy's FatturaPA through SDI (Natura, the virtual stamp duty, SDI's receipts); Poland's FA(3) through KSeF (corrections citing KSeF numbers); Romania's CIUS-RO uploaded to ANAF's e-Factura over the company's own connection, ANAF's verdict followed up (storno corrections); Spain's VERI\*FACTU invoicing records (each chained to the last by AEAT's SHA-256 fingerprint, with the verification QR code, sent to AEAT through the outbox), the recargo de equivalencia, and the Canary Islands, Ceuta and Melilla outside the VAT area; France's e-invoices through the company's plateforme agréée (both parties' SIRENs, the platform's statuses, corrections by avoir), e-reporting of the other sales, and the invoice's mandatory mentions; Portugal's certified invoices (each numbered in a series communicated to the AT, with its ATCUD, signed over the series' previous signature and printed with the QR code), signed with the software producer's key set on the server. Small businesses' exemptions and the domestic reverse charge in all but Spain |
-| 🇬🇧 | **United Kingdom** (`ferrum-gb`) | UK VAT (20%, 5%, zero-rated, exempt), the construction industry's reverse charge (CIS), exports and services abroad, reverse-charged services from abroad, VAT numbers checked by HMRC's check digits, and VAT returns (the nine boxes) filed through HMRC's Making Tax Digital API |
-| 🇺🇸 | **United States** (`ferrum-us`) | Sales tax by destination (by origin within origin-based states) at the ZIP code's combined rate from the states' rate tables, only where the company is registered; marketplace facilitators, exemption certificates and product taxability by state; use tax on untaxed purchases; sales reported to Avalara AvaTax; sales tax by jurisdiction, economic nexus and Forms 1099 reports |
-| 🌏 | **Thirteen more countries** (`ferrum-countries`) | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit: Peppol PINT for Singapore (InvoiceNow), Australia, New Zealand, Japan and the UAE through the company's access point, and Malaysia's through LHDN's MyInvois (below) |
-| 🇨🇦 | **Canada** (`ferrum-ca`) | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
-| 🇮🇳 | **India** (`ferrum-india`) | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
-| 💰 | **Finance** | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
-| 📋 | **Procurement** | material requests, requests for quotation, supplier quotations and scorecards |
-| 🏷️ | **Stock Operations** | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
-| ⚙️ | **Manufacturing Operations** | workstations, operations, routings, job cards, production planning and subcontracting |
+| | Add-on | Version | What it adds |
+|---|---|---|---|
+| 🇪🇺 | **European Union** (`ferrum-eu`) | `0.1.6` | EU VAT for a company in a member state: home rates, intra-Community supplies and reverse charge with VAT numbers confirmed in VIES, the One-Stop Shop for sales to consumers elsewhere in the EU, exports and acquisitions; rates from the Commission's TEDB; EN 16931 e-invoices (Peppol BIS Billing 3.0) handed to the company's Peppol access point; the EC sales list and the OSS return |
+| 🇩🇪 | **Germany** (`ferrum-de`, on the EU's) | `0.1.0` | XRechnung 3.0 e-invoices checked against KoSIT's rules (a public buyer's Leitweg-ID, a valid IBAN, both electronic addresses), small businesses (§ 19 UStG) invoicing without VAT, and the domestic reverse charge (§ 13b UStG) |
+| 🇪🇺 | **Belgium, Italy, Poland, Romania, Spain, France, Portugal** (`ferrum-eu-members`, on the EU's) | `0.1.0`–`0.1.1` | Each its own app: what the country's law asks of invoices (e-invoices through its network, chained records or certified software) and what it adds to the EU's VAT at home (below) |
+| 🇬🇧 | **United Kingdom** (`ferrum-gb`) | `0.1.0` | UK VAT (20%, 5%, zero-rated, exempt), the construction industry's reverse charge (CIS), exports and services abroad, reverse-charged services from abroad, VAT numbers checked by HMRC's check digits, and VAT returns (the nine boxes) filed through HMRC's Making Tax Digital API |
+| 🇺🇸 | **United States** (`ferrum-us`) | `0.1.0` | Sales tax by destination (by origin within origin-based states) at the ZIP code's combined rate from the states' rate tables, only where the company is registered; marketplace facilitators, exemption certificates and product taxability by state; use tax on untaxed purchases; sales reported to Avalara AvaTax; sales tax by jurisdiction, economic nexus and Forms 1099 reports |
+| 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
+| 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.0` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
+| 🇮🇳 | **India** (`ferrum-india`) | `0.2.1` | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
+| 💰 | **Finance** | `0.1.1` | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
+| 📋 | **Procurement** | `0.1.1` | material requests, requests for quotation, supplier quotations and scorecards |
+| 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
+| ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
+
+<details>
+<summary><b>The member states of <code>ferrum-eu-members</code></b></summary>
+
+| | Country | What the law asks | What ERP does | At home |
+|---|---|---|---|---|
+| 🇧🇪 | Belgium | Peppol between Belgian businesses (since 1 January 2026) | sends each invoice to a Belgian business through the EU's Peppol hand-over on submit, refusing one without both parties' Peppol IDs; enterprise numbers (KBO/BCE) checked and used as 0208 IDs | the small business franchise (article 56bis) and the contractors' reverse charge, in French and Dutch |
+| 🇮🇹 | Italy | FatturaPA through SDI (since 2019) | writes FPR12 (schema 1.2.3) with the Natura of lines without VAT and the €2 virtual stamp duty, queued for the company's SDI channel; SDI's receipts recorded; a delivered invoice is corrected by a credit note | the regime forfettario (RF19, N2.2) and the domestic reverse charge |
+| 🇵🇱 | Poland | structured invoices through KSeF (since 2026) | writes FA(3) with its rate codes, queued for the company's KSeF channel; KSeF numbers recorded, and corrections cite them | the small business exemption (article 113) and the domestic reverse charge |
+| 🇷🇴 | Romania | e-Factura between businesses (since 2024) | uploads CIUS-RO over the company's own OAuth connection to ANAF and follows ANAF's verdict; a validated invoice is corrected by a storno | the small business exemption (article 310) and the domestic reverse charge (article 331) |
+| 🇪🇸 | Spain | VERI\*FACTU records from certified software (from 2027) | gives each invoice its record, chained to the last by AEAT's SHA-256 fingerprint, and the verification QR code; sends the records to AEAT when the company uses VERI\*FACTU | the recargo de equivalencia; the Canary Islands, Ceuta and Melilla outside the VAT area |
+| 🇫🇷 | France | e-invoices through a plateforme agréée and e-reporting (since September 2026, every business by September 2027) | queues EN 16931 invoices with both parties' SIRENs for the company's platform and records its statuses; an e-invoice is corrected by an avoir; reports the other sales by day and rate | the franchise en base (article 293 B), the construction reverse charge (283-2 nonies) and the invoice's mandatory mentions |
+| 🇵🇹 | Portugal | invoices from certified software | numbers each invoice in a series communicated to the AT with its ATCUD, signs it over the series' previous signature with the producer's key ([set on the server](https://github.com/CBFerrum/Ferrum/blob/main/docs/operations.md#portugal-certified-invoices)) and prints the QR code | the small business exemption (article 53) and the construction reverse charge |
+
+</details>
 
 <details>
 <summary><b>The thirteen countries of <code>ferrum-countries</code></b></summary>
@@ -190,7 +199,7 @@ flowchart LR
         API["REST · MCP · live"]
         K["Kernel<br/><small>permissions · row-level security · audit</small>"]
         ENG["ERP's engine<br/><small>ledger · stock · pricing · flow</small>"]
-        ADD["Add-ons<br/><small>European Union · Germany · Belgium · Italy · Poland · Romania<br/>Spain · France · Portugal · United Kingdom · United States<br/>Canada · India · 13 more countries<br/>Finance · Procurement · Stock Operations · Manufacturing Operations</small>"]
+        ADD["Add-ons<br/><small>26 countries: India · the EU and 8 members · UK · US · Canada · 13 more<br/>Finance · Procurement · Stock Operations · Manufacturing Operations</small>"]
         CORE["Shared core<br/><small>ferrum-domain</small>"]
         OB[("Outbox")]
     end
@@ -219,7 +228,7 @@ flowchart BT
     CORE["ferrum-domain<br/><small>Ferrum: the shared core</small>"]
     subgraph REPO["this repository"]
         APP["ferrum-app-erp<br/><small>app.yaml · packages/ · the engine · ui/dist</small>"]
-        ADD["addons/<br/><small>European Union (ferrum-eu) · Germany (ferrum-de)<br/>Belgium · Italy · Poland · Romania<br/>Spain · France · Portugal (ferrum-eu-members)<br/>United Kingdom (ferrum-gb) · United States (ferrum-us)<br/>Canada (ferrum-ca) · India (ferrum-india)<br/>13 more countries (ferrum-countries)<br/>Finance · Procurement · Stock Operations<br/>Manufacturing Operations</small>"]
+        ADD["addons/<br/><small>European Union (ferrum-eu) · Germany (ferrum-de)<br/>7 more member states (ferrum-eu-members)<br/>United Kingdom (ferrum-gb) · United States (ferrum-us)<br/>Canada (ferrum-ca) · India (ferrum-india)<br/>13 more countries (ferrum-countries)<br/>Finance · Procurement · Stock Operations<br/>Manufacturing Operations</small>"]
     end
     APPS["Point of Sale · Commerce · Assets<br/>Field Service · HR · CRM"]
     SRV["ferrum-server<br/><small>Ferrum: compiles them all in</small>"]
@@ -287,11 +296,8 @@ done
 cargo test --workspace
 ```
 
-`FERRUM_ERP_TEST_DATABASE_URL`, `FERRUM_EU_TEST_DATABASE_URL`, `FERRUM_DE_TEST_DATABASE_URL`,
-`FERRUM_GB_TEST_DATABASE_URL`, `FERRUM_CA_TEST_DATABASE_URL`, `FERRUM_US_TEST_DATABASE_URL`, `FERRUM_COUNTRIES_TEST_DATABASE_URL`, `FERRUM_EU_MEMBERS_TEST_DATABASE_URL`,
-`FERRUM_FINANCE_TEST_DATABASE_URL`,
-`FERRUM_PROCUREMENT_TEST_DATABASE_URL`, `FERRUM_STOCK_OPS_TEST_DATABASE_URL` and
-`FERRUM_MFG_OPS_TEST_DATABASE_URL` override the URLs. ERP's end-to-end test (`tests/erp_it.rs`)
+`FERRUM_<NAME>_TEST_DATABASE_URL` overrides each one's URL (`FERRUM_ERP_…`, `FERRUM_EU_MEMBERS_…`,
+`FERRUM_STOCK_OPS_…` and so on, the database's name in capitals). ERP's end-to-end test (`tests/erp_it.rs`)
 walks a GST-registered company through opening stock, procure-to-pay, order-to-cash with a fake
 IRP, payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues, and a
 company outside India that gets none of India's rules.
@@ -317,10 +323,9 @@ src/             the engine (ledger, stock, pricing, trade, manufacturing, set-u
 tests/           the end-to-end scenario against a real PostgreSQL
 ui/              ERP's interface (React + Vite), built into ui/dist
 addons/          the European Union, Germany, the United Kingdom, the United States, Canada
-                 and India (each with its app.yaml); Belgium, Italy, Poland, Romania, Spain,
-                 France and Portugal (eu-members/) and thirteen more countries (countries/),
-                 an app each under apps/; Finance, Procurement, Stock Operations,
-                 Manufacturing Operations
+                 and India (each with its app.yaml); seven more member states (eu-members/)
+                 and thirteen more countries (countries/), an app each under apps/; Finance,
+                 Procurement, Stock Operations, Manufacturing Operations
 CHANGELOG.md     what changed in each version
 ```
 
@@ -333,6 +338,12 @@ CHANGELOG.md     what changed in each version
 | **Malaysia 0.1.1** | Malaysia's e-invoices through LHDN's MyInvois in `ferrum-countries`: a submitted invoice or credit note as UBL 2.1 JSON with the supplier's TIN, BRN, SST number and MSIC code, submitted with its SHA-256 and followed until LHDN validates it, its UUID, long ID and validation link recorded; cancelled at LHDN within 72 hours, corrected by a credit note after; the general public's and foreign buyers' TINs. With AvaTax or HMRC set to Off, the US and UK add-ons never reach the service, even with the test address override. |
 | **Singapore, Australia, New Zealand, Japan, UAE 0.1.1** | Peppol PINT e-invoices in `ferrum-countries`: PINT SG for InvoiceNow, PINT A-NZ, JP PINT and PINT AE, each with its tax scheme, category codes and participants' electronic addresses (UEN, ABN, NZBN, the T-number, the TIN), checked against PINT's rules and sent through the company's Peppol access point on submit, the access point's answer recorded. The EU 0.1.6's UBL writer takes a profile, transaction type and tax scheme. |
 | **France 0.1.0** | France in `ferrum-eu-members`, for the e-invoicing reform: invoices to French businesses queued on submit for the company's plateforme agréée as EN 16931 UBL with both parties' SIRENs, the platform's lifecycle statuses recorded, corrections by avoir; e-reporting of the other sales by day and rate; the invoice's mandatory mentions; SIREN, SIRET and VAT number keys checked; the franchise en base (article 293 B) and the construction reverse charge (283-2 nonies). The EU 0.1.5 writes the parties' legal registration identifiers. |
+
+<details>
+<summary><b>Earlier releases</b></summary>
+
+| Version | Highlights |
+|---|---|
 | **Spain 0.1.0** | Spain in `ferrum-eu-members`: VERI\*FACTU invoicing records chained by AEAT's SHA-256 fingerprint (AEAT's test vectors pass), cancellation records, the verification QR code, and records sent to AEAT through the outbox when the company uses VERI\*FACTU; NIFs checked; the recargo de equivalencia; the Canary Islands, Ceuta and Melilla outside the VAT area. |
 | **Belgium, Italy, Poland, Romania 0.1.0** | `ferrum-eu-members` on the EU's add-on: Belgium's Peppol between businesses, Italy's FatturaPA through SDI, Poland's FA(3) through KSeF and Romania's CIUS-RO through ANAF's e-Factura, with each country's small business exemption and domestic reverse charge. The EU 0.1.4 writes the parties' country subdivisions. |
 | **Thirteen countries 0.1.0** | `ferrum-countries`: Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China, each its own app on one VAT/GST engine, with dated rates, its registration number's check and its return. |
@@ -343,6 +354,8 @@ CHANGELOG.md     what changed in each version
 | **0.4.0** | The European Union's add-on (`ferrum-eu` 0.1.0): EU VAT with VIES, intra-Community supplies, the One-Stop Shop, exports and acquisitions; rates from TEDB; EN 16931 e-invoices with the Peppol hand-over; the EC sales list and the OSS return. India 0.2.1 follows NIC's reverse-charge rules on e-invoices. |
 | **0.3.0** | What every country's rules build on: tax categories and exemption reasons with a tax breakdown per category and rate (EN 16931), taxes per unit, reverse charge, tax rounding line by line, and party and ship-to addresses on documents. India 0.2.0 follows a company's ISO country code and handles reverse-charge purchases. |
 | **0.2.0** | ERP's own repository holds all of it: its manifest, interface, packages and engine, which other apps build on, and its add-ons. Countries plug in through `localization`, India first as the add-on `ferrum-india`. Earlier history is in Ferrum and Ferrum-Frontend. |
+
+</details>
 
 Every version is in [CHANGELOG.md](CHANGELOG.md).
 
