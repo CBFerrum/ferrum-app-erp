@@ -1,0 +1,27 @@
+package: pl
+version: 0.1.0
+label: Poland
+description: "Poland for ERP, on the EU's VAT. Invoices are FA(3) structured invoices issued in KSeF: written from the invoice with the Polish rate codes and amounts by rate, checked, queued for the company's KSeF channel and their KSeF numbers recorded; corrections cite the corrected invoice; NIPs are checked; the small business exemption (article 113) and the domestic reverse charge."
+depends: [eu]
+field_prefix: pl_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: pl_ksef_on_submit, type: check, default: true, label: Send Invoices to KSeF on Submit, visible_if: "doc.country_code == 'PL'"}}
+      - {op: add_field, after: pl_ksef_on_submit, field: {name: pl_small_business, type: check, label: Small Business Exemption (article 113), visible_if: "doc.country_code == 'PL'",
+          description: "Zwolnienie podmiotowe: no VAT on its sales, and its invoices say why"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: pl_reverse_charge, type: check, label: Reverse Charge (Poland),
+          description: "Odwrotne obciążenie: a VAT-registered customer in Poland accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, column: true, after: eu_peppol_status, field: {name: pl_ksef_status, type: select, label: KSeF, options: [Pending, Accepted, Rejected],
+          read_only: true, no_copy: true, in_filter: true}}
+      - {op: add_field, column: true, after: pl_ksef_status, field: {name: pl_ksef_number, type: data, label: KSeF Number, max_length: 40, read_only: true, no_copy: true}}
+      - {op: add_field, after: pl_ksef_number, field: {name: pl_ksef_error, type: text, label: KSeF Message, read_only: true, no_copy: true}}
+      - {op: add_action, action: {name: pl_fa3, group: e-Invoice, label: Download FA(3), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: pl_send_ksef, group: e-Invoice, label: Send to KSeF, docstatus: [1], permission: submit, condition: "doc.pl_ksef_status != 'Accepted'"}}
+      - {op: add_action, action: {name: pl_record_ksef, group: e-Invoice, label: Record KSeF Answer, docstatus: [1], permission: submit,
+          params: [{name: ksef_number, label: KSeF Number (empty when refused), type: data}, {name: message, label: KSeF's Message, type: text}]}}

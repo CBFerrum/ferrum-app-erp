@@ -1,0 +1,26 @@
+package: be
+version: 0.1.0
+label: Belgium
+description: "Belgium for ERP, on the EU's VAT. Invoices between Belgian businesses go through Peppol (mandatory since 1 January 2026); enterprise numbers (KBO/BCE) are checked and give 0208 Peppol IDs; small businesses under the franchise (article 56bis) and the construction reverse charge (Royal Decree no. 1, article 20) say so on the invoice."
+depends: [eu]
+field_prefix: be_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: eu_bic, field: {name: be_enterprise_number, type: data, label: Enterprise Number (KBO/BCE), max_length: 14, visible_if: "doc.country_code == 'BE'",
+          description: "0123.456.789: its Peppol ID is 0208 and these digits; taken from a Belgian VAT number when empty"}}
+      - {op: add_field, after: be_enterprise_number, field: {name: be_peppol_on_submit, type: check, default: true, label: Send Invoices to Belgian Businesses through Peppol, visible_if: "doc.country_code == 'BE'",
+          description: "On submit, an invoice to a Belgian VAT-registered customer goes to the company's Peppol access point"}}
+      - {op: add_field, after: be_peppol_on_submit, field: {name: be_small_business, type: check, label: Small Business Franchise (article 56bis), visible_if: "doc.country_code == 'BE'",
+          description: "Régime de franchise / vrijstellingsregeling: no VAT on its sales, and its invoices say why"}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: eu_peppol_id, field: {name: be_enterprise_number, type: data, label: Enterprise Number (KBO/BCE), max_length: 14}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: eu_vat_number, field: {name: be_enterprise_number, type: data, label: Enterprise Number (KBO/BCE), max_length: 14}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: eu_exemption_reason, field: {name: be_reverse_charge, type: check, label: Reverse Charge for Contractors (Belgium),
+          description: "Work on immovable property for a VAT-registered contractor: the customer accounts for the VAT (autoliquidation / verlegging van heffing)"}}

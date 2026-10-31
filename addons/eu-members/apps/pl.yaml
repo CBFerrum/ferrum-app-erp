@@ -1,0 +1,12 @@
+# ERP's add-on for Poland, on the European Union's: FA(3) invoices for KSeF, NIPs, the small business exemption and the domestic reverse charge. Ferrum localization.md L2.
+id: pl
+name: "Poland"
+version: 0.1.0
+publisher: cbferrum
+summary: "FA(3) invoices for KSeF, NIPs, the small business exemption and the domestic reverse charge for ERP in Poland"
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4", eu: ">=0.1"}
+parent: erp
+packages: [pl]
