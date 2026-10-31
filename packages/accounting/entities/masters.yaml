@@ -122,3 +122,25 @@
     - {name: condition, type: code, description: "Optional CEL condition on the document, e.g. doc.place_of_supply == 'Karnataka'"}
     - {name: rows, type: table, of: TaxRow, required: true}
   unique: [[company, title]]
+
+- name: TaxRate
+  # A tax rate kept as data: from its first day it replaces the localization's built-in rate for
+  # the category (a region's over the whole country's), so a new rate is a record, not a release.
+  label: Tax Rate
+  kind: master
+  module: accounting
+  title_field: category
+  fields:
+    - {name: country, type: data, required: true, max_length: 2, in_list: true, in_filter: true, description: "ISO 3166-1 alpha-2 code, e.g. SG"}
+    - {name: region, type: data, max_length: 6, in_list: true, in_filter: true, description: "A state's or province's code (e.g. ON), or empty for the whole country"}
+    - {name: category, type: data, required: true, max_length: 60, in_list: true, in_filter: true, description: "The localization's tax category, e.g. Standard or Reduced"}
+    - {name: rate, type: percent, required: true, min: "0", in_list: true}
+    - {name: valid_from, type: date, required: true, in_list: true}
+    - {name: valid_to, type: date, in_list: true, description: "Empty: until a later rate for the category starts"}
+    - {name: notes, type: text, description: "The law or notice it comes from"}
+  unique: [[country, region, category, valid_from]]
+  rules:
+    - {name: country_code, check: "doc.country.matches('^[A-Z]{2}$')", message: "The country is its two capital letters (ISO 3166-1), e.g. SG"}
+    - {name: at_most_100, check: "doc.rate <= 100.0", message: "A rate is at most 100%"}
+    - {name: ends_after_start, check: "doc.valid_to == null || doc.valid_to >= doc.valid_from", message: "A rate cannot end before it starts"}
+  list: {columns: [country, region, category, rate, valid_from, valid_to], sort: valid_from desc}

@@ -5,10 +5,11 @@
 //! can keep companies in several countries.
 
 use crate::pricing::Side;
-use crate::util::{find, id, set};
+use crate::util::{d, find, id, s, set};
 use async_trait::async_trait;
-use ferrum_kernel::{Ctx, Doc, Filter, HookCtx, Kernel, Result, Tx};
+use ferrum_kernel::{Ctx, Doc, Filter, HookCtx, Kernel, Op, Result, Tx};
 use ferrum_meta::EffEntity;
+use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -62,6 +63,33 @@ pub trait Localization: Send + Sync {
 static ALL: RwLock<Vec<Arc<dyn Localization>>> = RwLock::new(Vec::new());
 
 /// Registers a country's rules (at start-up). One per package: registering again replaces it.
+/// Rates kept as data (Tax Rate records) for a country on a day: each category's latest one in
+/// force (keyed in lower case), a region's over the whole country's. A localization prefers them
+/// to its built-in rates, so a new rate is a record, not a release.
+pub async fn rates(k: &Kernel, ctx: &Ctx, tx: &mut Tx, country: &str, region: Option<&str>, on: &str) -> Result<HashMap<String, Decimal>> {
+    if ctx.schema.entity("TaxRate").is_none() {
+        return Ok(HashMap::new());
+    }
+    let filters = vec![Filter::eq("country", country), Filter { field: "valid_from".into(), op: Op::Lte, value: json!(on) }];
+    let mut best: HashMap<String, (bool, String, Decimal)> = HashMap::new();
+    for r in find(k, ctx, tx, "TaxRate", filters, None, 500).await? {
+        let (Some(category), Some(from)) = (s(&r, "category"), s(&r, "valid_from")) else { continue };
+        if s(&r, "valid_to").is_some_and(|to| to < on) {
+            continue;
+        }
+        let regional = match (s(&r, "region"), region) {
+            (None, _) => false,
+            (Some(a), Some(b)) if a.eq_ignore_ascii_case(b) => true,
+            _ => continue,
+        };
+        let key = category.to_lowercase();
+        if best.get(&key).is_none_or(|(g, f, _)| (regional, from) >= (*g, f.as_str())) {
+            best.insert(key, (regional, from.to_string(), d(&r, "rate")));
+        }
+    }
+    Ok(best.into_iter().map(|(c, (_, _, rate))| (c, rate)).collect())
+}
+
 pub fn add(l: Arc<dyn Localization>) {
     let mut all = ALL.write().unwrap_or_else(|e| e.into_inner());
     all.retain(|x| x.package() != l.package());
