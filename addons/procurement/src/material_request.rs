@@ -9,8 +9,8 @@
 
 use crate::{installed, scorecard, settings};
 use async_trait::async_trait;
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{b, d, get, id, money, rows, s, set, stock_qty, sys};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;
@@ -477,7 +477,7 @@ async fn make_work_order(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Res
     for (l, open) in lines {
         let Some(item) = id(&l, "item") else { continue };
         let name = s(&l, "item_name").unwrap_or("an item").to_string();
-        let Some(bom) = ferrum_domain::manufacturing::default_bom(hc, company, item).await? else {
+        let Some(bom) = ferrum_app_erp::manufacturing::default_bom(hc, company, item).await? else {
             missing.push(name);
             continue;
         };

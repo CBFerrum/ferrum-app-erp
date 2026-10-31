@@ -1,8 +1,8 @@
 //! Helpers shared by the stock operations: item flags, warehouse accounts, batch and serial
 //! positions read from the stock ledger, and small document utilities.
 
-use ferrum_domain::ledger::Line;
-use ferrum_domain::stock::Posted;
+use ferrum_app_erp::ledger::Line;
+use ferrum_app_erp::stock::Posted;
 use ferrum_domain::util::Company;
 use ferrum_kernel::{Ctx, Doc, Error, FieldError, Result, Tx};
 use rust_decimal::Decimal;
@@ -54,7 +54,7 @@ pub fn validation(errors: Vec<FieldError>) -> Result<()> {
 
 /// Serial numbers as written on a line (one per line or comma-separated).
 pub fn serials(raw: Option<&str>) -> Vec<String> {
-    ferrum_domain::stock::parse_serials(raw)
+    ferrum_app_erp::stock::parse_serials(raw)
 }
 
 /// What the engine needs to know about an item.

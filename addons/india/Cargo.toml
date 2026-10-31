@@ -1,0 +1,31 @@
+[package]
+name = "ferrum-india"
+description = "India for Ferrum ERP: GST (GSTIN, place of supply, templates, HSN/SAC), e-invoices and e-way bills through the IRP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+# The IRP's API: an RSA-encrypted sign-in, AES session keys, RS256-signed QR codes, HTTPS calls.
+aes = "0.9"
+base64 = "0.22"
+dashmap = "6"
+hex = { workspace = true }
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "pem"] }
+
+[lints]
+workspace = true

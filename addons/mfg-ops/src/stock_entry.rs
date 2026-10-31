@@ -10,7 +10,7 @@ use crate::production_plan::refresh_plan;
 use crate::subcontracting::book_transfer;
 use crate::work_order::{last_completed, operating_cost_for};
 use async_trait::async_trait;
-use ferrum_domain::stock_entry::MANUFACTURE;
+use ferrum_app_erp::stock_entry::MANUFACTURE;
 use ferrum_domain::util::{company, d, get, id, money, rows, s, set, sys};
 use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result};
 use rust_decimal::Decimal;

@@ -1,28 +1,142 @@
-//! ERP for Ferrum (docs/plan/erp-repo.md in the Ferrum repository): its manifest, the manifest of
-//! its add-on for India, and its own interface (`ui/dist`, built from `ui/src` and committed), which
-//! the Ferrum server compiles in and serves at `/erp/` and on the workspace's portal. Its packages
-//! and their logic are still the platform's (`ferrum-domain`); its add-ons are the other crates of
-//! this workspace.
+//! ERP for Ferrum (docs/plan/erp-repo.md in the Ferrum repository): its manifest, its own interface
+//! (`ui/dist`, built from `ui/src` and committed, which the Ferrum server serves at `/erp/` and on
+//! the workspace's portal), its packages (accounting, inventory, buying, selling, manufacturing) and
+//! its engine: the double-entry ledger with receivables and payables, inventory valuation, selling
+//! and buying flows, stock entries, manufacturing and MRP, company set-up and the books' reports.
+//!
+//! Everything plugs into the kernel through `DocHook`s registered by entity name, each for the
+//! workspaces with its package, so a workspace without accounting gets no chart of accounts. Other
+//! apps (Point of Sale, Commerce, Assets, Field Service, HR's payroll, CRM's quotations) build on
+//! the engine's modules; countries plug in through [`localization`] (India is the add-on
+//! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
+
+pub mod accounting;
+pub mod flow;
+pub mod ledger;
+pub mod localization;
+pub mod manufacturing;
+pub mod portal;
+pub mod pricing;
+pub mod reports;
+pub mod reservation;
+pub mod setup;
+pub mod stock;
+pub mod stock_entry;
+pub mod trade;
+
+pub(crate) use ferrum_domain::util;
+
+use chrono::Datelike;
+use ferrum_kernel::{HookRegistry, Kernel, Result};
+use pricing::Side;
+use std::sync::{Arc, OnceLock};
+
+include!(concat!(env!("OUT_DIR"), "/ui.rs"));
+include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 
 /// ERP's `app.yaml`.
 pub const MANIFEST: &str = include_str!("../app.yaml");
 
-/// India's `app.yaml`: ERP's add-on for India (GST, e-invoices and e-way bills).
-pub const INDIA_MANIFEST: &str = include_str!("../india/app.yaml");
+/// India's `app.yaml`, for Ferrum builds from before they take India from its own crate
+/// (`ferrum_india::MANIFEST`). Goes with [`handed_over`].
+pub const INDIA_MANIFEST: &str = include_str!("../addons/india/app.yaml");
 
-include!(concat!(env!("OUT_DIR"), "/ui.rs"));
+/// Stage 3's hand-over (Ferrum docs/plan/erp-repo.md): while the ferrum-domain this is built with
+/// still has ERP's packages and hooks, they are its, and ERP's and India's entry points give
+/// nothing, so a build that calls both never loads a package or registers a hook twice. Goes once
+/// Ferrum's main has let go of them.
+pub fn handed_over() -> bool {
+    static DONE: OnceLock<bool> = OnceLock::new();
+    *DONE.get_or_init(|| ferrum_domain::packages().is_ok_and(|ps| !ps.iter().any(|p| p.name() == "accounting")))
+}
+
+/// ERP's metadata packages, embedded at build time.
+pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta::MetaError> {
+    if !handed_over() {
+        return Ok(Vec::new());
+    }
+    ferrum_meta::catalog::load_embedded(EMBEDDED)
+}
+
+/// Registers ERP's document hooks and the portal's invoices, each for the workspaces with its
+/// package. Call it before the hooks of apps that build on ERP's documents, so theirs see totals,
+/// postings and open items.
+pub fn register(h: &mut HookRegistry) {
+    if !handed_over() {
+        return;
+    }
+    let only = |p: &str| vec![p.to_string()];
+    // A customer's invoices on the workspace's portal ("Your invoices").
+    h.add_site("selling", Arc::new(portal::SellingPortal));
+    h.scoped(&only("accounting"), |h| {
+        h.register("Company", Arc::new(setup::CompanyHook))
+            .register("FiscalYear", Arc::new(setup::FiscalYearHook))
+            .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
+            .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook));
+    });
+    h.scoped(&only("inventory"), |h| {
+        h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));
+    });
+    h.scoped(&only("manufacturing"), |h| {
+        h.register("Bom", Arc::new(manufacturing::BomHook))
+            .register("WorkOrder", Arc::new(manufacturing::WorkOrderHook))
+            .register("MrpRun", Arc::new(manufacturing::MrpRunHook));
+    });
+    for (side, package, order, shipment, invoice) in [
+        (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),
+        (Side::Buying, "buying", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
+    ] {
+        h.scoped(&only(package), |h| {
+            h.register(order, Arc::new(trade::OrderHook(side)))
+                .register(shipment, Arc::new(trade::ShipmentHook(side)))
+                .register(invoice, Arc::new(trade::InvoiceHook(side)));
+        });
+    }
+}
+
+/// ERP's reports: the books and stock (trial balance to purchase register).
+pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
+    if !handed_over() {
+        return Vec::new();
+    }
+    vec![Arc::new(reports::ErpReports)]
+}
+
+/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions.
+pub async fn maintenance(k: &Kernel) -> Result<()> {
+    if !handed_over() {
+        return Ok(());
+    }
+    let year = chrono::Utc::now().year();
+    let mut tx = k.db.system_tx().await?;
+    let installed: bool = sqlx::query_scalar("select to_regproc('ferrum_ensure_journal_partitions') is not null").fetch_one(&mut *tx).await?;
+    // One replica at a time; the others skip this round.
+    let locked: bool = sqlx::query_scalar("select pg_try_advisory_xact_lock(hashtext('ferrum:journal_partitions'))").fetch_one(&mut *tx).await?;
+    if installed && locked {
+        let created: i32 = sqlx::query_scalar("select ferrum_ensure_journal_partitions($1, $2)").bind(year - 1).bind(year + 1).fetch_one(&mut *tx).await?;
+        if created > 0 {
+            tracing::info!(created, "journal partitions created");
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
 
     #[test]
-    fn the_manifests_are_valid() {
+    fn the_manifest_is_valid() {
         let erp = ferrum_apps::AppManifest::parse(MANIFEST).expect("ERP's app.yaml");
         assert_eq!(erp.id, "erp");
         assert_eq!(erp.ui.as_ref().map(|u| u.dist.as_str()), Some("ui/dist"));
+        // Packing a bundle takes the packages app.yaml lists, and they are this crate's.
+        let embedded: std::collections::BTreeSet<&str> = EMBEDDED.iter().map(|(p, ..)| *p).collect();
         assert_eq!(erp.packages, ["accounting", "inventory", "buying", "selling", "manufacturing"]);
+        assert!(erp.packages.iter().all(|p| embedded.contains(p.as_str())) && embedded.len() == erp.packages.len());
         let india = ferrum_apps::AppManifest::parse(INDIA_MANIFEST).expect("India's app.yaml");
         assert_eq!((india.id.as_str(), india.parent.as_deref()), ("india", Some("erp")));
     }
@@ -33,5 +147,42 @@ mod tests {
         let files: BTreeMap<String, Vec<u8>> = UI.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
         assert!(files.contains_key("index.html"), "ui/dist is built and committed");
         ferrum_apps::ui::prepare("erp", files).expect("a servable interface");
+    }
+
+    /// ERP's packages load with the shared ones, all together and each alone with what it needs.
+    #[test]
+    fn the_packages_fit_the_shared_core() {
+        let ours = ferrum_meta::catalog::load_embedded(EMBEDDED).expect("ERP's packages parse");
+        let mut all: Vec<_> = ferrum_domain::packages()
+            .expect("the shared packages")
+            .into_iter()
+            .filter(|p| p.name() != "india" && !ours.iter().any(|o| o.name() == p.name()))
+            .collect();
+        assert_eq!(all.iter().map(|p| p.name()).collect::<Vec<_>>(), ["contacts", "core", "parties", "products", "project_records"]);
+        all.extend(ours.clone());
+        let catalog = ferrum_meta::Catalog::from_packages(all).expect("they validate together");
+        assert_eq!(catalog.unknown_form_fields(), Vec::<String>::new(), "forms place fields nothing defines");
+        let names: Vec<String> = ours.iter().map(|p| p.name().to_string()).collect();
+        let schema = ferrum_meta::effective::build(&catalog, &names, &[], 1).unwrap_or_else(|e| panic!("{e}"));
+        assert!(schema.warnings.is_empty(), "{:?}", schema.warnings);
+        assert!(schema.entity("SalesInvoice").is_some() && schema.entity("JournalEntry").is_some());
+        for p in &names {
+            ferrum_meta::effective::build(&catalog, std::slice::from_ref(p), &[], 1).unwrap_or_else(|e| panic!("package {p} alone: {e}"));
+        }
+    }
+
+    /// Clusters record each package SQL file they applied with its checksum, and refuse to start
+    /// when an applied file changes: these are the files from before ERP had its own repository.
+    #[test]
+    fn applied_sql_files_are_unchanged() {
+        let applied = [
+            ("accounting", "sql/001_ledger.sql", "8161471627f74d25ce6db3096f0cf84cbcaa505e44fcb8376bbe28e5a52a3bfd"),
+            ("accounting", "sql/002_project_index.sql", "5e3263c4bb778c3e6d6a5c4d0af3d9fc5115e798bf0a5e1a420f582528b18426"),
+            ("inventory", "sql/001_stock.sql", "5a773facc96d9b825b0d9b5b53733ebe0b0e1d8ce1a8cbfb5978a15ebe1545c8"),
+        ];
+        for (package, file, checksum) in applied {
+            let (.., sql) = EMBEDDED.iter().find(|(p, f, _)| *p == package && *f == file).unwrap_or_else(|| panic!("{package}/{file} is gone"));
+            assert_eq!(hex::encode(Sha256::digest(sql.as_bytes())), checksum, "{package}/{file} changed: add a new file instead");
+        }
     }
 }

@@ -9,8 +9,8 @@
 
 use crate::common::{ItemInfo, batch_qty, items, opt_dec, row_error, serials, serials_in_stock, validation, warehouse_companies};
 use async_trait::async_trait;
-use ferrum_domain::ledger::{self, Entry, Line};
-use ferrum_domain::stock::{self, MoveIn};
+use ferrum_app_erp::ledger::{self, Entry, Line};
+use ferrum_app_erp::stock::{self, MoveIn};
 use ferrum_domain::util::{company, d, date, get, id, money, posting_ts, round, rows, s, set, sys};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;

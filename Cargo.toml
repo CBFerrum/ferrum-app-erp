@@ -1,10 +1,10 @@
 # ERP and its add-ons (Ferrum docs/plan/erp-repo.md): the app itself (this crate: its manifest,
-# India's, and its interface) and Finance, Procurement, Stock Operations and Manufacturing
-# Operations (addons/). The Ferrum server compiles them in; their packages and logic build on the
-# platform's crates, taken from Ferrum's main.
+# its interface, its packages and its engine) and India, Finance, Procurement, Stock Operations and
+# Manufacturing Operations (addons/). The Ferrum server compiles them in; they build on the
+# platform's crates, taken from Ferrum's main, and other apps build on this one.
 [workspace]
 resolver = "3"
-members = [".", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
+members = [".", "addons/india", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +18,7 @@ ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-apps = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-plugins = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -39,15 +40,38 @@ large_enum_variant = "allow"
 
 [package]
 name = "ferrum-app-erp"
-description = "ERP for Ferrum: accounting, selling, buying, stock and manufacturing; its manifest and its own interface"
+description = "ERP for Ferrum: accounting, selling, buying, stock and manufacturing; its manifest, interface, packages and engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-calc = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
 [dev-dependencies]
 ferrum-apps = { workspace = true }
+# The end-to-end test runs ERP with India's rules, sandboxed plugins and a fake IRP.
+ferrum-india = { path = "addons/india" }
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+axum = "0.8"
+base64 = "0.22"
+hex = { workspace = true }
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "pem"] }
 
 [lints]
 workspace = true

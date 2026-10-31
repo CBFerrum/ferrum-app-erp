@@ -6,9 +6,9 @@
 
 use crate::{cached, rows_value, table_of};
 use async_trait::async_trait;
+use ferrum_app_erp::manufacturing::default_bom;
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::manufacturing::default_bom;
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{b, d, elevated, get, id, money, rows, s, set, sys, to_stock, unit_factor};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Op, Result};
 use ferrum_meta::{EffEntity, FieldType};

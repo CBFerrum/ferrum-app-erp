@@ -23,8 +23,8 @@ use crate::common::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use ferrum_domain::ledger::{self, Entry, Line};
-use ferrum_domain::stock::{self, MoveIn, Posted};
+use ferrum_app_erp::ledger::{self, Entry, Line};
+use ferrum_app_erp::stock::{self, MoveIn, Posted};
 use ferrum_domain::util::{Company, b, company, d, date, get, id, money, posting_ts, round, rows, s, set, sys};
 use ferrum_kernel::ddl::q;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
