@@ -20,8 +20,11 @@ pub const VOID_TOPIC: &str = "us.avatax.void_requested";
 const SANDBOX: &str = "https://sandbox-rest.avatax.com";
 const PRODUCTION: &str = "https://rest.avatax.com";
 
-/// AvaTax's host for a company's mode; `FERRUM_US_AVATAX_URL` stands in for both.
+/// AvaTax's host for a company's mode (none when it is Off); `FERRUM_US_AVATAX_URL` stands in for both.
 fn host(mode: &str) -> Option<String> {
+    if mode == "Off" {
+        return None;
+    }
     if let Ok(u) = std::env::var("FERRUM_US_AVATAX_URL")
         && !u.trim().is_empty()
     {

@@ -16,6 +16,7 @@ pub mod id;
 pub mod jp;
 pub mod mx;
 pub mod my;
+pub mod myinvois;
 pub mod nz;
 pub mod ph;
 pub mod sa;
@@ -39,6 +40,9 @@ pub(crate) fn packages_of(name: &str) -> std::result::Result<Vec<ferrum_meta::Pa
 macro_rules! app {
     ($code:literal) => {
         crate::app!(@base $code, |_h: &mut ferrum_kernel::HookRegistry| {});
+    };
+    ($code:literal, hooks = $f:path) => {
+        crate::app!(@base $code, |h: &mut ferrum_kernel::HookRegistry| $f(h));
     };
     ($code:literal, $pint:expr) => {
         crate::app!(@base $code, |h: &mut ferrum_kernel::HookRegistry| {

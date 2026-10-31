@@ -4,6 +4,11 @@
 //! country with its package, a company there selling at home and abroad, buying at home, buying
 //! services from abroad, and its return.
 
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::{get, post, put};
+use axum::{Form, Json, Router};
+use base64::Engine;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
@@ -11,7 +16,7 @@ use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 fn obj(v: Value) -> Doc {
@@ -348,10 +353,177 @@ fn countries_end_to_end() {
 }
 
 async fn scenario() {
+    let calls: Calls = Arc::default();
+    let lhdn = fake_myinvois(calls.clone()).await;
+    // SAFETY: set before any connector runs, in this test's own process.
+    unsafe { std::env::set_var("FERRUM_MY_MYINVOIS_URL", &lhdn) };
     let k = fresh_kernel().await;
     for case in cases() {
         run(&k, &case).await;
     }
+    myinvois(&k, &calls, &lhdn).await;
+}
+
+type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+
+/// LHDN's MyInvois as far as Ferrum uses it: tokens for the right client, submissions accepted
+/// and validated, cancellations.
+async fn fake_myinvois(calls: Calls) -> String {
+    async fn token(Form(form): Form<HashMap<String, String>>) -> (StatusCode, Json<Value>) {
+        if form.get("client_id").map(String::as_str) != Some("ferrum-client") || form.get("grant_type").map(String::as_str) != Some("client_credentials") {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_client"})));
+        }
+        (StatusCode::OK, Json(json!({"access_token": "tok-1", "token_type": "Bearer", "expires_in": 3600})))
+    }
+    fn authorised(h: &HeaderMap) -> bool {
+        h.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer tok-1")
+    }
+    async fn submit(State(calls): State<Calls>, headers: HeaderMap, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
+        if !authorised(&headers) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({})));
+        }
+        let mut c = calls.lock().unwrap();
+        c.push(("submit".into(), body.clone()));
+        let n = c.iter().filter(|(k, _)| k == "submit").count();
+        let code = body["documents"][0]["codeNumber"].clone();
+        (
+            StatusCode::ACCEPTED,
+            Json(
+                json!({"submissionUid": format!("SUB-{n}"), "acceptedDocuments": [{"uuid": format!("UUID-{n}"), "invoiceCodeNumber": code}], "rejectedDocuments": []}),
+            ),
+        )
+    }
+    async fn status(headers: HeaderMap, Path(uid): Path<String>) -> (StatusCode, Json<Value>) {
+        if !authorised(&headers) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({})));
+        }
+        let n = uid.trim_start_matches("SUB-");
+        (
+            StatusCode::OK,
+            Json(json!({"overallStatus": "valid", "documentSummary": [{"uuid": format!("UUID-{n}"), "status": "Valid", "longId": format!("LONG-{n}"),
+                                                                                  "dateTimeValidated": chrono::Utc::now().to_rfc3339()}]})),
+        )
+    }
+    async fn cancel(State(calls): State<Calls>, headers: HeaderMap, Path(uuid): Path<String>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
+        if !authorised(&headers) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({})));
+        }
+        calls.lock().unwrap().push(("cancel".into(), json!({"uuid": uuid, "body": body})));
+        (StatusCode::OK, Json(json!({"uuid": uuid, "status": "Cancelled"})))
+    }
+    let app = Router::new()
+        .route("/connect/token", post(token))
+        .route("/api/v1.0/documentsubmissions/", post(submit))
+        .route("/api/v1.0/documentsubmissions/{uid}", get(status))
+        .route("/api/v1.0/documents/state/{uuid}/state", put(cancel))
+        .with_state(calls);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+/// Malaysia's e-invoices through MyInvois: submitted, validated, their link recorded, cancelled.
+async fn myinvois(k: &Arc<Kernel>, calls: &Calls, lhdn: &str) {
+    let tenant = k
+        .create_tenant(NewTenant {
+            slug: "myinvois".into(),
+            name: "MyInvois".into(),
+            admin_email: "admin@myinvois.test".into(),
+            admin_password: "Correct-Horse-9".into(),
+            admin_name: None,
+            packages: ["core", "accounting", "inventory", "selling", "buying", "my"].iter().map(|s| s.to_string()).collect(),
+            settings: Some(json!({"fiscal_year_start_month": 1})),
+        })
+        .await
+        .expect("tenant");
+    let session = k.login("myinvois", "admin@myinvois.test", "Correct-Horse-9").await.expect("login");
+    let ctx: Ctx = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx");
+    let list = async |entity: &str, filters: Value| -> Vec<Doc> {
+        let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&filters).unwrap(), ..Default::default() };
+        k.list(&ctx, entity, &q).await.unwrap().rows
+    };
+    let insert = async |entity: &str, v: Value| -> Doc { k.insert(&ctx, entity, obj(v)).await.unwrap_or_else(|e| panic!("insert {entity}: {e:?}")) };
+    let myr = match list("Currency", json!({"code": "MYR"})).await.into_iter().next() {
+        Some(c) => c,
+        None => insert("Currency", json!({"code": "MYR", "currency_name": "Ringgit", "symbol": "RM", "precision": 2})).await,
+    };
+    let co = insert(
+        "Company",
+        json!({"company_name": "Selangor Supplies Sdn Bhd", "abbr": "SS", "default_currency": myr["id"], "country": "Malaysia", "my_sst_number": "W10-1808-32000001",
+               "my_tin": "C21638015020", "my_brn": "201901012345", "my_msic_code": "46510", "my_msic_name": "Wholesale of computer hardware, software and peripherals",
+               "my_phone": "+60312345678", "my_street": "Lot 66, Persiaran Jaya", "my_city": "Shah Alam", "my_postal_code": "40000", "my_state": "Selangor",
+               "my_myinvois_mode": "Sandbox", "my_client_id": "ferrum-client", "my_client_secret": "s3cret"}),
+    )
+    .await;
+    let cid = uid(&co);
+    let nos = list("Uom", json!({"uom_name": "Nos"})).await.remove(0);
+    let group = list("ItemGroup", json!({"group_name": "Products"})).await.remove(0);
+    let goods = uid(&insert(
+        "Item",
+        json!({"item_code": "LAPTOP", "item_name": "Laptop", "item_group": group["id"], "stock_uom": nos["id"], "is_stock_item": false,
+                                         "standard_rate": "100", "my_sst_category": "Sales Tax 10%", "my_kind": "Goods"}),
+    )
+    .await);
+    let customer = async |name: &str, more: Value| -> Uuid {
+        let mut v = obj(json!({"customer_name": name}));
+        v.extend(more.as_object().cloned().unwrap_or_default());
+        let c = uid(&insert("Customer", Value::Object(v)).await);
+        insert(
+            "Address",
+            json!({"address_type": "Billing", "address_line1": "1 Jalan Ampang", "city": "Kuala Lumpur", "state": "Kuala Lumpur", "postal_code": "50450",
+                                 "country": "Malaysia", "is_primary": true, "customer": c.to_string()}),
+        )
+        .await;
+        c
+    };
+    let buyer = customer("Ampang Trading Sdn Bhd", json!({"my_tin": "C20830570210", "my_brn": "200501023456", "my_phone": "+60321234567"})).await;
+    let si =
+        insert("SalesInvoice", json!({"company": cid.to_string(), "customer": buyer.to_string(), "items": [{"item": goods.to_string(), "qty": "2"}]})).await;
+    assert_eq!(dec(&si["total_taxes"]), Decimal::from(20));
+    let si = k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("submit");
+    assert_eq!(si["my_einvoice_status"], json!("Pending"));
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let done = k.get(&ctx, "SalesInvoice", uid(&si), false).await.unwrap();
+    assert_eq!(
+        (done["my_einvoice_status"].clone(), done["my_uuid"].clone(), done["my_validation_url"].clone()),
+        (json!("Valid"), json!("UUID-1"), json!(format!("{lhdn}/UUID-1/share/LONG-1")))
+    );
+    let sent = calls.lock().unwrap().iter().find(|(k, _)| k == "submit").cloned().expect("submitted").1;
+    let d = &sent["documents"][0];
+    let bytes = base64::engine::general_purpose::STANDARD.decode(d["document"].as_str().unwrap()).unwrap();
+    use sha2::Digest;
+    assert_eq!(d["documentHash"].as_str().unwrap(), hex::encode(sha2::Sha256::digest(&bytes)));
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    let inv = &document["Invoice"][0];
+    assert_eq!(inv["InvoiceTypeCode"][0], json!({"_": "01", "listVersionID": "1.0"}));
+    let supplier = &inv["AccountingSupplierParty"][0]["Party"][0];
+    assert_eq!(supplier["PartyIdentification"][0]["ID"][0], json!({"_": "C21638015020", "schemeID": "TIN"}));
+    assert_eq!(supplier["IndustryClassificationCode"][0]["_"], json!("46510"));
+    assert_eq!(supplier["PostalAddress"][0]["CountrySubentityCode"][0]["_"], json!("10"), "Selangor");
+    let buyer_party = &inv["AccountingCustomerParty"][0]["Party"][0];
+    assert_eq!(buyer_party["PostalAddress"][0]["CountrySubentityCode"][0]["_"], json!("14"), "Kuala Lumpur");
+    assert_eq!(inv["TaxTotal"][0]["TaxSubtotal"][0]["TaxCategory"][0]["ID"][0]["_"], json!("01"), "sales tax");
+    assert_eq!(inv["TaxTotal"][0]["TaxAmount"][0]["_"], json!(20.0));
+    assert_eq!(inv["InvoiceLine"][0]["Item"][0]["CommodityClassification"][0]["ItemClassificationCode"][0], json!({"_": "022", "listID": "CLASS"}));
+
+    // Within 72 hours of validation, a cancellation cancels it at LHDN.
+    k.cancel(&ctx, "SalesInvoice", uid(&si), None).await.expect("cancel");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    assert_eq!(k.get(&ctx, "SalesInvoice", uid(&si), false).await.unwrap()["my_einvoice_status"], json!("Cancelled"));
+    let cancelled = calls.lock().unwrap().iter().find(|(k, _)| k == "cancel").cloned().expect("cancelled").1;
+    assert_eq!((cancelled["uuid"].clone(), cancelled["body"]["status"].clone()), (json!("UUID-1"), json!("cancelled")));
+
+    // A consumer buys under the general public's TIN.
+    let person = customer("Ali bin Abu", json!({})).await;
+    let si =
+        insert("SalesInvoice", json!({"company": cid.to_string(), "customer": person.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]})).await;
+    k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("submit");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let sent = calls.lock().unwrap().iter().filter(|(k, _)| k == "submit").nth(1).cloned().expect("second").1;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(sent["documents"][0]["document"].as_str().unwrap()).unwrap();
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(document["Invoice"][0]["AccountingCustomerParty"][0]["Party"][0]["PartyIdentification"][0]["ID"][0]["_"], json!("EI00000000010"));
 }
 
 async fn run(k: &Arc<Kernel>, case: &Case) {

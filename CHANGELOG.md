@@ -1,5 +1,21 @@
 # Changelog
 
+## Malaysia 0.1.1, with fixes to the United States and the United Kingdom
+
+- Malaysia's e-invoices through LHDN's MyInvois (`ferrum-countries`, `myinvois`): a submitted
+  invoice or credit note of a company that uses MyInvois (Sandbox or Production) is written as a
+  UBL 2.1 JSON document of version 1.0 with the supplier's TIN, BRN, SST number and MSIC code,
+  both parties' addresses with their state codes, each line's classification (022 by default) and
+  tax type (01 sales tax, 02 service tax, 06 not applicable, E exempt), and a credit note's
+  reference to the invoice's UUID; the connector takes a token (client credentials), submits it
+  (base64 and its SHA-256), asks after it until LHDN validates it, and records its UUID, long ID
+  and validation link (the QR code's), or LHDN's errors; cancelling within the 72 hours after
+  validation cancels it at LHDN, later a credit note corrects it; consumers buy under the general
+  public's TIN (EI00000000010), buyers abroad under EI00000000020; what the company still needs to
+  set is said before submitting.
+- The United States and the United Kingdom: a company whose AvaTax or HMRC mode is Off never
+  reaches the service, even when the test address override is set.
+
 ## Singapore, Australia, New Zealand, Japan and the UAE 0.1.1, and the European Union 0.1.6
 
 - Peppol PINT e-invoices (`ferrum-countries`, `pint`): Singapore (PINT SG for InvoiceNow,

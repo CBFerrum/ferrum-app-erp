@@ -26,8 +26,12 @@ const SANDBOX: (&str, &str) = ("https://test-api.service.hmrc.gov.uk", "https://
 const PRODUCTION: (&str, &str) = ("https://api.service.hmrc.gov.uk", "https://www.tax.service.gov.uk");
 const ACCEPT: &str = "application/vnd.hmrc.1.0+json";
 
-/// HMRC's API and sign-in hosts for a company's mode; `FERRUM_GB_HMRC_URL` stands in for both.
+/// HMRC's API and sign-in hosts for a company's mode (none when it is Off); `FERRUM_GB_HMRC_URL`
+/// stands in for both.
 fn hosts(mode: &str) -> Option<(String, String)> {
+    if mode == "Off" {
+        return None;
+    }
     if let Ok(u) = std::env::var("FERRUM_GB_HMRC_URL")
         && !u.trim().is_empty()
     {
