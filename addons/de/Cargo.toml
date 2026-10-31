@@ -1,0 +1,26 @@
+[package]
+name = "ferrum-de"
+description = "Germany for Ferrum ERP, on the European Union's add-on: XRechnung e-invoices (KoSIT's rules), small businesses (§ 19 UStG) and the domestic reverse charge (§ 13b UStG)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+ferrum-eu = { path = "../eu" }
+async-trait = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -42,6 +42,19 @@ pub struct Party {
     pub country: Option<String>,
     /// Peppol endpoint: (scheme, identifier).
     pub endpoint: Option<(String, String)>,
+    /// Who to ask about the invoice: (name, telephone, email).
+    pub contact: Option<(String, String, String)>,
+    /// The national tax registration number (BT-32), where there is no VAT number.
+    pub tax_number: Option<String>,
+}
+
+/// How to pay: a UNCL4461 code (58: SEPA credit transfer) to an account.
+#[derive(Debug, Clone, Default)]
+pub struct Payment {
+    pub code: String,
+    pub iban: Option<String>,
+    pub bic: Option<String>,
+    pub account_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +96,9 @@ pub struct Invoice {
     pub currency: String,
     pub buyer_reference: String,
     pub order_reference: Option<String>,
+    /// A national profile's specification identifier instead of EN 16931's or Peppol's.
+    pub customization: Option<String>,
+    pub payment: Option<Payment>,
     pub notes: Vec<String>,
     pub seller: Party,
     pub buyer: Party,
@@ -196,7 +212,11 @@ pub fn validate(inv: &Invoice) -> Vec<String> {
     let has = |c: &str| inv.subtotals.iter().any(|t| t.category == c) || inv.lines.iter().any(|l| l.category == c);
     for c in ["S", "Z", "E", "AE", "K", "G"] {
         if has(c) {
-            rule(inv.seller.vat.is_some(), &format!("BR-{c}-02"), "the seller's VAT number is on an invoice with VAT categories other than not subject to VAT");
+            rule(
+                inv.seller.vat.is_some() || inv.seller.tax_number.is_some(),
+                &format!("BR-{c}-02"),
+                "the seller's VAT number (or tax number) is on an invoice with VAT categories other than not subject to VAT",
+            );
         }
     }
     if has("AE") || has("K") {
@@ -255,7 +275,21 @@ fn party(out: &mut String, tag: &str, p: &Party) {
             esc(vat)
         );
     }
-    let _ = write!(out, "<cac:PartyLegalEntity><cbc:RegistrationName>{}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:{tag}>", esc(&p.name));
+    if let Some(n) = &p.tax_number {
+        let _ =
+            write!(out, "<cac:PartyTaxScheme><cbc:CompanyID>{}</cbc:CompanyID><cac:TaxScheme><cbc:ID>FC</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>", esc(n));
+    }
+    let _ = write!(out, "<cac:PartyLegalEntity><cbc:RegistrationName>{}</cbc:RegistrationName></cac:PartyLegalEntity>", esc(&p.name));
+    if let Some((name, phone, email)) = &p.contact {
+        let _ = write!(
+            out,
+            "<cac:Contact><cbc:Name>{}</cbc:Name><cbc:Telephone>{}</cbc:Telephone><cbc:ElectronicMail>{}</cbc:ElectronicMail></cac:Contact>",
+            esc(name),
+            esc(phone),
+            esc(email)
+        );
+    }
+    let _ = write!(out, "</cac:Party></cac:{tag}>");
 }
 
 fn tax_category(out: &mut String, tag: &str, category: &str, percent: Decimal, reason: Option<(&Option<String>, &Option<String>)>) {
@@ -289,7 +323,8 @@ pub fn to_xml(inv: &Invoice) -> String {
          xmlns:cac=\"urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2\" \
          xmlns:cbc=\"urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2\">"
     );
-    let _ = write!(o, "<cbc:CustomizationID>{}</cbc:CustomizationID>", if inv.peppol() { PEPPOL_CUSTOMIZATION } else { EN16931 });
+    let customization = inv.customization.as_deref().unwrap_or(if inv.peppol() { PEPPOL_CUSTOMIZATION } else { EN16931 });
+    let _ = write!(o, "<cbc:CustomizationID>{}</cbc:CustomizationID>", esc(customization));
     if inv.peppol() {
         let _ = write!(o, "<cbc:ProfileID>{PEPPOL_PROFILE}</cbc:ProfileID>");
     }
@@ -331,6 +366,20 @@ pub fn to_xml(inv: &Invoice) -> String {
             );
         }
         o.push_str("</cac:Delivery>");
+    }
+    if let Some(p) = &inv.payment {
+        let _ = write!(o, "<cac:PaymentMeans><cbc:PaymentMeansCode>{}</cbc:PaymentMeansCode>", esc(&p.code));
+        if let Some(iban) = &p.iban {
+            let _ = write!(o, "<cac:PayeeFinancialAccount><cbc:ID>{}</cbc:ID>", esc(iban));
+            if let Some(n) = &p.account_name {
+                let _ = write!(o, "<cbc:Name>{}</cbc:Name>", esc(n));
+            }
+            if let Some(bic) = &p.bic {
+                let _ = write!(o, "<cac:FinancialInstitutionBranch><cbc:ID>{}</cbc:ID></cac:FinancialInstitutionBranch>", esc(bic));
+            }
+            o.push_str("</cac:PayeeFinancialAccount>");
+        }
+        o.push_str("</cac:PaymentMeans>");
     }
     for a in &inv.allowances {
         let _ = write!(
@@ -495,6 +544,20 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
         Party { name: s(&company, "company_name").unwrap_or("").to_string(), vat: s(&company, "eu_vat_number").map(str::to_string), ..Default::default() };
     seller.country = s(&company, "country_code").map(str::to_string);
     seller.endpoint = endpoint(s(&company, "eu_peppol_id"));
+    seller.tax_number = s(&company, "eu_tax_number").filter(|_| seller.vat.is_none()).map(str::to_string);
+    seller.street = s(&company, "eu_street").map(str::to_string);
+    seller.city = s(&company, "eu_city").map(str::to_string);
+    seller.postal = s(&company, "eu_postal_code").map(str::to_string);
+    if let (Some(n), Some(p), Some(e)) = (s(&company, "eu_contact_name"), s(&company, "eu_contact_phone"), s(&company, "eu_contact_email")) {
+        seller.contact = Some((n.to_string(), p.to_string(), e.to_string()));
+    }
+    // Paid by SEPA credit transfer to the company's IBAN, when it has one.
+    let payment = s(&company, "eu_iban").map(|iban| Payment {
+        code: "58".into(),
+        iban: Some(iban.to_string()),
+        bic: s(&company, "eu_bic").map(str::to_string),
+        account_name: Some(seller.name.clone()),
+    });
     // The customer's VAT number as it was when the invoice was submitted.
     let vat = s(doc, "eu_customer_vat").or_else(|| s(&customer, "eu_vat_number")).map(str::to_string);
     let mut buyer = Party { name: s(&customer, "customer_name").unwrap_or("").to_string(), vat, ..Default::default() };
@@ -536,6 +599,8 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
         currency,
         buyer_reference: po.clone().unwrap_or_else(|| s(&customer, "customer_name").unwrap_or("").to_string()),
         order_reference: po,
+        customization: None,
+        payment,
         notes,
         seller,
         buyer,
@@ -658,6 +723,8 @@ mod tests {
             postal: Some("10115".into()),
             country: Some(country.into()),
             endpoint: endpoint(Some(ep)),
+            contact: None,
+            tax_number: None,
         };
         Invoice {
             number: "SINV-26-00001".into(),
@@ -668,6 +735,8 @@ mod tests {
             currency: "EUR".into(),
             buyer_reference: "PO-7".into(),
             order_reference: Some("PO-7".into()),
+            customization: None,
+            payment: Some(Payment { code: "58".into(), iban: Some("DE89370400440532013000".into()), bic: None, account_name: None }),
             notes: vec![],
             seller: party("Seller GmbH", "DE123456789", "DE", "9930:DE123456789"),
             buyer: party("Käufer & Co", "DE987654321", "DE", "0088:4000001000005"),
@@ -742,6 +811,7 @@ mod tests {
             "<cbc:ID>E</cbc:ID><cbc:Percent>0</cbc:Percent><cbc:TaxExemptionReasonCode>VATEX-EU-132-1E</cbc:TaxExemptionReasonCode>",
             "<cbc:PayableAmount currencyID=\"EUR\">502.00</cbc:PayableAmount>",
             "<cbc:InvoicedQuantity unitCode=\"HUR\">2</cbc:InvoicedQuantity>",
+            "<cac:PaymentMeans><cbc:PaymentMeansCode>58</cbc:PaymentMeansCode><cac:PayeeFinancialAccount><cbc:ID>DE89370400440532013000</cbc:ID>",
         ] {
             assert!(xml.contains(part), "{part} in {xml}");
         }

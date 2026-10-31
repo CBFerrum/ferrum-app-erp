@@ -112,6 +112,25 @@ pub fn valid_vat_format(vat: &str) -> std::result::Result<(), String> {
     if ok { Ok(()) } else { Err(format!("this is not the form of a VAT number in {cc}")) }
 }
 
+/// Whether an IBAN (without spaces, upper case) has its form and its check digits (ISO 13616:
+/// the number with its first four characters moved to its end, letters as 10 to 35, mod 97 is 1).
+pub fn valid_iban(iban: &str) -> bool {
+    let b = iban.as_bytes();
+    if !(15..=34).contains(&b.len())
+        || !b[..2].iter().all(u8::is_ascii_uppercase)
+        || !b[2..4].iter().all(u8::is_ascii_digit)
+        || !b.iter().all(u8::is_ascii_alphanumeric)
+    {
+        return false;
+    }
+    let mut rest = 0u32;
+    for c in b[4..].iter().chain(&b[..4]) {
+        let v = if c.is_ascii_digit() { u32::from(c - b'0') } else { u32::from(c - b'A') + 10 };
+        rest = if v >= 10 { (rest * 100 + v) % 97 } else { (rest * 10 + v) % 97 };
+    }
+    rest == 1
+}
+
 /// The member state (ISO) a VAT number is from.
 pub fn vat_country(vat: &str) -> Option<String> {
     let cc = vat.get(..2)?;
@@ -133,6 +152,16 @@ impl DocHook for VatNumberHook {
         set(doc, "eu_vat_number", vat.clone().map_or(Value::Null, Value::from));
         if let Some(v) = &vat {
             valid_vat_format(v).map_err(|m| Error::Validation(vec![FieldError::new("eu_vat_number", m)]))?;
+        }
+        if hc.entity.field("eu_iban").is_some() {
+            let iban: Option<String> =
+                s(doc, "eu_iban").map(|i| i.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_uppercase).collect()).filter(|i: &String| !i.is_empty());
+            if let Some(i) = &iban
+                && !valid_iban(i)
+            {
+                return Err(Error::Validation(vec![FieldError::new("eu_iban", "is not a valid IBAN (its check digits do not match)")]));
+            }
+            set(doc, "eu_iban", iban.map_or(Value::Null, Value::from));
         }
         Ok(())
     }
@@ -337,7 +366,8 @@ pub async fn standard_rate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, iso: &str, on: &s
     })
 }
 
-async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
+/// The id of a company's account by its number (the EU's VAT accounts are found so).
+pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
     let found = find(k, ctx, tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
     found.first().and_then(|a| s(a, "id")).map(str::to_string).ok_or_else(|| {
         let name = ADDED_ACCOUNTS.iter().find(|(n, _)| *n == number).map(|(_, a)| *a).unwrap_or(if number == INPUT_TAX { "Input Tax" } else { "Output Tax" });
@@ -596,8 +626,10 @@ impl Localization for Eu {
             return Ok(());
         }
         let Some((plan, company, party)) = plan(hc.kernel, hc.ctx, hc.tx, doc, side).await? else { return Ok(()) };
-        if s(&company, "eu_vat_number").is_none() {
-            return Err(Error::invalid("set the company's EU VAT number before invoicing: invoices carry it (Article 226 of Directive 2006/112/EC)"));
+        if s(&company, "eu_vat_number").is_none() && s(&company, "eu_tax_number").is_none() {
+            return Err(Error::invalid(
+                "set the company's EU VAT number (or its tax number) before invoicing: invoices carry it (Article 226 of Directive 2006/112/EC)",
+            ));
         }
         if plan.label(&[]) == "Intra-EU B2B" {
             let party = party.unwrap_or_default();
@@ -635,6 +667,8 @@ mod tests {
         }
         assert_eq!(normalize_vat(" gr 123.456-789 "), "EL123456789");
         assert_eq!(vat_country("EL123456789").as_deref(), Some("GR"));
+        assert!(valid_iban("DE89370400440532013000") && valid_iban("FR1420041010050500013M02606") && valid_iban("GB82WEST12345698765432"));
+        assert!(!valid_iban("DE89370400440532013001") && !valid_iban("DE8937") && !valid_iban("de89370400440532013000"));
         assert_eq!(vat_country("XX1"), None);
     }
 

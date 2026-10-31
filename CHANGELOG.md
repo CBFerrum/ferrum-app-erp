@@ -1,5 +1,21 @@
 # Changelog
 
+## Germany 0.1.0, and the European Union 0.1.1
+
+- Germany's add-on, `ferrum-de` (`addons/de`, Ferrum localization.md L2), on the EU's:
+  - XRechnung 3.0 (Download XRechnung): the EN 16931 invoice with Germany's CIUS, checked against
+    KoSIT's rules (BR-DE-*, from its schematron) before it is written: payment instructions, the
+    seller's contact, both parties' city and post code, a buyer reference (a public buyer's
+    Leitweg-ID), a valid IBAN, and both electronic addresses (Peppol IDs, else the Leitweg-ID
+    under scheme 0204 or an email under EM).
+  - Small businesses (§ 19 UStG): no VAT on what they sell at home, with the invoice's mention;
+    they invoice with their tax number.
+  - The domestic reverse charge (§ 13b UStG): items marked so, sold to a business in Germany,
+    carry no VAT and the mention that the customer owes it.
+- The EU 0.1.1: a company's invoice address, contact and IBAN (checked by its check digits) go on
+  its e-invoices (payment by SEPA credit transfer), and its tax number where it has no VAT number
+  (EN 16931 BT-32), which also lets it invoice.
+
 ## 0.4.0, and the European Union 0.1.0
 
 - The European Union's add-on, `ferrum-eu` (`addons/eu`, Ferrum localization.md L1). For a company
