@@ -1,0 +1,24 @@
+package: my
+version: 0.1.0
+label: "Malaysia"
+description: "Malaysia's sales and service tax for ERP. Sales tax on taxable goods (10%, 5%), service tax on taxable services (8%, or 6% for food and beverage, telecommunications, parking, logistics, construction, healthcare and education), service tax on imported taxable services, and the SST-02 figures."
+depends: [selling, buying]
+field_prefix: my_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30, description: "e.g. W10-1808-32000001: on the invoices that charge SST"}}
+      - {op: add_section, after: tax_id, section: {label: "Malaysia SST", collapsible: true, fields: [my_sst_number]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: my_sst_number, type: data, label: "SST Registration Number", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: my_sst_category, type: select, label: "SST Category", options: ["Sales Tax 10%", "Sales Tax 5%", "Service Tax", "Service Tax 6%", "Zero Rated", "Exempt", "Out of Scope"], default: "Out of Scope",
+          description: "Sales Tax on taxable goods sold by a registered manufacturer; Service Tax (8%) or Service Tax 6% on taxable services; Out of Scope (the default) for everything else"}}
+      - {op: add_field, after: my_sst_category, field: {name: my_kind, type: select, label: "Goods or Services (Malaysia)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

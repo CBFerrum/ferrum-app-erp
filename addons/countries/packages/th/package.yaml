@@ -1,0 +1,24 @@
+package: th
+version: 0.1.0
+label: "Thailand"
+description: "Thailand's VAT for ERP. 7% (until the royal decree's cut lapses), exports at 0%, exempt supplies, VAT on services from abroad, and the PP.30 return."
+depends: [selling, buying]
+field_prefix: th_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: th_tax_id, type: data, label: "Tax ID (Thailand)", max_length: 30, description: "13 digits: on the invoices that charge VAT"}}
+      - {op: add_section, after: tax_id, section: {label: "Thailand VAT", collapsible: true, fields: [th_tax_id]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: th_tax_id, type: data, label: "Tax ID (Thailand)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: th_tax_id, type: data, label: "Tax ID (Thailand)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: th_vat_category, type: select, label: "VAT Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: th_vat_category, field: {name: th_kind, type: select, label: "Goods or Services (Thailand)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

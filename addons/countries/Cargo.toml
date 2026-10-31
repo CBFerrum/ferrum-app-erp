@@ -1,0 +1,26 @@
+[package]
+name = "ferrum-countries"
+description = "Countries for Ferrum ERP whose VAT or GST works the common way, each its own app on one engine: Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the United Arab Emirates, Australia, New Zealand, Japan, Mexico and China"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

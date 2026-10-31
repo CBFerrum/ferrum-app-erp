@@ -1,0 +1,25 @@
+package: ae
+version: 0.1.0
+label: "United Arab Emirates"
+description: "The UAE's VAT for ERP. 5%, zero-rated and exempt supplies, the reverse charge on imported services, and the VAT 201 return."
+depends: [selling, buying]
+field_prefix: ae_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30, description: "15 digits: on the invoices that charge VAT"}}
+      - {op: add_field, after: ae_trn, field: {name: ae_emirate, type: select, label: Emirate, options: [Abu Dhabi, Dubai, Sharjah, Ajman, Umm Al Quwain, Ras Al Khaimah, Fujairah], default: Dubai, description: "Where the company is established: its standard-rated supplies go on this emirate's line of the VAT 201"}}
+      - {op: add_section, after: tax_id, section: {label: "United Arab Emirates VAT", collapsible: true, fields: [ae_trn, ae_emirate]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ae_trn, type: data, label: "Tax Registration Number (TRN)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: ae_vat_category, type: select, label: "VAT Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: ae_vat_category, field: {name: ae_kind, type: select, label: "Goods or Services (United Arab Emirates)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

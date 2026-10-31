@@ -1,0 +1,24 @@
+package: mx
+version: 0.1.0
+label: "Mexico"
+description: "Mexico's IVA for ERP. 16%, the border regions' 8%, 0% (exports, foods, medicines), exempt acts, IVA on imported services, and the IVA return on a cash basis."
+depends: [selling, buying]
+field_prefix: mx_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: mx_rfc, type: data, label: "RFC", max_length: 30, description: "12 characters for a company, 13 for a person: on the invoices that charge IVA"}}
+      - {op: add_section, after: tax_id, section: {label: "Mexico IVA", collapsible: true, fields: [mx_rfc]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: mx_rfc, type: data, label: "RFC", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: mx_rfc, type: data, label: "RFC", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: mx_iva_category, type: select, label: "IVA Category", options: ["General 16%", "Border Region 8%", "Zero Rated", "Exempt", "Out of Scope"], default: "General 16%",
+          description: "Border Region 8%: only for businesses the border regions' incentive authorises"}}
+      - {op: add_field, after: mx_iva_category, field: {name: mx_kind, type: select, label: "Goods or Services (Mexico)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

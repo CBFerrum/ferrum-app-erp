@@ -1,0 +1,25 @@
+package: nz
+version: 0.1.0
+label: "New Zealand"
+description: "New Zealand's GST for ERP. 15%, zero-rated exports, exempt supplies, the reverse charge on imported services, and the GST101A return."
+depends: [selling, buying]
+field_prefix: nz_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: nz_gst_number, type: data, label: "GST Number (NZ)", max_length: 30, description: "The IRD number: on the invoices that charge GST"}}
+      - {op: add_field, after: nz_gst_number, field: {name: nz_reverse_charge, type: check, label: "Reverse Charge on Imported Services", description: "Taxable supplies under 95% of all supplies"}}
+      - {op: add_section, after: tax_id, section: {label: "New Zealand GST", collapsible: true, fields: [nz_gst_number, nz_reverse_charge]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: nz_gst_number, type: data, label: "GST Number (NZ)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: nz_gst_number, type: data, label: "GST Number (NZ)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: nz_gst_category, type: select, label: "GST Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where GST is not charged"}}
+      - {op: add_field, after: nz_gst_category, field: {name: nz_kind, type: select, label: "Goods or Services (New Zealand)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

@@ -1,0 +1,25 @@
+package: sg
+version: 0.1.0
+label: "Singapore"
+description: "Singapore GST for ERP. Standard-rated (9%), zero-rated (exports, international services) and exempt supplies, the reverse charge on imported services for RC Businesses, and the GST F5 return."
+depends: [selling, buying]
+field_prefix: sg_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30, description: "The UEN or GST M-number: on the invoices that charge GST"}}
+      - {op: add_field, after: sg_gst_number, field: {name: sg_reverse_charge, type: check, label: "Reverse Charge on Imported Services", description: "An RC Business: not entitled to claim all its input tax (banks, holding companies, developers of residential property, charities)"}}
+      - {op: add_section, after: tax_id, section: {label: "Singapore GST", collapsible: true, fields: [sg_gst_number, sg_reverse_charge]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: sg_gst_number, type: data, label: "GST Registration Number", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: sg_gst_category, type: select, label: "GST Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where GST is not charged"}}
+      - {op: add_field, after: sg_gst_category, field: {name: sg_kind, type: select, label: "Goods or Services (Singapore)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

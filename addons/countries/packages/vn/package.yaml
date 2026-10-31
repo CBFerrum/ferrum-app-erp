@@ -1,0 +1,24 @@
+package: vn
+version: 0.1.0
+label: "Vietnam"
+description: "Vietnam's VAT for ERP. 10%, the temporary 8% for listed goods and services, 5%, exports at 0%, goods and services not subject to VAT, VAT on services from abroad, and declaration 01/GTGT."
+depends: [selling, buying]
+field_prefix: vn_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: vn_tax_code, type: data, label: "Tax Code (MST)", max_length: 30, description: "10 digits, or 10 and a branch: on the invoices that charge VAT"}}
+      - {op: add_section, after: tax_id, section: {label: "Vietnam VAT", collapsible: true, fields: [vn_tax_code]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: vn_tax_code, type: data, label: "Tax Code (MST)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: vn_tax_code, type: data, label: "Tax Code (MST)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: vn_vat_category, type: select, label: "VAT Category", options: ["Standard", "Standard (Reduced to 8%)", "Reduced 5%", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Standard (Reduced to 8%): goods and services at 10% that the 2% reduction covers, 8% until 31 December 2026"}}
+      - {op: add_field, after: vn_vat_category, field: {name: vn_kind, type: select, label: "Goods or Services (Vietnam)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

@@ -1,0 +1,25 @@
+package: au
+version: 0.1.0
+label: "Australia"
+description: "Australia's GST for ERP. 10% on taxable supplies, GST-free supplies (Zero Rated), input-taxed supplies (Exempt), the reverse charge, and the BAS's GST labels."
+depends: [selling, buying]
+field_prefix: au_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30, description: "11 digits: on the invoices that charge GST"}}
+      - {op: add_field, after: au_abn, field: {name: au_reverse_charge, type: check, label: "Reverse Charge on Imported Services", description: "Not entitled to full input tax credits for services bought from abroad (Division 84)"}}
+      - {op: add_section, after: tax_id, section: {label: "Australia GST", collapsible: true, fields: [au_abn, au_reverse_charge]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: au_abn, type: data, label: "ABN", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: au_gst_category, type: select, label: "GST Category", options: ["Taxable", "Zero Rated", "Exempt", "Out of Scope"], default: "Taxable",
+          description: "Taxable (10%); Zero Rated: GST-free (basic food, health, education, exports); Exempt: input taxed (financial supplies, residential rent)"}}
+      - {op: add_field, after: au_gst_category, field: {name: au_kind, type: select, label: "Goods or Services (Australia)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

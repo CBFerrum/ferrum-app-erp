@@ -1,0 +1,24 @@
+package: id
+version: 0.1.0
+label: "Indonesia"
+description: "Indonesia's PPN for ERP. 12% on a tax base of 11/12 of the price (11% in effect) and the full 12% on luxury goods, exports at 0%, exempt deliveries, PPN on services used from abroad, and SPT Masa PPN's figures."
+depends: [selling, buying]
+field_prefix: id_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: id_npwp, type: data, label: "NPWP", max_length: 30, description: "16 digits (a 15-digit NPWP gains a leading zero): on the invoices that charge PPN"}}
+      - {op: add_section, after: tax_id, section: {label: "Indonesia PPN", collapsible: true, fields: [id_npwp]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: id_npwp, type: data, label: "NPWP", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: id_npwp, type: data, label: "NPWP", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: id_ppn_category, type: select, label: "PPN Category", options: ["Standard", "Luxury", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Standard: 12% on 11/12 of the price (PMK 131/2024); Luxury: 12% on the full price"}}
+      - {op: add_field, after: id_ppn_category, field: {name: id_kind, type: select, label: "Goods or Services (Indonesia)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}

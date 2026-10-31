@@ -1,5 +1,36 @@
 # Changelog
 
+## South East Asia, the Gulf, Australia, New Zealand, Japan, Mexico and China 0.1.0
+
+- `ferrum-countries` (`addons/countries`, Ferrum localization.md L6 and L7): thirteen apps, one per
+  country, on one engine for VAT and GST that work the common way (each item's category takes its
+  dated rate on one of the country's tax rows; exports zero-rated; purchases at home recover the
+  tax where it is recoverable; imported goods carry none; services from abroad reverse-charged
+  where the country says, for all its companies or those whose setting says so; an item's own tax
+  rate wins; a sales invoice that charges the tax needs the company's registration number; the
+  country's accounts on a new company), each with its registration number's check and its return:
+  - Singapore (`sg`): GST 9% (8% in 2023, 7% before), RC Businesses' reverse charge, the GST F5.
+  - Malaysia (`my`): sales tax 10% and 5%, service tax 8% (6% before March 2024) and 6%, each on
+    its own row and not recovered, service tax on imported taxable services, the SST-02 figures.
+  - Indonesia (`id`): PPN 12% on 11/12 of the price (11% in effect), luxury goods at 12%, the
+    16-digit NPWP, SPT Masa PPN's figures.
+  - Thailand (`th`): VAT 7% to 30 September 2027 (the Code's 10% after, unless extended), the
+    13-digit tax ID's check digit, PP.30.
+  - The Philippines (`ph`): VAT 12%, the 2550Q figures.
+  - Vietnam (`vn`): VAT 10%, 5% and the temporary 8% (to 31 December 2026), declaration 01/GTGT.
+  - Saudi Arabia (`sa`): VAT 15% (5% before July 2020), ZATCA's VAT return boxes.
+  - The United Arab Emirates (`ae`): VAT 5%, the VAT 201 by the company's emirate.
+  - Australia (`au`): GST 10%, GST-free and input-taxed supplies, the ABN's check, the BAS's GST
+    labels.
+  - New Zealand (`nz`): GST 15%, the IRD number's check, the GST101A on the 3/23 fraction.
+  - Japan (`jp`): consumption tax 10% and the reduced 8% on rows of their own (worked out once per
+    rate per invoice, as qualified invoices need), the T-number, the return's national and local
+    parts.
+  - Mexico (`mx`): IVA 16%, the border regions' 8%, 0% and exempt acts, the RFC, the IVA return on
+    a cash basis from payments.
+  - China (`cn`): VAT 13%, 9% and 6%, small-scale taxpayers' 1% (3% from 2028) without input
+    credit, the unified social credit code's check character.
+
 ## The United States 0.1.0
 
 - The United States' add-on, `ferrum-us` (`addons/us`, Ferrum localization.md L4), for a company in
