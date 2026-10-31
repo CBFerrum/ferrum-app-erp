@@ -1,5 +1,34 @@
 # Changelog
 
+## The United States 0.1.0
+
+- The United States' add-on, `ferrum-us` (`addons/us`, Ferrum localization.md L4), for a company in
+  the United States:
+  - Sales tax where the goods go (the ship-to, else the billing address; over the counter, the
+    company's location), and within an origin-based state (Arizona, Illinois, Mississippi,
+    Missouri, Ohio, Pennsylvania, Tennessee, Texas, Utah, Virginia) where they ship from.
+  - The ZIP code's combined rate (state, county, city, special districts) from the states' rate
+    tables: a US Rate Table takes a state's table as published (Avalara's free tables' columns,
+    rates as fractions or percentages, every line checked) and writes its ZIP codes' rates (US
+    Sales Tax Rate) from its date; cancelling it takes them back. Without a ZIP code's rate, the
+    state's own (the Tax Foundation's, 1 July 2026), and where local taxes apply submitting
+    refuses until the rate is there.
+  - Only in the states where the company is registered to collect; none on sales through a
+    marketplace facilitator; customers' exemption certificates (resale, government, charities...)
+    by state and date; products' taxability by state (US Product Taxability: exempt or a reduced
+    rate) and not-taxable tax codes (NT); exports.
+  - Use tax on purchases the supplier did not tax, at the company's location's rate, accrued as a
+    reverse charge (Use Tax Expense to Use Tax Payable).
+  - Sales reported to Avalara AvaTax through the outbox: each submitted invoice recorded
+    (`createoradjust`, committed) with the tax it charged as a tax-amount override, with its
+    exemption certificate and entity use code; AvaTax's own figure comes back, and an invoice
+    whose tax differs is marked for review; cancelling voids it there (`DocVoided`).
+  - Reports: sales tax by state and jurisdiction; economic nexus (each state's threshold, from the
+    Sales Tax Institute's chart of 1 August 2026, measured as the state does, against gross,
+    retail or taxable sales and transactions); Forms 1099 (payments to suppliers in a calendar
+    year, by bank rather than card, against $600 to 2025 and $2,000 from 2026; TINs sealed and
+    shown by their last four digits).
+
 ## Canada 0.1.0
 
 - Canada's add-on, `ferrum-ca` (`addons/ca`, Ferrum localization.md L5), for a company in Canada,

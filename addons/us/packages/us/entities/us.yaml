@@ -1,0 +1,76 @@
+- name: UsTaxRate
+  # A ZIP code's sales tax rate from a day on: the state's, the county's, the city's and special
+  # districts', from a state's rate table (US Rate Table) or entered by hand.
+  label: US Sales Tax Rate
+  kind: master
+  module: accounting
+  title_field: zip
+  search_fields: [region]
+  fields:
+    - {name: state, type: data, required: true, max_length: 25, in_list: true, in_filter: true, description: "Its two-letter code (or name)"}
+    - {name: zip, type: data, required: true, max_length: 5, in_list: true, in_filter: true, label: ZIP Code}
+    - {name: region, type: data, max_length: 140, in_list: true, label: Tax Region}
+    - {name: state_rate, type: decimal, required: true, min: "0", max: "100", label: State Rate %}
+    - {name: county_rate, type: decimal, min: "0", max: "100", label: County Rate %}
+    - {name: city_rate, type: decimal, min: "0", max: "100", label: City Rate %}
+    - {name: special_rate, type: decimal, min: "0", max: "100", label: Special Districts Rate %}
+    - {name: combined_rate, type: decimal, read_only: true, in_list: true, label: Combined Rate %}
+    - {name: valid_from, type: date, required: true, in_list: true, in_filter: true}
+    - {name: rate_table, type: link, to: UsRateTable, read_only: true}
+  unique: [[zip, valid_from]]
+  list: {columns: [state, zip, region, combined_rate, valid_from], sort: zip asc}
+
+- name: UsRateTable
+  # A state's rate table as published: one line per ZIP code. Submitting it writes their rates
+  # (US Sales Tax Rate) from its date on; cancelling it takes them back.
+  label: US Rate Table
+  kind: document
+  module: accounting
+  submittable: true
+  title_field: state
+  fields:
+    - {name: state, type: data, required: true, max_length: 25, in_list: true, in_filter: true, description: "Its two-letter code (or name)"}
+    - {name: valid_from, type: date, required: true, in_list: true}
+    - {name: source, type: data, max_length: 200, in_list: true, description: "Where it came from, e.g. Avalara's rate table for California, November 2026"}
+    - {name: csv, type: text, required: true, label: Rates (CSV),
+       description: "Avalara's rate table columns: State, ZipCode, TaxRegionName, EstimatedCombinedRate, StateRate, EstimatedCountyRate, EstimatedCityRate, EstimatedSpecialRate (rates as fractions, 0.0725 for 7.25%)"}
+    - {name: zip_count, type: int, read_only: true, no_copy: true, in_list: true, label: ZIP Codes}
+  list: {columns: [state, valid_from, zip_count, source], sort: valid_from desc}
+
+- name: UsTaxability
+  # How a kind of product (its tax code) is taxed in a state where that differs from tangible
+  # goods': groceries, clothing, software, services.
+  label: US Product Taxability
+  kind: master
+  module: accounting
+  title_field: tax_code
+  search_fields: [note]
+  fields:
+    - {name: state, type: data, required: true, max_length: 25, in_list: true, in_filter: true, description: "Its two-letter code (or name)"}
+    - {name: tax_code, type: data, required: true, max_length: 25, in_list: true, in_filter: true}
+    - {name: taxable, type: check, in_list: true, description: "Off: not taxed in the state"}
+    - {name: rate, type: decimal, min: "0", max: "100", in_list: true, label: Reduced Rate %, description: "Its combined rate in the state when reduced (e.g. groceries); empty: the ZIP code's"}
+    - {name: note, type: data, max_length: 500}
+  unique: [[state, tax_code]]
+  list: {columns: [state, tax_code, taxable, rate, note], sort: state asc}
+
+- name: UsExemptionCertificate
+  # A customer's certificate that its purchases in the states it lists are exempt (resale,
+  # government, charities...). Sales into those states while it is valid carry no sales tax.
+  label: US Exemption Certificate
+  kind: master
+  module: selling
+  title_field: certificate_number
+  search_fields: [customer]
+  fields:
+    - {name: customer, type: link, to: Customer, required: true, in_list: true, in_filter: true}
+    - {name: states, type: data, required: true, max_length: 200, in_list: true, description: "The states it covers, e.g. CA, NV (a multistate certificate lists each)"}
+    - {name: reason, type: select, required: true, in_list: true, in_filter: true,
+       options: [Resale, Federal Government, State or Local Government, Charitable, Religious, Educational, Agricultural, Industrial Production, Direct Pay, Other]}
+    - {name: certificate_number, type: data, required: true, max_length: 50, in_list: true}
+    - {name: valid_from, type: date, required: true, in_list: true}
+    - {name: valid_to, type: date, in_list: true, description: "Empty: until revoked"}
+    - {name: disabled, type: check, in_filter: true, description: "Revoked or no longer on file"}
+  rules:
+    - {name: period_order, check: "doc.valid_to == null || doc.valid_to >= doc.valid_from", message: "The certificate ends before it starts"}
+  list: {columns: [customer, certificate_number, reason, states, valid_to], sort: customer asc}

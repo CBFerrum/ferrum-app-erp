@@ -1,0 +1,14 @@
+# ERP's add-on for the United States: sales and use tax by destination from rate tables, exemption
+# certificates, marketplace facilitators, sales reported to Avalara AvaTax, the economic nexus
+# report and Forms 1099. Ferrum localization.md L4.
+id: us
+name: United States
+version: 0.1.0
+publisher: cbferrum
+summary: Sales and use tax, exemption certificates, economic nexus and Forms 1099 for ERP in the United States
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [us]
