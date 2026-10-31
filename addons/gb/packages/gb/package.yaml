@@ -1,0 +1,48 @@
+package: gb
+version: 0.1.0
+label: United Kingdom
+description: UK VAT for ERP. Standard, reduced, zero-rated and exempt supplies, the construction industry's reverse charge, and VAT returns worked out from the books and filed through HMRC's Making Tax Digital API.
+depends: [selling, buying]
+field_prefix: gb_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: gb_vrn, type: data, label: VAT Registration Number (UK), max_length: 16, description: "Nine digits (GB prefix optional); invoices and VAT returns carry it"}}
+      - {op: add_field, after: gb_vrn, field: {name: gb_hmrc_mode, type: select, label: File VAT Returns with HMRC, options: ["Off", Sandbox, Production], default: "Off",
+          description: "Off: returns are worked out here and filed some other way"}}
+      - {op: add_field, after: gb_hmrc_mode, field: {name: gb_hmrc_client_id, type: data, label: HMRC Application Client ID, max_length: 100}}
+      - {op: add_field, after: gb_hmrc_client_id, field: {name: gb_hmrc_client_secret, type: secret, label: HMRC Application Client Secret}}
+      - {op: add_field, after: gb_hmrc_client_secret, field: {name: gb_hmrc_redirect_uri, type: url, label: HMRC Redirect URI,
+          description: "The address registered with your HMRC application: https://<your Ferrum>/api/app/gb/hmrc/callback"}}
+      - {op: add_field, after: gb_hmrc_redirect_uri, field: {name: gb_hmrc_access_token, type: secret, label: HMRC Access Token}}
+      - {op: add_field, after: gb_hmrc_access_token, field: {name: gb_hmrc_refresh_token, type: secret, label: HMRC Refresh Token}}
+      - {op: add_field, after: gb_hmrc_refresh_token, field: {name: gb_hmrc_state, type: secret, label: HMRC Sign-in State}}
+      - {op: add_field, after: gb_hmrc_state, field: {name: gb_hmrc_token_expires, type: datetime, label: HMRC Access Until, read_only: true}}
+      - {op: add_field, after: gb_hmrc_token_expires, field: {name: gb_hmrc_connected_at, type: datetime, label: Connected to HMRC, read_only: true,
+          description: "HMRC's authorisation lasts 18 months from here"}}
+      - {op: add_section, after: tax_id, section: {label: UK VAT, collapsible: true, fields: [gb_vrn, gb_hmrc_mode, gb_hmrc_client_id, gb_hmrc_client_secret, gb_hmrc_redirect_uri,
+          gb_hmrc_token_expires, gb_hmrc_connected_at]}}
+      - {op: add_action, action: {name: gb_connect_hmrc, label: Connect to HMRC, permission: write, condition: "doc.gb_hmrc_mode != 'Off'"}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: gb_vrn, type: data, label: VAT Registration Number (UK), max_length: 16}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: gb_vrn, type: data, label: VAT Registration Number (UK), max_length: 16}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: gb_vat_category, type: select, label: UK VAT Rate, options: [Standard, Reduced, Zero Rated, Exempt], default: Standard,
+          description: "Standard 20%, reduced 5%, zero-rated 0%, or exempt"}}
+      - {op: add_field, after: gb_vat_category, field: {name: gb_kind, type: select, label: Goods or Services (UK), options: [Goods, Services, Digital Services],
+          description: "Empty: goods when it is a stock item, else services"}}
+      - {op: add_field, after: gb_kind, field: {name: gb_cis_reverse_charge, type: check, label: Construction Reverse Charge (CIS),
+          description: "Building and construction services: a VAT-registered customer who is not the end user accounts for the VAT"}}
+  - entity: SalesInvoice
+    ops:
+      - {op: add_field, after: customer_name, field: {name: gb_vat_notes, type: text, label: VAT Notes (UK), read_only: true}}
+
+roles:
+  - name: Accounts Manager
+    permissions:
+      - {entity: GbVatReturn, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}

@@ -90,52 +90,59 @@ fn plain(html: &str) -> String {
 /// TEDB's answer: its rates, or its fault's description.
 pub fn parse(xml: &str) -> std::result::Result<Vec<Rate>, String> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
     let mut path: Vec<String> = Vec::new();
+    let mut text = String::new();
     let mut out = Vec::new();
     let mut cur: Option<Rate> = None;
     let mut fault: Vec<String> = Vec::new();
     loop {
-        let ev = reader.read_event().map_err(|e| format!("TEDB's answer is not XML: {e}"))?;
-        let text = match &ev {
+        match reader.read_event().map_err(|e| format!("TEDB's answer is not XML: {e}"))? {
             Xml::Start(e) => {
-                let name = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
+                let name = e.local_name().as_ref().to_string();
                 if name == "vatRateResults" {
                     cur = Some(Rate::default());
                 }
                 path.push(name);
-                continue;
+                text.clear();
+            }
+            Xml::Text(t) => text.push_str(&t.xml10_content()),
+            Xml::CData(c) => text.push_str(&c.xml10_content()),
+            // Entity and character references come apart from the text around them.
+            Xml::GeneralRef(r) => {
+                if let Ok(Some(ch)) = r.resolve_char_ref() {
+                    text.push(ch);
+                } else if let Some(v) = quick_xml::escape::resolve_predefined_entity(&r.xml10_content()) {
+                    text.push_str(v);
+                }
             }
             Xml::End(_) => {
+                let value = std::mem::take(&mut text).trim().to_string();
+                let tail: Vec<&str> = path.iter().rev().take(3).map(String::as_str).collect();
+                let (last, parent, grand) = (tail.first().copied().unwrap_or(""), tail.get(1).copied().unwrap_or(""), tail.get(2).copied().unwrap_or(""));
+                if let Some(r) = cur.as_mut() {
+                    match (grand, parent, last) {
+                        (_, "vatRateResults", "memberState") => r.member_state = value,
+                        (_, "vatRateResults", "type") => r.kind = value,
+                        (_, "vatRateResults", "situationOn") => r.situation_on = value.chars().take(10).collect(),
+                        (_, "vatRateResults", "comment") => r.comment = Some(plain(&value)).filter(|c| !c.is_empty()),
+                        (_, "rate", "type") => r.rate_kind = value,
+                        (_, "rate", "value") => r.value = Decimal::from_str(&value).ok(),
+                        ("cnCodes", "code", "value") => r.cn_codes.push(value),
+                        ("cpaCodes", "code", "value") => r.cpa_codes.push(value),
+                        (_, "category", "description") => r.category = Some(plain(&value)).filter(|c| !c.is_empty()),
+                        _ => {}
+                    }
+                } else if parent == "error" && last == "description" {
+                    fault.push(value);
+                }
                 if path.pop().as_deref() == Some("vatRateResults")
                     && let Some(r) = cur.take()
                 {
                     out.push(r);
                 }
-                continue;
             }
-            Xml::Text(t) => t.unescape().map_err(|e| format!("TEDB's answer has bad text: {e}"))?.to_string(),
-            Xml::CData(c) => String::from_utf8_lossy(c).to_string(),
             Xml::Eof => break,
-            _ => continue,
-        };
-        let tail: Vec<&str> = path.iter().rev().take(3).map(String::as_str).collect();
-        let (last, parent, grand) = (tail.first().copied().unwrap_or(""), tail.get(1).copied().unwrap_or(""), tail.get(2).copied().unwrap_or(""));
-        if let Some(r) = cur.as_mut() {
-            match (grand, parent, last) {
-                (_, "vatRateResults", "memberState") => r.member_state = text,
-                (_, "vatRateResults", "type") => r.kind = text,
-                (_, "vatRateResults", "situationOn") => r.situation_on = text.chars().take(10).collect(),
-                (_, "vatRateResults", "comment") => r.comment = Some(plain(&text)).filter(|c| !c.is_empty()),
-                (_, "rate", "type") => r.rate_kind = text,
-                (_, "rate", "value") => r.value = Decimal::from_str(text.trim()).ok(),
-                ("cnCodes", "code", "value") => r.cn_codes.push(text),
-                ("cpaCodes", "code", "value") => r.cpa_codes.push(text),
-                (_, "category", "description") => r.category = Some(plain(&text)).filter(|c| !c.is_empty()),
-                _ => {}
-            }
-        } else if parent == "error" && last == "description" {
-            fault.push(text);
+            _ => {}
         }
     }
     if out.is_empty() && !fault.is_empty() {

@@ -3,7 +3,7 @@
 # add-ons on it (Ferrum docs/plan/localization.md, L1 and L2).
 id: eu
 name: European Union
-version: 0.1.1
+version: 0.1.2
 publisher: cbferrum
 summary: EU VAT for ERP. VIES, intra-EU supplies, the One-Stop Shop, EN 16931 e-invoices
 categories: [finance]

@@ -1,0 +1,31 @@
+[package]
+name = "ferrum-gb"
+description = "The United Kingdom for Ferrum ERP: VAT (20%, 5%, zero, exempt), the construction reverse charge, and VAT returns filed through HMRC's Making Tax Digital API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+ferrum-plugins = { workspace = true }
+tokio = { workspace = true }
+axum = "0.8"
+
+[lints]
+workspace = true
