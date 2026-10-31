@@ -1,0 +1,26 @@
+package: ca
+version: 0.1.0
+label: Canada
+description: Canada for ERP. GST/HST by the province of supply (goods where delivered, services by the customer's address), PST in British Columbia, Saskatchewan and Manitoba and QST in Quebec where the company is registered, zero-rated and exempt supplies, exports, and the GST/HST return.
+depends: [selling, buying]
+field_prefix: ca_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ca_business_number, type: data, label: GST/HST Number, max_length: 20, description: "The Business Number's GST/HST account, e.g. 123456789RT0001"}}
+      - {op: add_field, after: ca_business_number, field: {name: ca_province, type: select, label: Province (Canada), options: [AB, BC, MB, NB, NL, NS, NT, NU, ON, PE, QC, SK, YT], description: "Where the company is: its purchases are supplied there"}}
+      - {op: add_field, after: ca_province, field: {name: ca_qst_number, type: data, label: QST Number, max_length: 20, description: "Registered for Quebec's QST (e.g. 1234567890TQ0001): sales into Quebec carry QST"}}
+      - {op: add_field, after: ca_qst_number, field: {name: ca_pst_provinces, type: data, label: Registered for PST In, max_length: 20,
+          description: "The provinces whose PST or RST the company collects, e.g. BC, SK, MB"}}
+      - {op: add_section, after: tax_id, section: {label: Canadian Sales Taxes, collapsible: true, fields: [ca_business_number, ca_province, ca_qst_number, ca_pst_provinces]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: ca_pst_exempt, type: check, label: PST Exempt (Resale), description: "Buys for resale under its own PST number: no PST is charged"}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: ca_gst_category, type: select, label: GST/HST, options: [Taxable, Zero Rated, Exempt], default: Taxable,
+          description: "Zero-rated (basic groceries, exports, prescription drugs) or exempt (most health, financial and educational services)"}}
+      - {op: add_field, after: ca_gst_category, field: {name: ca_pst_exempt, type: check, label: Not Subject to PST}}
+      - {op: add_field, after: ca_pst_exempt, field: {name: ca_kind, type: select, label: Goods or Services (Canada), options: [Goods, Services],
+          description: "Goods are taxed where delivered, services by the customer's address. Empty: goods when it is a stock item"}}
