@@ -1581,6 +1581,25 @@ async fn scenario() {
     assert_eq!(dec(&pi["outstanding_amount"]), n("1000"), "nothing extra payable to the supplier");
     assert_eq!((t.gl("VAT Input").await, t.gl("VAT Owed (reverse charge)").await), (n("190"), n("-190")));
 
+    // Records from before country codes get theirs from the upgrade step `country-codes`
+    // (ferrum_domain::countries::backfill), which reports the names it does not know.
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query("update e_company set country_code = null where tenant_id = $1").bind(t.ctx.tenant).execute(&mut *tx).await.unwrap();
+    sqlx::query("update e_address set country_code = null, country = case when id = $2 then 'Atlantis' else country end where tenant_id = $1")
+        .bind(t.ctx.tenant)
+        .bind(uid(&billing))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Company").await.unwrap(), Vec::<String>::new());
+    assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Address").await.unwrap(), vec!["Atlantis".to_string()]);
+    tx.commit().await.unwrap();
+    assert_eq!((t.get("Company", gmbh).await["country_code"].clone(), t.get("Company", cid).await["country_code"].clone()), (json!("DE"), Value::Null));
+    assert_eq!(
+        (t.get("Address", uid(&shipping)).await["country_code"].clone(), t.get("Address", uid(&billing)).await["country_code"].clone()),
+        (json!("AT"), Value::Null)
+    );
+
     // India's reverse charge: a GTA's freight takes the RCM template, owed in cash.
     let gta = uid(&t.insert("Supplier", json!({"supplier_name": "Speedy Transport", "in_gstin": gstin("27AAACS2222D1Z"), "in_reverse_charge": true})).await);
     let freight = uid(&t
