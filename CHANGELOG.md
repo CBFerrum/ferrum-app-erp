@@ -1,5 +1,25 @@
 # Changelog
 
+## The United Kingdom 0.1.0
+
+- The UK's add-on, `ferrum-gb` (`addons/gb`, Ferrum localization.md L3), for a company in the UK:
+  - VAT at the item's rate (standard 20%, reduced 5%, zero-rated, exempt); construction services
+    to a VAT-registered customer who is not the end user reverse-charged (section 55A, the CIS
+    reverse charge) with the invoice's mention; exported goods zero-rated; services to
+    businesses abroad and digital services to consumers abroad outside the scope of UK VAT.
+  - Purchases: services from abroad and CIS services reverse-charged by the company itself
+    (input and owed VAT alike); imported goods carry no VAT on the supplier's invoice.
+  - VAT registration numbers checked by HMRC's check digits.
+  - VAT returns (UK VAT Return): the nine boxes worked out from the period's submitted invoices
+    (boxes 6 and 7 in whole pounds, box 5 never negative), filed through HMRC's Making Tax
+    Digital API (hmrc/vat-api's VAT (MTD) 1.0) once HMRC's declaration is made: Connect to HMRC
+    signs in with OAuth (the callback at `/api/app/gb/hmrc/callback`), tokens are refreshed when
+    they lapse, the fraud prevention headers (WEB_APP_VIA_SERVER) carry the filing browser's
+    details when filed through `/api/app/gb/returns/{id}/file`, and HMRC's receipt or refusal is
+    recorded on the return. A filed return cannot be cancelled.
+- The European Union 0.1.2: TEDB's answers are read with quick-xml 0.42 (0.37 has two advisories,
+  RUSTSEC-2026-0194 and RUSTSEC-2026-0195).
+
 ## Germany 0.1.0, and the European Union 0.1.1
 
 - Germany's add-on, `ferrum-de` (`addons/de`, Ferrum localization.md L2), on the EU's:

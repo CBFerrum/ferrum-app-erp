@@ -1,0 +1,38 @@
+- name: GbVatReturn
+  # A VAT return for one of HMRC's periods: its nine boxes worked out from the company's
+  # submitted invoices, filed through Making Tax Digital when submitted.
+  label: UK VAT Return
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  title_field: period_key
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true, in_list: true}
+    - {name: period_key, type: data, required: true, max_length: 4, in_list: true, description: "HMRC's key for the period (from its obligations), e.g. 26A1"}
+    - {name: from_date, type: date, required: true, in_list: true}
+    - {name: to_date, type: date, required: true, in_list: true}
+    - {name: box1, type: currency, read_only: true, label: "1. VAT due on sales and other outputs"}
+    - {name: box2, type: currency, read_only: true, label: "2. VAT due on acquisitions from the EU (Northern Ireland)"}
+    - {name: box3, type: currency, read_only: true, label: "3. Total VAT due"}
+    - {name: box4, type: currency, read_only: true, label: "4. VAT reclaimed on purchases and other inputs"}
+    - {name: box5, type: currency, read_only: true, label: "5. Net VAT to pay or reclaim"}
+    - {name: box6, type: currency, read_only: true, label: "6. Total value of sales, excluding VAT"}
+    - {name: box7, type: currency, read_only: true, label: "7. Total value of purchases, excluding VAT"}
+    - {name: box8, type: currency, read_only: true, label: "8. Goods supplied to the EU (Northern Ireland)"}
+    - {name: box9, type: currency, read_only: true, label: "9. Goods acquired from the EU (Northern Ireland)"}
+    - {name: finalised, type: check, label: "I confirm the information given is true and complete (HMRC's declaration)",
+       description: "When you submit this VAT return you are making a legal declaration that the information is true and complete. A false declaration can result in prosecution."}
+    - {name: hmrc_status, type: select, options: [Pending, Filed, Failed], read_only: true, no_copy: true, in_list: true, in_filter: true, label: HMRC}
+    - {name: processing_date, type: data, read_only: true, no_copy: true}
+    - {name: form_bundle_number, type: data, read_only: true, no_copy: true}
+    - {name: charge_ref_number, type: data, read_only: true, no_copy: true}
+    - {name: payment_indicator, type: data, read_only: true, no_copy: true}
+    - {name: receipt_id, type: data, read_only: true, no_copy: true}
+    - {name: hmrc_error, type: text, read_only: true, no_copy: true}
+    - {name: client_data, type: json, read_only: true, hidden: true, no_copy: true, description: "The filing browser's details, for HMRC's fraud prevention headers"}
+  unique: [[company, period_key]]
+  rules:
+    - {name: period_order, check: "doc.to_date >= doc.from_date", message: "The period ends before it starts"}
+    - {name: declared, check: "doc.finalised", message: "Confirm HMRC's declaration before filing", on: submit}
+  list: {columns: [period_key, from_date, to_date, box5, hmrc_status], sort: to_date desc}

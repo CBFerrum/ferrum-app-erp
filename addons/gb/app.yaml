@@ -1,0 +1,14 @@
+# ERP's add-on for the United Kingdom: VAT on sales and purchases (with the construction
+# industry's reverse charge) and VAT returns filed through HMRC's Making Tax Digital API from the
+# books. Ferrum localization.md L3.
+id: gb
+name: United Kingdom
+version: 0.1.0
+publisher: cbferrum
+summary: UK VAT and Making Tax Digital returns for ERP
+categories: [finance]
+runtime: native
+platform: ">=0.3.1, <0.4"
+requires: {erp: ">=0.4"}
+parent: erp
+packages: [gb]

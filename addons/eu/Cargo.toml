@@ -20,7 +20,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 # VIES (JSON) and TEDB (SOAP) over HTTPS; TEDB's answers are XML.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-quick-xml = "0.37"
+quick-xml = "0.42"
 
 [dev-dependencies]
 ferrum-plugins = { workspace = true }
