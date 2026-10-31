@@ -140,6 +140,7 @@ mod tests {
     #[test]
     fn packages_validate_with_the_platform() {
         let mut pkgs = ferrum_domain::packages().expect("platform packages");
+        pkgs.extend(ferrum_app_erp::packages().expect("ERP's packages"));
         pkgs.extend(super::packages().expect("mfg_ops parses"));
         let cat = ferrum_meta::Catalog::from_packages(pkgs).expect("valid together");
         let schema = ferrum_meta::effective::build(&cat, &["mfg_ops".into()], &[], 1).expect("effective schema");

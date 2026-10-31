@@ -4,8 +4,8 @@
 
 use crate::common::{child_table, installed, validation};
 use async_trait::async_trait;
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{d, elevated, get, id, money, rows, s, set, unit_factor};
 use ferrum_kernel::ddl::q;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};

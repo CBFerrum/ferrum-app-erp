@@ -14,7 +14,7 @@ use crate::rules;
 use crate::terms::{open_installments, schedules};
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_domain::ledger::{self, Entry, Line, OpenItem};
+use ferrum_app_erp::ledger::{self, Entry, Line, OpenItem};
 use ferrum_domain::util::{b, company, currency, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;

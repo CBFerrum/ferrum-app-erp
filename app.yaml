@@ -1,8 +1,8 @@
 # ERP as an app of its own (Ferrum docs/plan/erp-repo.md): accounting, selling, buying, stock and
 # manufacturing, with its interface at /erp/ (ui/, built into ui/dist and embedded in this crate).
-# Its packages bring the customers, suppliers and items other apps share (parties, products) and
-# add their ERP fields to them; they are still the platform's (ferrum-domain) until stage 3.
-# Recorded as installed in every workspace that has accounting; India is its add-on (india/).
+# Its packages (packages/, with the engine in src/) build on the customers, suppliers and items
+# other apps share (ferrum-domain's parties and products) and add their ERP fields to them.
+# Recorded as installed in every workspace that has accounting; India is its add-on (addons/india).
 id: erp
 name: ERP
 version: 0.2.0

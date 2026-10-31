@@ -9,8 +9,8 @@
 
 use crate::common::{child_table, finish_rows, installed, items, rows_value, serials, stock_lines, validation};
 use async_trait::async_trait;
-use ferrum_domain::ledger::{self, Entry, Line};
-use ferrum_domain::stock::{self, MoveIn};
+use ferrum_app_erp::ledger::{self, Entry, Line};
+use ferrum_app_erp::stock::{self, MoveIn};
 use ferrum_domain::util::{b, company, d, date, id, money, posting_ts, rows, s, set, stock_qty, sys};
 use ferrum_kernel::ddl::q;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result, Tx};

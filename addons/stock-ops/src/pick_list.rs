@@ -8,8 +8,8 @@
 use crate::bundle::{PACKED, bundles};
 use crate::common::{ItemInfo, child_table, finish_rows, installed, items, rows_value, serials, validation};
 use async_trait::async_trait;
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{d, elevated, get, id, money, rows, s, set, stock_qty, sys, to_stock, unit_factor};
 use ferrum_kernel::ddl::q;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
@@ -475,7 +475,7 @@ impl DocHook for PickListHook {
         let ids: Vec<Uuid> = picked.iter().filter_map(|(_, r)| id(r, "item")).collect();
         let infos = items(hc.tx, hc.ctx.tenant, &ids).await?;
         let keys: Vec<(Uuid, Uuid)> = picked.iter().filter_map(|(_, r)| Some((id(r, "item")?, id(r, "warehouse")?))).collect();
-        let bal = ferrum_domain::stock::lock_balances(hc.tx, hc.ctx.tenant, cid, &keys).await?;
+        let bal = ferrum_app_erp::stock::lock_balances(hc.tx, hc.ctx.tenant, cid, &keys).await?;
         // Lists for the same orders but other warehouses serialize on the orders (in id order).
         let mut so_ids: Vec<Uuid> = picked.iter().filter_map(|(_, r)| id(r, "sales_order")).collect();
         so_ids.sort();

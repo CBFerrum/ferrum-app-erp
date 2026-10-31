@@ -7,7 +7,7 @@
 use crate::common::{FiscalYear, fiscal_year};
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_domain::ledger::{self, Entry, Line};
+use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_domain::util::{company, elevated, get, id, money, s, set, sys};
 use ferrum_kernel::store::field_expr;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};

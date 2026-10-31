@@ -2,7 +2,7 @@
 //! reconciliation, period closing, payment terms and schedules, dunning, subscriptions and the
 //! allocation of advance payments.
 //!
-//! Every posting goes through `ferrum_domain::ledger` (balanced entries, period locks,
+//! Every posting goes through `ferrum_app_erp::ledger` (balanced entries, period locks,
 //! append-only reversals, open items and allocations). Hooks on other packages' documents
 //! (invoices, orders, payments, journals, any submitted document for budgets) do nothing for
 //! tenants that did not install this package.
@@ -87,6 +87,7 @@ mod tests {
     #[test]
     fn packages_validate_with_the_platform() {
         let mut all = ferrum_domain::packages().expect("platform packages");
+        all.extend(ferrum_app_erp::packages().expect("ERP's packages"));
         let ours = super::packages().expect("finance packages parse");
         assert_eq!(ours.iter().map(|p| p.name()).collect::<Vec<_>>(), ["finance"]);
         all.extend(ours);

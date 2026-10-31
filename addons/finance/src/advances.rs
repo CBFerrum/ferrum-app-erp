@@ -10,8 +10,8 @@
 use crate::common::installed;
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_domain::flow::sync_invoice_outstanding;
-use ferrum_domain::ledger::{self, Entry, Line};
+use ferrum_app_erp::flow::sync_invoice_outstanding;
+use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_domain::util::{company, date, id, money, round, s};
 use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result};
 use rust_decimal::Decimal;

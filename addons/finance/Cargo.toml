@@ -10,6 +10,7 @@ build = "build.rs"
 ferrum-kernel = { workspace = true }
 ferrum-meta = { workspace = true }
 ferrum-domain = { workspace = true }
+ferrum-app-erp = { path = "../.." }
 ferrum-calc = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }

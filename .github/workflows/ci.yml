@@ -34,11 +34,12 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       # The application role must not be a superuser: superusers bypass row-level security.
-      # One database per add-on's tests (each resets its own).
+      # One database per crate's tests (each resets its own).
       - name: Create the application role and test databases
         run: |
           psql postgres://postgres:postgres@localhost:5432/postgres -v ON_ERROR_STOP=1 <<'SQL'
           create role ferrum login password 'ferrum';
+          create database ferrum_erp_test owner ferrum;
           create database ferrum_finance_test owner ferrum;
           create database ferrum_procurement_test owner ferrum;
           create database ferrum_stock_ops_test owner ferrum;

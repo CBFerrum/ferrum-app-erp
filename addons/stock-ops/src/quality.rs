@@ -5,8 +5,8 @@
 
 use crate::common::{finish_rows, installed, items, rows_value, validation};
 use async_trait::async_trait;
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{b, d, get, id, money, rows, s, set, stock_qty};
 use ferrum_kernel::ddl::q;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};

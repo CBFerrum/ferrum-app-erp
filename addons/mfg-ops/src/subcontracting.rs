@@ -6,10 +6,10 @@
 
 use crate::{cached, rows_value, submit_param};
 use async_trait::async_trait;
+use ferrum_app_erp::ledger::{self, Entry, Line};
+use ferrum_app_erp::stock::{self, MoveIn, parse_serials};
+use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::ledger::{self, Entry, Line};
-use ferrum_domain::stock::{self, MoveIn, parse_serials};
-use ferrum_domain::trade::create_for_user;
 use ferrum_domain::util::{Company, b, company, d, date, elevated, get, id, money, posting_ts, round, rows, s, set, sys};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;

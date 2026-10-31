@@ -1,5 +1,5 @@
 //! Embeds ERP's own interface (`ui/dist`, built from `ui/src` and committed; Ferrum
-//! docs/plan/apps-ui.md) into the crate.
+//! docs/plan/apps-ui.md) and its metadata packages (`packages/<name>/...`) into the crate.
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -33,4 +33,24 @@ fn main() {
     code.push_str("];\n");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(out.join("ui.rs"), code).expect("write ui.rs");
+
+    // Relative to the crate, like the paths below: checkouts at other paths can share a target
+    // directory (Cargo hashes path crates relative to their workspace) without mixing up files.
+    println!("cargo:rerun-if-changed=packages");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages");
+    let mut code = String::from("// (package, path inside the package, content)\npub static EMBEDDED: &[(&str, &str, &str)] = &[\n");
+    let mut packages: Vec<_> =
+        std::fs::read_dir(&root).expect("packages/").filter_map(|e| e.ok()).filter(|e| e.path().join("package.yaml").is_file()).collect();
+    packages.sort_by_key(|e| e.file_name());
+    for pkg in packages {
+        let name = pkg.file_name().to_string_lossy().to_string();
+        let mut files = Vec::new();
+        walk(&pkg.path(), "", &mut files);
+        for (rel, _) in files {
+            let file = format!("/packages/{name}/{rel}");
+            writeln!(code, "    ({name:?}, {rel:?}, include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {file:?}))),").expect("write");
+        }
+    }
+    code.push_str("];\n");
+    std::fs::write(out.join("packages.rs"), code).expect("write packages.rs");
 }

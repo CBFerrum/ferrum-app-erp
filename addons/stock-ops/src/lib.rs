@@ -2,7 +2,7 @@
 //! item variants and product bundles.
 //!
 //! Every quantity and value change goes through the platform's inventory engine
-//! (`ferrum_domain::stock`) and every financial effect through its ledger, so valuation, locking
+//! (`ferrum_app_erp::stock`) and every financial effect through its ledger, so valuation, locking
 //! and append-only reversal behave exactly as for the platform's own documents. Hooks on platform
 //! entities run for every tenant and act only where this package is installed.
 
@@ -91,6 +91,7 @@ mod tests {
     #[test]
     fn packages_validate_with_the_platform() {
         let mut pkgs = ferrum_domain::packages().expect("platform packages");
+        pkgs.extend(ferrum_app_erp::packages().expect("ERP's packages"));
         pkgs.extend(super::packages().expect("stock_ops parses"));
         let cat = ferrum_meta::Catalog::from_packages(pkgs).expect("catalog validates");
         let schema = ferrum_meta::effective::build(&cat, &["stock_ops".into()], &[], 1).expect("effective schema");
