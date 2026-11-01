@@ -12,7 +12,7 @@ modules:
     order: 25
     # report:bank_reconciliation is not a report of the server's: the ERP interface answers that address
     # with the reconciliation workbench, so it shows in the sidebar beside the bank's records.
-    items: [Budget, MonthlyDistribution, BankAccount, BankTransaction, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
+    items: [report:finance_overview, Budget, MonthlyDistribution, BankAccount, BankTransaction, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
             DunningType, Dunning, SubscriptionPlan, Subscription, report:budget_variance, report:bank_reconciliation_statement, report:cash_flow_forecast,
             report:receivables_by_due_date, report:dunning_summary, report:subscription_metrics]
 

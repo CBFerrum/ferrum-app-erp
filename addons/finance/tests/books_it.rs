@@ -225,6 +225,7 @@ async fn scenario() {
     payment_allocation(&mut t).await;
     statements(&mut t).await;
     revaluation(&mut t).await;
+    overview(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
@@ -941,4 +942,86 @@ async fn revaluation(t: &mut T) {
     assert_eq!((dec(&may["total_gain_loss"]), may["reversal_date"].clone(), may["reversed_on"].clone()), (n("-300"), json!("2026-06-01"), json!("2026-06-01")));
     assert_eq!(t.gl("Exchange Gain or Loss").await, Decimal::ZERO, "posted and taken out again");
     t.books_balance().await;
+}
+
+// ───────────────────────────── what needs attention ─────────────────────────────
+
+async fn overview(t: &mut T) {
+    let (a, am, au) = (t.admin.clone(), t.am.clone(), t.au.clone());
+    let cid = t.open_company("Overview Co", "OV").await;
+    t.insert(&a, "FiscalYear", json!({"year_name": "OV 2025", "company": cid, "start_date": "2025-01-01", "end_date": "2025-12-31"})).await;
+    let fy26 = uid(&t.find_one("FiscalYear", json!({"year_name": "OV 2026", "company": cid})).await);
+    let bank = t.account("Primary Bank").await;
+    let capital = t.account("Capital Stock").await;
+    let unit = uid(&t.find_one("Item", json!({"item_code": "UNIT"})).await);
+    let customer = uid(&t.insert(&a, "Customer", json!({"customer_name": "Slow Payer"})).await);
+    let supplier = uid(&t.insert(&a, "Supplier", json!({"supplier_name": "Slow Biller"})).await);
+    // 100 in the bank since the end of 2025, a year nothing has closed.
+    t.make(&am, "JournalEntry", t.journal("2025-12-31", json!([dr(bank, "100"), cr(capital, "100")]))).await;
+    // Owed to us: 1000 due on 15 October (late), 400 due on 5 November (this week), 300 due on 1 December.
+    for (date, amount, due) in [("2026-09-01", "1000", "2026-10-15"), ("2026-10-20", "400", "2026-11-05"), ("2026-10-25", "300", "2026-12-01")] {
+        t.make(&am, "SalesInvoice", json!({"company": cid, "customer": customer.to_string(), "posting_date": date, "due_date": due, "items": [{"item": unit.to_string(), "qty": amount}]})).await;
+    }
+    // Owed by us: 500 due on 20 October (late), 200 due on 3 November (this week).
+    for (date, amount, due, no) in [("2026-09-05", "500", "2026-10-20", "B-1"), ("2026-10-22", "200", "2026-11-03", "B-2")] {
+        t.make(
+            &am,
+            "PurchaseInvoice",
+            json!({"company": cid, "supplier": supplier.to_string(), "bill_no": no, "posting_date": date, "due_date": due,
+                                              "items": [{"item": unit.to_string(), "qty": amount, "price_list_rate": "1"}]}),
+        )
+        .await;
+    }
+    let ops = uid(&t.insert(&am, "BankAccount", json!({"account_name": "Ops", "company": cid, "account": bank.to_string()})).await);
+    let csv = "Date,Description,Amount\n28/10/2026,Deposit,50\n30/10/2026,Fee,-5\n";
+    t.action(
+        &am,
+        "BankAccount",
+        ops,
+        "import_transactions",
+        json!({"csv": csv, "mapping": {"date": "Date", "description": "Description", "amount": "Amount"}}),
+    )
+    .await;
+    // Two drafts waiting, and January 2026 closed. Months that have ended and are open: the twelve of 2025 and February to October 2026.
+    t.insert(&am, "JournalEntry", t.journal("2026-11-01", json!([dr(bank, "1"), cr(capital, "1")]))).await;
+    t.insert(
+        &am,
+        "SalesInvoice",
+        json!({"company": cid, "customer": customer.to_string(), "posting_date": "2026-11-01", "items": [{"item": unit.to_string(), "qty": "10"}]}),
+    )
+    .await;
+    t.action(&am, "FiscalYear", fy26, "close_period", json!({"period_start": "2026-01-01"})).await;
+
+    let report = t.report(&am, "finance_overview", &[("company", cid.clone()), ("as_of", "2026-11-01".into())]).await;
+    let row = |key: &str| {
+        report["rows"].as_array().unwrap().iter().find(|r| r["key"] == json!(key)).unwrap_or_else(|| panic!("no row {key}: {}", report["rows"])).clone()
+    };
+    let counted = |key: &str| (row(key)["count"].clone(), dec(&row(key)["amount"]), row(key)["oldest"].clone());
+    assert_eq!(counted("overdue_receivables"), (json!(1), n("1000"), json!("2026-10-15")));
+    assert_eq!(counted("receivables_due_week"), (json!(1), n("400"), json!("2026-11-05")));
+    assert_eq!(counted("overdue_payables"), (json!(1), n("500"), json!("2026-10-20")));
+    assert_eq!(counted("payables_due_week"), (json!(1), n("200"), json!("2026-11-03")));
+    let lines = row("unreconciled_lines");
+    assert_eq!((lines["count"].clone(), lines["oldest"].clone(), lines["detail"][0]["name"].clone()), (json!(2), json!("2026-10-28"), json!("Ops")));
+    let drafts = row("drafts");
+    assert_eq!((drafts["count"].clone(), drafts["detail"].as_array().unwrap().len()), (json!(2), 2));
+    let kinds: Vec<&str> = drafts["detail"].as_array().unwrap().iter().map(|d| d["entity"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["SalesInvoice", "JournalEntry"]);
+    let months = row("open_months");
+    assert_eq!(
+        (months["count"].clone(), months["oldest"].clone(), months["detail"][0]["start"].clone()),
+        (json!(21), json!("2025-01-01"), json!("2026-10-01"))
+    );
+    assert_eq!(months["detail"][0]["fiscal_year"], json!(fy26.to_string()));
+    let years = row("unclosed_years");
+    assert_eq!((years["count"].clone(), years["detail"][0]["name"].clone()), (json!(1), json!("OV 2025")));
+    assert_eq!(dec(&row("cash")["amount"]), n("100"));
+    // Closing a month takes it off: with February closed, twenty remain.
+    t.action(&am, "FiscalYear", fy26, "close_period", json!({"period_start": "2026-02-01"})).await;
+    let report = t.report(&am, "finance_overview", &[("company", cid.clone()), ("as_of", "2026-11-01".into())]).await;
+    assert_eq!(report["rows"].as_array().unwrap().iter().find(|r| r["key"] == json!("open_months")).unwrap()["count"], json!(20));
+    // It counts only what the person may read: an accounts user cannot read sales invoices, so their draft is not theirs to be told of.
+    let mine = t.report(&au, "finance_overview", &[("company", cid.clone()), ("as_of", "2026-11-01".into())]).await;
+    let drafts = mine["rows"].as_array().unwrap().iter().find(|r| r["key"] == json!("drafts")).unwrap().clone();
+    assert_eq!((drafts["count"].clone(), drafts["detail"][0]["entity"].clone()), (json!(1), json!("JournalEntry")));
 }

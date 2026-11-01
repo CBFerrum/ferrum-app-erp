@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use chrono::{Datelike, Duration, NaiveDate};
 use ferrum_domain::reports::{Params, ReportCompany, ReportSource, col, param_def, period, read_tx, resolve_company, today};
 use ferrum_domain::util::{exchange_rate, money, round};
-use ferrum_kernel::{Action, Ctx, Error, Kernel, Result, Tx};
+use ferrum_kernel::{Action, Ctx, Error, Kernel, Result, Tx, row_scope};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -33,6 +33,7 @@ const DEFS: &[Def] = &[
         entity: "Budget",
         params: &["company", "fiscal_year", "budget_against", "cost_center", "project"],
     },
+    Def { name: "finance_overview", label: "Finance Overview", entity: "JournalEntry", params: &["company", "as_of"] },
     Def { name: "bank_reconciliation_statement", label: "Bank Reconciliation Statement", entity: "BankTransaction", params: &["bank_account", "as_of"] },
     Def { name: "cash_flow_forecast", label: "Cash Flow Forecast", entity: "JournalEntry", params: &["company", "from_date", "to_date", "group_by"] },
     Def {
@@ -64,7 +65,14 @@ fn param(name: &str) -> Value {
 impl ReportSource for FinanceReports {
     fn catalog(&self) -> Vec<Value> {
         DEFS.iter()
-            .map(|d| json!({"name": d.name, "label": d.label, "module": "finance", "entity": d.entity, "params": d.params.iter().map(|p| param(p)).collect::<Vec<_>>()}))
+            .map(|d| {
+                let mut entry = json!({"name": d.name, "label": d.label, "module": "finance", "entity": d.entity, "params": d.params.iter().map(|p| param(p)).collect::<Vec<_>>()});
+                // The overview counts documents of several kinds across the company.
+                if d.name == "finance_overview" {
+                    entry["scoped"] = json!(false);
+                }
+                entry
+            })
             .collect()
     }
 
@@ -80,6 +88,7 @@ impl ReportSource for FinanceReports {
         let mut out = match name {
             "budget_variance" => budget_variance(ctx, &mut tx, &co, &p).await?,
             "cash_flow_forecast" => cash_flow(k, ctx, &mut tx, &co, &p).await?,
+            "finance_overview" => overview(ctx, &mut tx, &co, &p).await?,
             "receivables_by_due_date" => by_due_date(ctx, &mut tx, &co, &p).await?,
             "dunning_summary" => dunning_summary(ctx, &mut tx, &co, &p).await?,
             "subscription_metrics" => subscription_metrics(k, ctx, &mut tx, &co, &p).await?,
@@ -672,5 +681,118 @@ async fn subscription_metrics(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &ReportCom
             "churned_mrr": money(churned_mrr), "subscriptions_start": subs_start, "subscriptions_new": subs_new, "subscriptions_churned": subs_churned,
             "customer_churn_pct": money(pct(Decimal::from(subs_churned), Decimal::from(subs_start))), "revenue_churn_pct": money(pct(churned_mrr, mrr_start))},
         "meta": {"from_date": from, "to_date": to, "note": "MRR uses each subscription's current plans."},
+    }))
+}
+
+// ───────────────────────────── what needs attention ─────────────────────────────
+
+/// Whether the caller may read every record of an entity of this company (a company scope is fine):
+/// what is counted for them is not narrowed to their own.
+fn all_of(ctx: &Ctx, entity: &str) -> bool {
+    let Some(ent) = ctx.schema.entity(entity) else { return false };
+    row_scope(ctx, ent, Action::Read).is_ok_and(|s| s.grants.is_empty() && s.conds.iter().all(|c| c.field.as_deref() == Some("company")))
+}
+
+/// A finance lead's morning check in one answer, one row each: what is overdue and what falls due
+/// this week (receivables and payables, as the ageing reports count them), bank statement lines not
+/// reconciled, drafts waiting to be submitted, months that have ended and are not closed, years
+/// that have ended and are not closed, and the cash there is. A row names what it counts (`key`),
+/// how many, how much when that means something, the oldest date, and the parts (`detail`) a screen
+/// links to.
+async fn overview(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let as_of = p.date("as_of")?.unwrap_or_else(today);
+    let week = as_of + Duration::days(7);
+    let mut rows: Vec<Value> = Vec::new();
+    for (kind, overdue_key, week_key, overdue_label, week_label) in [
+        ("customer", "overdue_receivables", "receivables_due_week", "Overdue receivables", "Receivables due this week"),
+        ("supplier", "overdue_payables", "payables_due_week", "Overdue payables", "Payables due this week"),
+    ] {
+        for (key, label, from, to) in [(overdue_key, overdue_label, None, as_of - Duration::days(1)), (week_key, week_label, Some(as_of), week)] {
+            let (n, amount, oldest): (i64, Decimal, Option<NaiveDate>) = sqlx::query_as(
+                "select count(*), coalesce(sum(o.base_outstanding), 0), min(coalesce(o.due_date, o.posting_date)) from open_item o \
+                 where o.tenant_id = $1 and o.company_id = $2 and o.party_kind = $3 and o.status = 'open' and o.outstanding > 0 \
+                 and coalesce(o.due_date, o.posting_date) <= $5 and ($4::date is null or coalesce(o.due_date, o.posting_date) >= $4)",
+            )
+            .bind(ctx.tenant)
+            .bind(co.id)
+            .bind(kind)
+            .bind(from)
+            .bind(to)
+            .fetch_one(&mut **tx)
+            .await?;
+            rows.push(json!({"key": key, "item": label, "count": n, "amount": money(amount), "oldest": oldest}));
+        }
+    }
+    if all_of(ctx, "BankTransaction") {
+        let lines: Vec<(Uuid, String, i64, Option<NaiveDate>)> = sqlx::query_as(
+            "select b.id, b.account_name, count(t.id), min(t.date) from e_bank_account b \
+             left join e_bank_transaction t on t.tenant_id = b.tenant_id and t.bank_account = b.id and t.docstatus = 1 and t.unallocated_amount > 0 and t.date <= $3 \
+             where b.tenant_id = $1 and b.company = $2 and not coalesce(b.disabled, false) group by b.id, b.account_name order by b.account_name",
+        )
+        .bind(ctx.tenant)
+        .bind(co.id)
+        .bind(as_of)
+        .fetch_all(&mut **tx)
+        .await?;
+        let total: i64 = lines.iter().map(|l| l.2).sum();
+        rows.push(json!({"key": "unreconciled_lines", "item": "Bank lines to reconcile", "count": total, "oldest": lines.iter().filter_map(|l| l.3).min(),
+            "detail": lines.iter().map(|(id, name, n, oldest)| json!({"id": id, "name": name, "count": n, "oldest": oldest})).collect::<Vec<_>>()}));
+    }
+    let mut drafts = Vec::new();
+    for entity in ["SalesInvoice", "PurchaseInvoice", "PaymentEntry", "JournalEntry", "PaymentAllocation", "ExchangeRevaluation"] {
+        let Some(ent) = ctx.schema.entity(entity).filter(|_| all_of(ctx, entity)).cloned() else { continue };
+        let (Some(c), Some(d)) = (ferrum_kernel::store::field_expr(&ent, "company", "a"), ferrum_kernel::store::field_expr(&ent, "posting_date", "a")) else {
+            continue;
+        };
+        let sql = format!("select count(*), min({d}) from {} a where a.tenant_id = $1 and {c} = $2 and a.docstatus = 0", ferrum_kernel::ddl::q(&ent.table));
+        let (n, oldest): (i64, Option<NaiveDate>) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(ctx.tenant).bind(co.id).fetch_one(&mut **tx).await?;
+        if n > 0 {
+            drafts.push(json!({"entity": entity, "label": if n == 1 { ent.def.label.clone() } else { ent.def.plural_label() }, "count": n, "oldest": oldest}));
+        }
+    }
+    let waiting: i64 = drafts.iter().filter_map(|d| d["count"].as_i64()).sum();
+    rows.push(json!({"key": "drafts", "item": "Drafts waiting to be submitted", "count": waiting,
+        "oldest": drafts.iter().filter_map(|d| d["oldest"].as_str()).min(), "detail": drafts}));
+    // Months that have ended and are still open, and the years that have ended with nothing closing them.
+    let months: Vec<(Uuid, NaiveDate, NaiveDate)> = sqlx::query_as(
+        "select f.id, p.period_start, p.period_end from accounting_period p join e_fiscal_year f on f.tenant_id = p.tenant_id and f.company = p.company_id \
+         and p.period_start between f.start_date and f.end_date where p.tenant_id = $1 and p.company_id = $2 and p.status = 'open' and p.period_end < $3 \
+         order by p.period_start",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(as_of)
+    .fetch_all(&mut **tx)
+    .await?;
+    rows.push(json!({"key": "open_months", "item": "Months ended and not closed", "count": months.len(), "oldest": months.first().map(|m| m.1),
+        "detail": months.iter().rev().take(12).map(|(fy, start, end)| json!({"fiscal_year": fy, "start": start, "end": end})).collect::<Vec<_>>()}));
+    let years: Vec<(Uuid, String, NaiveDate)> = sqlx::query_as(
+        "select f.id, f.year_name, f.end_date from e_fiscal_year f where f.tenant_id = $1 and f.company = $2 and f.end_date < $3 \
+         and exists (select 1 from journal_entry j where j.tenant_id = f.tenant_id and j.company_id = f.company and j.posting_date between f.start_date and f.end_date) \
+         and not exists (select 1 from e_period_closing_voucher v where v.tenant_id = f.tenant_id and v.fiscal_year = f.id and v.docstatus = 1) order by f.end_date",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(as_of)
+    .fetch_all(&mut **tx)
+    .await?;
+    rows.push(json!({"key": "unclosed_years", "item": "Fiscal years ended and not closed", "count": years.len(), "oldest": years.first().map(|y| y.2),
+        "detail": years.iter().map(|(id, name, end)| json!({"id": id, "name": name, "end": end})).collect::<Vec<_>>()}));
+    let cash: Vec<(Uuid, String, Decimal)> = sqlx::query_as(
+        "select a.id, coalesce(a.account_number || ' - ', '') || a.account_name, coalesce(sum(l.debit - l.credit), 0) from e_account a \
+         left join journal_line l on l.tenant_id = a.tenant_id and l.account_id = a.id and l.posting_date <= $3 \
+         where a.tenant_id = $1 and a.company = $2 and a.account_type in ('Bank', 'Cash') and not coalesce(a.is_group, false) group by a.id, 2 order by 2",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(as_of)
+    .fetch_all(&mut **tx)
+    .await?;
+    rows.push(json!({"key": "cash", "item": "Cash and bank", "amount": money(cash.iter().map(|c| c.2).sum()),
+        "detail": cash.iter().map(|(id, name, balance)| json!({"id": id, "name": name, "balance": money(*balance)})).collect::<Vec<_>>()}));
+    Ok(json!({
+        "columns": [col("item", "What", "data"), col("count", "How many", "int"), col("amount", "Amount", "currency"), col("oldest", "Oldest", "date")],
+        "rows": rows,
+        "meta": {"as_of": as_of},
     }))
 }
