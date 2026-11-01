@@ -1,0 +1,32 @@
+- name: HandlingUnitType
+  label: Handling Unit Type
+  kind: master
+  module: wms
+  title_field: type_name
+  fields:
+    - {name: type_name, type: data, required: true, unique: true, in_list: true}
+    - {name: kind, type: select, options: [Pallet, Tote, Carton, Cage, Other], default: Pallet, in_list: true}
+    - {name: tare_kg, type: decimal, min: "0"}
+    - {name: max_weight_kg, type: decimal, min: "0", in_list: true}
+    - {name: volume_l, type: decimal, min: "0", in_list: true}
+  list: {columns: [type_name, kind, max_weight_kg], sort: type_name asc}
+
+- name: HandlingUnit
+  label: Handling Unit
+  label_plural: Handling Units
+  kind: master
+  module: wms
+  title_field: unit_code
+  search_fields: [unit_code]
+  description: A pallet, tote or carton with an identity of its own. Custody says how sure anyone is of where it is.
+  fields:
+    - {name: unit_code, type: data, required: true, unique: true, in_list: true, max_length: 40, description: "As on its label: an SSCC where one is used"}
+    - {name: type, type: link, to: HandlingUnitType, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: bin, type: link, to: StorageBin, read_only: true, in_list: true}
+    - {name: parent_unit, type: link, to: HandlingUnit, label: Inside, description: "The pallet this carton sits on"}
+    - {name: custody, type: select, options: [In Place, In Transit, Uncertain], default: In Place, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: custodian, type: data, read_only: true, no_copy: true, description: "The robot or person who has it"}
+    - {name: status, type: select, options: [Open, Closed, Shipped], default: Open, in_list: true, in_filter: true}
+    - {name: gross_weight_kg, type: decimal, min: "0"}
+  list: {columns: [unit_code, type, bin, custody, status], sort: unit_code asc}

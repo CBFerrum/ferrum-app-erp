@@ -1,0 +1,25 @@
+id: wms
+name: Warehouse Management
+version: 0.1.0
+publisher: cbferrum
+summary: Bins, handling units and positions by lot and owner, receiving to returns, with people and robots on one task list
+description: README.md
+categories: [inventory]
+license: AGPL-3.0-only
+runtime: native
+platform: ">=0.3.2, <0.4"
+requires: {erp: ">=0.1", stock-ops: ">=0.1", ops: ">=0.1"}
+parent: erp
+packages: [wms]
+uninstall: ask
+ui:
+  dist: ui/dist
+contributes:
+  shell.app:
+    - {id: wms, route: wms, title: Warehouse, description: "What is where, and what to do next", icon: warehouse, color: "#b45309", roles: [Warehouse Manager, Warehouse Operator, Warehouse Viewer]}
+  shell.open:
+    - {id: wms, package: wms, path: "wms/e/{entity}/{id}", list: "wms/e/{entity}"}
+  shell.create:
+    - {id: inbound, label: Inbound shipment, path: wms/e/InboundShipment/new, entity: InboundShipment}
+    - {id: wave, label: Pick wave, path: wms/e/PickWave/new, entity: PickWave}
+    - {id: count, label: Cycle count, path: wms/e/CycleCount/new, entity: CycleCount}

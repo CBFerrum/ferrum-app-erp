@@ -1,0 +1,60 @@
+- name: WarehouseTask
+  label: Warehouse Task
+  label_plural: Warehouse Tasks
+  kind: master
+  module: wms
+  title_field: summary
+  description: One movement of stock, by a person or a robot. Moving, arrived and done are different things.
+  fields:
+    - {name: summary, type: data, read_only: true, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: kind, type: select, options: [Putaway, Pick, Replenish, Move], required: true, in_list: true, in_filter: true}
+    - {name: status, type: select, options: [Open, Released, Moving, Arrived, Done, Short, Cancelled, Exception], default: Open, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: priority, type: int, default: 0, in_list: true}
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: done_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: lot, type: data}
+    - {name: serial, type: data}
+    - {name: owner, type: link, to: Customer}
+    - {name: stock_status, type: data, read_only: true}
+    - {name: from_bin, type: link, to: StorageBin, in_list: true}
+    - {name: to_bin, type: link, to: StorageBin, in_list: true}
+    - {name: handling_unit, type: link, to: HandlingUnit}
+    - {name: robot, type: link, to: Device, description: "Empty for a person"}
+    - {name: command, type: data, read_only: true, no_copy: true, label: Ledger Command}
+    - {name: custody, type: select, options: [In Place, In Transit, Uncertain], default: In Place, read_only: true, no_copy: true, in_filter: true}
+    - {name: after_task, type: link, to: WarehouseTask, label: Waits For}
+    - {name: wave, type: link, to: PickWave, in_filter: true}
+    - {name: shipment, type: link, to: Shipment}
+    - {name: sales_order, type: link, to: SalesOrder}
+    - {name: so_line, type: data}
+    - {name: reason, type: text, read_only: true, no_copy: true}
+  list: {columns: [summary, kind, status, from_bin, to_bin, qty], sort: priority desc}
+
+- name: PickWaveOrder
+  label: Wave Order
+  kind: child
+  fields:
+    - {name: sales_order, type: link, to: SalesOrder, required: true, in_list: true}
+    - {name: customer, type: data, fetch_from: sales_order.customer_name, read_only: true, in_list: true}
+
+- name: PickWave
+  label: Pick Wave
+  label_plural: Pick Waves
+  kind: document
+  module: wms
+  company_scoped: true
+  description: Orders released together. Nothing short goes unnoticed - what could not be allocated stays open.
+  numbering: {template: "WAVE-{FY}-{seq:5}", date_field: planned_on}
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: planned_on, type: date, required: true, default_expr: today, in_list: true}
+    - {name: strategy, type: select, options: [By Order, Batch], default: By Order, in_list: true, description: "Batch picks all of an item together and sorts it at packing"}
+    - {name: orders, type: table, of: PickWaveOrder, required: true}
+    - {name: status, type: select, options: [Draft, Released, Picked, Closed], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: shortfall, type: json, read_only: true, no_copy: true, description: "What could not be allocated, item by item"}
+  actions:
+    - {name: release, label: Release, permission: write, condition: "doc.status == 'Draft'"}
+  list: {columns: [number, warehouse, planned_on, strategy, status], sort: planned_on desc}
