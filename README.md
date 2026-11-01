@@ -72,6 +72,9 @@ and CRM build on its engine.
 | 📋 | **Procurement** | `0.1.1` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
+| 🏭 | **Warehouse Management** | `0.1.0` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
+| 🛠️ | **Manufacturing Execution** | `0.1.0` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
+| ✅ | **Quality** | `0.1.0` | holds that stop stock everywhere it could go, nonconformances and corrective action |
 
 <details>
 <summary><b>The member states of <code>ferrum-eu-members</code></b></summary>
