@@ -15,6 +15,7 @@ mod closing;
 mod common;
 mod dunning;
 mod reports;
+mod revaluation;
 mod rules;
 mod subscription;
 mod terms;
@@ -57,6 +58,7 @@ pub fn register(h: &mut HookRegistry) {
         .register("PurchaseInvoice", Arc::new(advances::AdvanceHook))
         .register("PaymentEntry", Arc::new(advances::AdvancePaymentHook))
         .register("PaymentAllocation", Arc::new(allocation::AllocationHook))
+        .register("ExchangeRevaluation", Arc::new(revaluation::RevaluationHook))
         .register("SalesInvoice", Arc::new(allocation::AllocationGuard))
         .register("PurchaseInvoice", Arc::new(allocation::AllocationGuard))
         .register("PaymentEntry", Arc::new(allocation::AllocationGuard))
@@ -74,8 +76,8 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
 
 /// Periodic upkeep: every minute, on one replica at a time (advisory lock); must be idempotent and cheap.
 /// Subscriptions bill what is due (each period exactly once); once a day per workspace,
-/// subscription statuses are refreshed and dunnings resolved and drafted. One workspace's failure
-/// does not stop the others.
+/// subscription statuses are refreshed and dunnings resolved and drafted; revaluations whose
+/// reversal day has come are reversed. One workspace's failure does not stop the others.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     for ctx in common::tenants(k).await? {
         if let Err(e) = subscription::upkeep(k, &ctx).await {
@@ -83,6 +85,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
         if let Err(e) = dunning::upkeep(k, &ctx).await {
             tracing::warn!(tenant = %ctx.tenant, "dunning upkeep failed: {e}");
+        }
+        if let Err(e) = revaluation::upkeep(k, &ctx).await {
+            tracing::warn!(tenant = %ctx.tenant, "revaluation upkeep failed: {e}");
         }
     }
     Ok(())

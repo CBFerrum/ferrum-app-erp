@@ -224,6 +224,7 @@ async fn scenario() {
     bank_workbench(&mut t).await;
     payment_allocation(&mut t).await;
     statements(&mut t).await;
+    revaluation(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
@@ -791,5 +792,153 @@ async fn statements(t: &mut T) {
         (dec(&moved["totals"]["operating"]), dec(&moved["totals"]["investing"]), dec(&moved["totals"]["net_change"])),
         (n("-1500"), Decimal::ZERO, n("12500"))
     );
+    t.books_balance().await;
+}
+
+// ───────────────────────────── foreign exchange revaluation ─────────────────────────────
+
+async fn revaluation(t: &mut T) {
+    let (a, am) = (t.admin.clone(), t.am.clone());
+    let cid = t.open_company("Reval Co", "RV").await;
+    let (inr, eur) = (t.inr.to_string(), t.eur.to_string());
+    let bank_group = t.account("Bank Accounts").await;
+    let eur_bank = uid(
+        &t.insert(
+            &a,
+            "Account",
+            json!({"account_name": "EUR Bank", "account_number": "1122", "company": cid, "parent_account": bank_group.to_string(), "root_type": "Asset", "account_type": "Bank", "account_currency": eur}),
+        )
+        .await,
+    );
+    // Euros are 90 rupees through March (the rates the allocation section put in), 92 from April, 89 from May.
+    t.insert(&a, "ExchangeRate", json!({"from_currency": eur, "to_currency": inr, "rate": "89", "valid_from": "2026-05-01"})).await;
+    let services = t.find_one("ItemGroup", json!({"group_name": "Services"})).await;
+    let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await;
+    // One of these costs 45,000 rupees: 500 euros at 90.
+    let big = uid(&t.insert(&a, "Item", json!({"item_code": "EU-45K", "item_name": "EU-45K", "item_group": services["id"], "stock_uom": nos["id"], "is_stock_item": false, "standard_rate": "45000"})).await);
+    let unit = uid(&t.find_one("Item", json!({"item_code": "UNIT"})).await);
+    let euro_gmbh = uid(&t.insert(&a, "Customer", json!({"customer_name": "Euro GmbH", "default_currency": eur})).await);
+    let paris = uid(&t.insert(&a, "Customer", json!({"customer_name": "Paris SA", "default_currency": eur})).await);
+    let berlin = uid(&t.insert(&a, "Supplier", json!({"supplier_name": "Berlin AG", "default_currency": eur})).await);
+
+    // March, at 90: Euro GmbH is invoiced 500 euros (45,000 rupees); Berlin AG bills us 200 euros (18,000); Paris SA pays 300 euros
+    // ahead (27,000) into the euro account.
+    t.make(
+        &am,
+        "SalesInvoice",
+        json!({"company": cid, "customer": euro_gmbh.to_string(), "posting_date": "2026-03-10", "items": [{"item": big.to_string(), "qty": "1"}]}),
+    )
+    .await;
+    let bill = t
+        .make(&am, "PurchaseInvoice", json!({"company": cid, "supplier": berlin.to_string(), "bill_no": "B-1", "posting_date": "2026-03-12", "currency": eur, "items": [{"item": unit.to_string(), "qty": "200", "price_list_rate": "1"}]}))
+        .await;
+    assert_eq!(
+        (bill["currency"].clone(), dec(&bill["grand_total"]), dec(&bill["base_grand_total"])),
+        (json!(eur), n("200"), n("18000")),
+        "the bill: 200 euros at 90"
+    );
+    t.make(&am, "PaymentEntry", json!({"company": cid, "payment_type": "Receive", "customer": paris.to_string(), "posting_date": "2026-03-14", "bank_account": eur_bank.to_string(), "currency": eur, "paid_amount": "300"})).await;
+    assert_eq!(
+        (t.gl("EUR Bank").await, t.gl("Debtors").await, t.gl("Creditors").await),
+        (n("27000"), n("18000"), n("-18000")),
+        "45,000 owed by Euro GmbH less the 27,000 Paris SA paid ahead"
+    );
+
+    // At the end of April, euros are 92. Worked per balance (euros at 92, against the books):
+    //   Euro GmbH owes 500: 46,000 against 45,000, +1,000.   Paris SA is owed 300: -27,600 against -27,000, -600.
+    //   The euro bank holds 300: 27,600 against 27,000, +600. Berlin AG is owed 200: -18,400 against -18,000, -400.
+    // Net +600, a gain: it is credited to the exchange gain/loss account.
+    let draft = json!({"company": cid, "posting_date": "2026-04-30", "reversal_date": "2999-01-01"});
+    let seen = t.k.preview(&am, "ExchangeRevaluation", obj(draft.clone())).await.expect("a preview");
+    let balances = seen["rows"].as_array().unwrap();
+    assert_eq!(balances.len(), 4, "{:?}", seen["rows"]);
+    let gain = |r: Option<&Value>| dec(&r.unwrap_or_else(|| panic!("a balance is missing: {:?}", seen["rows"]))["gain_loss"]);
+    let of = |key: &str, party: Uuid| gain(balances.iter().find(|r| r[key] == json!(party.to_string())));
+    let bank_row = gain(balances.iter().find(|r| r["customer"].is_null() && r["supplier"].is_null()));
+    assert_eq!((of("customer", euro_gmbh), of("customer", paris), of("supplier", berlin), bank_row), (n("1000"), n("-600"), n("-400"), n("600")));
+    let euro_row = balances.iter().find(|r| r["customer"] == json!(euro_gmbh.to_string())).unwrap();
+    assert_eq!(
+        (dec(&euro_row["balance"]), dec(&euro_row["book_value"]), dec(&euro_row["exchange_rate"]), dec(&euro_row["revalued"])),
+        (n("500"), n("45000"), n("92"), n("46000"))
+    );
+    assert_eq!(dec(&seen["total_gain_loss"]), n("600"));
+    assert_eq!(seen["gain_loss_account"], json!(t.account("Exchange Gain or Loss").await.to_string()), "the company's own account unless another is chosen");
+    assert_eq!(seen["reversal_date"], json!("2999-01-01"));
+    let early = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2026-02-01"}))).await.expect("a preview");
+    assert!(early["rows"].as_array().unwrap().is_empty(), "nothing in euros has been booked by February");
+    assert_eq!(early["reversal_date"], json!("2026-02-02"), "the day after, unless another is chosen");
+    // No rate, no revaluation.
+    let rateless = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2025-12-31"}))).await.expect("nothing to value yet");
+    assert!(rateless["rows"].as_array().unwrap().is_empty());
+
+    // Posted, the books carry the day's rate: debtors 18,000 + 1,000 - 600, creditors -18,000 - 400, the euro bank 27,600, a gain of 600.
+    let run = t.insert(&am, "ExchangeRevaluation", draft.clone()).await;
+    assert_eq!((run["docstatus"].clone(), dec(&run["total_gain_loss"])), (json!(0), n("600")));
+    let run = t.submit(&am, "ExchangeRevaluation", uid(&run)).await;
+    assert!(run["number"].as_str().unwrap().starts_with("ERV-"));
+    assert_eq!(
+        (t.gl("Debtors").await, t.gl("Creditors").await, t.gl("EUR Bank").await, t.gl("Exchange Gain or Loss").await),
+        (n("18400"), n("-18400"), n("27600"), n("-600"))
+    );
+    assert_eq!(run["reversed_on"], Value::Null, "its reversal day is far off");
+    t.books_balance().await;
+    // The ageing is the documents', not the ledger's: the invoice still says 500 euros owed, booked at 90.
+    let ageing = t.report(&am, "receivables", &[("company", cid.clone()), ("customer", euro_gmbh.to_string())]).await;
+    assert_eq!(dec(&ageing["totals"]["outstanding_base"]), n("45000"));
+    // Run again at the same rates and there is nothing left to revalue.
+    let again = t.insert(&am, "ExchangeRevaluation", draft.clone()).await;
+    assert!(again["rows"].as_array().unwrap().is_empty(), "the balances already stand at 92");
+    let e = t.k.submit(&am, "ExchangeRevaluation", uid(&again), None).await.unwrap_err();
+    assert!(invalid(&e, "nothing to revalue"), "{e:?}");
+
+    // April's cash flow: the 600 is a gain on the euro bank that moved no cash, so it is told apart: operating 0 (profit 600, debtors
+    // up 400, creditors up 400, less the 600 not realised), the exchange line 600, the bank 27,000 to 27,600.
+    let april = t.report(&am, "cash_flow", &[("company", cid.clone()), ("from_date", "2026-04-01".into()), ("to_date", "2026-04-30".into())]).await;
+    assert_eq!(
+        [&april["totals"]["operating"], &april["totals"]["net_change"], &april["totals"]["opening"], &april["totals"]["closing"]].map(dec),
+        [Decimal::ZERO, n("600"), n("27000"), n("27600")]
+    );
+    assert_eq!((dec(&line(&april, "Effect of exchange rates on cash and bank")["amount"]), april["meta"]["reconciled"].clone()), (n("600"), json!(true)));
+
+    // Cancelled, it goes at once.
+    t.k.cancel(&am, "ExchangeRevaluation", uid(&run), None).await.expect("cancel");
+    assert_eq!(
+        (t.gl("Debtors").await, t.gl("Creditors").await, t.gl("EUR Bank").await, t.gl("Exchange Gain or Loss").await),
+        (n("18000"), n("-18000"), n("27000"), Decimal::ZERO)
+    );
+
+    // Run again and let its day come: the daily upkeep takes the difference out, once, and records the day.
+    let second = t.make(&am, "ExchangeRevaluation", draft.clone()).await;
+    assert_eq!(t.gl("Exchange Gain or Loss").await, n("-600"));
+    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    assert_eq!(t.gl("Exchange Gain or Loss").await, n("-600"), "2999 has not come");
+    {
+        let mut tx = t.k.db.system_tx().await.unwrap();
+        sqlx::query("update e_exchange_revaluation set reversal_date = '2026-05-01' where id = $1").bind(uid(&second)).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    assert_eq!((t.gl("Exchange Gain or Loss").await, t.gl("Debtors").await, t.gl("EUR Bank").await), (Decimal::ZERO, n("18000"), n("27000")));
+    assert_eq!(t.get("ExchangeRevaluation", uid(&second)).await["reversed_on"], json!("2026-05-01"));
+    let may_first: i64 = t
+        .count(
+            "select count(*) from journal_entry where tenant_id = $1 and source_id = $2 and posting_date = '2026-05-01' and reversal_of is not null",
+            Some(uid(&second)),
+        )
+        .await;
+    assert_eq!(may_first, 1, "the reversal is dated its own day");
+    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    assert_eq!(
+        t.count("select count(*) from journal_entry where tenant_id = $1 and source_id = $2", Some(uid(&second))).await,
+        2,
+        "reversed once: the entry and its reversal"
+    );
+
+    // May, at 89: Euro GmbH's 500 is 44,500 against 45,000 (-500), Paris SA's -300 is -26,700 against -27,000 (+300), the euro bank's
+    // 300 is 26,700 against 27,000 (-300), Berlin AG's -200 is -17,800 against -18,000 (+200). Net -300, a loss. The reversal day
+    // has passed, so it is reversed as soon as it is submitted.
+    let may = t.make(&am, "ExchangeRevaluation", json!({"company": cid, "posting_date": "2026-05-31"})).await;
+    assert_eq!((dec(&may["total_gain_loss"]), may["reversal_date"].clone(), may["reversed_on"].clone()), (n("-300"), json!("2026-06-01"), json!("2026-06-01")));
+    assert_eq!(t.gl("Exchange Gain or Loss").await, Decimal::ZERO, "posted and taken out again");
     t.books_balance().await;
 }
