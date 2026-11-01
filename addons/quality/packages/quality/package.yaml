@@ -1,0 +1,33 @@
+package: quality
+version: 0.1.0
+label: Quality
+description: Holds, nonconformance, corrective action and inspection plans
+depends: [inventory, stock_ops]
+field_prefix: qa_
+
+modules:
+  - name: quality
+    label: Quality
+    icon: shield-check
+    order: 48
+    items: [QualityHold, Nonconformance, Capa, InspectionPlan]
+
+roles:
+  - name: Quality User
+    description: Raises nonconformances and places holds. Cannot release what they hold.
+    permissions:
+      - {entity: Item, read: true}
+      - {entity: QualityInspectionTemplate, read: true}
+      - {entity: QualityHold, read: true, create: true}
+      - {entity: Nonconformance, read: true, write: true, create: true}
+      - {entity: Capa, read: true, write: true, create: true}
+      - {entity: InspectionPlan, read: true}
+  - name: Quality Manager
+    description: Releases holds, decides dispositions, approves plans and verifies corrective action.
+    permissions:
+      - {entity: Item, read: true}
+      - {entity: QualityInspectionTemplate, read: true}
+      - {entity: QualityHold, read: true, write: true, create: true, export: true}
+      - {entity: Nonconformance, read: true, write: true, create: true, export: true}
+      - {entity: Capa, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: InspectionPlan, read: true, write: true, create: true, delete: true, export: true}

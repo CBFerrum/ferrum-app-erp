@@ -1,0 +1,88 @@
+package: wms
+version: 0.1.0
+label: Warehouse Management
+description: Bins, handling units, positions by lot and owner, and warehouse execution on ERP's stock
+depends: [inventory, buying, selling, stock_ops, ops, quality]
+field_prefix: wms_
+
+modules:
+  - name: wms
+    label: Warehouse
+    icon: warehouse
+    order: 45
+    items: [ManagedWarehouse, StorageZone, StorageBin, HandlingUnit, HandlingUnitType, InboundShipment, PickWave, WarehouseTask, Shipment, CycleCount, ReturnAuthorization, ReplenishmentRule, StorageContract]
+
+overlays:
+  - entity: Item
+    ops:
+      - {op: add_field, column: true, field: {name: wms_weight_kg, type: decimal, min: "0", label: Weight (kg), description: "One stock unit, for bin capacity and shipping checks"}}
+      - {op: add_field, column: true, field: {name: wms_volume_l, type: decimal, min: "0", label: Volume (litres)}}
+      - {op: add_field, column: true, field: {name: wms_temperature_class, type: select, options: [Ambient, Chilled, Frozen], label: Temperature Class}}
+      - {op: add_field, column: true, field: {name: wms_hazard_class, type: data, max_length: 20, label: Hazard Class, description: "Stored only in bins that allow this class"}}
+      - {op: add_field, column: true, field: {name: wms_receive_status, type: select, options: [Available, Inspection, Quarantine], default: Available, label: Status on Receipt, description: "Inspection and Quarantine stock cannot be allocated until a person releases it"}}
+
+roles:
+  - name: Warehouse Viewer
+    description: Sees what is where and what is happening.
+    permissions:
+      - {entity: Item, read: true}
+      - {entity: Warehouse, read: true}
+      - {entity: ManagedWarehouse, read: true}
+      - {entity: StorageZone, read: true}
+      - {entity: StorageBin, read: true}
+      - {entity: HandlingUnitType, read: true}
+      - {entity: HandlingUnit, read: true}
+      - {entity: InboundShipment, read: true}
+      - {entity: PickWave, read: true}
+      - {entity: WarehouseTask, read: true}
+      - {entity: Shipment, read: true}
+      - {entity: CycleCount, read: true}
+      - {entity: ReturnAuthorization, read: true}
+      - {entity: ReplenishmentRule, read: true}
+      - {entity: StorageContract, read: true}
+  - name: Warehouse Operator
+    description: "Works the tasks: receives, moves, picks, packs and counts. Cannot adjust stock or approve a difference."
+    permissions:
+      - {entity: Item, read: true}
+      - {entity: Warehouse, read: true}
+      - {entity: ManagedWarehouse, read: true}
+      - {entity: StorageZone, read: true}
+      - {entity: StorageBin, read: true}
+      - {entity: HandlingUnitType, read: true}
+      - {entity: HandlingUnit, read: true, write: true, create: true}
+      - {entity: InboundShipment, read: true}
+      - {entity: PickWave, read: true}
+      - {entity: WarehouseTask, read: true}
+      - {entity: Shipment, read: true}
+      - {entity: CycleCount, read: true}
+      - {entity: ReturnAuthorization, read: true}
+      - {entity: ReplenishmentRule, read: true}
+      - {entity: StorageContract, read: true}
+  - name: Warehouse Manager
+    description: Sets up the warehouse, releases work, approves differences and decides what happens to held stock.
+    permissions:
+      - {entity: Company, read: true}
+      - {entity: Customer, read: true}
+      - {entity: DeliveryNote, read: true}
+      - {entity: Device, read: true}
+      - {entity: Item, read: true}
+      - {entity: PurchaseOrder, read: true}
+      - {entity: PurchaseReceipt, read: true}
+      - {entity: SalesOrder, read: true}
+      - {entity: Site, read: true}
+      - {entity: SiteArea, read: true}
+      - {entity: Supplier, read: true}
+      - {entity: Warehouse, read: true}
+      - {entity: ManagedWarehouse, read: true, write: true, create: true, export: true}
+      - {entity: StorageZone, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: StorageBin, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: HandlingUnitType, read: true, write: true, create: true, delete: true}
+      - {entity: HandlingUnit, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: InboundShipment, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: PickWave, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: WarehouseTask, read: true, write: true, create: true, export: true}
+      - {entity: Shipment, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: CycleCount, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: ReturnAuthorization, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: ReplenishmentRule, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: StorageContract, read: true, write: true, create: true, delete: true}
