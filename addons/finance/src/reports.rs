@@ -201,7 +201,7 @@ async fn budget_variance(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<
 
 /// Book balance against bank balance as of a date, with the vouchers not cleared yet and the bank
 /// lines not in the books explaining the difference.
-async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Result<Value> {
+pub(crate) async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Result<Value> {
     let ba = p.uuid("bank_account")?.ok_or_else(|| Error::field("bank_account", "is required"))?;
     let as_of = p.date("as_of")?.unwrap_or_else(today);
     let row: Option<(Uuid, Uuid, Option<Uuid>, String, Option<Decimal>, Option<NaiveDate>)> =
