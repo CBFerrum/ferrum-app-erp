@@ -86,6 +86,13 @@ const erpRoutes = [
     errorElement: <RouteError />,
     children: [
       { index: true, lazy: erpHome },
+      // The accountant's screens answer where the sidebar already points (its reports, the New
+      // button of its lists), ahead of the frame's generic pages; each loads when first opened.
+      { path: "r/bank_reconciliation", lazy: () => import("./Bank").then((m) => ({ Component: m.Bank })) },
+      { path: "r/profit_and_loss", lazy: () => import("./Statement").then((m) => ({ Component: m.ProfitAndLoss })) },
+      { path: "r/balance_sheet", lazy: () => import("./Statement").then((m) => ({ Component: m.BalanceSheet })) },
+      { path: "r/cash_flow", lazy: () => import("./Statement").then((m) => ({ Component: m.CashFlow })) },
+      { path: "e/PaymentAllocation/new", lazy: () => import("./Allocate").then((m) => ({ Component: m.Allocate })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
     ],
