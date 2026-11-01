@@ -1,0 +1,452 @@
+// Applying a customer's or supplier's unapplied money to their open invoices, in one sitting: the
+// money there is (payments, credit notes, journal credits) on one side, what is owed on the other,
+// an amount against each invoice (oldest first with one button), and what is left over on both
+// sides always in view. Confirming shows the pairings with the exchange gain or loss the server
+// works out for each, and then posts every one of them or none. The rules about what may be paired
+// are the server's; this screen only keeps the sums.
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import { api, docPath, errorMessage, formatDate, todayIso } from "@ferrum/client";
+import { Alert, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { LinkInput, useMe } from "@ferrum/records";
+import { currencies, documentBody, dueWords, fill, fromReport, kindLabel, type Open, pairOff, postingDate, ready, split, type Tally, tally } from "./allocation";
+import { cmp, min, sub, sum } from "./decimal";
+import { show } from "./money";
+import { AccountsTabs } from "./Tabs";
+
+type PartyType = "Customer" | "Supplier";
+
+interface Report {
+  rows: Parameters<typeof fromReport>[0];
+}
+
+interface Preview {
+  allocations: { credit_type?: string; credit_number?: string | null; invoice_number?: string | null; allocated_amount: string; exchange_difference: string }[];
+  total_allocated: string;
+  exchange_difference: string;
+}
+
+const ROOT = ["erp", "allocate"] as const;
+
+// ───────────────────────────── the sums on screen ─────────────────────────────
+
+function Summary({ t, currency, onFill, onClear, onReview, canFill }: { t: Tally; currency: string; onFill: () => void; onClear: () => void; onReview: () => void; canFill: boolean }) {
+  return (
+    <div className="erp-summary" role="status">
+      <dl className="erp-sums">
+        <div>
+          <dt>Money to apply</dt>
+          <dd>{show(t.available)}</dd>
+        </div>
+        <div>
+          <dt>Applying</dt>
+          <dd>{show(t.applied)}</dd>
+        </div>
+        <div data-tone={cmp(t.left, "0") > 0 ? "left" : undefined}>
+          <dt>Left over</dt>
+          <dd>{show(t.left)}</dd>
+        </div>
+      </dl>
+      <span className="faint">{currency}</span>
+      {t.over && <span className="erp-negative">{t.over}</span>}
+      <span className="spacer" />
+      <Button onClick={onFill} disabled={!canFill}>
+        Oldest invoices first
+      </Button>
+      <Button variant="ghost" onClick={onClear} disabled={cmp(t.applied, "0") === 0}>
+        Clear
+      </Button>
+      <Button variant="primary" onClick={onReview} disabled={!ready(t)}>
+        Review
+      </Button>
+    </div>
+  );
+}
+
+function MoneyTable({ credits, left, used, precision, onToggle }: { credits: Open[]; left: Record<string, string>; used: Set<string>; precision: number; onToggle: (id: string, on: boolean) => void }) {
+  return (
+    <section className="erp-card" aria-labelledby="al-money">
+      <h2 id="al-money" className="erp-card-title">
+        Money to apply
+      </h2>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>
+                <span className="sr-only">Use</span>
+              </th>
+              <th>Document</th>
+              <th className="num">Available</th>
+              <th className="num">Left over</th>
+            </tr>
+          </thead>
+          <tbody>
+            {credits.map((c) => (
+              <tr key={c.id} data-off={!used.has(c.id) || undefined}>
+                <td>
+                  <input type="checkbox" aria-label={`Use ${kindLabel(c)} ${c.number ?? ""}`} checked={used.has(c.id)} onChange={(e) => onToggle(c.id, e.target.checked)} />
+                </td>
+                <td>
+                  <DocLink item={c} />
+                  <div className="faint">
+                    {kindLabel(c)} · {formatDate(c.date)}
+                  </div>
+                </td>
+                <td className="num">{show(sub("0", c.outstanding), precision)}</td>
+                <td className="num">{used.has(c.id) ? show(left[c.id], precision) : <span className="faint">not used</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function DocLink({ item }: { item: Open }) {
+  const label = item.number ?? kindLabel(item);
+  // A journal's open items are its lines: the journal itself is found from its list.
+  if (item.kind === "JournalEntry") return <span className="cell-title">{label}</span>;
+  return (
+    <Link className="cell-title" to={`/e/${item.kind}/${item.id}`}>
+      {label}
+    </Link>
+  );
+}
+
+function InvoiceTable({ invoices, amounts, t, available, onAmount, today }: { invoices: Open[]; amounts: Record<string, string>; t: Tally; available: string; onAmount: (id: string, v: string) => void; today: string }) {
+  // "Full" asks for as much of the invoice as the money not given to the other invoices can pay.
+  const room = (id: string) => sub(available, sum(Object.entries(amounts).filter(([k]) => k !== id).map(([, v]) => v)));
+  return (
+    <section className="erp-card" aria-labelledby="al-owed">
+      <h2 id="al-owed" className="erp-card-title">
+        Open invoices
+      </h2>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Due</th>
+              <th className="num">Owed</th>
+              <th className="num">Apply</th>
+              <th className="num">Left owed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((inv) => {
+              const late = dueWords(inv.due ?? inv.date, today);
+              const full = min(inv.outstanding, cmp(room(inv.id), "0") > 0 ? room(inv.id) : "0");
+              return (
+                <tr key={inv.id}>
+                  <td>
+                    <DocLink item={inv} />
+                    <div className="faint">{formatDate(inv.date)}</div>
+                  </td>
+                  <td>
+                    {inv.due ? formatDate(inv.due) : ""}
+                    <div className={late.includes("overdue") ? "erp-negative" : "faint"}>{late}</div>
+                  </td>
+                  <td className="num">{show(inv.outstanding)}</td>
+                  <td className="num erp-apply">
+                    <input
+                      className="input num"
+                      inputMode="decimal"
+                      aria-label={`Amount to apply to ${inv.number ?? "the invoice"}`}
+                      aria-invalid={t.errors[inv.id] ? true : undefined}
+                      placeholder="0"
+                      value={amounts[inv.id] ?? ""}
+                      onChange={(e) => onAmount(inv.id, e.target.value)}
+                    />
+                    <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={`Apply as much as possible to ${inv.number ?? "the invoice"}`}>
+                      Full
+                    </Button>
+                    {t.errors[inv.id] && <span className="field-error">{t.errors[inv.id]}</span>}
+                  </td>
+                  <td className="num">{show(t.invoiceLeft[inv.id])}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// ───────────────────────────── confirming ─────────────────────────────
+
+function Review({ company, partyType, party, pairings, byId, minDate, onClose, onDone }: { company: string; partyType: PartyType; party: string; pairings: ReturnType<typeof pairOff>["pairings"]; byId: Map<string, Open>; minDate: string; onClose: () => void; onDone: () => void }) {
+  const [date, setDate] = useState(minDate);
+  const [remarks, setRemarks] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const body = useMemo(() => documentBody({ company, partyType, party, date, pairings, remarks: remarks.trim() }), [company, partyType, party, date, pairings, remarks]);
+  // The server works out each pairing's documents and exchange difference before anything is saved.
+  const seen = useQuery({
+    queryKey: [...ROOT, "preview", JSON.stringify(body)],
+    queryFn: ({ signal }) => api.post<Preview>("/api/v1/PaymentAllocation/_calc", body, { signal }),
+  });
+  const p = seen.data;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    let made: { id: string; version: number } | null = null;
+    try {
+      made = await api.post<{ id: string; version: number }>("/api/v1/PaymentAllocation", body);
+      const done = await api.post<{ number?: string }>(docPath("PaymentAllocation", made.id, "submit"), {}, { ifMatch: made.version });
+      toast(`Applied ${show(p?.total_allocated)}${done.number ? ` (${done.number})` : ""}`);
+      onDone();
+    } catch (err) {
+      // A draft that could not be posted is not left behind.
+      if (made) await api.del(docPath("PaymentAllocation", made.id)).catch(() => undefined);
+      setProblem(errorMessage(err));
+      setBusy(false);
+    }
+  };
+  const gain = p?.exchange_difference ?? "0";
+  return (
+    <Dialog
+      open
+      wide
+      onClose={onClose}
+      title="Review before applying"
+      footer={
+        <>
+          <Button onClick={onClose}>Back</Button>
+          <Button variant="primary" type="submit" form="al-confirm" loading={busy} disabled={!p}>
+            Apply {p ? show(p.total_allocated) : ""}
+          </Button>
+        </>
+      }
+    >
+      <form id="al-confirm" className="stack erp-tight" onSubmit={submit}>
+        {problem && <Alert tone="error">{problem}</Alert>}
+        {seen.error ? (
+          <Alert tone="error">{errorMessage(seen.error)}</Alert>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Money</th>
+                  <th>Applied to</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Exchange gain (loss)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pairings.map((pair, i) => (
+                  <tr key={`${pair.credit}-${pair.invoice}`}>
+                    <td>
+                      {p?.allocations[i]?.credit_number ?? byId.get(pair.credit)?.number}
+                      <div className="faint">{p?.allocations[i]?.credit_type}</div>
+                    </td>
+                    <td>{p?.allocations[i]?.invoice_number ?? byId.get(pair.invoice)?.number}</td>
+                    <td className="num">{show(pair.amount)}</td>
+                    <td className="num">{p ? (cmp(p.allocations[i]?.exchange_difference ?? "0", "0") === 0 ? <span className="faint">none</span> : show(p.allocations[i].exchange_difference)) : "…"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {p && cmp(gain, "0") !== 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}>{cmp(gain, "0") > 0 ? "Exchange gain" : "Exchange loss"}, in the company's currency</td>
+                    <td className="num">{show(gain)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+        <div className="erp-two">
+          <Field label="Dated" htmlFor="al-date" hint="Not before the money or the invoices it joins.">
+            <input id="al-date" className="input" type="date" required min={minDate} value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+          <Field label="Note" htmlFor="al-note">
+            <input id="al-note" className="input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+          </Field>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+// ───────────────────────────── the screen ─────────────────────────────
+
+function Body({ items, company, partyType, party, onApplied }: { items: Open[]; company: string; partyType: PartyType; party: string; onApplied: () => void }) {
+  const [sp, setSp] = useSearchParams();
+  const all = useMemo(() => currencies(items), [items]);
+  const currency = all.includes(sp.get("currency") ?? "") ? sp.get("currency")! : (all[0] ?? "");
+  const { credits, invoices } = useMemo(() => split(items, currency), [items, currency]);
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
+  const today = todayIso();
+
+  const usable = useMemo(() => credits.filter((c) => !off.has(c.id)), [credits, off]);
+  const t = useMemo(() => tally(usable, invoices, amounts), [usable, invoices, amounts]);
+  const { pairings } = useMemo(() => pairOff(usable, invoices, amounts), [usable, invoices, amounts]);
+  const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+  const minDate = postingDate(today, pairings.flatMap((p) => [byId.get(p.credit)?.date, byId.get(p.invoice)?.date]).filter((d): d is string => !!d));
+
+  const reset = () => setAmounts({});
+  const setAmount = (id: string, v: string) => setAmounts((a) => (v === "" ? Object.fromEntries(Object.entries(a).filter(([k]) => k !== id)) : { ...a, [id]: v }));
+
+  if (!credits.length || !invoices.length) {
+    return (
+      <EmptyState title={!credits.length ? "No money waiting to be applied" : "No open invoices to apply it to"} icon="check">
+        <p className="muted">
+          {!credits.length
+            ? `${items.length ? "Everything this party owes is still to be paid" : "Nothing is open for this party"}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.`
+            : "The money is waiting, with nothing yet to apply it to."}
+        </p>
+        {!credits.length && (
+          <Link className="btn btn-default btn-md" to="/e/PaymentEntry/new">
+            <Icon name="plus" />
+            Record a payment
+          </Link>
+        )}
+      </EmptyState>
+    );
+  }
+  return (
+    <>
+      {all.length > 1 && (
+        <div className="segmented" role="group" aria-label="Currency">
+          {all.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-pressed={c === currency}
+              onClick={() => {
+                reset();
+                setOff(new Set());
+                setSp((prev) => new URLSearchParams({ ...Object.fromEntries(prev), currency: c }), { replace: true });
+              }}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      <Summary
+        t={t}
+        currency={currency}
+        canFill={cmp(t.available, "0") > 0}
+        onFill={() => setAmounts(fill(usable, invoices))}
+        onClear={reset}
+        onReview={() => setReviewing(true)}
+      />
+      <div className="erp-pair">
+        <MoneyTable
+          credits={credits}
+          left={t.creditLeft}
+          used={new Set(usable.map((c) => c.id))}
+          precision={2}
+          onToggle={(id, on) =>
+            setOff((o) => {
+              const next = new Set(o);
+              if (on) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
+        />
+        <InvoiceTable invoices={invoices} amounts={amounts} t={t} available={t.available} onAmount={setAmount} today={today} />
+      </div>
+      {reviewing && (
+        <Review
+          company={company}
+          partyType={partyType}
+          party={party}
+          pairings={pairings}
+          byId={byId}
+          minDate={minDate}
+          onClose={() => setReviewing(false)}
+          onDone={() => {
+            setReviewing(false);
+            reset();
+            onApplied();
+          }}
+        />
+      )}
+      <p className="faint">Untick a payment to keep it for later. Oldest invoices first pays the earliest due dates with the oldest money.</p>
+    </>
+  );
+}
+
+export function Allocate() {
+  useShellTitle("Apply payments");
+  const qc = useQueryClient();
+  const me = useMe().data;
+  const [sp, setSp] = useSearchParams();
+  const partyType: PartyType = sp.get("type") === "Supplier" ? "Supplier" : "Customer";
+  const party = sp.get("party");
+  const company = sp.get("company") ?? me?.default_company ?? null;
+  const put = useCallback(
+    (changes: Record<string, string | null>) =>
+      setSp(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(changes)) v ? next.set(k, v) : next.delete(k);
+          return next;
+        },
+        { replace: true },
+      ),
+    [setSp],
+  );
+  const q = useQuery({
+    queryKey: [...ROOT, "open", partyType, party, company],
+    enabled: !!party,
+    queryFn: ({ signal }) =>
+      api.get<Report>(`/api/reports/${partyType === "Customer" ? "receivables" : "payables"}`, { company, [partyType.toLowerCase()]: party, as_of: todayIso() }, signal),
+  });
+  const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: ROOT }), [qc]);
+  useLiveEntity("PaymentAllocation", refresh);
+  useLiveEntity("PaymentEntry", refresh);
+  useLiveEntity(partyType === "Customer" ? "SalesInvoice" : "PurchaseInvoice", refresh);
+  const items = useMemo(() => (q.data ? fromReport(q.data.rows) : []), [q.data]);
+
+  let body;
+  if (!party) {
+    body = (
+      <EmptyState title={`Choose a ${partyType.toLowerCase()}`} icon="user">
+        <p className="muted">Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.</p>
+      </EmptyState>
+    );
+  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load what is open" />;
+  else if (!q.data || !company) body = <PageLoading label="Loading what is open" />;
+  else body = <Body key={`${partyType}-${party}`} items={items} company={company} partyType={partyType} party={party} onApplied={refresh} />;
+
+  return (
+    <div className="erp-page erp-allocate">
+      <header className="erp-head">
+        <div>
+          <AccountsTabs />
+          <p className="page-sub">Apply payments, credit notes and journal credits to open invoices.</p>
+        </div>
+        <div className="erp-tools">
+          <div className="segmented" role="group" aria-label="Whose">
+            {(["Customer", "Supplier"] as const).map((k) => (
+              <button key={k} type="button" aria-pressed={partyType === k} onClick={() => put({ type: k === "Customer" ? null : k, party: null, currency: null })}>
+                {k === "Customer" ? "Customers" : "Suppliers"}
+              </button>
+            ))}
+          </div>
+          <div className="erp-pick erp-pick-wide">
+            <LinkInput to={partyType} id="al-party" label={partyType} placeholder={`Find a ${partyType.toLowerCase()}…`} value={party} onChange={(id) => put({ party: id, currency: null })} />
+          </div>
+          <div className="erp-pick">
+            <LinkInput to="Company" id="al-company" label="Company" value={company} onChange={(id) => put({ company: id })} />
+          </div>
+        </div>
+      </header>
+      {body}
+    </div>
+  );
+}
