@@ -15,6 +15,7 @@ pub mod flow;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
+pub mod periods;
 pub mod portal;
 pub mod pricing;
 pub mod reports;

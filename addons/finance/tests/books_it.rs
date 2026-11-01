@@ -223,6 +223,7 @@ async fn scenario() {
 
     bank_workbench(&mut t).await;
     payment_allocation(&mut t).await;
+    statements(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
@@ -578,5 +579,217 @@ async fn payment_allocation(t: &mut T) {
     assert_eq!(t.get("SalesInvoice", euro_bill).await["status"], json!("Paid"));
     let euro_ledger = "select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and customer_id = $2";
     assert_eq!(t.amount(euro_ledger, Some(euro)).await, Decimal::ZERO, "nothing is left on the customer's account in rupees");
+    t.books_balance().await;
+}
+
+// ───────────────────────────── statements, compared, and the cash flow ─────────────────────────────
+
+/// The row of a statement for an account (or total) by its words.
+fn line<'a>(report: &'a Value, account: &str) -> &'a Value {
+    report["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!(account)).unwrap_or_else(|| panic!("no row {account}: {}", report["rows"]))
+}
+
+async fn statements(t: &mut T) {
+    let (a, am) = (t.admin.clone(), t.am.clone());
+    let cid = t.open_company("Stmt Co", "SC").await;
+    let bank = t.account("Primary Bank").await;
+    let capital = t.account("Capital Stock").await;
+    let loans = t.account("Secured Loans").await;
+    let computers = t.account("Computers").await;
+    let rent = t.account("Rent").await;
+    let unit = uid(&t.find_one("Item", json!({"item_code": "UNIT"})).await);
+    let customer = uid(&t.insert(&a, "Customer", json!({"customer_name": "Stmt Customer"})).await);
+    let operations = uid(&t.insert(&a, "CostCenter", json!({"cost_center_name": "Operations", "company": cid, "is_group": true})).await);
+    let marketing =
+        uid(&t.insert(&a, "CostCenter", json!({"cost_center_name": "Marketing", "company": cid, "parent_cost_center": operations.to_string()})).await);
+    let sales_team =
+        uid(&t.insert(&a, "CostCenter", json!({"cost_center_name": "Sales Team", "company": cid, "parent_cost_center": operations.to_string()})).await);
+    let website = uid(&t.insert(&a, "Project", json!({"project_name": "Website", "company": cid})).await);
+    let entry = |date: &str, lines: Value| t.journal(date, lines);
+    let rent_line = |amount: &str, cc: Uuid, project: Option<Uuid>| json!({"account": rent.to_string(), "debit": amount, "cost_center": cc.to_string(), "project": project.map(|p| p.to_string())});
+
+    // January: capital 10,000 and a loan of 4,000 come in, 2,000 of computers go out, 3,000 is
+    // invoiced and 1,000 of it paid, 500 of rent. February: 600 of rent, 1,000 invoiced, 1,500 of the loan repaid.
+    t.make(&am, "JournalEntry", entry("2026-01-05", json!([dr(bank, "10000"), cr(capital, "10000")]))).await;
+    t.make(&am, "JournalEntry", entry("2026-01-08", json!([dr(bank, "4000"), cr(loans, "4000")]))).await;
+    t.make(&am, "JournalEntry", entry("2026-01-10", json!([dr(computers, "2000"), cr(bank, "2000")]))).await;
+    let jan_invoice = uid(&t
+        .make(
+            &am,
+            "SalesInvoice",
+            json!({"company": cid, "customer": customer.to_string(), "posting_date": "2026-01-15", "items": [{"item": unit.to_string(), "qty": "3000"}]}),
+        )
+        .await);
+    t.make(
+        &am,
+        "PaymentEntry",
+        json!({"company": cid, "payment_type": "Receive", "customer": customer.to_string(), "posting_date": "2026-01-20", "bank_account": bank.to_string(), "currency": t.inr.to_string(),
+               "paid_amount": "1000", "references": [{"invoice_type": "Sales Invoice", "invoice": jan_invoice.to_string(), "allocated_amount": "1000"}]}),
+    )
+    .await;
+    t.make(&am, "JournalEntry", entry("2026-01-25", json!([rent_line("500", marketing, None), cr(bank, "500")]))).await;
+    t.make(&am, "JournalEntry", entry("2026-02-05", json!([rent_line("600", sales_team, Some(website)), cr(bank, "600")]))).await;
+    t.make(
+        &am,
+        "SalesInvoice",
+        json!({"company": cid, "customer": customer.to_string(), "posting_date": "2026-02-10", "items": [{"item": unit.to_string(), "qty": "1000"}]}),
+    )
+    .await;
+    t.make(&am, "JournalEntry", entry("2026-02-14", json!([dr(loans, "1500"), cr(bank, "1500")]))).await;
+
+    // Profit and loss: January 3,000 - 500 = 2,500; February 1,000 - 600 = 400. Asked on its own it is what it always was.
+    let own = t.report(&am, "profit_and_loss", &[("company", cid.clone()), ("from_date", "2026-02-01".into()), ("to_date", "2026-02-28".into())]).await;
+    assert_eq!((dec(&own["totals"]["income"]), dec(&own["totals"]["expense"]), dec(&own["totals"]["net_profit"])), (n("1000"), n("600"), n("400")));
+    assert_eq!(own["columns"].as_array().unwrap().len(), 2, "one period has an account column and an amount column");
+    assert!(own["rows"][1].get("amount_1").is_none() && line(&own, "Net Profit").get("change").is_none());
+
+    // Set beside the month before: sales 1,000 against 3,000 (down 2,000, which is 66.67% of 3,000), rent 600
+    // against 500 (up 100, 20%), the profit 400 against 2,500 (down 2,100, 84%).
+    let both = t
+        .report(
+            &am,
+            "profit_and_loss",
+            &[("company", cid.clone()), ("from_date", "2026-02-01".into()), ("to_date", "2026-02-28".into()), ("compare", "Previous period".into())],
+        )
+        .await;
+    let sales_row = line(&both, "4110 - Sales");
+    assert_eq!(
+        (dec(&sales_row["amount"]), dec(&sales_row["amount_1"]), dec(&sales_row["change"]), dec(&sales_row["change_pct"])),
+        (n("1000"), n("3000"), n("-2000"), n("-66.67"))
+    );
+    let rent_row = line(&both, "5230 - Rent");
+    assert_eq!(
+        (dec(&rent_row["amount"]), dec(&rent_row["amount_1"]), dec(&rent_row["change"]), dec(&rent_row["change_pct"])),
+        (n("600"), n("500"), n("100"), n("20"))
+    );
+    assert_eq!(rent_row["account_id"], json!(rent.to_string()), "a row names its account, to open the entries behind it");
+    let net = line(&both, "Net Profit");
+    assert_eq!((dec(&net["amount"]), dec(&net["amount_1"]), dec(&net["change"]), dec(&net["change_pct"])), (n("400"), n("2500"), n("-2100"), n("-84")));
+    let heads: Vec<&str> = both["columns"].as_array().unwrap().iter().map(|c| c["label"].as_str().unwrap()).collect();
+    assert_eq!(heads, ["Account", "Feb 2026", "Jan 2026", "Change", "Change %"]);
+    assert_eq!((both["meta"]["periods"][1]["from_date"].clone(), both["meta"]["periods"][1]["to_date"].clone()), (json!("2026-01-01"), json!("2026-01-31")));
+    assert_eq!(dec(&both["meta"]["periods"][1]["net_profit"]), n("2500"));
+    // A year back has no February to compare with: every figure of it is nothing, and the change is not a percentage of nothing.
+    let year = t
+        .report(
+            &am,
+            "profit_and_loss",
+            &[("company", cid.clone()), ("from_date", "2026-02-01".into()), ("to_date", "2026-02-28".into()), ("compare", "Previous year".into())],
+        )
+        .await;
+    assert_eq!((dec(&line(&year, "4110 - Sales")["amount_1"]), line(&year, "4110 - Sales")["change_pct"].clone()), (Decimal::ZERO, Value::Null));
+    let bad = ferrum_domain::reports::run(
+        &t.k,
+        &am,
+        "profit_and_loss",
+        &HashMap::from([("company".to_string(), cid.clone()), ("compare".to_string(), "last time".to_string())]),
+    )
+    .await
+    .unwrap_err();
+    assert!(invalid(&bad, "Previous period"), "{bad:?}");
+
+    // The same by cost center: Operations holds Marketing (January's 500) and Sales Team (February's 600).
+    let expense_in = |cc: Uuid, from: &'static str, to: &'static str| {
+        let (t, am, cid) = (&*t, &am, &cid);
+        async move {
+            let r = t
+                .report(am, "profit_and_loss", &[("company", cid.clone()), ("from_date", from.into()), ("to_date", to.into()), ("cost_center", cc.to_string())])
+                .await;
+            dec(&r["totals"]["expense"])
+        }
+    };
+    assert_eq!(expense_in(operations, "2026-01-01", "2026-02-28").await, n("1100"), "a group is the cost centers below it");
+    assert_eq!(expense_in(marketing, "2026-01-01", "2026-02-28").await, n("500"));
+    assert_eq!(expense_in(sales_team, "2026-02-01", "2026-02-28").await, n("600"));
+    assert_eq!(expense_in(sales_team, "2026-01-01", "2026-01-31").await, Decimal::ZERO);
+    let project = t
+        .report(
+            &am,
+            "profit_and_loss",
+            &[("company", cid.clone()), ("from_date", "2026-01-01".into()), ("to_date", "2026-02-28".into()), ("project", website.to_string())],
+        )
+        .await;
+    assert_eq!(dec(&project["totals"]["expense"]), n("600"), "the Website project had February's rent");
+
+    // The entries behind a figure: the group of the indirect expenses is its accounts' entries, 500 and 600.
+    let group = uid(&t.find_one("Account", json!({"account_name": "Indirect Expenses", "company": cid})).await);
+    let ledger = t
+        .report(
+            &am,
+            "general_ledger",
+            &[("company", cid.clone()), ("from_date", "2026-01-01".into()), ("to_date", "2026-02-28".into()), ("account", group.to_string())],
+        )
+        .await;
+    let entries: Vec<&Value> = ledger["rows"].as_array().unwrap().iter().filter(|r| r.get("voucher_type").is_some()).collect();
+    assert_eq!(entries.len(), 2, "{ledger}");
+    assert_eq!((dec(&line(&ledger, "Closing")["debit"]), dec(&line(&ledger, "Closing")["balance"])), (n("1100"), n("1100")));
+    assert_eq!(entries[0]["voucher_type"], json!("JournalEntry"));
+
+    // Balance sheet at the end of February against the end of January (a month back from a month's end is a month's end).
+    // January: assets 12,500 (bank) + 2,000 (debtors) + 2,000 (computers) = 16,500; loan 4,000; equity 10,000 + 2,500 profit.
+    // February: bank 12,500 - 600 - 1,500 = 10,400; debtors 3,000; computers 2,000 = 15,400; loan 2,500; equity 10,000 + 2,900.
+    let sheet = t.report(&am, "balance_sheet", &[("company", cid.clone()), ("as_of", "2026-02-28".into()), ("compare", "Previous period".into())]).await;
+    let total_assets = line(&sheet, "Total Assets");
+    assert_eq!(
+        (dec(&total_assets["amount"]), dec(&total_assets["amount_1"]), dec(&total_assets["change"]), dec(&total_assets["change_pct"])),
+        (n("15400"), n("16500"), n("-1100"), n("-6.67"))
+    );
+    let (loan_row, open_row) = (line(&sheet, "2210 - Secured Loans"), line(&sheet, "Profit/loss not yet closed to equity"));
+    assert_eq!((dec(&loan_row["amount"]), dec(&loan_row["amount_1"])), (n("2500"), n("4000")));
+    assert_eq!((dec(&open_row["amount"]), dec(&open_row["amount_1"])), (n("2900"), n("2500")));
+    assert_eq!(
+        (dec(&line(&sheet, "Total Liabilities and Equity")["amount"]), dec(&line(&sheet, "Total Liabilities and Equity")["amount_1"])),
+        (n("15400"), n("16500"))
+    );
+    assert_eq!((sheet["meta"]["balanced"].clone(), sheet["meta"]["periods"][1]["label"].clone()), (json!(true), json!("31 Jan 2026")));
+    assert_eq!(dec(&sheet["meta"]["periods"][1]["assets"]), n("16500"));
+
+    // Cash flow, January. Profit 2,500; debtors up 2,000 (-2,000), so operating is 500. Computers 2,000 bought: investing -2,000.
+    // Capital 10,000 and the loan 4,000 came in: financing 14,000. Net 500 - 2,000 + 14,000 = 12,500, the bank's own movement.
+    let jan = t.report(&am, "cash_flow", &[("company", cid.clone()), ("from_date", "2026-01-01".into()), ("to_date", "2026-01-31".into())]).await;
+    let totals = &jan["totals"];
+    assert_eq!(
+        [&totals["operating"], &totals["investing"], &totals["financing"], &totals["net_change"], &totals["opening"], &totals["closing"]].map(dec),
+        [n("500"), n("-2000"), n("14000"), n("12500"), Decimal::ZERO, n("12500")]
+    );
+    assert_eq!((jan["meta"]["reconciled"].clone(), dec(&jan["meta"]["difference"])), (json!(true), Decimal::ZERO));
+    assert_eq!(dec(&line(&jan, "Profit (loss) for the period")["amount"]), n("2500"));
+    assert_eq!(dec(&line(&jan, "1111 - Debtors")["amount"]), n("-2000"));
+    assert_eq!(dec(&line(&jan, "1230 - Computers")["amount"]), n("-2000"));
+    assert_eq!(dec(&line(&jan, "3100 - Capital Stock")["amount"]), n("10000"));
+    assert_eq!(dec(&line(&jan, "2210 - Secured Loans")["amount"]), n("4000"), "the loan is financing because the standard chart says so");
+    assert_eq!(line(&jan, "2210 - Secured Loans")["section"], json!("financing"));
+    // February against January: profit 400, debtors up 1,000, so operating is -600; 1,500 of the loan repaid; 12,500 - 2,100 = 10,400.
+    let feb = t
+        .report(
+            &am,
+            "cash_flow",
+            &[("company", cid.clone()), ("from_date", "2026-02-01".into()), ("to_date", "2026-02-28".into()), ("compare", "Previous period".into())],
+        )
+        .await;
+    assert_eq!(
+        [
+            &feb["totals"]["operating"],
+            &feb["totals"]["investing"],
+            &feb["totals"]["financing"],
+            &feb["totals"]["net_change"],
+            &feb["totals"]["opening"],
+            &feb["totals"]["closing"]
+        ]
+        .map(dec),
+        [n("-600"), Decimal::ZERO, n("-1500"), n("-2100"), n("12500"), n("10400")]
+    );
+    let net = line(&feb, "Net increase (decrease) in cash");
+    assert_eq!((dec(&net["amount"]), dec(&net["amount_1"]), dec(&net["change"]), dec(&net["change_pct"])), (n("-2100"), n("12500"), n("-14600"), n("-116.8")));
+    assert_eq!((dec(&line(&feb, "1111 - Debtors")["amount"]), dec(&line(&feb, "1111 - Debtors")["amount_1"])), (n("-1000"), n("-2000")));
+    assert_eq!(feb["meta"]["reconciled"], json!(true));
+    assert_eq!(feb["meta"]["periods"][1]["label"], json!("Jan 2026"));
+    // An account sets its own section: the computers become part of operations, and the cash flow still ends where the bank does.
+    t.k.update(&am, "Account", computers, obj(json!({"cash_flow_section": "Operating"})), None).await.expect("a section of its own");
+    let moved = t.report(&am, "cash_flow", &[("company", cid.clone()), ("from_date", "2026-01-01".into()), ("to_date", "2026-01-31".into())]).await;
+    assert_eq!(
+        (dec(&moved["totals"]["operating"]), dec(&moved["totals"]["investing"]), dec(&moved["totals"]["net_change"])),
+        (n("-1500"), Decimal::ZERO, n("12500"))
+    );
     t.books_balance().await;
 }
