@@ -33,7 +33,7 @@ MUTANTS = [
     ("wms-issues-what-nobody-picked", "addons/wms/src/posting.rs", "    if waiting < qty {", "    if false {", WMS),
     ("wms-arriving-is-delivering", TASKS, 'json!({"status": "Arrived", "custody": "In Transit", "reason": "Arrived: confirm the unit at its destination"})', 'json!({"status": "Done", "custody": "In Place"})', WMS),
     ("wms-parcel-goes-twice", "addons/wms/src/shipping.rs", 'd(line, "verified_qty") - d(line, "handed_over_qty")', 'd(line, "verified_qty")', WMS),
-    ("wms-receives-twice", "addons/wms/src/inbound.rs", 'if !matches!(status, "Expected" | "Receiving") {', 'if status == "Received" {', WMS),
+    ("wms-receives-twice", "addons/wms/src/inbound.rs", 'if !matches!(status, "Expected" | "Receiving") {\n        return Err(Error::invalid("this shipment is already received"));', 'if status == "Received" {\n        return Err(Error::invalid("this shipment is already received"));', WMS),
     ("wms-scan-counts-twice", "addons/wms/src/inbound.rs", '    if !first {\n        return Ok(json!({"repeated": true}));\n    }\n', "    let _ = first;\n", WMS),
     ("wms-part-of-a-code-matches", "addons/wms/src/slotting.rs", "upper(item_code) = upper($2)", "upper(item_code) like '%' || upper($2) || '%'", WMS),
     ("wms-held-stock-allocated", WAVES, "and p.status = 'Available' and p.qty > p.allocated \\\n", "and p.qty > p.allocated \\\n", WMS),

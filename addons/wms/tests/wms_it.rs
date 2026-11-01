@@ -269,7 +269,7 @@ async fn scenario() {
     let closed = t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.expect("closed");
     assert_eq!(closed["status"], json!("Discrepancy"), "the unknown pallet is still somebody's to sort out");
     assert_eq!(t.on_books(bolt).await, n("100"), "ERP received it, damaged included: it is here");
-    assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.is_err(), "a shipment that closed with a difference does not receive twice");
+    assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.is_err_and(|e| text(&e).contains("already received")), "a shipment that closed with a difference does not receive twice");
     assert_eq!(t.on_books(bolt).await, n("100"));
     assert!(t.api_as(&operator, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.is_err(), "settling a difference is a manager's");
     assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/settle"), json!({"note": " "})).await.is_err(), "and says what became of it");
