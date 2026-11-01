@@ -97,10 +97,13 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid)
     let per = if d(&bom, "quantity").is_zero() { Decimal::ONE } else { d(&bom, "quantity") };
     let source = id(&wo, "source_warehouse").ok_or_else(|| Error::internal("no source warehouse"))?;
     let mut missing = Vec::new();
+    let mut materials = Vec::new();
     for line in rows(&bom, "items") {
         let item = id(&line, "item").ok_or_else(|| Error::internal("a line without an item"))?;
         let need = (d(&line, "qty") / per * d(&doc, "qty")).round_dp(9);
-        let there = usable(tx, ctx.tenant, item, id(&line, "source_warehouse").unwrap_or(source)).await?;
+        let warehouse = id(&line, "source_warehouse").unwrap_or(source);
+        materials.push(json!({"item": item, "warehouse": warehouse, "qty": need}));
+        let there = usable(tx, ctx.tenant, item, warehouse).await?;
         if there < need {
             let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
             missing.push(format!("{}: {} of {}", code.unwrap_or_default(), there.normalize(), need.normalize()));
@@ -112,6 +115,8 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid)
     if !append(tx, ctx, run, event, "Release", Utc::now(), &Line::default(), json!({"revision": rev_id})).await? {
         return Ok(json!({"repeated": true}));
     }
+    // For whoever runs the warehouse: a managed one brings this to the line.
+    ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "mes.run.released", Some("ProductionRun"), Some(run), json!({"run": run, "materials": materials})).await?;
     let mut command = None;
     if let Some((device, ..)) = device {
         let takes_jobs = ferrum_ops::devices::operation(tx, ctx.tenant, device, JOB_OPERATION).await?.is_some();
@@ -464,7 +469,7 @@ async fn post_scrap(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, doc: &Doc, sc
         }
     }
     if !items.is_empty() {
-        let entry = json!({"company": doc.get("company"), "purpose": "Material Issue", "items": items, "remarks": format!("Scrap on run {}", s(doc, "reference").unwrap_or_default())});
+        let entry = json!({"company": doc.get("company"), "purpose": "Material Issue", "items": items, "remarks": format!("Scrap on run {}", s(doc, "number").unwrap_or_default())});
         let made = k.insert_tx(&elevated, tx, "StockEntry", entry.as_object().cloned().unwrap_or_default()).await?;
         k.submit_tx(&elevated, tx, "StockEntry", id(&made, "id").ok_or_else(|| Error::internal("no id"))?, None).await?;
     }

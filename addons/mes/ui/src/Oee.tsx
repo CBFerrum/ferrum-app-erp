@@ -40,7 +40,7 @@ export function Oee() {
         </Field>
       </section>
       {!station ? (
-        <EmptyState title="Choose a workstation" icon="activity" />
+        <EmptyState title="Choose a workstation" icon="chart" />
       ) : q.isPending ? (
         <PageLoading />
       ) : q.isError ? (

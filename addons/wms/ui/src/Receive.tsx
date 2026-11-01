@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, docPath, errorMessage, formatDecimal, newKey } from "@ferrum/client";
+import { api, docPath, formatDecimal, newKey, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { post } from "./data";
 import { lineProgress, type ReceiveLine } from "./logic";
@@ -31,7 +31,7 @@ function Unknown({ id, onClose }: { id: string; onClose: () => void }) {
       void qc.invalidateQueries({ queryKey: ["wms"] });
       onClose();
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   return (
     <Dialog
@@ -60,6 +60,29 @@ function Unknown({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
+function Settle({ id }: { id: string }) {
+  const qc = useQueryClient();
+  const box = useId();
+  const [note, setNote] = useState("");
+  const send = useMutation({
+    mutationFn: () => post(`/inbound/${id}/settle`, { note }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["wms"] }),
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  return (
+    <section className="card card-pad stack">
+      <Field label="What became of the difference" htmlFor={box} required hint="The stock is already right. This records that someone looked, and what they found.">
+        <textarea id={box} className="textarea" rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+      <div>
+        <Button variant="primary" disabled={!note.trim()} loading={send.isPending} onClick={() => send.mutate()}>
+          Settle it
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function Receive() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
@@ -71,16 +94,21 @@ export function Receive() {
   const qtyId = useId();
   const pending = useRef<string | null>(null);
   const scan = useMutation({
-    mutationFn: (line: ReceiveLine) => {
+    mutationFn: (code: string) => {
       pending.current ??= newKey();
-      return post(`/inbound/${id}/scan`, { scan_id: pending.current, line: line.id, qty: damaged ? 0 : qty, damaged: damaged ? qty : 0 });
+      return post(`/inbound/${id}/scan`, { scan_id: pending.current, code, qty: damaged ? 0 : qty, damaged: damaged ? qty : 0 });
     },
     onSuccess: () => {
       pending.current = null;
       setDamaged(false);
+      // The next scan is one of something, not however many the last one was.
+      setQty("1");
       void qc.invalidateQueries({ queryKey: ["wms", "inbound-doc", id] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => {
+      pending.current = null;
+      toast(refusal(e), "error");
+    },
   });
   const close = useMutation({
     mutationFn: () => post<{ status: string }>(`/inbound/${id}/close`),
@@ -88,13 +116,12 @@ export function Receive() {
       toast(r.status === "Received" ? "Received in full" : "Received, with a difference to look at");
       void qc.invalidateQueries({ queryKey: ["wms"] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const doc = q.data;
   const open = doc.status === "Expected" || doc.status === "Receiving";
-  const find = (code: string) => doc.items.find((l) => (l._titles?.item ?? "").toLowerCase().includes(code.toLowerCase()) || l.lot === code);
   return (
     <div className="wms-page wms-narrow">
       <Link to="/" className="faint">
@@ -116,11 +143,7 @@ export function Receive() {
           <ScanBox
             label="Scan the item"
             busy={scan.isPending}
-            onScan={(code) => {
-              const line = find(code);
-              if (line) scan.mutate(line);
-              else toast(`${code} is not on this shipment`, "error");
-            }}
+            onScan={(code) => scan.mutate(code)}
           />
         </section>
       ) : null}
@@ -148,6 +171,7 @@ export function Receive() {
           </Button>
         </div>
       ) : null}
+      {doc.status === "Discrepancy" ? <Settle id={id} /> : null}
       {unknown ? <Unknown id={id} onClose={() => setUnknown(false)} /> : null}
     </div>
   );

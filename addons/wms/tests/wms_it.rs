@@ -147,7 +147,8 @@ async fn scenario() {
     packages.extend(ferrum_ops::packages().expect("ops"));
     packages.extend(ferrum_quality::packages().expect("quality"));
     packages.extend(ferrum_wms::packages().expect("wms"));
-    let catalog = Catalog::from_packages(packages).expect("catalog");
+    let catalog = Catalog::from_packages(packages).unwrap();
+    assert_eq!(catalog.links_out_of_reach("wms"), Vec::<String>::new(), "whoever fills in a link can look up what it points at");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
     ferrum_app_erp::register(&mut hooks);
@@ -249,25 +250,33 @@ async fn scenario() {
         {"item": milk, "expected_qty": 10, "lot": "M-1", "expiry": (Utc::now() + Duration::days(40)).date_naive().to_string(), "rate": 3},
         {"item": milk, "expected_qty": 10, "lot": "M-2", "expiry": (Utc::now() + Duration::days(10)).date_naive().to_string(), "rate": 3}]})).await;
     let asn = uid(&inbound);
-    let lines = inbound["items"].as_array().unwrap().clone();
-    let line = |i: usize| lines[i]["id"].as_str().unwrap().to_string();
+    assert!(k.update(&operator, "InboundShipment", asn, obj(json!({"reference": "DN-78"})), None).await.is_err(), "a shipment changes through its scans, not by editing it");
     let scan = Uuid::now_v7();
     let path = format!("/inbound/{asn}/scan");
-    let body = json!({"scan_id": scan, "line": line(0), "qty": 96});
+    assert!(t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "OLT", "qty": 1})).await.is_err_and(|e| text(&e).contains("not on this shipment")), "part of a code is no match");
+    let body = json!({"scan_id": scan, "code": "BOLT", "qty": 96});
     assert_eq!(dec(&t.api_as(&operator, "POST", &path, body.clone()).await.unwrap()["received"]), n("96"));
     assert_eq!(t.api_as(&operator, "POST", &path, body).await.unwrap()["repeated"], json!(true), "a scanner repeating itself counts once");
-    let over = t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "line": line(0), "qty": 10})).await;
+    let over = t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "bolt", "qty": 10})).await;
     assert!(matches!(over, Err(Error::Forbidden(ref m)) if m.contains("manager")), "{over:?}");
-    t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "line": line(0), "damaged": 4})).await.expect("damaged");
-    assert!(t.api_as(&viewer, "POST", &path, json!({"scan_id": Uuid::now_v7(), "line": line(1), "qty": 1})).await.is_err(), "a viewer does not receive");
-    for i in [1, 2] {
-        t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "line": line(i), "qty": 10})).await.expect("milk");
+    t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "BOLT", "damaged": 4})).await.expect("damaged");
+    assert!(t.api_as(&viewer, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "M-1", "qty": 1})).await.is_err(), "a viewer does not receive");
+    for lot in ["M-1", "M-2"] {
+        t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": lot, "qty": 10})).await.expect("milk");
     }
     t.api_as(&operator, "POST", &format!("/inbound/{asn}/unknown"), json!({"description": "A pallet with no label", "qty": 1})).await.expect("noted");
     assert!(matches!(t.api_as(&operator, "POST", &format!("/inbound/{asn}/close"), Value::Null).await, Err(Error::Forbidden(_))));
     let closed = t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.expect("closed");
     assert_eq!(closed["status"], json!("Discrepancy"), "the unknown pallet is still somebody's to sort out");
     assert_eq!(t.on_books(bolt).await, n("100"), "ERP received it, damaged included: it is here");
+    assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.is_err(), "a shipment that closed with a difference does not receive twice");
+    assert_eq!(t.on_books(bolt).await, n("100"));
+    assert!(t.api_as(&operator, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.is_err(), "settling a difference is a manager's");
+    assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/settle"), json!({"note": " "})).await.is_err(), "and says what became of it");
+    t.api_as(&manager, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.expect("settled");
+    let settled = t.get("InboundShipment", asn).await;
+    assert_eq!(settled["status"], json!("Received"));
+    assert!(settled["notes"].as_str().unwrap().contains("Returned to sender"), "{settled:?}");
     assert_eq!(t.qty_in("DOCK", "BOLT").await, n("96"));
     assert_eq!(t.bin("JAIL", "BOLT").await, vec![("Damaged".to_string(), n("4"), Decimal::ZERO)], "damaged goods are out of reach");
     t.reconciled().await;
@@ -353,12 +362,12 @@ async fn scenario() {
             ship = uid(s);
         }
     }
-    let wrong_item = t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"item_code": "NUT", "qty": 1})).await;
+    let wrong_item = t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "NUT", "qty": 1})).await;
     assert!(wrong_item.is_err(), "not on this shipment");
     let hand = |tracking: &str, label: &str| json!({"carrier": "DHL", "tracking": tracking, "label": label});
     assert!(t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T1", "T1")).await.is_err(), "nothing verified, nothing leaves");
-    t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"item_code": "BOLT", "qty": 88})).await.expect("verified");
-    assert!(t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"item_code": "BOLT", "qty": 5})).await.is_err(), "more than was picked for it");
+    t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "BOLT", "qty": 88})).await.expect("verified");
+    assert!(t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "BOLT", "qty": 5})).await.is_err(), "more than was picked for it");
     assert!(t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T1", "T2")).await.is_err_and(|e| text(&e).contains("label")));
     let went = t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T1", "T1")).await.expect("handed over");
     assert_eq!(went["whole"], json!(false), "a partial shipment says it is one");
@@ -368,6 +377,9 @@ async fn scenario() {
     assert_eq!(t.qty_in("DOOR", "BOLT").await, n("6"), "and only that left");
     assert_eq!(t.get("Shipment", ship).await["status"], json!("Partially Handed Over"));
     t.reconciled().await;
+    let again = t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T2", "T2")).await;
+    assert!(again.is_err_and(|e| text(&e).contains("verified")), "what has gone does not go again");
+    assert_eq!(t.on_books(bolt).await, n("12"), "and the books did not move");
 
     // ───── a robot: arriving is not delivering ─────
     let (gw, amr) = fleet(&t, site).await;
@@ -486,7 +498,7 @@ async fn scenario() {
     // ───── a customer's stock is theirs: off the books, and billed ─────
     let goods = item("CRATE", json!({})).await;
     let stored = t.insert("InboundShipment", json!({"company": company, "warehouse": wh, "owner": tenant_customer, "items": [{"item": goods, "expected_qty": 20}]})).await;
-    t.api_as(&operator, "POST", &format!("/inbound/{}/scan", uid(&stored)), json!({"scan_id": Uuid::now_v7(), "line": stored["items"][0]["id"], "qty": 20})).await.unwrap();
+    t.api_as(&operator, "POST", &format!("/inbound/{}/scan", uid(&stored)), json!({"scan_id": Uuid::now_v7(), "code": "CRATE", "qty": 20})).await.unwrap();
     t.api_as(&manager, "POST", &format!("/inbound/{}/close", uid(&stored)), Value::Null).await.expect("closed");
     assert_eq!(t.qty_in("DOCK", "CRATE").await, n("20"));
     assert!(t.on_books(goods).await.is_zero(), "it is not ours");
@@ -517,6 +529,47 @@ async fn scenario() {
     assert!(before >= 1, "below its minimum");
     ferrum_wms::maintenance(&k).await.expect("upkeep");
     assert_eq!(t.tasks().await.iter().filter(|x| x["kind"] == json!("Replenish")).count(), before, "not again while one is on its way");
+
+    // ───── a second parcel carries only what the first did not ─────
+    let bolts = t.on_books(bolt).await;
+    t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "BOLT", "qty": 2})).await.expect("the rest verified");
+    t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T3", "T3")).await.expect("the rest handed over");
+    assert_eq!(t.on_books(bolt).await, bolts - n("2"), "two left, not ninety");
+    t.reconciled().await;
+
+    // ───── the line: a released run brings its material, and production takes it from there ─────
+    let part = item("PART", json!({})).await;
+    let more = t.insert("StockEntry", json!({"company": company, "purpose": "Material Receipt", "items": [{"item": part, "qty": 10, "basic_rate": 2, "target_warehouse": wh}]})).await;
+    k.submit(&t.admin, "StockEntry", uid(&more), None).await.unwrap();
+    t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": part, "from_bin": "DOCK", "to_bin": "P-01", "qty": 10, "reason": "Walked the warehouse"})).await.expect("shelved");
+    let line_side = bin("LINE", zone("LIN", "Production").await, json!({})).await;
+    k.update(&t.admin, "ManagedWarehouse", managed, obj(json!({"production_bin": line_side})), None).await.expect("a line");
+    let run = Uuid::now_v7();
+    let materials = [json!({"item": part, "warehouse": wh, "qty": 12})];
+    for _ in 0..2 {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        ferrum_wms::waves::supply(&k, &t.admin, &mut tx, run, &materials).await.expect("supplied");
+        tx.commit().await.unwrap();
+    }
+    let moves: Vec<Value> = t.tasks().await.into_iter().filter(|x| x["item"] == json!("PART")).collect();
+    assert_eq!(moves.len(), 1, "a run is supplied once, however often the event arrives");
+    assert_eq!(moves[0]["to_bin"], json!("LINE"));
+    assert_eq!(dec(&moves[0]["qty"]), n("10"), "as much as there is");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let told: Option<String> = sqlx::query_scalar("select payload->>'short' from outbox where tenant_id = $1 and topic = 'wms.supply.short' and record_id = $2").bind(tenant).bind(run).fetch_optional(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(told.as_deref(), Some("PART: 10 of 12"), "and what is missing goes back to the run");
+    let issue = |qty: i64| json!({"company": company, "purpose": "Material Issue", "items": [{"item": part, "qty": qty, "source_warehouse": wh}]});
+    let early = t.insert("StockEntry", issue(4)).await;
+    let e = k.submit(&t.admin, "StockEntry", uid(&early), None).await.expect_err("it has not reached the line");
+    assert!(text(&e).contains("brought to the line"), "{e:?}");
+    let id = moves[0]["id"].as_str().unwrap();
+    t.api_as(&manager, "POST", &format!("/tasks/{id}/release"), json!({})).await.expect("released");
+    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "P-01", "to_scan": "LINE"})).await.expect("brought");
+    k.submit(&t.admin, "StockEntry", uid(&early), None).await.expect("taken from the line");
+    assert_eq!(t.qty_in("LINE", "PART").await, n("6"));
+    assert_eq!(t.on_books(part).await, n("6"));
+    t.reconciled().await;
 
     // ───── a lot can be followed, for a recall ─────
     let q = obj(json!({"item": milk, "lot": "M-1"}));

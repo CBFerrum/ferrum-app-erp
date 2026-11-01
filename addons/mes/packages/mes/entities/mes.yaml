@@ -58,12 +58,11 @@
 - name: ProductionRun
   label: Production Run
   label_plural: Production Runs
-  kind: master
+  kind: document
   module: mes
-  title_field: reference
   description: One piece of a work order on one workstation, from release to its last count.
+  numbering: {template: "RUN-{FY}-{seq:5}"}
   fields:
-    - {name: reference, type: data, read_only: true, in_list: true}
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: work_order, type: link, to: WorkOrder, required: true, in_list: true, in_filter: true}
     - {name: revision, type: link, to: ProductionRevision, required: true, in_list: true}
@@ -79,4 +78,4 @@
     - {name: finished_at, type: datetime, read_only: true, no_copy: true}
     - {name: command, type: data, read_only: true, no_copy: true, label: Ledger Command}
     - {name: note, type: text, read_only: true, no_copy: true}
-  list: {columns: [reference, workstation, qty, good_qty, status], sort: reference desc}
+  list: {columns: [number, workstation, qty, good_qty, status], sort: number desc}

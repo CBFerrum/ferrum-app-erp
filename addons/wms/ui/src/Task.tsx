@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, docPath, errorMessage, formatDecimal, newKey } from "@ferrum/client";
+import { api, docPath, formatDecimal, newKey, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { post } from "./data";
@@ -42,7 +42,7 @@ function Recover({ t, onClose }: { t: TaskDoc; onClose: () => void }) {
       void qc.invalidateQueries({ queryKey: ["wms"] });
       onClose();
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   return (
     <Dialog
@@ -80,7 +80,7 @@ function Release({ t }: { t: TaskDoc }) {
   const send = useMutation({
     mutationFn: () => post(`/tasks/${t.id}/release`, { robot }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["wms"] }),
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   return (
     <section className="card card-pad stack">
@@ -111,7 +111,7 @@ function Confirm({ t }: { t: TaskDoc }) {
       toast("Done");
       void qc.invalidateQueries({ queryKey: ["wms"] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   const needFrom = !robot && from === null;
   return (
@@ -155,14 +155,14 @@ export function TaskPage() {
       toast(r.status === "Cancelled" ? "Cancelled" : "Asked to stop: it stays as it is until the robot answers.");
       void qc.invalidateQueries({ queryKey: ["wms"] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const t = q.data;
   const word = taskWords(t.status);
   const open = ["Open", "Released", "Moving"].includes(t.status);
-  const custody = custodyWords(t.custody ?? null);
+  const custody = custodyWords(t.custody ?? null, t.status);
   return (
     <div className="wms-page wms-narrow">
       <Link to="/" className="faint">

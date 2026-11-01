@@ -59,6 +59,15 @@ pub async fn goods(tx: &mut Tx, tenant: Uuid, item: Uuid) -> Result<Goods> {
         .ok_or_else(|| Error::NotFound("item".into()))
 }
 
+/// The item a scan names: its barcode, or its code when that is what the label carries.
+pub async fn item_by_scan(tx: &mut Tx, tenant: Uuid, code: &str) -> Result<Option<Uuid>> {
+    Ok(sqlx::query_scalar("select id from e_item where tenant_id = $1 and (barcode = $2 or upper(item_code) = upper($2)) order by barcode = $2 desc nulls last limit 1")
+        .bind(tenant)
+        .bind(code)
+        .fetch_optional(&mut **tx)
+        .await?)
+}
+
 /// Why `goods` cannot go into `bin` as it stands, ignoring what is already there.
 pub fn unfit(goods: &Goods, bin: &Bin) -> Option<String> {
     if bin.status.as_deref() == Some("Blocked") {

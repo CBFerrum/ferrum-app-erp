@@ -92,6 +92,14 @@ impl EventSink for CommandEvents {
         if ev.topic == "quality.hold.released" {
             return holds::released(k, ev).await;
         }
+        if ev.topic == "mes.run.released" {
+            let Some(run) = ev.payload["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) else { return Ok(()) };
+            let ctx = Ctx::system(ev.tenant_id, k.registry.schema(ev.tenant_id).await?);
+            let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+            waves::supply(k, &ctx, &mut tx, run, ev.payload["materials"].as_array().map_or(&[], Vec::as_slice)).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
         if !ev.topic.starts_with("ops.command.") {
             return Ok(());
         }

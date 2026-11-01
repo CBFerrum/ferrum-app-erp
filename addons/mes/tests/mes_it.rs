@@ -123,7 +123,9 @@ async fn scenario() {
     ferrum_quality::register(&mut hooks);
     ferrum_ops::register(&mut hooks);
     ferrum_mes::register(&mut hooks);
-    let k = Kernel::boot(db, Catalog::from_packages(packages).unwrap(), hooks, KernelSettings::default(), None).await.expect("boot");
+    let catalog = Catalog::from_packages(packages).unwrap();
+    assert_eq!(catalog.links_out_of_reach("mes"), Vec::<String>::new(), "whoever fills in a link can look up what it points at");
+    let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.unwrap();
     ferrum_app_erp::maintenance(&k).await.unwrap();
     let tenant = k
@@ -180,7 +182,7 @@ async fn scenario() {
 
     let revision = uid(&k.insert(&supervisor, "ProductionRevision", obj(json!({"item": widget, "revision": "A", "bom": uid(&bom), "job_number": 412, "ideal_cycle_secs": 60}))).await.expect("revision"));
     let run = async |rev: Uuid, email: &str, qty: i64| {
-        uid(&t.insert("ProductionRun", json!({"reference": format!("RUN-{}", Uuid::now_v7()), "company": company, "work_order": uid(&wo), "revision": rev, "operation": operation, "workstation": station, "operator_email": email, "qty": qty})).await)
+        uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&wo), "revision": rev, "operation": operation, "workstation": station, "operator_email": email, "qty": qty})).await)
     };
 
     // ───── the gate: each refuses by name, and a viewer of the floor cannot open it ─────
@@ -308,6 +310,14 @@ async fn scenario() {
     tx.commit().await.unwrap();
     while k.dispatch_outbox_once().await.unwrap() > 0 {}
     assert_eq!(t.get("ProductionRun", r2).await["status"], json!("Paused"));
+    let reference = t.get("ProductionRun", r2).await["number"].clone();
+    assert!(reference.as_str().unwrap().starts_with("RUN-"), "{reference}");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    outbox::enqueue(&mut tx, tenant, "ops.fact.mes.event", None, None, json!({"actor": "pia", "body": {"reference": reference, "event_id": Uuid::now_v7(), "kind": "resume"}})).await.unwrap();
+    outbox::enqueue(&mut tx, tenant, "ops.fact.mes.event", None, None, json!({"actor": "pia", "body": {"reference": "NO-SUCH-RUN", "event_id": Uuid::now_v7(), "kind": "resume"}})).await.unwrap();
+    tx.commit().await.unwrap();
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+    assert_eq!(t.get("ProductionRun", r2).await["status"], json!("Running"), "a console knows a run by the reference on its job sheet");
 
     // ───── a controller that refuses: a person sees it ─────
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();

@@ -16,6 +16,8 @@ roles:
   - name: Quality User
     description: Raises nonconformances and places holds. Cannot release what they hold.
     permissions:
+      - {entity: Item, read: true}
+      - {entity: QualityInspectionTemplate, read: true}
       - {entity: QualityHold, read: true, create: true}
       - {entity: Nonconformance, read: true, write: true, create: true}
       - {entity: Capa, read: true, write: true, create: true}
@@ -23,6 +25,8 @@ roles:
   - name: Quality Manager
     description: Releases holds, decides dispositions, approves plans and verifies corrective action.
     permissions:
+      - {entity: Item, read: true}
+      - {entity: QualityInspectionTemplate, read: true}
       - {entity: QualityHold, read: true, write: true, create: true, export: true}
       - {entity: Nonconformance, read: true, write: true, create: true, export: true}
       - {entity: Capa, read: true, write: true, create: true, delete: true, export: true}

@@ -3,7 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, NavLink } from "react-router";
-import { errorMessage, formatDecimal } from "@ferrum/client";
+import { formatDecimal, refusal } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { post, type Run, rows } from "./data";
 import { runWords } from "./logic";
@@ -28,14 +28,14 @@ function Row({ r }: { r: Run }) {
   const release = useMutation({
     mutationFn: () => post(`/runs/${r.id}/release`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["mes"] }),
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   return (
     <li className="mes-row">
       <Link to={`/run/${r.id}`} className="mes-row-main">
         <strong>{r._titles?.workstation ?? "Workstation"}</strong> <Badge tone={word.tone}>{word.label}</Badge>
         <div className="faint">
-          {r._titles?.work_order ?? ""} · {formatDecimal(r.good_qty ?? 0)} of {formatDecimal(r.qty)} · {r.operator_email}
+          {r.number} · {r._titles?.work_order ?? ""} · {formatDecimal(r.good_qty ?? 0)} of {formatDecimal(r.qty)} · {r.operator_email}
         </div>
         {r.note ? <div className="muted">{r.note}</div> : null}
       </Link>
@@ -60,7 +60,7 @@ export function Home() {
       ) : q.isError ? (
         <ErrorState error={q.error} onRetry={() => void q.refetch()} />
       ) : list.length === 0 ? (
-        <EmptyState title="Nothing on the floor" icon="factory">
+        <EmptyState title="Nothing on the floor" icon="dashboard">
           <Link to="/e/ProductionRun/new">Plan a run</Link>
         </EmptyState>
       ) : (

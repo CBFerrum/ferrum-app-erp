@@ -21,6 +21,7 @@ roles:
   - name: Production Operator
     description: Starts, pauses and reports the runs they are on.
     permissions:
+      - {entity: Item, read: true}
       - {entity: ProductionRun, read: true}
       - {entity: ProductionRevision, read: true}
       - {entity: OperatorQualification, read: true}
@@ -28,6 +29,13 @@ roles:
   - name: Production Supervisor
     description: Plans and releases runs, approves revisions and records who is qualified.
     permissions:
+      - {entity: Bom, read: true}
+      - {entity: Company, read: true}
+      - {entity: Device, read: true}
+      - {entity: Item, read: true}
+      - {entity: Operation, read: true}
+      - {entity: WorkOrder, read: true}
+      - {entity: Workstation, read: true}
       - {entity: ProductionRun, read: true, write: true, create: true, delete: true, export: true}
       - {entity: ProductionRevision, read: true, write: true, create: true, delete: true, export: true}
       - {entity: OperatorQualification, read: true, write: true, create: true, delete: true, export: true, import: true}

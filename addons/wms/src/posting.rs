@@ -1,7 +1,7 @@
 //! The contract with ERP. Moves inside a warehouse are positions only. Anything that crosses its
 //! wall goes through an ERP document, whose stock moves this mirrors in the same transaction:
 //! what ERP receives lands at the inbound bin, and what ERP issues must be waiting at the outbound
-//! bin. So a document posted from anywhere keeps the two in step, or is refused saying why. The
+//! bin, or for a stock entry at the production bin. So a document posted from anywhere keeps the two in step, or is refused saying why. The
 //! database checks the sum at every commit, for anything that gets past this.
 
 use crate::position::{self, Cause, Key, Kind};
@@ -20,12 +20,13 @@ pub struct Managed {
     pub inbound_bin: Option<Uuid>,
     pub outbound_bin: Option<Uuid>,
     pub quarantine_bin: Option<Uuid>,
+    pub production_bin: Option<Uuid>,
     pub allocation_rule: Option<String>,
     pub person_station: Option<Uuid>,
     pub status: Option<String>,
 }
 
-const MANAGED: &str = "select warehouse, inbound_bin, outbound_bin, quarantine_bin, allocation_rule, person_station, status from e_managed_warehouse where tenant_id = $1";
+const MANAGED: &str = "select warehouse, inbound_bin, outbound_bin, quarantine_bin, production_bin, allocation_rule, person_station, status from e_managed_warehouse where tenant_id = $1";
 
 pub async fn managed(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<Option<Managed>> {
     Ok(sqlx::query_as::<_, Managed>(sqlx::AssertSqlSafe(format!("{MANAGED} and warehouse = $2 and status = 'Managed'"))).bind(tenant).bind(warehouse).fetch_optional(&mut **tx).await?)
@@ -83,34 +84,39 @@ pub async fn mirror(tx: &mut Tx, ctx: &Ctx, entity: &str, doc: Uuid) -> Result<(
             let key = Key { bin, item: m.item_id, owner: None, lot, serial, unit: None, status };
             position::arrive(tx, ctx, m.warehouse_id, Kind::Receive, &key, m.qty, expiry, &cause).await?;
         } else {
-            let bin = w.outbound_bin.ok_or_else(|| Error::invalid("this warehouse has no outbound bin"))?;
-            issue(tx, ctx, m.warehouse_id, bin, m.item_id, &lot, &serial, -m.qty, &cause).await?;
+            let outbound = w.outbound_bin.ok_or_else(|| Error::invalid("this warehouse has no outbound bin"))?;
+            // Production takes through stock entries, and what it takes waits at the line.
+            let line = w.production_bin.filter(|_| entity == "StockEntry");
+            issue(tx, ctx, m.warehouse_id, line, outbound, m.item_id, &lot, &serial, -m.qty, &cause).await?;
         }
     }
     Ok(())
 }
 
-/// Issues from the outbound bin, across units: what ERP issues is an item, and it may sit on several.
+/// Issues from the line if there is one, then from the outbound bin, across units: what ERP issues
+/// is an item, and it may sit on several.
 #[allow(clippy::too_many_arguments)]
-async fn issue(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, bin: Uuid, item: Uuid, lot: &str, serial: &str, qty: Decimal, cause: &Cause) -> Result<()> {
-    let rows: Vec<(Option<Uuid>, String, Decimal)> = sqlx::query_as(
-        "select unit_id, status, qty from wms_position where tenant_id = $1 and bin_id = $2 and item_id = $3 and owner_id is null and lot = $4 and serial = $5 and qty > 0 \
-         order by unit_id nulls first, status for update",
+async fn issue(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, line: Option<Uuid>, outbound: Uuid, item: Uuid, lot: &str, serial: &str, qty: Decimal, cause: &Cause) -> Result<()> {
+    let bins: Vec<Uuid> = line.into_iter().chain([outbound]).collect();
+    let rows: Vec<(Uuid, Option<Uuid>, String, Decimal)> = sqlx::query_as(
+        "select bin_id, unit_id, status, qty from wms_position where tenant_id = $1 and bin_id = any($2) and item_id = $3 and owner_id is null and lot = $4 and serial = $5 and qty > 0 \
+         order by array_position($2, bin_id), unit_id nulls first, status for update",
     )
     .bind(ctx.tenant)
-    .bind(bin)
+    .bind(&bins)
     .bind(item)
     .bind(lot)
     .bind(serial)
     .fetch_all(&mut **tx)
     .await?;
-    let waiting: Decimal = rows.iter().filter(|r| r.1 == "Available").map(|r| r.2).sum();
+    let waiting: Decimal = rows.iter().filter(|r| r.2 == "Available").map(|r| r.3).sum();
     if waiting < qty {
         let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
-        return Err(Error::field("items", format!("{}: only {} of {} has been picked to the outbound bin", code.unwrap_or_default(), waiting.normalize(), qty.normalize())));
+        let place = if line.is_some() { "brought to the line" } else { "picked to the outbound bin" };
+        return Err(Error::field("items", format!("{}: only {} of {} has been {place}", code.unwrap_or_default(), waiting.normalize(), qty.normalize())));
     }
     let mut left = qty;
-    for (n, (unit, status, have)) in rows.into_iter().filter(|r| r.1 == "Available").enumerate() {
+    for (n, (bin, unit, status, have)) in rows.into_iter().filter(|r| r.2 == "Available").enumerate() {
         if left <= Decimal::ZERO {
             break;
         }

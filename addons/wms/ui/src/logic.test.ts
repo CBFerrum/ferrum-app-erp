@@ -12,6 +12,7 @@ describe("what a task is, in words", () => {
   it("says uncertain stock is out of reach", () => {
     expect(custodyWords("Uncertain")).toMatch(/out of reach/);
     expect(custodyWords("In Place")).toBeNull();
+    expect(custodyWords("In Transit", "Arrived")).not.toMatch(/on its way/i);
   });
 
   it("puts what is stuck first", () => {

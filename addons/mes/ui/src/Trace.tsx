@@ -31,7 +31,7 @@ export function Trace() {
         <Field label="Lot" htmlFor={`${box}-l`}>
           <input id={`${box}-l`} className="input" autoComplete="off" value={lot} onChange={(e) => setLot(e.target.value.trim())} />
         </Field>
-        <div className="mes-buttons">
+        <div className="mes-trace-actions">
           <Button variant="primary" disabled={!item || !lot} onClick={() => ask(true)}>
             What was made with it
           </Button>

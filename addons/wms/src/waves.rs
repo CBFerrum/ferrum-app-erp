@@ -4,6 +4,7 @@
 
 use crate::posting;
 use crate::tasks::{self, NewTask};
+use ferrum_domain::util::d;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use ferrum_domain::util::{elevated, id, sys};
@@ -211,6 +212,46 @@ pub async fn replenish(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<u32> {
         }
     }
     Ok(made)
+}
+
+/// Brings what a released run needs to the line, through the same allocation as any pick. What is
+/// already at the line counts. The run's id marks it done, because this arrives at least once. What
+/// cannot be brought goes back to the run: otherwise it would show only when the material ran out.
+pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[Value]) -> Result<()> {
+    if sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing").bind(ctx.tenant).bind(run).execute(&mut **tx).await?.rows_affected() == 0 {
+        return Ok(());
+    }
+    let mut short = Vec::new();
+    for m in materials.iter().filter_map(Value::as_object) {
+        let (Some(item), Some(warehouse)) = (id(m, "item"), id(m, "warehouse")) else { continue };
+        let Some(w) = posting::managed(tx, ctx.tenant, warehouse).await? else { continue };
+        let Some(line) = w.production_bin else { continue };
+        let there: Decimal = sqlx::query_scalar("select coalesce(sum(qty - allocated), 0) from wms_position where tenant_id = $1 and bin_id = $2 and item_id = $3 and owner_id is null and status = 'Available'")
+            .bind(ctx.tenant)
+            .bind(line)
+            .bind(item)
+            .fetch_one(&mut **tx)
+            .await?;
+        let need = d(m, "qty") - there;
+        if need <= Decimal::ZERO {
+            continue;
+        }
+        let rule = w.allocation_rule.unwrap_or_else(|| "FEFO".into());
+        let takes = allocate(tx, ctx.tenant, warehouse, item, None, need, &rule, ctx.today(), &[line]).await?;
+        let found: Decimal = takes.iter().map(|t| t.qty).sum();
+        for take in takes {
+            let task = NewTask { warehouse, kind: "Move", item, qty: take.qty, lot: take.lot, serial: take.serial, unit: take.unit, status: "Available".into(), from_bin: take.bin, to_bin: Some(line), ..Default::default() };
+            tasks::create(k, ctx, tx, task).await?;
+        }
+        if found < need {
+            let goods = crate::slotting::goods(tx, ctx.tenant, item).await?;
+            short.push(format!("{}: {} of {}", goods.item_code, found.normalize(), need.normalize()));
+        }
+    }
+    if !short.is_empty() {
+        ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "wms.supply.short", Some("ProductionRun"), Some(run), json!({"run": run, "short": short.join("; ")})).await?;
+    }
+    Ok(())
 }
 
 /// Stock available to promise, by item, for a warehouse.

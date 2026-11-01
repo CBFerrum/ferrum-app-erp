@@ -12,6 +12,7 @@
     - {name: inbound_bin, type: link, to: StorageBin, label: Inbound Bin, description: "Where stock lands when ERP receives it"}
     - {name: outbound_bin, type: link, to: StorageBin, label: Outbound Bin, description: "Where picked stock waits. ERP can issue only what is here"}
     - {name: quarantine_bin, type: link, to: StorageBin, label: Quarantine Bin}
+    - {name: production_bin, type: link, to: StorageBin, label: Production Bin, description: "Where material waits for the line. Production takes from here, and releasing a run brings what it needs"}
     - {name: allocation_rule, type: select, options: [FEFO, FIFO], default: FEFO, in_list: true, description: "First to expire, or first received, goes out first"}
     - {name: over_receipt_percent, type: percent, default: 0, min: "0", max: "100", label: Over-Receipt Allowed, description: "More than this above what was expected needs a manager"}
     - {name: person_station, type: link, to: Device, label: Station for People, description: "When set, tasks for people go through the site runtime and keep working offline"}
@@ -30,7 +31,7 @@
   fields:
     - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
     - {name: zone_code, type: data, required: true, in_list: true, max_length: 40}
-    - {name: kind, type: select, options: [Receiving, Storage, Picking, Packing, Shipping, Quarantine, Returns], default: Storage, in_list: true, in_filter: true}
+    - {name: kind, type: select, options: [Receiving, Storage, Picking, Packing, Shipping, Quarantine, Returns, Production], default: Storage, in_list: true, in_filter: true}
     - {name: temperature_class, type: select, options: [Ambient, Chilled, Frozen], default: Ambient, in_list: true}
     - {name: available, type: check, default: true, in_list: true, in_filter: true, description: "Off while it cannot be used: an AS/RS down, an aisle blocked. Nothing is released into it"}
     - {name: unavailable_reason, type: data, visible_if: "!doc.available"}

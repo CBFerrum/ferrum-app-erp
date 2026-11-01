@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, docPath, errorMessage, formatDateTime, formatDecimal, newKey } from "@ferrum/client";
+import { api, docPath, formatDateTime, formatDecimal, newKey, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { get, post, type Run, rows } from "./data";
@@ -27,8 +27,13 @@ function useStep(id: string) {
   return useMutation({
     mutationFn: (step: Record<string, unknown>) => post(`/runs/${id}/events`, { event_id: newKey(), ...step }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["mes"] }),
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
+}
+
+/** Why the last press was refused, inside the dialog: a toast sits behind one. */
+function Refused({ step }: { step: ReturnType<typeof useStep> }) {
+  return step.isError ? <Alert tone="error">{refusal(step.error)}</Alert> : null;
 }
 
 function Pause({ id, onClose }: { id: string; onClose: () => void }) {
@@ -36,6 +41,7 @@ function Pause({ id, onClose }: { id: string; onClose: () => void }) {
   const q = useQuery({ queryKey: ["mes", "reasons"], queryFn: () => rows<{ id: string; reason: string; category: string }>("DowntimeReason", [], { limit: 100 }) });
   return (
     <Dialog open title="Why has it stopped?" onClose={onClose}>
+      <Refused step={step} />
       {q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
@@ -74,6 +80,7 @@ function Consume({ id, onClose }: { id: string; onClose: () => void }) {
       }
     >
       <div className="stack">
+        <Refused step={step} />
         <Field label="Material" htmlFor={`${box}-i`} required>
           <LinkInput to="Item" id={`${box}-i`} value={item} required onChange={setItem} />
         </Field>
@@ -111,6 +118,7 @@ function Report({ id, onClose }: { id: string; onClose: () => void }) {
       }
     >
       <div className="stack">
+        <Refused step={step} />
         <Field label="Good" htmlFor={`${box}-g`}>
           <input id={`${box}-g`} className="input" inputMode="decimal" value={good} onChange={(e) => setGood(e.target.value)} />
         </Field>
@@ -146,9 +154,12 @@ function Complete({ id, short, onClose }: { id: string; short: boolean; onClose:
         </>
       }
     >
-      <Field label={short ? "It is short of its quantity. Why?" : "Anything to note"} htmlFor={`${box}-n`} required={short}>
-        <textarea id={`${box}-n`} className="textarea" rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-      </Field>
+      <div className="stack">
+        <Refused step={step} />
+        <Field label={short ? "It is short of its quantity. Why?" : "Anything to note"} htmlFor={`${box}-n`} required={short}>
+          <textarea id={`${box}-n`} className="textarea" rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+      </div>
     </Dialog>
   );
 }
@@ -175,7 +186,7 @@ export function RunPage() {
       </Link>
       <header>
         <h1 className="mes-title">{r._titles?.workstation ?? "Run"}</h1>
-        <Badge tone={word.tone}>{word.label}</Badge> <span className="faint">{r._titles?.work_order ?? ""}</span>
+        <Badge tone={word.tone}>{word.label}</Badge> <span className="faint">{r.number} · {r._titles?.work_order ?? ""}</span>
       </header>
       {r.note ? <Alert tone="warning">{r.note}</Alert> : null}
       <dl className="mes-counts">
