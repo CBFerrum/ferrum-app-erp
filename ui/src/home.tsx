@@ -1,0 +1,43 @@
+// ERP's home (its modules), loaded when first opened: the first script holds only the frame
+// (Ferrum docs/plan/apps-ui.md §12.9). For people who keep the books, a line above the modules says
+// what needs them today and leads to the overview.
+
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router";
+import { api, todayIso } from "@ferrum/client";
+import { Icon } from "@ferrum/kit";
+import { can, useMe, useMetaIndex } from "@ferrum/records";
+import { ModulesHome } from "@ferrum/records/frame";
+import { needing, type Overview, say } from "./attention";
+
+/** What needs the person today, when they can read the books and the bank. Nothing when nothing does. */
+function Needs() {
+  const me = useMe().data;
+  const entities = useMetaIndex().data?.entities;
+  const mayRead = (name: string) => !!entities?.some((e) => e.name === name && can(e.permissions, "read"));
+  const company = me?.default_company ?? null;
+  const q = useQuery({
+    queryKey: ["erp", "overview", company, todayIso()],
+    enabled: !!company && mayRead("JournalEntry") && mayRead("BankTransaction"),
+    queryFn: ({ signal }) => api.get<Overview>("/api/reports/finance_overview", { company, as_of: todayIso() }, signal),
+  });
+  // The overview is a courtesy here: if it cannot be had, the home is the modules, as it was.
+  const items = q.data ? needing(q.data) : [];
+  if (!items.length) return null;
+  return (
+    <aside className="erp-needs" aria-label="Needs you today">
+      <Icon name="alert" size={15} />
+      <span>{items.map(say).join(" · ")}</span>
+      <Link to="/r/finance_overview">Open accounts today</Link>
+    </aside>
+  );
+}
+
+export function Home() {
+  return (
+    <>
+      <Needs />
+      <ModulesHome />
+    </>
+  );
+}

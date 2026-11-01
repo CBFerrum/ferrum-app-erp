@@ -517,6 +517,88 @@
   min-width: 14rem;
 }
 
+/* ── accounts today ── */
+
+.erp-today-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.erp-attn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.erp-attn[data-calm] {
+  border-left-color: var(--success);
+}
+
+.erp-attn h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.erp-attn p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.erp-figure-big {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.erp-attn-list {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.erp-attn-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+.erp-attn-link {
+  margin-top: 0.25rem;
+  font-size: 13px;
+}
+
+.erp-needs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.625rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 13.5px;
+}
+
+.erp-needs a {
+  margin-left: auto;
+}
+
 /* ── statements ── */
 
 .erp-seg {
@@ -546,6 +628,11 @@
 
 .erp-filters .field {
   min-width: 9rem;
+}
+
+.erp-check {
+  align-self: center;
+  min-height: 36px;
 }
 
 .erp-headlines {

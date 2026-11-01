@@ -37,10 +37,10 @@ function NotFound({ back = "Go to ERP's home" }: { back?: string }) {
 
 /** ERP's home: its modules, with the start-up signal; loaded when first opened, as every page. */
 const erpHome = () =>
-  import("./home").then(({ ModulesHome }) => ({
+  import("./home").then(({ Home }) => ({
     Component: function ErpHome() {
       useEffect(() => shell().ready(), []);
-      return <ModulesHome />;
+      return <Home />;
     },
   }));
 
@@ -89,9 +89,11 @@ const erpRoutes = [
       // The accountant's screens answer where the sidebar already points (its reports, the New
       // button of its lists), ahead of the frame's generic pages; each loads when first opened.
       { path: "r/bank_reconciliation", lazy: () => import("./Bank").then((m) => ({ Component: m.Bank })) },
+      { path: "r/finance_overview", lazy: () => import("./Today").then((m) => ({ Component: m.Today })) },
       { path: "r/profit_and_loss", lazy: () => import("./Statement").then((m) => ({ Component: m.ProfitAndLoss })) },
       { path: "r/balance_sheet", lazy: () => import("./Statement").then((m) => ({ Component: m.BalanceSheet })) },
       { path: "r/cash_flow", lazy: () => import("./Statement").then((m) => ({ Component: m.CashFlow })) },
+      { path: "e/ExchangeRevaluation/new", lazy: () => import("./Revalue").then((m) => ({ Component: m.Revalue })) },
       { path: "e/PaymentAllocation/new", lazy: () => import("./Allocate").then((m) => ({ Component: m.Allocate })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
