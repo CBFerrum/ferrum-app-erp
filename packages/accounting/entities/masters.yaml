@@ -53,6 +53,7 @@
       options: [Receivable, Payable, Bank, Cash, Stock, Cost of Goods Sold, Stock Received But Not Billed, Tax, Income, Expense,
                 Round Off, Exchange Gain Loss, Stock Adjustment, Fixed Asset, Equity, Temporary]
     - {name: account_currency, type: link, to: Currency, description: Leave empty for company currency}
+    - {name: cash_flow_section, type: select, options: [Operating, Investing, Financing], label: Cash Flow Section, description: "Where a change in this account shows in the cash flow statement. Empty: fixed assets are investing, equity is financing, everything else operating"}
     - {name: frozen, type: check, description: Frozen accounts refuse new postings}
     - {name: disabled, type: check}
   unique: [[company, account_name], [company, account_number]]

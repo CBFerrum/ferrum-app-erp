@@ -2,6 +2,7 @@
 //! from the ledgers (journal lines, open items, stock moves) inside one read-only,
 //! tenant-isolated transaction. The report framework they plug into is ferrum-domain's.
 
+use crate::periods::{self, Compare};
 use crate::util::money;
 use chrono::NaiveDate;
 use ferrum_domain::reports::{Params, ReportCompany, ReportSource, col, fy_start, param_def, period, read_tx, resolve_company, today};
@@ -29,10 +30,23 @@ const DEFS: &[Def] = &[
         label: "General Ledger",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "account", "customer", "supplier"],
+        params: &["company", "from_date", "to_date", "account", "customer", "supplier", "cost_center", "project", "exclude_closing"],
     },
-    Def { name: "profit_and_loss", label: "Profit and Loss", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
-    Def { name: "balance_sheet", label: "Balance Sheet", module: "accounting", entity: "JournalEntry", params: &["company", "as_of"] },
+    Def {
+        name: "profit_and_loss",
+        label: "Profit and Loss",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project"],
+    },
+    Def { name: "balance_sheet", label: "Balance Sheet", module: "accounting", entity: "JournalEntry", params: &["company", "as_of", "compare", "periods"] },
+    Def {
+        name: "cash_flow",
+        label: "Cash Flow",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "from_date", "to_date", "compare", "periods"],
+    },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
     Def { name: "stock_balance", label: "Stock Balance", module: "inventory", entity: "StockEntry", params: &["company", "as_of", "warehouse", "item"] },
@@ -59,6 +73,18 @@ const DEFS: &[Def] = &[
     },
 ];
 
+/// The parameters that are not the framework's standard ones.
+fn param(name: &str) -> Value {
+    match name {
+        "compare" => json!({"name": name, "label": "Compare With", "type": "select", "options": ["Previous period", "Previous year"]}),
+        "periods" => json!({"name": name, "label": "How Many To Compare", "type": "select", "options": ["1", "2", "3"], "default": "1"}),
+        "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
+        "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
+        "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
+        other => param_def(other),
+    }
+}
+
 /// ERP's reports. Each sums up every record of its entity, so it needs access to all of them
 /// (a company scope is fine: reports run per company and check it).
 pub struct ErpReports;
@@ -69,7 +95,7 @@ impl ReportSource for ErpReports {
         DEFS.iter()
             .map(|d| {
                 json!({"name": d.name, "label": d.label, "module": d.module, "entity": d.entity, "scoped": false,
-                       "params": d.params.iter().map(|p| param_def(p)).collect::<Vec<_>>()})
+                       "params": d.params.iter().map(|p| param(p)).collect::<Vec<_>>()})
             })
             .collect()
     }
@@ -84,6 +110,7 @@ impl ReportSource for ErpReports {
             "general_ledger" => general_ledger(&mut tx, ctx, &co, &p).await?,
             "profit_and_loss" => profit_and_loss(&mut tx, ctx, &co, &p).await?,
             "balance_sheet" => balance_sheet(&mut tx, ctx, &co, &p).await?,
+            "cash_flow" => cash_flow(&mut tx, ctx, &co, &p).await?,
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
             "stock_balance" => stock_balance(&mut tx, ctx, &co, &p).await?,
@@ -116,6 +143,8 @@ struct Acc {
     account_number: Option<String>,
     is_group: Option<bool>,
     root_type: String,
+    account_type: Option<String>,
+    cash_flow_section: Option<String>,
 }
 
 fn natural(root: &str, debit_minus_credit: Decimal) -> Decimal {
@@ -131,8 +160,8 @@ fn label(a: &Acc) -> String {
 
 async fn accounts(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany) -> Result<Vec<Acc>> {
     Ok(sqlx::query_as::<_, Acc>(
-        "select id, parent_account, account_name, account_number, is_group, root_type from e_account where tenant_id = $1 and company = $2 \
-         order by account_number nulls last, account_name",
+        "select id, parent_account, account_name, account_number, is_group, root_type, account_type, cash_flow_section from e_account \
+         where tenant_id = $1 and company = $2 order by account_number nulls last, account_name",
     )
     .bind(ctx.tenant)
     .bind(co.id)
@@ -142,7 +171,33 @@ async fn accounts(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany) -> Result<Vec<Acc>
 
 /// Debit-minus-credit per account over `[from, to]` (from = None: since the beginning).
 async fn balances(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: Option<NaiveDate>, to: NaiveDate) -> Result<HashMap<Uuid, Decimal>> {
-    balances_where(tx, ctx, co, from, to, &[]).await
+    balances_where(tx, ctx, co, from, to, &[], &Dims::default()).await
+}
+
+/// What a statement of income and expense can be narrowed to besides its period: a cost center
+/// (with every cost center below it) and a project, the two dimensions a ledger line carries.
+#[derive(Default)]
+struct Dims {
+    cost_centers: Option<Vec<Uuid>>,
+    project: Option<Uuid>,
+}
+
+async fn dims(tx: &mut Tx, ctx: &Ctx, p: &Params<'_>) -> Result<Dims> {
+    let cost_centers = match p.uuid("cost_center")? {
+        Some(root) => Some(
+            sqlx::query_scalar(
+                "with recursive t(id, depth) as (select id, 0 from e_cost_center where tenant_id = $1 and id = $2 \
+                 union all select c.id, t.depth + 1 from e_cost_center c join t on c.parent_cost_center = t.id where c.tenant_id = $1 and t.depth < 64) \
+                 select id from t",
+            )
+            .bind(ctx.tenant)
+            .bind(root)
+            .fetch_all(&mut **tx)
+            .await?,
+        ),
+        None => None,
+    };
+    Ok(Dims { cost_centers, project: p.uuid("project")? })
 }
 
 /// Entries that close a year's income and expense into equity (the Finance module's Period
@@ -150,12 +205,22 @@ async fn balances(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: Option<Naive
 /// balance sheets and trial balances keep them.
 pub const CLOSING_SOURCES: &[&str] = &["PeriodClosingVoucher"];
 
-/// Account balances over a period, leaving out entries from the `skip` source entities.
-async fn balances_where(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: Option<NaiveDate>, to: NaiveDate, skip: &[&str]) -> Result<HashMap<Uuid, Decimal>> {
+/// Account balances over a period, leaving out entries from the `skip` source entities and lines
+/// outside the dimensions.
+async fn balances_where(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    from: Option<NaiveDate>,
+    to: NaiveDate,
+    skip: &[&str],
+    dims: &Dims,
+) -> Result<HashMap<Uuid, Decimal>> {
     Ok(sqlx::query_as::<_, (Uuid, Decimal)>(
         "select l.account_id, sum(l.debit - l.credit) from journal_line l where l.tenant_id = $1 and l.company_id = $2 \
          and ($3::date is null or l.posting_date >= $3) and l.posting_date <= $4 \
          and (cardinality($5::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($5))) \
+         and ($6::uuid[] is null or l.cost_center_id = any($6)) and ($7::uuid is null or l.project_id = $7) \
          group by l.account_id",
     )
     .bind(ctx.tenant)
@@ -163,14 +228,28 @@ async fn balances_where(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: Option
     .bind(from)
     .bind(to)
     .bind(skip.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    .bind(&dims.cost_centers)
+    .bind(dims.project)
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
     .collect())
 }
 
-/// Indented account tree for the given root types with balances rolled up to groups.
-fn tree(accs: &[Acc], bal: &HashMap<Uuid, Decimal>, root: &str, precision: u32) -> (Vec<Value>, Decimal) {
+/// One line of an indented account tree: the account, and its balance in each period compared,
+/// rolled up from its children.
+struct Node {
+    account: String,
+    id: Uuid,
+    depth: usize,
+    group: bool,
+    amounts: Vec<Decimal>,
+}
+
+/// Indented account tree for one root type, with balances rolled up to groups, one amount per
+/// period of `bals` (each a period's debit-minus-credit per account). An account shows when it had
+/// activity in any of the periods.
+fn tree(accs: &[Acc], bals: &[HashMap<Uuid, Decimal>], root: &str, precision: u32) -> (Vec<Node>, Vec<Decimal>) {
     let mut children: HashMap<Option<Uuid>, Vec<&Acc>> = HashMap::new();
     for a in accs.iter().filter(|a| a.root_type == root) {
         let parent = a.parent_account.filter(|p| accs.iter().any(|x| x.id == *p && x.root_type == root));
@@ -183,30 +262,110 @@ fn tree(accs: &[Acc], bal: &HashMap<Uuid, Decimal>, root: &str, precision: u32) 
         let own = natural(&a.root_type, bal.get(&a.id).copied().unwrap_or_default());
         own + children.get(&Some(a.id)).map(|cs| cs.iter().map(|c| total(c, children, bal, depth + 1)).sum::<Decimal>()).unwrap_or_default()
     }
-    fn walk(a: &Acc, depth: usize, children: &HashMap<Option<Uuid>, Vec<&Acc>>, bal: &HashMap<Uuid, Decimal>, precision: u32, out: &mut Vec<Value>) {
+    fn walk(a: &Acc, depth: usize, children: &HashMap<Option<Uuid>, Vec<&Acc>>, bals: &[HashMap<Uuid, Decimal>], precision: u32, out: &mut Vec<Node>) {
         if depth > 64 {
             return;
         }
-        let t = total(a, children, bal, depth);
-        let has_activity =
-            bal.contains_key(&a.id) || children.get(&Some(a.id)).is_some_and(|cs| cs.iter().any(|c| total(c, children, bal, depth + 1) != Decimal::ZERO));
-        if t.is_zero() && !has_activity {
+        let totals: Vec<Decimal> = bals.iter().map(|b| total(a, children, b, depth)).collect();
+        let has_activity = bals
+            .iter()
+            .any(|b| b.contains_key(&a.id) || children.get(&Some(a.id)).is_some_and(|cs| cs.iter().any(|c| total(c, children, b, depth + 1) != Decimal::ZERO)));
+        if totals.iter().all(Decimal::is_zero) && !has_activity {
             return;
         }
-        out.push(
-            json!({"account": label(a), "account_id": a.id, "amount": money(t.round_dp(precision)), "_indent": depth, "_bold": a.is_group.unwrap_or(false)}),
-        );
+        out.push(Node {
+            account: label(a),
+            id: a.id,
+            depth,
+            group: a.is_group.unwrap_or(false),
+            amounts: totals.iter().map(|t| t.round_dp(precision)).collect(),
+        });
         for c in children.get(&Some(a.id)).cloned().unwrap_or_default() {
-            walk(c, depth + 1, children, bal, precision, out);
+            walk(c, depth + 1, children, bals, precision, out);
         }
     }
     let mut out = Vec::new();
-    let mut sum = Decimal::ZERO;
+    let mut sums = vec![Decimal::ZERO; bals.len()];
     for r in children.get(&None).cloned().unwrap_or_default() {
-        sum += total(r, &children, bal, 0);
-        walk(r, 0, &children, bal, precision, &mut out);
+        for (sum, bal) in sums.iter_mut().zip(bals) {
+            *sum += total(r, &children, bal, 0);
+        }
+        walk(r, 0, &children, bals, precision, &mut out);
     }
-    (out, sum)
+    (out, sums)
+}
+
+/// A statement's periods, the one asked for first and then those before it (`compare` and
+/// `periods` say how many, up to three).
+fn spans(p: &Params<'_>, from: NaiveDate, to: NaiveDate) -> Result<Vec<(NaiveDate, NaiveDate)>> {
+    let Some(how) = compare(p)? else { return Ok(vec![(from, to)]) };
+    Ok(std::iter::once((from, to)).chain((1..=count(p)).map(|k| periods::before(from, to, how, k))).collect())
+}
+
+/// The days of a balance sheet and its comparisons.
+fn days(p: &Params<'_>, on: NaiveDate) -> Result<Vec<NaiveDate>> {
+    let Some(how) = compare(p)? else { return Ok(vec![on]) };
+    Ok(std::iter::once(on).chain((1..=count(p)).map(|k| periods::day_before(on, how, k))).collect())
+}
+
+fn compare(p: &Params<'_>) -> Result<Option<Compare>> {
+    match p.str("compare") {
+        None => Ok(None),
+        Some(text) => Compare::parse(text).map(Some).ok_or_else(|| Error::field("compare", "choose Previous period or Previous year")),
+    }
+}
+
+fn count(p: &Params<'_>) -> u32 {
+    p.str("periods").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 3)
+}
+
+/// The key of the amount of the `i`th period in a row: `amount`, then `amount_1`, `amount_2`...
+fn key(i: usize) -> String {
+    if i == 0 { "amount".into() } else { format!("amount_{i}") }
+}
+
+/// Puts a row's amounts in it, one for each period, and with comparisons how much the first moved
+/// from the second and by what percentage of it.
+fn amounts(row: &mut Value, a: &[Decimal]) {
+    for (i, v) in a.iter().enumerate() {
+        row[key(i)] = money(*v);
+    }
+    if a.len() > 1 {
+        let change = a[0] - a[1];
+        row["change"] = money(change);
+        row["change_pct"] = if a[1].is_zero() { Value::Null } else { money((change / a[1].abs() * Decimal::ONE_HUNDRED).round_dp(2)) };
+    }
+}
+
+fn node_rows(nodes: &[Node], indent: usize) -> Vec<Value> {
+    nodes
+        .iter()
+        .map(|n| {
+            let mut row = json!({"account": n.account, "account_id": n.id, "_indent": n.depth + indent, "_bold": n.group});
+            amounts(&mut row, &n.amounts);
+            row
+        })
+        .collect()
+}
+
+fn total_row(label: &str, a: &[Decimal]) -> Value {
+    let mut row = json!({"account": label, "_bold": true});
+    amounts(&mut row, a);
+    row
+}
+
+/// The columns of a statement of accounts: the account, an amount for each period and, with more
+/// than one, how much the first moved.
+fn statement_columns(labels: &[String]) -> Vec<Value> {
+    let mut cols = vec![col("account", "Account", "data")];
+    if labels.len() == 1 {
+        cols.push(col("amount", "Amount", "currency"));
+        return cols;
+    }
+    cols.extend(labels.iter().enumerate().map(|(i, l)| col(&key(i), l, "currency")));
+    cols.push(col("change", "Change", "currency"));
+    cols.push(col("change_pct", "Change %", "percent"));
+    cols
 }
 
 async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
@@ -278,7 +437,22 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
 
 async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
-    let account = p.uuid("account")?;
+    // A group account is every account below it: a figure of a statement opens the entries behind it.
+    let accounts: Option<Vec<Uuid>> = match p.uuid("account")? {
+        Some(root) => Some(
+            sqlx::query_scalar(
+                "with recursive t(id, depth) as (select id, 0 from e_account where tenant_id = $1 and company = $2 and id = $3 \
+                 union all select a.id, t.depth + 1 from e_account a join t on a.parent_account = t.id where a.tenant_id = $1 and t.depth < 64) select id from t",
+            )
+            .bind(ctx.tenant)
+            .bind(co.id)
+            .bind(root)
+            .fetch_all(&mut **tx)
+            .await?,
+        ),
+        None => None,
+    };
+    let dims = dims(tx, ctx, p).await?;
     // The journal keeps the id it was posted under: a merged party is every id it has had.
     let customer = match p.uuid("customer")? {
         Some(id) => Some(ferrum_kernel::merge::merged_ids(tx, ctx.tenant, "Customer", id).await?),
@@ -288,16 +462,23 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
         Some(id) => Some(ferrum_kernel::merge::merged_ids(tx, ctx.tenant, "Supplier", id).await?),
         None => None,
     };
+    let skip: Vec<String> =
+        if p.str("exclude_closing").is_some_and(|v| v == "true" || v == "1") { CLOSING_SOURCES.iter().map(|s| s.to_string()).collect() } else { vec![] };
     let opening: Decimal = sqlx::query_scalar(
-        "select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and company_id = $2 and posting_date < $3 \
-         and ($4::uuid is null or account_id = $4) and ($5::uuid[] is null or customer_id = any($5)) and ($6::uuid[] is null or supplier_id = any($6))",
+        "select coalesce(sum(l.debit - l.credit), 0) from journal_line l where l.tenant_id = $1 and l.company_id = $2 and l.posting_date < $3 \
+         and ($4::uuid[] is null or l.account_id = any($4)) and ($5::uuid[] is null or l.customer_id = any($5)) and ($6::uuid[] is null or l.supplier_id = any($6)) \
+         and ($7::uuid[] is null or l.cost_center_id = any($7)) and ($8::uuid is null or l.project_id = $8) \
+         and (cardinality($9::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($9)))",
     )
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
-    .bind(account)
+    .bind(&accounts)
     .bind(&customer)
     .bind(&supplier)
+    .bind(&dims.cost_centers)
+    .bind(dims.project)
+    .bind(&skip)
     .fetch_one(&mut **tx)
     .await?;
     #[allow(clippy::type_complexity)]
@@ -309,17 +490,22 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
          left join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
          left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date between $3 and $4 \
-         and ($5::uuid is null or l.account_id = $5) and ($6::uuid[] is null or l.customer_id = any($6)) and ($7::uuid[] is null or l.supplier_id = any($7)) \
+         and ($5::uuid[] is null or l.account_id = any($5)) and ($6::uuid[] is null or l.customer_id = any($6)) and ($7::uuid[] is null or l.supplier_id = any($7)) \
+         and ($9::uuid[] is null or l.cost_center_id = any($9)) and ($10::uuid is null or l.project_id = $10) \
+         and (cardinality($11::text[]) = 0 or e.source_entity <> all($11)) \
          order by l.posting_date, e.created_at, l.entry_id, l.line_no limit $8",
     )
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
     .bind(to)
-    .bind(account)
+    .bind(&accounts)
     .bind(&customer)
     .bind(&supplier)
     .bind(MAX_ROWS + 1)
+    .bind(&dims.cost_centers)
+    .bind(dims.project)
+    .bind(&skip)
     .fetch_all(&mut **tx)
     .await?;
     let truncated = lines.len() as i64 > MAX_ROWS;
@@ -345,76 +531,212 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     }))
 }
 
-async fn profit_and_loss(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
-    let (from, to) = period(p, co)?;
-    let accs = accounts(tx, ctx, co).await?;
-    let bal = balances_where(tx, ctx, co, Some(from), to, CLOSING_SOURCES).await?;
-    let (inc_rows, income) = tree(&accs, &bal, "Income", co.precision);
-    let (exp_rows, expense) = tree(&accs, &bal, "Expense", co.precision);
-    let mut rows = vec![json!({"account": "Income", "_bold": true})];
-    rows.extend(inc_rows.into_iter().map(|mut r| {
-        indent(&mut r);
-        r
-    }));
-    rows.push(json!({"account": "Total Income", "amount": money(income), "_bold": true}));
-    rows.push(json!({"account": "Expenses", "_bold": true}));
-    rows.extend(exp_rows.into_iter().map(|mut r| {
-        indent(&mut r);
-        r
-    }));
-    rows.push(json!({"account": "Total Expenses", "amount": money(expense), "_bold": true}));
-    let net = income - expense;
-    rows.push(json!({"account": if net >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, "amount": money(net), "_bold": true}));
-    Ok(json!({
-        "columns": [col("account", "Account", "data"), col("amount", "Amount", "currency")],
-        "rows": rows,
-        "totals": {"income": money(income), "expense": money(expense), "net_profit": money(net)},
-        "meta": {"from_date": from, "to_date": to},
-    }))
+/// What each period of a statement came to, for the interface to head its columns with.
+fn periods_meta(spans: &[(NaiveDate, NaiveDate)], labels: &[String], figures: &[(&str, &[Decimal])]) -> Vec<Value> {
+    spans
+        .iter()
+        .enumerate()
+        .map(|(i, (from, to))| {
+            let mut m = json!({"key": key(i), "label": labels[i], "from_date": from, "to_date": to});
+            for (name, values) in figures {
+                m[*name] = money(values[i]);
+            }
+            m
+        })
+        .collect()
 }
 
-fn indent(r: &mut Value) {
-    if let Some(i) = r.get("_indent").and_then(Value::as_u64) {
-        r["_indent"] = json!(i + 1);
+async fn profit_and_loss(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let spans = spans(p, from, to)?;
+    let dims = dims(tx, ctx, p).await?;
+    let accs = accounts(tx, ctx, co).await?;
+    let mut bals = Vec::new();
+    for (f, t) in &spans {
+        bals.push(balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?);
     }
+    let (inc_nodes, income) = tree(&accs, &bals, "Income", co.precision);
+    let (exp_nodes, expense) = tree(&accs, &bals, "Expense", co.precision);
+    let net: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
+    let mut rows = vec![json!({"account": "Income", "_bold": true})];
+    rows.extend(node_rows(&inc_nodes, 1));
+    rows.push(total_row("Total Income", &income));
+    rows.push(json!({"account": "Expenses", "_bold": true}));
+    rows.extend(node_rows(&exp_nodes, 1));
+    rows.push(total_row("Total Expenses", &expense));
+    rows.push(total_row(if net[0] >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, &net));
+    let labels: Vec<String> = spans.iter().map(|(f, t)| periods::label(*f, *t)).collect();
+    Ok(json!({
+        "columns": statement_columns(&labels),
+        "rows": rows,
+        "totals": {"income": money(income[0]), "expense": money(expense[0]), "net_profit": money(net[0])},
+        "meta": {"from_date": from, "to_date": to, "periods": periods_meta(&spans, &labels, &[("income", &income), ("expense", &expense), ("net_profit", &net)])},
+    }))
 }
 
 async fn balance_sheet(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let as_of = p.date("as_of")?.unwrap_or_else(today);
+    let on = days(p, as_of)?;
     let accs = accounts(tx, ctx, co).await?;
-    let bal = balances(tx, ctx, co, None, as_of).await?;
-    let (asset_rows, assets) = tree(&accs, &bal, "Asset", co.precision);
-    let (liab_rows, liabilities) = tree(&accs, &bal, "Liability", co.precision);
-    let (eq_rows, equity) = tree(&accs, &bal, "Equity", co.precision);
-    let (_, income) = tree(&accs, &bal, "Income", co.precision);
-    let (_, expense) = tree(&accs, &bal, "Expense", co.precision);
-    let unclosed = income - expense;
+    let mut bals = Vec::new();
+    for day in &on {
+        bals.push(balances(tx, ctx, co, None, *day).await?);
+    }
+    let (asset_nodes, assets) = tree(&accs, &bals, "Asset", co.precision);
+    let (liab_nodes, liabilities) = tree(&accs, &bals, "Liability", co.precision);
+    let (eq_nodes, equity) = tree(&accs, &bals, "Equity", co.precision);
+    let (_, income) = tree(&accs, &bals, "Income", co.precision);
+    let (_, expense) = tree(&accs, &bals, "Expense", co.precision);
+    let unclosed: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
+    let all_equity: Vec<Decimal> = equity.iter().zip(&unclosed).map(|(e, u)| *e + *u).collect();
+    let total: Vec<Decimal> = liabilities.iter().zip(&all_equity).map(|(l, e)| *l + *e).collect();
     let mut rows = vec![json!({"account": "Assets", "_bold": true})];
-    rows.extend(asset_rows.into_iter().map(|mut r| {
-        indent(&mut r);
-        r
-    }));
-    rows.push(json!({"account": "Total Assets", "amount": money(assets), "_bold": true}));
+    rows.extend(node_rows(&asset_nodes, 1));
+    rows.push(total_row("Total Assets", &assets));
     rows.push(json!({"account": "Liabilities", "_bold": true}));
-    rows.extend(liab_rows.into_iter().map(|mut r| {
-        indent(&mut r);
-        r
-    }));
-    rows.push(json!({"account": "Total Liabilities", "amount": money(liabilities), "_bold": true}));
+    rows.extend(node_rows(&liab_nodes, 1));
+    rows.push(total_row("Total Liabilities", &liabilities));
     rows.push(json!({"account": "Equity", "_bold": true}));
-    rows.extend(eq_rows.into_iter().map(|mut r| {
-        indent(&mut r);
-        r
-    }));
-    rows.push(json!({"account": "Profit/loss not yet closed to equity", "amount": money(unclosed), "_indent": 1}));
-    rows.push(json!({"account": "Total Equity", "amount": money(equity + unclosed), "_bold": true}));
-    let total = liabilities + equity + unclosed;
-    rows.push(json!({"account": "Total Liabilities and Equity", "amount": money(total), "_bold": true}));
+    rows.extend(node_rows(&eq_nodes, 1));
+    let mut open = json!({"account": "Profit/loss not yet closed to equity", "_indent": 1});
+    amounts(&mut open, &unclosed);
+    rows.push(open);
+    rows.push(total_row("Total Equity", &all_equity));
+    rows.push(total_row("Total Liabilities and Equity", &total));
+    let labels: Vec<String> = on.iter().map(|d| d.format("%d %b %Y").to_string()).collect();
+    let spans: Vec<(NaiveDate, NaiveDate)> = on.iter().map(|d| (*d, *d)).collect();
     Ok(json!({
-        "columns": [col("account", "Account", "data"), col("amount", "Amount", "currency")],
+        "columns": statement_columns(&labels),
         "rows": rows,
-        "totals": {"assets": money(assets), "liabilities": money(liabilities), "equity": money(equity + unclosed)},
-        "meta": {"as_of": as_of, "balanced": assets == total, "difference": money(assets - total)},
+        "totals": {"assets": money(assets[0]), "liabilities": money(liabilities[0]), "equity": money(all_equity[0])},
+        "meta": {"as_of": as_of, "balanced": assets[0] == total[0], "difference": money(assets[0] - total[0]),
+                 "periods": periods_meta(&spans, &labels, &[("assets", &assets), ("liabilities", &liabilities), ("equity", &all_equity)])},
+    }))
+}
+
+/// Where an account's change shows in the cash flow: the account's own choice, else by what it is
+/// (fixed assets are investing, equity is financing, everything else operating).
+fn section(a: &Acc) -> &'static str {
+    match a.cash_flow_section.as_deref() {
+        Some("Investing") => "investing",
+        Some("Financing") => "financing",
+        Some("Operating") => "operating",
+        _ if a.account_type.as_deref() == Some("Fixed Asset") => "investing",
+        _ if a.root_type == "Equity" => "financing",
+        _ => "operating",
+    }
+}
+
+/// The cash flow, by the indirect method: the profit of the period, adjusted for what moved in the
+/// other accounts of the balance sheet, which the account's type or its own setting sorts into
+/// operating, investing and financing activities. It must end where the bank and cash accounts did;
+/// `meta.difference` says by how much it does not (it should always be nothing).
+async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let spans = spans(p, from, to)?;
+    let accs = accounts(tx, ctx, co).await?;
+    let cash = |a: &Acc| a.root_type == "Asset" && matches!(a.account_type.as_deref(), Some("Bank" | "Cash"));
+    struct Figures {
+        profit: Decimal,
+        /// The cash each balance sheet account's movement brought in (or took out).
+        impact: HashMap<Uuid, Decimal>,
+        /// The part of the cash accounts' movement that was only revaluation.
+        exchange: Decimal,
+        opening: Decimal,
+        closing: Decimal,
+    }
+    let mut per: Vec<Figures> = Vec::new();
+    for (f, t) in &spans {
+        let moves = balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &Dims::default()).await?;
+        let moved = |a: &Acc| moves.get(&a.id).copied().unwrap_or_default();
+        let profit = -accs.iter().filter(|a| matches!(a.root_type.as_str(), "Income" | "Expense")).map(moved).sum::<Decimal>();
+        let impact = accs
+            .iter()
+            .filter(|a| !cash(a) && matches!(a.root_type.as_str(), "Asset" | "Liability" | "Equity") && !moved(a).is_zero())
+            .map(|a| (a.id, -moved(a)))
+            .collect();
+        let cash_at = |bal: HashMap<Uuid, Decimal>| accs.iter().filter(|a| cash(a)).map(|a| bal.get(&a.id).copied().unwrap_or_default()).sum::<Decimal>();
+        let opening = cash_at(balances(tx, ctx, co, None, f.pred_opt().unwrap_or(*f)).await?);
+        let closing = cash_at(balances(tx, ctx, co, None, *t).await?);
+        let exchange: Decimal = sqlx::query_scalar(
+            "select coalesce(sum(l.debit - l.credit), 0) from journal_line l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
+             join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id where l.tenant_id = $1 and l.company_id = $2 \
+             and l.posting_date between $3 and $4 and e.source_entity = 'ExchangeRevaluation' and a.root_type = 'Asset' and a.account_type in ('Bank', 'Cash')",
+        )
+        .bind(ctx.tenant)
+        .bind(co.id)
+        .bind(f)
+        .bind(t)
+        .fetch_one(&mut **tx)
+        .await?;
+        per.push(Figures { profit, impact, exchange, opening, closing });
+    }
+    let n = per.len();
+    let column = |f: &dyn Fn(&Figures) -> Decimal| -> Vec<Decimal> { per.iter().map(f).collect() };
+    let sum_of = |parts: &[Vec<Decimal>]| -> Vec<Decimal> { (0..n).map(|i| parts.iter().map(|c| c[i]).sum()).collect() };
+    let section_rows = |which: &str| -> (Vec<Value>, Vec<Decimal>) {
+        let mut rows = Vec::new();
+        let mut total = vec![Decimal::ZERO; n];
+        for a in accs.iter().filter(|a| section(a) == which) {
+            let a_amounts: Vec<Decimal> = per.iter().map(|f| f.impact.get(&a.id).copied().unwrap_or_default().round_dp(co.precision)).collect();
+            if a_amounts.iter().all(Decimal::is_zero) {
+                continue;
+            }
+            for (t, v) in total.iter_mut().zip(&a_amounts) {
+                *t += *v;
+            }
+            let mut row = json!({"account": label(a), "account_id": a.id, "section": which, "_indent": 1});
+            amounts(&mut row, &a_amounts);
+            rows.push(row);
+        }
+        (rows, total)
+    };
+    let profit = column(&|f| f.profit);
+    let unrealised = column(&|f| -f.exchange);
+    let exchange = column(&|f| f.exchange);
+    let (operating_rows, operating_lines) = section_rows("operating");
+    let (investing_rows, investing) = section_rows("investing");
+    let (financing_rows, financing) = section_rows("financing");
+    let operating = sum_of(&[profit.clone(), operating_lines, unrealised.clone()]);
+    let net = sum_of(&[operating.clone(), investing.clone(), financing.clone(), exchange.clone()]);
+    let opening = column(&|f| f.opening);
+    let closing = column(&|f| f.closing);
+
+    let mut rows = vec![json!({"account": "Cash flow from operating activities", "_bold": true})];
+    let mut start = json!({"account": "Profit (loss) for the period", "section": "profit", "_indent": 1});
+    amounts(&mut start, &profit);
+    rows.push(start);
+    rows.extend(operating_rows);
+    if unrealised.iter().any(|v| !v.is_zero()) {
+        let mut row = json!({"account": "Exchange gain (loss) on cash and bank, not yet realised", "section": "exchange", "_indent": 1});
+        amounts(&mut row, &unrealised);
+        rows.push(row);
+    }
+    rows.push(total_row("Net cash from operating activities", &operating));
+    rows.push(json!({"account": "Cash flow from investing activities", "_bold": true}));
+    rows.extend(investing_rows);
+    rows.push(total_row("Net cash from investing activities", &investing));
+    rows.push(json!({"account": "Cash flow from financing activities", "_bold": true}));
+    rows.extend(financing_rows);
+    rows.push(total_row("Net cash from financing activities", &financing));
+    if exchange.iter().any(|v| !v.is_zero()) {
+        rows.push(total_row("Effect of exchange rates on cash and bank", &exchange));
+    }
+    rows.push(total_row("Net increase (decrease) in cash", &net));
+    let mut at_start = json!({"account": "Cash and bank at the start of the period"});
+    amounts(&mut at_start, &opening);
+    rows.push(at_start);
+    rows.push(total_row("Cash and bank at the end of the period", &closing));
+    let difference: Vec<Decimal> = (0..n).map(|i| closing[i] - opening[i] - net[i]).collect();
+    let labels: Vec<String> = spans.iter().map(|(f, t)| periods::label(*f, *t)).collect();
+    Ok(json!({
+        "columns": statement_columns(&labels),
+        "rows": rows,
+        "totals": {"operating": money(operating[0]), "investing": money(investing[0]), "financing": money(financing[0]), "net_change": money(net[0]),
+                   "opening": money(opening[0]), "closing": money(closing[0])},
+        "meta": {"from_date": from, "to_date": to, "reconciled": difference[0].is_zero(), "difference": money(difference[0]),
+                 "periods": periods_meta(&spans, &labels, &[("operating", &operating), ("investing", &investing), ("financing", &financing), ("net_change", &net),
+                                                           ("opening", &opening), ("closing", &closing), ("difference", &difference)])},
     }))
 }
 

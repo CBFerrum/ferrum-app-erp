@@ -91,6 +91,10 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
         if !typ.is_empty() {
             d.insert("account_type".into(), json!(typ));
         }
+        // Borrowing is financing, which no account type says.
+        if name == "Secured Loans" {
+            d.insert("cash_flow_section".into(), json!("Financing"));
+        }
         if !parent.is_empty() {
             d.insert("parent_account".into(), json!(ids.get(parent).cloned()));
         }
