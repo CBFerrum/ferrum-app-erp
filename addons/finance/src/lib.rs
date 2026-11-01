@@ -8,6 +8,7 @@
 //! tenants that did not install this package.
 
 mod advances;
+mod allocation;
 mod bank;
 mod budget;
 mod closing;
@@ -55,6 +56,11 @@ pub fn register(h: &mut HookRegistry) {
         .register("SalesInvoice", Arc::new(advances::AdvanceHook))
         .register("PurchaseInvoice", Arc::new(advances::AdvanceHook))
         .register("PaymentEntry", Arc::new(advances::AdvancePaymentHook))
+        .register("PaymentAllocation", Arc::new(allocation::AllocationHook))
+        .register("SalesInvoice", Arc::new(allocation::AllocationGuard))
+        .register("PurchaseInvoice", Arc::new(allocation::AllocationGuard))
+        .register("PaymentEntry", Arc::new(allocation::AllocationGuard))
+        .register("JournalEntry", Arc::new(allocation::AllocationGuard))
         .register("DunningType", Arc::new(dunning::DunningTypeHook))
         .register("Dunning", Arc::new(dunning::DunningHook))
         .register("SubscriptionPlan", Arc::new(subscription::PlanHook))

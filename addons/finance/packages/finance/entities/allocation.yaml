@@ -1,0 +1,36 @@
+- name: PaymentAllocationRow
+  label: Payment Allocation Row
+  kind: child
+  fields:
+    - {name: credit, type: data, required: true, label: Money to Apply (Open Item ID), description: "A payment, credit note or journal credit of the party that is not applied yet"}
+    - {name: credit_type, type: data, read_only: true, in_list: true, label: Money Is}
+    - {name: credit_number, type: data, read_only: true, in_list: true, label: Document}
+    - {name: invoice, type: data, required: true, label: Invoice (Open Item ID)}
+    - {name: invoice_type, type: data, read_only: true}
+    - {name: invoice_number, type: data, read_only: true, in_list: true, label: Applied To}
+    - {name: due_date, type: date, read_only: true}
+    - {name: allocated_amount, type: currency, currency: parent.currency, required: true, in_list: true}
+    - {name: exchange_difference, type: currency, read_only: true, in_list: true, label: Exchange Gain (Loss), description: "In company currency: the two documents were booked at different rates"}
+
+- name: PaymentAllocation
+  label: Payment Allocation
+  module: finance
+  kind: document
+  submittable: true
+  company_scoped: true
+  numbering: {template: "PAL-{FY}-{seq:5}", gapless: true, on: submit, date_field: posting_date}
+  title_field: party_name
+  description: A customer's or supplier's unapplied payments, credit notes and journal credits applied to their open invoices; cancelling it opens them again.
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: party_type, type: select, options: [Customer, Supplier], required: true, default: Customer, in_list: true, in_filter: true}
+    - {name: customer, type: link, to: Customer, visible_if: "doc.party_type == 'Customer'", required_if: "doc.party_type == 'Customer'", in_filter: true}
+    - {name: supplier, type: link, to: Supplier, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'", in_filter: true}
+    - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true, description: "Not before the money or the invoice it joins"}
+    - {name: currency, type: link, to: Currency, read_only: true, description: "All the pairings of one document are in one currency"}
+    - {name: allocations, type: table, of: PaymentAllocationRow, required: true}
+    - {name: total_allocated, type: currency, currency: currency, read_only: true, in_list: true}
+    - {name: exchange_difference, type: currency, read_only: true, label: Exchange Gain (Loss), description: "In company currency"}
+    - {name: remarks, type: text}
+  list: {columns: [number, posting_date, party_name, total_allocated], sort: posting_date desc}

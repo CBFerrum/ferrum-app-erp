@@ -20,6 +20,16 @@ use uuid::Uuid;
 
 pub const KEY: &str = "AdvanceAllocation";
 
+/// What settling `take` of an invoice with `take` of money already received or paid does in company
+/// currency: each side at the rate it was booked at, and the exchange gain (positive) or loss
+/// (negative) the difference makes. A customer who paid at a lower rate than the invoice was
+/// raised at has lost; a supplier paid at a lower rate than the bill gained.
+pub(crate) fn difference(invoice_rate: Decimal, money_rate: Decimal, take: Decimal, precision: u32, customer: bool) -> (Decimal, Decimal, Decimal) {
+    let (invoice_base, money_base) = (round(take * invoice_rate, precision), round(take * money_rate, precision));
+    let diff = invoice_base - money_base;
+    (invoice_base, money_base, if customer { -diff } else { diff })
+}
+
 pub struct AdvanceHook;
 
 #[async_trait]
@@ -74,8 +84,7 @@ impl DocHook for AdvanceHook {
             if !ledger::period_open(hc.tx, hc.ctx.tenant, co.id, on).await? {
                 on = hc.ctx.today();
             }
-            let inv_base = round(take * invoice.exchange_rate, co.precision);
-            let adv_base = round(take * adv_rate, co.precision);
+            let (inv_base, adv_base, _) = difference(invoice.exchange_rate, adv_rate, take, co.precision, invoice.customer_id.is_some());
             ledger::allocate(hc.tx, hc.ctx, co.id, iid, KEY, key, on, take, inv_base).await?;
             ledger::allocate(hc.tx, hc.ctx, co.id, pid, KEY, key, on, -take, -adv_base).await?;
             let diff = inv_base - adv_base;
@@ -154,4 +163,31 @@ async fn undo_pairings(hc: &mut HookCtx<'_>, item: Uuid) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::difference;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    fn n(s: &str) -> Decimal {
+        Decimal::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn a_customer_who_paid_at_a_lower_rate_lost_and_a_supplier_gained() {
+        // 100 raised at 92 (9,200) and settled with 100 received or paid at 90 (9,000).
+        assert_eq!(difference(n("92"), n("90"), n("100"), 2, true), (n("9200"), n("9000"), n("-200")));
+        assert_eq!(difference(n("92"), n("90"), n("100"), 2, false), (n("9200"), n("9000"), n("200")));
+        // At the same rate there is nothing to post.
+        assert_eq!(difference(n("90"), n("90"), n("37.5"), 2, true).2, Decimal::ZERO);
+    }
+
+    #[test]
+    fn each_side_rounds_on_its_own() {
+        // 33.33 at 92.5 is 3083.025, which rounds up to 3083.03; at 90.1 it is 3002.997, which is 3003.00:
+        // the invoice side is 80.03 above, so a customer lost 80.03.
+        assert_eq!(difference(n("92.5"), n("90.1"), n("33.33"), 2, true), (n("3083.03"), n("3003.00"), n("-80.03")));
+    }
 }
