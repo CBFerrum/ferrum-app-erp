@@ -1,6 +1,8 @@
 //! Finance: budgets with commitment control, bank accounts with statement import and
-//! reconciliation, period closing, payment terms and schedules, dunning, subscriptions and the
-//! allocation of advance payments.
+//! reconciliation (and the workbench's matching), period closing, payment terms and schedules,
+//! dunning, subscriptions, the allocation of advance payments and of any unapplied money to a
+//! party's open invoices, exchange revaluation at a period's end, and the overview of what needs
+//! attention.
 //!
 //! Every posting goes through `ferrum_app_erp::ledger` (balanced entries, period locks,
 //! append-only reversals, open items and allocations). Hooks on other packages' documents
