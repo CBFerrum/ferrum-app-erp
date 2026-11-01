@@ -55,6 +55,9 @@ struct T {
     k: Arc<Kernel>,
     tenant: Uuid,
     admin: Ctx,
+    /// An accounts manager and an accounts user, who do most of what the sections do.
+    am: Ctx,
+    au: Ctx,
     /// The company the section in hand works in.
     company: Uuid,
     inr: Uuid,
@@ -94,6 +97,26 @@ impl T {
     async fn amount(&self, sql: &str, id: Option<Uuid>) -> Decimal {
         let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
         sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string())).bind(self.tenant).bind(id).fetch_one(&mut *tx).await.unwrap()
+    }
+    async fn uuid(&self, sql: &str, id: Option<Uuid>) -> Uuid {
+        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string())).bind(self.tenant).bind(id).fetch_one(&mut *tx).await.unwrap()
+    }
+    /// What is left on an open item (a receivable, a payable, money not yet applied).
+    async fn outstanding(&self, item: Uuid) -> Decimal {
+        self.amount("select outstanding from open_item where tenant_id = $1 and id = $2", Some(item)).await
+    }
+    /// Debit minus credit on an account (by name) in the working company.
+    async fn gl(&self, account: &str) -> Decimal {
+        self.amount(
+            &format!(
+                "select coalesce(sum(l.debit - l.credit), 0) from journal_line l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
+                 where l.tenant_id = $1 and l.company_id = '{}' and a.account_name = '{account}' and $2::uuid is null",
+                self.company
+            ),
+            None,
+        )
+        .await
     }
     async fn report(&self, ctx: &Ctx, name: &str, params: &[(&str, String)]) -> Value {
         let p: HashMap<String, String> = params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
@@ -192,19 +215,20 @@ async fn scenario() {
         .expect("tenant");
     let session = k.login("books", "admin@books.test", "Correct-Horse-9").await.expect("login");
     let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx");
-    let mut t = T { k: k.clone(), tenant, admin, company: Uuid::nil(), inr: Uuid::nil(), eur: Uuid::nil() };
+    let mut t = T { k: k.clone(), tenant, am: admin.clone(), au: admin.clone(), admin, company: Uuid::nil(), inr: Uuid::nil(), eur: Uuid::nil() };
+    t.am = t.user("am@books.test", "Accounts Manager").await;
+    t.au = t.user("au@books.test", "Accounts User").await;
     t.inr = uid(&t.find_one("Currency", json!({"code": "INR"})).await);
     t.eur = uid(&t.find_one("Currency", json!({"code": "EUR"})).await);
 
     bank_workbench(&mut t).await;
+    payment_allocation(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
 
 async fn bank_workbench(t: &mut T) {
-    let a = t.admin.clone();
-    let am = t.user("am@books.test", "Accounts Manager").await;
-    let au = t.user("au@books.test", "Accounts User").await;
+    let (a, am, au) = (t.admin.clone(), t.am.clone(), t.au.clone());
     let cid = t.open_company("Bank Co", "BC").await;
     let bank_gl = t.account("Primary Bank").await;
     let bank_charges = t.account("Bank Charges").await;
@@ -226,7 +250,7 @@ async fn bank_workbench(t: &mut T) {
     let pe_b = uid(&t.make(&am, "PaymentEntry", pay(globex, "Receive", "2026-03-04", "800", "G-1")).await);
     let pe_c = uid(&t.make(&am, "PaymentEntry", pay(landlord, "Pay", "2026-03-04", "500", "R-3")).await);
     let pe_d = uid(&t.make(&am, "PaymentEntry", pay(acme, "Receive", "2026-03-30", "250", "ACME-9")).await);
-    let pe_e = uid(&t.make(&am, "PaymentEntry", pay(supplies, "Pay", "2026-03-20", "300", "CHQ-7")).await);
+    t.make(&am, "PaymentEntry", pay(supplies, "Pay", "2026-03-20", "300", "CHQ-7")).await;
     let pe_x = uid(&t.make(&am, "PaymentEntry", pay(cafe, "Pay", "2026-03-06", "3.50", "")).await);
     let pe_y = uid(&t.make(&am, "PaymentEntry", pay(cafe, "Pay", "2026-03-07", "3.50", "")).await);
 
@@ -366,5 +390,193 @@ async fn bank_workbench(t: &mut T) {
     // A date before the statement starts shows no lines, and the statement's balance is the opening one.
     let early = t.action(&au, "BankAccount", ba_id, "workbench", json!({"as_of": "2026-03-01"})).await;
     assert_eq!((early["lines"].as_array().unwrap().len(), dec(&early["figures"]["statement_balance"])), (0, Decimal::ZERO));
+    t.books_balance().await;
+}
+
+// ───────────────────────────── applying payments to open invoices ─────────────────────────────
+
+async fn payment_allocation(t: &mut T) {
+    let (a, am, au) = (t.admin.clone(), t.am.clone(), t.au.clone());
+    let cid = t.open_company("Alloc Co", "AC").await;
+    let cash = t.account("Cash").await;
+    let bank_gl = t.account("Primary Bank").await;
+    let debtors = t.account("Debtors").await;
+    let (inr, eur) = (t.inr.to_string(), t.eur.to_string());
+    let services = t.find_one("ItemGroup", json!({"group_name": "Services"})).await;
+    let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await;
+    // One unit costs 1, so a quantity is an amount; the other item costs 9,200 rupees, 100 euros at 92.
+    let unit_json =
+        json!({"item_code": "UNIT", "item_name": "UNIT", "item_group": services["id"], "stock_uom": nos["id"], "is_stock_item": false, "standard_rate": "1"});
+    let unit = uid(&t.insert(&a, "Item", unit_json).await);
+    let euro_item = json!({"item_code": "EU-SVC", "item_name": "EU-SVC", "item_group": services["id"], "stock_uom": nos["id"], "is_stock_item": false, "standard_rate": "9200"});
+    let eu_svc = uid(&t.insert(&a, "Item", euro_item).await);
+    let acme = uid(&t.insert(&a, "Customer", json!({"customer_name": "Acme"})).await);
+    let beta = uid(&t.insert(&a, "Customer", json!({"customer_name": "Beta"})).await);
+    let invoice = |customer: Uuid, date: &str, amount: &str| json!({"company": cid, "customer": customer.to_string(), "posting_date": date, "items": [{"item": unit.to_string(), "qty": amount}]});
+    let receipt = |customer: Uuid, date: &str, amount: &str, invoice: Option<Uuid>| {
+        let mut v = json!({"company": cid, "payment_type": "Receive", "customer": customer.to_string(), "posting_date": date, "bank_account": bank_gl.to_string(),
+                           "currency": inr, "paid_amount": amount});
+        if let Some(i) = invoice {
+            v["references"] = json!([{"invoice_type": "Sales Invoice", "invoice": i.to_string(), "allocated_amount": amount}]);
+        }
+        v
+    };
+
+    // Acme is owed 1000 (A), 600 (B) and 400 (C); D (150) was paid, and credited back afterwards.
+    let sinv_a = t.make(&am, "SalesInvoice", invoice(acme, "2026-03-01", "1000")).await;
+    let sinv_b = t.make(&am, "SalesInvoice", invoice(acme, "2026-03-10", "600")).await;
+    let sinv_c = t.make(&am, "SalesInvoice", invoice(acme, "2026-03-20", "400")).await;
+    let sinv_d = uid(&t.make(&am, "SalesInvoice", invoice(acme, "2026-03-05", "150")).await);
+    let (a_id, b_id, c_id) = (uid(&sinv_a), uid(&sinv_b), uid(&sinv_c));
+    t.make(&am, "PaymentEntry", receipt(acme, "2026-03-06", "150", Some(sinv_d))).await;
+    let credit_note = t.action(&am, "SalesInvoice", sinv_d, "make_credit_note", json!({})).await;
+    let cn_id = vid(&credit_note);
+    t.k.update(&am, "SalesInvoice", cn_id, obj(json!({"posting_date": "2026-03-27"})), None).await.expect("the credit note's date");
+    t.submit(&am, "SalesInvoice", cn_id).await;
+    // Money not applied yet: 1200 received with no invoice named, and a journal that credits Acme 80.
+    let p1 = uid(&t.make(&am, "PaymentEntry", receipt(acme, "2026-03-25", "1200", None)).await);
+    let journal = json!({"company": cid, "posting_date": "2026-03-26", "accounts": [dr(cash, "80"), {"account": debtors.to_string(), "credit": "80", "party_type": "Customer", "customer": acme.to_string()}]});
+    t.make(&am, "JournalEntry", journal).await;
+    let je_line = t.uuid("select id from open_item where tenant_id = $1 and entity = 'JournalEntry' and customer_id = $2", Some(acme)).await;
+
+    // Open: A 1000 + B 600 + C 400, less the credit note 150, the 1200 and the 80 = 570, which is what the ledger says Acme owes.
+    let owed = "select coalesce(sum(outstanding), 0) from open_item where tenant_id = $1 and customer_id = $2 and status = 'open'";
+    let ledger = "select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and customer_id = $2";
+    assert_eq!((t.amount(owed, Some(acme)).await, t.amount(ledger, Some(acme)).await), (n("570"), n("570")));
+
+    // The pairings: the 1200 covers A (1000) and 200 of B; the 80 and the credit note's 150 go to B and C.
+    let rows = json!([
+        {"credit": p1.to_string(), "invoice": a_id.to_string(), "allocated_amount": "1000"},
+        {"credit": p1.to_string(), "invoice": b_id.to_string(), "allocated_amount": "200"},
+        {"credit": je_line.to_string(), "invoice": b_id.to_string(), "allocated_amount": "80"},
+        {"credit": cn_id.to_string(), "invoice": c_id.to_string(), "allocated_amount": "150"},
+    ]);
+    let allocation = json!({"company": cid, "party_type": "Customer", "customer": acme.to_string(), "posting_date": "2026-03-28", "allocations": rows});
+
+    // Asked before it is saved, the server says what each row is and what comes to: 1000 + 200 + 80 + 150 = 1430, no exchange difference.
+    let preview = t.k.preview(&au, "PaymentAllocation", obj(allocation.clone())).await.expect("a preview");
+    assert_eq!(
+        (preview["party_name"].clone(), dec(&preview["total_allocated"]), dec(&preview["exchange_difference"])),
+        (json!("Acme"), n("1430"), Decimal::ZERO)
+    );
+    assert_eq!(
+        (preview["allocations"][0]["credit_type"].clone(), preview["allocations"][0]["invoice_number"].clone()),
+        (json!("Payment Entry"), sinv_a["number"].clone())
+    );
+    assert_eq!(preview["allocations"][3]["credit_type"], json!("Sales Invoice"), "a credit note is a sales invoice");
+    assert_eq!(preview["allocations"][2]["credit_type"], json!("Journal Entry"));
+    assert!(t.list("PaymentAllocation", json!({})).await.is_empty(), "a preview writes nothing");
+
+    // What cannot be done is refused with the reason.
+    let refuse = |what: Value| {
+        let mut v = allocation.clone();
+        v["allocations"] = what;
+        v
+    };
+    let one = |credit: Uuid, invoice: Uuid, amount: &str| json!({"credit": credit.to_string(), "invoice": invoice.to_string(), "allocated_amount": amount});
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([one(p1, a_id, "1001")])))).await.unwrap_err();
+    assert!(invalid(&e, "left, not 1001"), "more than the invoice has left: {e:?}");
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([one(p1, a_id, "1000"), one(p1, b_id, "201")])))).await.unwrap_err();
+    assert!(invalid(&e, "left, not 1201"), "more than the money has left, over two rows: {e:?}");
+    let beta_invoice = uid(&t.make(&am, "SalesInvoice", invoice(beta, "2026-03-02", "100")).await);
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([one(p1, beta_invoice, "50")])))).await.unwrap_err();
+    assert!(invalid(&e, "another party"), "{e:?}");
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([one(a_id, b_id, "50")])))).await.unwrap_err();
+    assert!(invalid(&e, "not money to apply"), "an invoice is not money: {e:?}");
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([one(p1, cn_id, "50")])))).await.unwrap_err();
+    assert!(invalid(&e, "nothing to pay"), "a credit note is not owed: {e:?}");
+    let mut early = allocation.clone();
+    early["posting_date"] = json!("2026-03-24");
+    let e = t.k.insert(&au, "PaymentAllocation", obj(early)).await.unwrap_err();
+    assert!(invalid(&e, "cannot be dated before"), "the 1200 arrived on the 25th: {e:?}");
+    let e = t.k.insert(&au, "PaymentAllocation", obj(refuse(json!([])))).await.unwrap_err();
+    assert!(invalid(&e, "at least one"), "{e:?}");
+
+    // An accounts user applies it.
+    let made = t.insert(&au, "PaymentAllocation", allocation).await;
+    assert_eq!((made["docstatus"].clone(), dec(&made["total_allocated"])), (json!(0), n("1430")));
+    let done = t.submit(&au, "PaymentAllocation", uid(&made)).await;
+    assert!(done["number"].as_str().unwrap().starts_with("PAL-"), "{:?}", done["number"]);
+    // Left on the invoices: A 0, B 600 - 200 - 80 = 320, C 400 - 150 = 250 (570 together, as before); the money is all used.
+    assert_eq!((t.outstanding(a_id).await, t.outstanding(b_id).await, t.outstanding(c_id).await), (n("0"), n("320"), n("250")));
+    assert_eq!((t.outstanding(p1).await, t.outstanding(je_line).await, t.outstanding(cn_id).await), (n("0"), n("0"), n("0")));
+    let (doc_a, doc_b, doc_c) = (t.get("SalesInvoice", a_id).await, t.get("SalesInvoice", b_id).await, t.get("SalesInvoice", c_id).await);
+    assert_eq!(
+        (doc_a["status"].clone(), dec(&doc_b["outstanding_amount"]), doc_b["status"].clone(), dec(&doc_c["outstanding_amount"]), doc_c["status"].clone()),
+        (json!("Paid"), n("320"), json!("Partly Paid"), n("250"), json!("Partly Paid"))
+    );
+    assert_eq!((t.amount(owed, Some(acme)).await, t.amount(ledger, Some(acme)).await), (n("570"), n("570")), "applying money moves nothing in the ledger");
+    // Neither the payment nor an invoice can be cancelled from under it.
+    let e = t.k.cancel(&am, "PaymentEntry", p1, None).await.unwrap_err();
+    assert!(invalid(&e, "applied by payment allocation PAL-"), "{e:?}");
+    let e = t.k.cancel(&am, "SalesInvoice", a_id, None).await.unwrap_err();
+    assert!(invalid(&e, "applied by payment allocation PAL-"), "{e:?}");
+    // Cancelling it opens everything again.
+    t.k.cancel(&am, "PaymentAllocation", uid(&made), None).await.expect("cancel");
+    assert_eq!((t.outstanding(a_id).await, t.outstanding(b_id).await, t.outstanding(c_id).await), (n("1000"), n("600"), n("400")));
+    assert_eq!((t.outstanding(p1).await, t.outstanding(je_line).await, t.outstanding(cn_id).await), (n("-1200"), n("-80"), n("-150")));
+    assert_eq!(t.get("SalesInvoice", a_id).await["status"], json!("Unpaid"));
+    assert_eq!(t.amount(owed, Some(acme)).await, n("570"));
+
+    // A supplier: 500 paid ahead, a bill of 800; applying the 500 leaves 300 to pay.
+    let supplies = uid(&t.insert(&a, "Supplier", json!({"supplier_name": "Supplies Co"})).await);
+    let advance = uid(&t
+        .make(
+            &am,
+            "PaymentEntry",
+            json!({"company": cid, "payment_type": "Pay", "supplier": supplies.to_string(), "posting_date": "2026-03-12", "bank_account": bank_gl.to_string(),
+                                                          "currency": inr, "paid_amount": "500"}),
+        )
+        .await);
+    let bill = uid(&t
+        .make(
+            &am,
+            "PurchaseInvoice",
+            json!({"company": cid, "supplier": supplies.to_string(), "bill_no": "S-1", "posting_date": "2026-03-15",
+                                                          "items": [{"item": unit.to_string(), "qty": "800", "price_list_rate": "1"}]}),
+        )
+        .await);
+    assert_eq!((t.outstanding(advance).await, t.outstanding(bill).await), (n("-500"), n("800")));
+    let supplier_side = json!({"company": cid, "party_type": "Supplier", "supplier": supplies.to_string(), "posting_date": "2026-03-16", "allocations": [one(advance, bill, "500")]});
+    let applied = t.make(&au, "PaymentAllocation", supplier_side).await;
+    assert_eq!((dec(&applied["total_allocated"]), applied["party_name"].clone()), (n("500"), json!("Supplies Co")));
+    assert_eq!((t.outstanding(advance).await, t.outstanding(bill).await), (n("0"), n("300")));
+    let paid = t.get("PurchaseInvoice", bill).await;
+    assert_eq!((dec(&paid["outstanding_amount"]), paid["status"].clone()), (n("300"), json!("Partly Paid")));
+
+    // Euros booked at 90 when they came in and 92 when they were billed: 100 euros are 9,000 rupees
+    // against a bill of 9,200, so applying one to the other is a loss of 200 on exchange.
+    for (rate, from) in [("90", "2026-01-01"), ("92", "2026-04-01")] {
+        t.insert(&a, "ExchangeRate", json!({"from_currency": eur, "to_currency": inr, "rate": rate, "valid_from": from})).await;
+    }
+    let euro = uid(&t.insert(&a, "Customer", json!({"customer_name": "Euro GmbH", "default_currency": eur})).await);
+    let euros_in = uid(&t
+        .make(
+            &am,
+            "PaymentEntry",
+            json!({"company": cid, "payment_type": "Receive", "customer": euro.to_string(), "posting_date": "2026-03-01", "bank_account": cash.to_string(),
+                                                           "currency": eur, "paid_amount": "100"}),
+        )
+        .await);
+    let euro_bill = uid(&t
+        .make(
+            &am,
+            "SalesInvoice",
+            json!({"company": cid, "customer": euro.to_string(), "posting_date": "2026-04-05", "items": [{"item": eu_svc.to_string(), "qty": "1"}]}),
+        )
+        .await);
+    assert_eq!((t.outstanding(euros_in).await, t.outstanding(euro_bill).await), (n("-100"), n("100")));
+    let fx = json!({"company": cid, "party_type": "Customer", "customer": euro.to_string(), "posting_date": "2026-04-06", "allocations": [one(euros_in, euro_bill, "100")]});
+    let seen = t.k.preview(&au, "PaymentAllocation", obj(fx.clone())).await.expect("preview");
+    assert_eq!(
+        (dec(&seen["allocations"][0]["exchange_difference"]), dec(&seen["exchange_difference"]), seen["currency"].clone()),
+        (n("-200"), n("-200"), json!(eur))
+    );
+    let before = t.gl("Exchange Gain or Loss").await;
+    t.make(&au, "PaymentAllocation", fx).await;
+    assert_eq!(t.gl("Exchange Gain or Loss").await - before, n("200"), "a loss of 200 is a debit of 200");
+    assert_eq!(t.get("SalesInvoice", euro_bill).await["status"], json!("Paid"));
+    let euro_ledger = "select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and customer_id = $2";
+    assert_eq!(t.amount(euro_ledger, Some(euro)).await, Decimal::ZERO, "nothing is left on the customer's account in rupees");
     t.books_balance().await;
 }

@@ -10,8 +10,10 @@ modules:
     label: Finance
     icon: landmark
     order: 25
-    items: [Budget, MonthlyDistribution, BankAccount, BankTransaction, PeriodClosingVoucher, PaymentTermsTemplate, DunningType, Dunning,
-            SubscriptionPlan, Subscription, report:budget_variance, report:bank_reconciliation_statement, report:cash_flow_forecast,
+    # report:bank_reconciliation is not a report of the server's: the ERP interface answers that address
+    # with the reconciliation workbench, so it shows in the sidebar beside the bank's records.
+    items: [Budget, MonthlyDistribution, BankAccount, BankTransaction, report:bank_reconciliation, PaymentAllocation, PeriodClosingVoucher, PaymentTermsTemplate,
+            DunningType, Dunning, SubscriptionPlan, Subscription, report:budget_variance, report:bank_reconciliation_statement, report:cash_flow_forecast,
             report:receivables_by_due_date, report:dunning_summary, report:subscription_metrics]
 
 roles:
@@ -21,6 +23,7 @@ roles:
       - {entity: MonthlyDistribution, read: true, write: true, create: true, delete: true}
       - {entity: BankAccount, read: true, write: true, create: true, delete: true, export: true, read_groups: [bank_details], write_groups: [bank_details]}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, import: true}
+      - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PeriodClosingVoucher, read: true, write: true, create: true, delete: true, submit: true, cancel: true}
       - {entity: PaymentTermsTemplate, read: true, write: true, create: true, delete: true}
       - {entity: DunningType, read: true, write: true, create: true, delete: true}
@@ -33,6 +36,7 @@ roles:
       - {entity: MonthlyDistribution, read: true}
       - {entity: BankAccount, read: true}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true}
+      - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: PeriodClosingVoucher, read: true}
       - {entity: PaymentTermsTemplate, read: true}
       - {entity: DunningType, read: true}
