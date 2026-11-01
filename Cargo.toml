@@ -4,7 +4,7 @@
 # platform's crates, taken from Ferrum's main, and other apps build on this one.
 [workspace]
 resolver = "3"
-members = [".", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/eu-members", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops"]
+members = [".", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/eu-members", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops", "addons/wms"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,7 @@ ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-calc = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-apps = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-plugins = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+ferrum-ops = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,67 @@
+- name: ShipmentItem
+  label: Shipment Item
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: lot, type: data, in_list: true}
+    - {name: serial, type: data}
+    - {name: sales_order, type: link, to: SalesOrder}
+    - {name: so_line, type: data}
+    - {name: verified_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+
+- name: Shipment
+  label: Shipment
+  label_plural: Shipments
+  kind: master
+  module: wms
+  title_field: reference
+  description: What leaves, verified piece by piece, handed to a carrier. A shipment becomes a delivery note when it goes.
+  fields:
+    - {name: reference, type: data, read_only: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: customer, type: link, to: Customer, required: true, in_list: true}
+    - {name: owner, type: link, to: Customer, description: "A customer's own stock leaving for them: no delivery note"}
+    - {name: items, type: table, of: ShipmentItem, required: true}
+    - {name: status, type: select, options: [Picking, Packed, Handed Over, Partially Handed Over, Cancelled], default: Picking, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: carrier, type: data, in_list: true}
+    - {name: tracking, type: data, in_list: true}
+    - {name: expected_weight_kg, type: decimal, read_only: true}
+    - {name: weighed_kg, type: decimal, label: Weighed (kg)}
+    - {name: label_checked, type: check, read_only: true, no_copy: true}
+    - {name: handed_over_at, type: datetime, read_only: true, no_copy: true}
+    - {name: delivery_note, type: link, to: DeliveryNote, read_only: true, no_copy: true}
+  list: {columns: [reference, customer, carrier, status], sort: reference desc}
+
+- name: ReturnLine
+  label: Return Line
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: lot, type: data}
+    - {name: serial, type: data}
+    - {name: reason, type: data, in_list: true}
+    - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: disposition, type: select, options: [Undecided, Restock, Repair, Scrap, Return to Supplier], default: Undecided, in_list: true}
+    - {name: rate, type: currency, min: "0", description: "Value taken back into stock"}
+
+- name: ReturnAuthorization
+  label: Return Authorization
+  label_plural: Return Authorizations
+  kind: document
+  module: wms
+  title_field: customer
+  company_scoped: true
+  numbering: {template: "RMA-{FY}-{seq:5}", date_field: authorized_on}
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: customer, type: link, to: Customer, required: true, in_list: true, in_filter: true}
+    - {name: authorized_on, type: date, required: true, default_expr: today, in_list: true}
+    - {name: items, type: table, of: ReturnLine, required: true}
+    - {name: status, type: select, options: [Authorized, Received, Dispositioned, Closed], default: Authorized, read_only: true, no_copy: true, in_list: true, in_filter: true}
+  list: {columns: [number, customer, authorized_on, status], sort: authorized_on desc}

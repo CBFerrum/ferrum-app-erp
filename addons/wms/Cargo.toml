@@ -1,0 +1,30 @@
+[package]
+name = "ferrum-wms"
+description = "Warehouse execution on ERP's stock: bins, handling units, positions by lot and owner, receiving to returns, robots and people on one task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-ops = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast"] }
+ferrum-stock-ops = { path = "../stock-ops" }
+tokio = { workspace = true }
+
+[lints]
+workspace = true
