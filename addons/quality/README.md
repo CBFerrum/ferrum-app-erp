@@ -1,6 +1,12 @@
-Quality holds, nonconformance and corrective action. A hold is a real stop: held stock cannot ship or
-be consumed, in any app, until someone with the authority releases it, and that someone cannot be the
-person who placed it. Inspection plans are versioned and cannot change once approved.
+# Quality
 
-This is a general quality system. Whether it meets the rules of a regulated process depends on that
-process, and needs its own validation.
+Holds that hold, and what happens after.
+
+- **Holds** by item and lot stop ERP from shipping or consuming that stock, the warehouse from
+  allocating it and the floor from using it. Receipts pass: a hold never stops anyone taking goods off
+  a lorry. Whoever placed a hold does not release it.
+- **Nonconformances** with a disposition, and **corrective action** verified by someone other than
+  its owner.
+- **Inspection plans** that say when a lot needs looking at.
+
+Controlled document release, supplier quality and recall management are not built.

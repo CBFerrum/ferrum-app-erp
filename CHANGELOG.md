@@ -1,5 +1,24 @@
 # Changelog
 
+## Warehouse 0.1.0, Shop Floor 0.1.0 and Quality 0.1.0: from the dock to the machine
+
+Three add-ons that run on ERP's stock and work orders, and on Operations from the platform. They have
+been run end to end on a real server with a simulated fleet and a simulated press. **Nothing has
+touched physical equipment, and none of this is a safety claim.**
+
+- **Warehouse** runs a warehouse down to the bin. Positions are a subledger of ERP's stock, never a
+  second balance: the database refuses any commit where the two differ. Receiving by scan, putaway,
+  wave picking, packing, partial shipments by the parcel, counts with a second counter, returns,
+  holds, and storage billing for customers' stock. A robot's arrival moves nothing: stock moves on a
+  scan at the destination, and when nobody can say where it is, the task says so until someone finds it.
+- **Shop Floor** runs work orders on the floor. A run is released only with an approved revision, a
+  qualified operator, equipment that can run and material there, and releasing it brings that material
+  to the line. Events are idempotent, so a shaky terminal counts once. Lots trace forward and back,
+  and OEE follows a written definition that says when a figure is unknown rather than zero. It sends
+  machines an approved job number, never a program.
+- **Quality** puts holds that stop shipping and consuming held stock, in ERP, the warehouse and on the
+  floor, with nonconformances and corrective action. Whoever placed a hold does not release it.
+
 ## ERP 0.5.0 and Finance 0.2.0: the accountant's screens
 
 ERP's own interface now has hand-made screens for the accountant's work, each with its rules in the
