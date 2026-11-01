@@ -756,6 +756,8 @@ async fn scenario() {
     assert_eq!(dn["status"], json!("Unresolved"));
     assert_eq!(t.gl("Other Income").await, n("-49.89"));
     t.action(&am, "Dunning", uid(&dn), "send_letter", json!({})).await;
+    assert!(outbox.0.lock().unwrap().is_empty(), "queued: nothing leaves inside the transaction");
+    while t.k.dispatch_outbox_once().await.unwrap() > 0 {}
     let sent = outbox.0.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0.as_str(), sent[0].1.as_str()), ("billing@hooli.test", "Final notice 3 for Hooli"));

@@ -363,13 +363,16 @@ impl DocHook for DunningHook {
         if name != "send_letter" {
             return Ok(None);
         }
-        let mailer = hc.kernel.mailer.clone().ok_or_else(|| Error::Unavailable("no mailer is configured on this server".into()))?;
+        if hc.kernel.mailer.is_none() {
+            return Err(Error::Unavailable("no mailer is configured on this server".into()));
+        }
         let customer = get(hc.kernel, hc.ctx, hc.tx, "Customer", id(doc, "customer").unwrap_or_default()).await?;
         let to = params.get("to").and_then(Value::as_str).map(str::to_string).or_else(|| s(&customer, "email").map(str::to_string));
         let to = to.filter(|t| t.contains('@')).ok_or_else(|| Error::field("to", "the customer has no email address; give one"))?;
         let subject = s(doc, "letter_subject").unwrap_or("Payment reminder").to_string();
         let html = format!("<div style=\"font-family:sans-serif;white-space:pre-wrap\">{}</div>", html_escape(s(doc, "letter").unwrap_or_default()));
-        mailer.send(&to, &subject, &html).await?;
+        // Queued in this transaction: it goes once this commits, and a slow mail server holds nothing.
+        hc.kernel.queue_mail(hc.tx, hc.ctx.tenant, &to, &subject, &html).await?;
         let mut v = Doc::new();
         v.insert("letter_sent_to".into(), json!(to));
         v.insert("letter_sent_at".into(), json!(chrono::Utc::now().to_rfc3339()));
