@@ -2,7 +2,7 @@
 //! first): the release gate, what happened as events, real postings to ERP, a lot followed through
 //! both ways, and OEE worked out by hand.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SubsecRound, Utc};
 use ferrum_kernel::query::parse_filters;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, SiteRequest, outbox};
@@ -277,7 +277,9 @@ async fn scenario() {
     assert!(t.release(&supervisor, main).await.is_err(), "not twice");
 
     // ───── what happened, as it happened ─────
-    let t0 = Utc::now() - Duration::hours(2);
+    // Whole seconds: Linux clocks have nanoseconds and the database keeps microseconds, so an event
+    // exactly at the start of a period would otherwise round to just before it.
+    let t0 = Utc::now().trunc_subsecs(0) - Duration::hours(2);
     let at = |m: i64| (t0 + Duration::minutes(m)).to_rfc3339();
     assert!(t.event(&operator, r1, json!({"kind": "start"})).await.is_err(), "not released");
     t.event(&operator, main, json!({"kind": "start", "at": at(0)})).await.expect("started");
