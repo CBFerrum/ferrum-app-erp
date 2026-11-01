@@ -86,7 +86,13 @@ impl EventSink for Events {
             let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
             let run = match ev.payload["body"]["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) {
                 Some(run) => Some(run),
-                None => sqlx::query_scalar("select id from e_production_run where tenant_id = $1 and number = $2").bind(ev.tenant_id).bind(ev.payload["body"]["reference"].as_str()).fetch_optional(&mut *tx).await?,
+                None => {
+                    sqlx::query_scalar("select id from e_production_run where tenant_id = $1 and number = $2")
+                        .bind(ev.tenant_id)
+                        .bind(ev.payload["body"]["reference"].as_str())
+                        .fetch_optional(&mut *tx)
+                        .await?
+                }
             };
             let Some(run) = run else { return Ok(()) };
             match runs::record(k, &ctx, &mut tx, run, &step).await {
@@ -102,7 +108,10 @@ impl EventSink for Events {
             let ctx = Ctx::system(ev.tenant_id, schema().await?);
             let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
             let mut note = Doc::new();
-            note.insert("note".into(), json!(format!("The warehouse cannot bring all of this to the line: {}", ev.payload["short"].as_str().unwrap_or_default())));
+            note.insert(
+                "note".into(),
+                json!(format!("The warehouse cannot bring all of this to the line: {}", ev.payload["short"].as_str().unwrap_or_default())),
+            );
             k.set_values_tx(&ctx, &mut tx, "ProductionRun", run, note).await?;
             tx.commit().await?;
             return Ok(());
@@ -139,7 +148,8 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
     match (req.method.as_str(), segments) {
         ("POST", ["runs", run, "release"]) => {
             may(ctx, SUPERVISE)?;
-            let event = serde_json::from_slice::<Value>(&req.body).ok().and_then(|v| v["event_id"].as_str().and_then(|e| e.parse().ok())).unwrap_or_else(Uuid::now_v7);
+            let event =
+                serde_json::from_slice::<Value>(&req.body).ok().and_then(|v| v["event_id"].as_str().and_then(|e| e.parse().ok())).unwrap_or_else(Uuid::now_v7);
             runs::release(k, ctx, tx, uuid(run)?, event).await
         }
         ("POST", ["runs", run, "events"]) => {
@@ -164,7 +174,11 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
         }
         ("GET", ["runs", run, "events"]) => {
             may(ctx, READ)?;
-            let rows: Vec<Value> = sqlx::query_scalar("select to_jsonb(e) - 'tenant_id' from mes_event e where tenant_id = $1 and run_id = $2 order by seq").bind(ctx.tenant).bind(uuid(run)?).fetch_all(&mut **tx).await?;
+            let rows: Vec<Value> = sqlx::query_scalar("select to_jsonb(e) - 'tenant_id' from mes_event e where tenant_id = $1 and run_id = $2 order by seq")
+                .bind(ctx.tenant)
+                .bind(uuid(run)?)
+                .fetch_all(&mut **tx)
+                .await?;
             Ok(json!({"events": rows}))
         }
         _ => Err(Error::NotFound("route".into())),

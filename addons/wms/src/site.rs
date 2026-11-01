@@ -80,9 +80,22 @@ struct Bill {
 
 async fn overview(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<Value> {
     let tasks: Vec<(Option<String>, i64)> = sqlx::query_as("select status, count(*) from e_warehouse_task where tenant_id = $1 and warehouse = $2 and status not in ('Done', 'Short', 'Cancelled') group by status").bind(tenant).bind(warehouse).fetch_all(&mut **tx).await?;
-    let positions: Vec<(String, Decimal)> = sqlx::query_as("select status, sum(qty) from wms_position where tenant_id = $1 and warehouse_id = $2 and qty > 0 group by status").bind(tenant).bind(warehouse).fetch_all(&mut **tx).await?;
-    let blocked: i64 = sqlx::query_scalar("select count(*) from e_storage_bin where tenant_id = $1 and warehouse = $2 and status = 'Blocked'").bind(tenant).bind(warehouse).fetch_one(&mut **tx).await?;
-    let closed: i64 = sqlx::query_scalar("select count(*) from e_storage_zone where tenant_id = $1 and warehouse = $2 and not available").bind(tenant).bind(warehouse).fetch_one(&mut **tx).await?;
+    let positions: Vec<(String, Decimal)> =
+        sqlx::query_as("select status, sum(qty) from wms_position where tenant_id = $1 and warehouse_id = $2 and qty > 0 group by status")
+            .bind(tenant)
+            .bind(warehouse)
+            .fetch_all(&mut **tx)
+            .await?;
+    let blocked: i64 = sqlx::query_scalar("select count(*) from e_storage_bin where tenant_id = $1 and warehouse = $2 and status = 'Blocked'")
+        .bind(tenant)
+        .bind(warehouse)
+        .fetch_one(&mut **tx)
+        .await?;
+    let closed: i64 = sqlx::query_scalar("select count(*) from e_storage_zone where tenant_id = $1 and warehouse = $2 and not available")
+        .bind(tenant)
+        .bind(warehouse)
+        .fetch_one(&mut **tx)
+        .await?;
     Ok(json!({
         "tasks": tasks.into_iter().map(|(s, n)| (s.unwrap_or_default(), n)).collect::<std::collections::BTreeMap<_, _>>(),
         "stock": positions.into_iter().collect::<std::collections::BTreeMap<_, _>>(),

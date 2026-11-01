@@ -40,12 +40,14 @@ pub async fn maintenance(_k: &Kernel) -> Result<()> {
 
 /// The active hold over this item and lot, if any. An empty lot on the hold covers every lot.
 pub async fn hold_on(tx: &mut Tx, tenant: Uuid, item: Uuid, lot: &str) -> Result<Option<(Uuid, Option<String>)>> {
-    Ok(sqlx::query_as("select id, rework_order from e_quality_hold where tenant_id = $1 and item = $2 and status = 'Active' and (coalesce(lot, '') = '' or lot = $3) limit 1")
-        .bind(tenant)
-        .bind(item)
-        .bind(lot)
-        .fetch_optional(&mut **tx)
-        .await?)
+    Ok(sqlx::query_as(
+        "select id, rework_order from e_quality_hold where tenant_id = $1 and item = $2 and status = 'Active' and (coalesce(lot, '') = '' or lot = $3) limit 1",
+    )
+    .bind(tenant)
+    .bind(item)
+    .bind(lot)
+    .fetch_optional(&mut **tx)
+    .await?)
 }
 
 /// Refuses documents that would ship or consume held stock. Receipts pass: stock may come in on
@@ -78,7 +80,11 @@ impl DocHook for HoldGate {
                 if rework.is_some() && rework == work_order {
                     continue;
                 }
-                let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(hc.ctx.tenant).bind(item).fetch_optional(&mut **hc.tx).await?;
+                let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2")
+                    .bind(hc.ctx.tenant)
+                    .bind(item)
+                    .fetch_optional(&mut **hc.tx)
+                    .await?;
                 return Err(Error::field("items", format!("{} {lot} is on quality hold", code.unwrap_or_default())));
             }
         }
@@ -149,7 +155,15 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, hold: Uuid, note: &str)
     if s(&doc, "placed_by") == Some(ctx.email.as_str()) {
         return Err(Error::Forbidden("someone other than who placed it has to release it".into()));
     }
-    set(k, ctx, tx, "QualityHold", hold, json!({"status": "Released", "released_by": ctx.email, "released_at": chrono::Utc::now().to_rfc3339(), "release_note": note})).await?;
+    set(
+        k,
+        ctx,
+        tx,
+        "QualityHold",
+        hold,
+        json!({"status": "Released", "released_by": ctx.email, "released_at": chrono::Utc::now().to_rfc3339(), "release_note": note}),
+    )
+    .await?;
     ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "quality.hold.released", Some("QualityHold"), Some(hold), json!({"hold": hold})).await?;
     audit::record(tx, ctx, "QualityHold", hold, "quality.released", None, json!({"note": note})).await
 }
@@ -179,7 +193,15 @@ async fn decide(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ncr: Uuid, d: &Disposition) 
     if matches!(doc.get("status").and_then(Value::as_str), Some("Dispositioned" | "Closed")) {
         return Err(Error::invalid("this has been decided"));
     }
-    set(k, ctx, tx, "Nonconformance", ncr, json!({"status": "Dispositioned", "disposition": d.disposition, "disposition_note": d.note, "decided_by": ctx.email})).await
+    set(
+        k,
+        ctx,
+        tx,
+        "Nonconformance",
+        ncr,
+        json!({"status": "Dispositioned", "disposition": d.disposition, "disposition_note": d.note, "decided_by": ctx.email}),
+    )
+    .await
 }
 
 async fn verify_capa(k: &Kernel, ctx: &Ctx, tx: &mut Tx, capa: Uuid, note: &str) -> Result<()> {
@@ -204,7 +226,11 @@ async fn approve_plan(k: &Kernel, ctx: &Ctx, tx: &mut Tx, plan: Uuid) -> Result<
         return Err(Error::invalid("this plan is not a draft"));
     }
     let item = id(&doc, "item").ok_or_else(|| Error::internal("a plan without an item"))?;
-    sqlx::query("update e_inspection_plan set status = 'Superseded' where tenant_id = $1 and item = $2 and status = 'Approved'").bind(ctx.tenant).bind(item).execute(&mut **tx).await?;
+    sqlx::query("update e_inspection_plan set status = 'Superseded' where tenant_id = $1 and item = $2 and status = 'Approved'")
+        .bind(ctx.tenant)
+        .bind(item)
+        .execute(&mut **tx)
+        .await?;
     set(k, ctx, tx, "InspectionPlan", plan, json!({"status": "Approved", "approved_by": ctx.email})).await
 }
 

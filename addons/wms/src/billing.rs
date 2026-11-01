@@ -27,10 +27,22 @@ pub async fn bill(k: &Kernel, ctx: &Ctx, tx: &mut Tx, customer: Uuid, from: Naiv
     if to < from {
         return Err(Error::invalid("the period ends before it starts"));
     }
-    let contract: Option<(Uuid, Uuid, Decimal, Option<Decimal>)> =
-        sqlx::query_as("select company, service_item, rate_per_bin_day, rate_per_unit_moved from e_storage_contract where tenant_id = $1 and customer = $2 and active").bind(ctx.tenant).bind(customer).fetch_optional(&mut **tx).await?;
+    let contract: Option<(Uuid, Uuid, Decimal, Option<Decimal>)> = sqlx::query_as(
+        "select company, service_item, rate_per_bin_day, rate_per_unit_moved from e_storage_contract where tenant_id = $1 and customer = $2 and active",
+    )
+    .bind(ctx.tenant)
+    .bind(customer)
+    .fetch_optional(&mut **tx)
+    .await?;
     let Some((company, service, per_bin, per_unit)) = contract else { return Err(Error::invalid("this customer has no storage contract")) };
-    let bin_days: i64 = sqlx::query_scalar("select coalesce(sum(bins), 0)::int8 from wms_storage_day where tenant_id = $1 and customer_id = $2 and day between $3 and $4").bind(ctx.tenant).bind(customer).bind(from).bind(to).fetch_one(&mut **tx).await?;
+    let bin_days: i64 =
+        sqlx::query_scalar("select coalesce(sum(bins), 0)::int8 from wms_storage_day where tenant_id = $1 and customer_id = $2 and day between $3 and $4")
+            .bind(ctx.tenant)
+            .bind(customer)
+            .bind(from)
+            .bind(to)
+            .fetch_one(&mut **tx)
+            .await?;
     let handled: Decimal = sqlx::query_scalar(
         "select coalesce(sum(qty), 0) from wms_move where tenant_id = $1 and owner_id = $2 and kind in ('Receive', 'Issue') and at::date between $3 and $4",
     )
@@ -40,7 +52,9 @@ pub async fn bill(k: &Kernel, ctx: &Ctx, tx: &mut Tx, customer: Uuid, from: Naiv
     .bind(to)
     .fetch_one(&mut **tx)
     .await?;
-    let mut items = vec![json!({"item": service, "qty": bin_days.max(0), "rate": per_bin, "price_list_rate": per_bin, "description": format!("Storage {from} to {to}: {bin_days} bin-days")})];
+    let mut items = vec![
+        json!({"item": service, "qty": bin_days.max(0), "rate": per_bin, "price_list_rate": per_bin, "description": format!("Storage {from} to {to}: {bin_days} bin-days")}),
+    ];
     if let Some(rate) = per_unit.filter(|r| *r > Decimal::ZERO)
         && handled > Decimal::ZERO
     {

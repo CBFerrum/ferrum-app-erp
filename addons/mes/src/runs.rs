@@ -30,19 +30,34 @@ fn status(doc: &Doc) -> &str {
 
 /// Who a run's device is, and whether it can work. No device means a manual station.
 async fn equipment(tx: &mut Tx, tenant: Uuid, workstation: Uuid) -> Result<Option<(Uuid, Lifecycle, String)>> {
-    let row: Option<(Option<Uuid>,)> = sqlx::query_as("select mes_device from e_workstation where tenant_id = $1 and id = $2").bind(tenant).bind(workstation).fetch_optional(&mut **tx).await?;
+    let row: Option<(Option<Uuid>,)> = sqlx::query_as("select mes_device from e_workstation where tenant_id = $1 and id = $2")
+        .bind(tenant)
+        .bind(workstation)
+        .fetch_optional(&mut **tx)
+        .await?;
     let Some(device) = row.and_then(|r| r.0) else { return Ok(None) };
-    let (lifecycle, code): (String, String) = sqlx::query_as("select lifecycle, device_code from e_device where tenant_id = $1 and id = $2").bind(tenant).bind(device).fetch_one(&mut **tx).await?;
+    let (lifecycle, code): (String, String) =
+        sqlx::query_as("select lifecycle, device_code from e_device where tenant_id = $1 and id = $2").bind(tenant).bind(device).fetch_one(&mut **tx).await?;
     Ok(Some((device, Lifecycle::parse(&lifecycle).unwrap_or(Lifecycle::Quarantined), code)))
 }
 
 /// What is usable of `item` in `warehouse`: the books, less what is on quality hold.
 async fn usable(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid) -> Result<Decimal> {
-    let held_all: i64 = sqlx::query_scalar("select count(*) from e_quality_hold where tenant_id = $1 and item = $2 and status = 'Active' and coalesce(lot, '') = ''").bind(tenant).bind(item).fetch_one(&mut **tx).await?;
+    let held_all: i64 =
+        sqlx::query_scalar("select count(*) from e_quality_hold where tenant_id = $1 and item = $2 and status = 'Active' and coalesce(lot, '') = ''")
+            .bind(tenant)
+            .bind(item)
+            .fetch_one(&mut **tx)
+            .await?;
     if held_all > 0 {
         return Ok(Decimal::ZERO);
     }
-    let have: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3").bind(tenant).bind(item).bind(warehouse).fetch_optional(&mut **tx).await?;
+    let have: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3")
+        .bind(tenant)
+        .bind(item)
+        .bind(warehouse)
+        .fetch_optional(&mut **tx)
+        .await?;
     let held: Decimal = sqlx::query_scalar(
         "select coalesce(sum(m.qty), 0) from stock_move m where m.tenant_id = $1 and m.item_id = $2 and m.warehouse_id = $3 \
          and m.batch_no in (select h.lot from e_quality_hold h where h.tenant_id = $1 and h.item = $2 and h.status = 'Active')",
@@ -76,13 +91,15 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid)
         return Err(Error::invalid("that revision is not how this work order is being made"));
     }
     let today = ctx.today();
-    let qualified: Option<i32> = sqlx::query_scalar("select 1 from e_operator_qualification where tenant_id = $1 and lower(user_email) = lower($2) and operation = $3 and valid_until >= $4")
-        .bind(ctx.tenant)
-        .bind(s(&doc, "operator_email"))
-        .bind(id(&doc, "operation"))
-        .bind(today)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let qualified: Option<i32> = sqlx::query_scalar(
+        "select 1 from e_operator_qualification where tenant_id = $1 and lower(user_email) = lower($2) and operation = $3 and valid_until >= $4",
+    )
+    .bind(ctx.tenant)
+    .bind(s(&doc, "operator_email"))
+    .bind(id(&doc, "operation"))
+    .bind(today)
+    .fetch_optional(&mut **tx)
+    .await?;
     if qualified.is_none() {
         return Err(Error::invalid(format!("{} is not qualified for this operation", s(&doc, "operator_email").unwrap_or_default())));
     }
@@ -105,7 +122,11 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid)
         materials.push(json!({"item": item, "warehouse": warehouse, "qty": need}));
         let there = usable(tx, ctx.tenant, item, warehouse).await?;
         if there < need {
-            let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
+            let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2")
+                .bind(ctx.tenant)
+                .bind(item)
+                .fetch_optional(&mut **tx)
+                .await?;
             missing.push(format!("{}: {} of {}", code.unwrap_or_default(), there.normalize(), need.normalize()));
         }
     }
@@ -195,12 +216,35 @@ async fn equipment_state(tx: &mut Tx, tenant: Uuid, workstation: Uuid, at: DateT
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Step {
     Start,
-    Pause { reason: String },
+    Pause {
+        reason: String,
+    },
     Resume,
-    Consume { item: Uuid, #[serde(default)] lot: String, #[serde(default)] serial: String, qty: Decimal },
-    Report { #[serde(default)] good: Decimal, #[serde(default)] scrap: Decimal, #[serde(default)] rework: Decimal, #[serde(default)] lot: String },
-    Complete { #[serde(default)] note: String },
-    Cancel { reason: String },
+    Consume {
+        item: Uuid,
+        #[serde(default)]
+        lot: String,
+        #[serde(default)]
+        serial: String,
+        qty: Decimal,
+    },
+    Report {
+        #[serde(default)]
+        good: Decimal,
+        #[serde(default)]
+        scrap: Decimal,
+        #[serde(default)]
+        rework: Decimal,
+        #[serde(default)]
+        lot: String,
+    },
+    Complete {
+        #[serde(default)]
+        note: String,
+    },
+    Cancel {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,7 +262,11 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
     let at = e.at.unwrap_or_else(Utc::now);
     let state = status(&doc).to_string();
     let workstation = id(&doc, "workstation").ok_or_else(|| Error::internal("a run without a workstation"))?;
-    let seen: Option<i32> = sqlx::query_scalar("select 1 from mes_event where tenant_id = $1 and event_id = $2").bind(ctx.tenant).bind(e.event_id).fetch_optional(&mut **tx).await?;
+    let seen: Option<i32> = sqlx::query_scalar("select 1 from mes_event where tenant_id = $1 and event_id = $2")
+        .bind(ctx.tenant)
+        .bind(e.event_id)
+        .fetch_optional(&mut **tx)
+        .await?;
     if seen.is_some() {
         return Ok(json!({"repeated": true}));
     }
@@ -236,7 +284,11 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             if state != "Running" {
                 return Err(wrong("pause"));
             }
-            let known: Option<i32> = sqlx::query_scalar("select 1 from e_downtime_reason where tenant_id = $1 and reason = $2").bind(ctx.tenant).bind(reason).fetch_optional(&mut **tx).await?;
+            let known: Option<i32> = sqlx::query_scalar("select 1 from e_downtime_reason where tenant_id = $1 and reason = $2")
+                .bind(ctx.tenant)
+                .bind(reason)
+                .fetch_optional(&mut **tx)
+                .await?;
             if known.is_none() {
                 return Err(Error::field("reason", "choose a downtime reason"));
             }
@@ -282,7 +334,8 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             if *scrap > Decimal::ZERO {
                 post_scrap(k, ctx, tx, run, &doc, *scrap).await?;
             }
-            set(k, ctx, tx, run, json!({"good_qty": money(new_good), "scrap_qty": money(new_scrap), "rework_qty": money(d(&doc, "rework_qty") + *rework)})).await?;
+            set(k, ctx, tx, run, json!({"good_qty": money(new_good), "scrap_qty": money(new_scrap), "rework_qty": money(d(&doc, "rework_qty") + *rework)}))
+                .await?;
         }
         Step::Complete { note } => {
             if !matches!(state.as_str(), "Running" | "Paused") {
@@ -311,7 +364,11 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
 
 async fn output_tracked(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<bool> {
     let wo = k.get_tx(&sys(ctx), tx, "WorkOrder", id(doc, "work_order").ok_or_else(|| Error::internal("no order"))?, false).await?;
-    let tracked: Option<Option<bool>> = sqlx::query_scalar("select has_batch_no from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(id(&wo, "item")).fetch_optional(&mut **tx).await?;
+    let tracked: Option<Option<bool>> = sqlx::query_scalar("select has_batch_no from e_item where tenant_id = $1 and id = $2")
+        .bind(ctx.tenant)
+        .bind(id(&wo, "item"))
+        .fetch_optional(&mut **tx)
+        .await?;
     Ok(tracked.flatten().unwrap_or(false))
 }
 
@@ -357,7 +414,7 @@ async fn open_consumption(tx: &mut Tx, tenant: Uuid, run: Uuid) -> Result<BTreeM
 
 /// Spreads `need` of an item over what was consumed. A lot-tracked item must be fully accounted for
 /// by consumption events. One that is not tracked may simply be what the BOM says.
-fn spread(open: &mut Vec<(String, String, Decimal)>, need: Decimal, tracked: bool, code: &str) -> Result<Vec<(String, String, Decimal)>> {
+fn spread(open: &mut [(String, String, Decimal)], need: Decimal, tracked: bool, code: &str) -> Result<Vec<(String, String, Decimal)>> {
     let (mut left, mut out) = (need, Vec::new());
     for row in open.iter_mut() {
         if left <= Decimal::ZERO {
@@ -379,7 +436,17 @@ fn spread(open: &mut Vec<(String, String, Decimal)>, need: Decimal, tracked: boo
     Ok(out)
 }
 
-async fn record_genealogy(tx: &mut Tx, tenant: Uuid, run: Uuid, item: Uuid, lot: &str, serial: &str, qty: Decimal, out_item: Uuid, out_lot: &str) -> Result<()> {
+async fn record_genealogy(
+    tx: &mut Tx,
+    tenant: Uuid,
+    run: Uuid,
+    item: Uuid,
+    lot: &str,
+    serial: &str,
+    qty: Decimal,
+    out_item: Uuid,
+    out_lot: &str,
+) -> Result<()> {
     sqlx::query("insert into mes_genealogy (tenant_id, run_id, input_item, input_lot, input_serial, input_qty, output_item, output_lot) values ($1, $2, $3, $4, $5, $6, $7, $8)")
         .bind(tenant)
         .bind(run)
@@ -395,7 +462,8 @@ async fn record_genealogy(tx: &mut Tx, tenant: Uuid, run: Uuid, item: Uuid, lot:
 }
 
 async fn tracked(tx: &mut Tx, tenant: Uuid, item: Uuid) -> Result<(bool, String)> {
-    let row: (Option<bool>, String) = sqlx::query_as("select has_batch_no, item_code from e_item where tenant_id = $1 and id = $2").bind(tenant).bind(item).fetch_one(&mut **tx).await?;
+    let row: (Option<bool>, String) =
+        sqlx::query_as("select has_batch_no, item_code from e_item where tenant_id = $1 and id = $2").bind(tenant).bind(item).fetch_one(&mut **tx).await?;
     Ok((row.0.unwrap_or(false), row.1))
 }
 
@@ -441,7 +509,12 @@ async fn post_output(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, doc: &Doc, g
 }
 
 async fn ensure_batch(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: Uuid, lot: &str) -> Result<()> {
-    let have: Option<i32> = sqlx::query_scalar("select 1 from e_batch where tenant_id = $1 and item = $2 and batch_id = $3").bind(ctx.tenant).bind(item).bind(lot).fetch_optional(&mut **tx).await?;
+    let have: Option<i32> = sqlx::query_scalar("select 1 from e_batch where tenant_id = $1 and item = $2 and batch_id = $3")
+        .bind(ctx.tenant)
+        .bind(item)
+        .bind(lot)
+        .fetch_optional(&mut **tx)
+        .await?;
     if have.is_none() {
         k.insert_tx(&elevated(ctx), tx, "Batch", json!({"batch_id": lot, "item": item}).as_object().cloned().unwrap_or_default()).await?;
     }
@@ -486,7 +559,11 @@ pub async fn approve(k: &Kernel, ctx: &Ctx, tx: &mut Tx, revision: Uuid) -> Resu
         return Err(Error::Forbidden("someone other than its author has to approve this".into()));
     }
     let item = id(&doc, "item").ok_or_else(|| Error::internal("no item"))?;
-    sqlx::query("update e_production_revision set status = 'Superseded' where tenant_id = $1 and item = $2 and status = 'Approved'").bind(ctx.tenant).bind(item).execute(&mut **tx).await?;
+    sqlx::query("update e_production_revision set status = 'Superseded' where tenant_id = $1 and item = $2 and status = 'Approved'")
+        .bind(ctx.tenant)
+        .bind(item)
+        .execute(&mut **tx)
+        .await?;
     let values = json!({"status": "Approved", "approved_by": ctx.email, "approved_at": Utc::now().to_rfc3339()});
     k.set_values_tx(&sys(ctx), tx, "ProductionRevision", revision, values.as_object().cloned().unwrap_or_default()).await?;
     audit::record(tx, ctx, "ProductionRevision", revision, "mes.approved", None, json!({})).await

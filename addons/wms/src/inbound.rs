@@ -34,7 +34,11 @@ pub struct Unknown {
 }
 
 async fn over_allowed(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<Decimal> {
-    let pct: Option<Option<Decimal>> = sqlx::query_scalar("select over_receipt_percent from e_managed_warehouse where tenant_id = $1 and warehouse = $2").bind(tenant).bind(warehouse).fetch_optional(&mut **tx).await?;
+    let pct: Option<Option<Decimal>> = sqlx::query_scalar("select over_receipt_percent from e_managed_warehouse where tenant_id = $1 and warehouse = $2")
+        .bind(tenant)
+        .bind(warehouse)
+        .fetch_optional(&mut **tx)
+        .await?;
     Ok(pct.flatten().unwrap_or_default())
 }
 
@@ -55,7 +59,13 @@ pub async fn scan(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, s: &Scan) 
     if !matches!(status, "Expected" | "Receiving") {
         return Err(Error::invalid(format!("this shipment is {status}")));
     }
-    let first = sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing").bind(ctx.tenant).bind(s.scan_id).execute(&mut **tx).await?.rows_affected() > 0;
+    let first = sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing")
+        .bind(ctx.tenant)
+        .bind(s.scan_id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected()
+        > 0;
     if !first {
         return Ok(json!({"repeated": true}));
     }
@@ -96,7 +106,12 @@ pub async fn unknown(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, u: &Unk
 
 /// A batch record for a lot, if the receipt is the first anyone has heard of it.
 async fn ensure_batch(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: Uuid, lot: &str, expiry: Option<&Value>) -> Result<()> {
-    let have: Option<i32> = sqlx::query_scalar("select 1 from e_batch where tenant_id = $1 and item = $2 and batch_id = $3").bind(ctx.tenant).bind(item).bind(lot).fetch_optional(&mut **tx).await?;
+    let have: Option<i32> = sqlx::query_scalar("select 1 from e_batch where tenant_id = $1 and item = $2 and batch_id = $3")
+        .bind(ctx.tenant)
+        .bind(item)
+        .bind(lot)
+        .fetch_optional(&mut **tx)
+        .await?;
     if have.is_none() {
         let mut b = Doc::new();
         b.insert("batch_id".into(), json!(lot));
@@ -149,7 +164,8 @@ pub async fn close(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid) -> Result
     if !erp_items.is_empty() {
         let supplier = id(&doc, "supplier").ok_or_else(|| Error::field("supplier", "a company's receipt needs its supplier"))?;
         let company = id(&doc, "company").ok_or_else(|| Error::internal("a shipment without a company"))?;
-        let receipt = json!({"company": company, "supplier": supplier, "set_warehouse": warehouse, "supplier_delivery_note": doc.get("reference"), "items": erp_items});
+        let receipt =
+            json!({"company": company, "supplier": supplier, "set_warehouse": warehouse, "supplier_delivery_note": doc.get("reference"), "items": erp_items});
         let elevated = elevated(ctx);
         let made = k.insert_tx(&elevated, tx, "PurchaseReceipt", receipt.as_object().cloned().unwrap_or_default()).await?;
         let made_id = id(&made, "id").ok_or_else(|| Error::internal("a receipt without an id"))?;
@@ -164,10 +180,30 @@ pub async fn close(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid) -> Result
         }
         let item = id(l, "item").ok_or_else(|| Error::internal("a line without an item"))?;
         let quarantine = w.quarantine_bin.ok_or_else(|| Error::invalid("this warehouse has no quarantine bin"))?;
-        let status = if owner.is_some() { "Available".to_string() } else { sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_one(&mut **tx).await?.unwrap_or_else(|| "Available".into()) };
+        let status = if owner.is_some() {
+            "Available".to_string()
+        } else {
+            sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2")
+                .bind(ctx.tenant)
+                .bind(item)
+                .fetch_one(&mut **tx)
+                .await?
+                .unwrap_or_else(|| "Available".into())
+        };
         let from = Key { bin: inbound, item, owner, lot: s(l, "lot").unwrap_or_default().to_string(), status, ..Default::default() };
         let to = Key { bin: quarantine, status: "Damaged".into(), ..from.clone() };
-        position::transfer(tx, ctx, warehouse, Kind::Status, &from, &to, damaged, Decimal::ZERO, &Cause { reason: Some("Damaged on receipt".into()), source: Some(("InboundShipment".into(), shipment)), ..Default::default() }).await?;
+        position::transfer(
+            tx,
+            ctx,
+            warehouse,
+            Kind::Status,
+            &from,
+            &to,
+            damaged,
+            Decimal::ZERO,
+            &Cause { reason: Some("Damaged on receipt".into()), source: Some(("InboundShipment".into(), shipment)), ..Default::default() },
+        )
+        .await?;
     }
     // What is good goes to a bin. What must be inspected first waits where it is.
     let mut made: BTreeMap<String, u32> = BTreeMap::new();
@@ -177,7 +213,11 @@ pub async fn close(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid) -> Result
             continue;
         }
         let item = id(l, "item").ok_or_else(|| Error::internal("a line without an item"))?;
-        let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_one(&mut **tx).await?;
+        let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2")
+            .bind(ctx.tenant)
+            .bind(item)
+            .fetch_one(&mut **tx)
+            .await?;
         let status = if owner.is_some() { "Available".to_string() } else { status.unwrap_or_else(|| "Available".into()) };
         if status != "Available" {
             *made.entry("waiting".into()).or_default() += 1;
@@ -185,7 +225,13 @@ pub async fn close(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid) -> Result
         }
         let to = slotting::suggest(tx, ctx.tenant, warehouse, item, good).await?;
         let lot = s(l, "lot").unwrap_or_default().to_string();
-        tasks::create(k, ctx, tx, NewTask { warehouse, kind: "Putaway", item, qty: good, lot, owner, from_bin: inbound, to_bin: to, status, ..Default::default() }).await?;
+        tasks::create(
+            k,
+            ctx,
+            tx,
+            NewTask { warehouse, kind: "Putaway", item, qty: good, lot, owner, from_bin: inbound, to_bin: to, status, ..Default::default() },
+        )
+        .await?;
         *made.entry(if to.is_some() { "putaway" } else { "no_bin" }.to_string()).or_default() += 1;
     }
     let notes = doc.get("notes").and_then(Value::as_str).unwrap_or_default();

@@ -4,9 +4,9 @@
 
 use crate::posting;
 use crate::tasks::{self, NewTask};
-use ferrum_domain::util::d;
 use async_trait::async_trait;
 use chrono::NaiveDate;
+use ferrum_domain::util::d;
 use ferrum_domain::util::{elevated, id, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;
@@ -36,7 +36,17 @@ pub struct Take {
 /// What can be promised of `qty`, in the order the rule says. Positions stay locked to the end of
 /// the transaction, so two waves cannot promise the same stock. Stock for a person's task keeps
 /// its bin's picking sequence inside the rule.
-pub async fn allocate(tx: &mut Tx, tenant: Uuid, warehouse: Uuid, item: Uuid, owner: Option<Uuid>, qty: Decimal, rule: &str, today: NaiveDate, reserved_bins: &[Uuid]) -> Result<Vec<Take>> {
+pub async fn allocate(
+    tx: &mut Tx,
+    tenant: Uuid,
+    warehouse: Uuid,
+    item: Uuid,
+    owner: Option<Uuid>,
+    qty: Decimal,
+    rule: &str,
+    today: NaiveDate,
+    reserved_bins: &[Uuid],
+) -> Result<Vec<Take>> {
     let order = if rule == "FIFO" { "p.received_on, p.expiry nulls last" } else { "p.expiry nulls last, p.received_on" };
     let rows: Vec<Open> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select p.bin_id, p.lot, p.serial, p.unit_id, p.qty - p.allocated as free from wms_position p \
@@ -75,7 +85,8 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
     let w = posting::must_manage(tx, ctx.tenant, warehouse).await?;
     let outbound = w.outbound_bin.ok_or_else(|| Error::invalid("this warehouse has no outbound bin"))?;
     let batch = doc.get("strategy").and_then(Value::as_str) == Some("Batch");
-    let orders: Vec<Uuid> = doc.get("orders").and_then(Value::as_array).map(|o| o.iter().filter_map(|r| r["sales_order"].as_str()?.parse().ok()).collect()).unwrap_or_default();
+    let orders: Vec<Uuid> =
+        doc.get("orders").and_then(Value::as_array).map(|o| o.iter().filter_map(|r| r["sales_order"].as_str()?.parse().ok()).collect()).unwrap_or_default();
     let today = ctx.today();
     let rule = w.allocation_rule.clone().unwrap_or_else(|| "FEFO".into());
     let (mut shortfall, mut made) = (Vec::new(), 0u32);
@@ -139,7 +150,13 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
         }
     }
     for ((bin, item, lot, serial, unit), qty) in trips {
-        tasks::create(k, ctx, tx, NewTask { warehouse, kind: "Pick", item, qty, lot, serial, unit, from_bin: bin, to_bin: Some(outbound), wave: Some(wave), ..Default::default() }).await?;
+        tasks::create(
+            k,
+            ctx,
+            tx,
+            NewTask { warehouse, kind: "Pick", item, qty, lot, serial, unit, from_bin: bin, to_bin: Some(outbound), wave: Some(wave), ..Default::default() },
+        )
+        .await?;
         made += 1;
     }
     let values = json!({"status": "Released", "shortfall": shortfall});
@@ -149,7 +166,12 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
 
 /// A wave is picked when none of its tasks is still open.
 pub async fn progress(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: Uuid) -> Result<()> {
-    let open: i64 = sqlx::query_scalar("select count(*) from e_warehouse_task where tenant_id = $1 and wave = $2 and status not in ('Done', 'Short', 'Cancelled')").bind(ctx.tenant).bind(wave).fetch_one(&mut **tx).await?;
+    let open: i64 =
+        sqlx::query_scalar("select count(*) from e_warehouse_task where tenant_id = $1 and wave = $2 and status not in ('Done', 'Short', 'Cancelled')")
+            .bind(ctx.tenant)
+            .bind(wave)
+            .fetch_one(&mut **tx)
+            .await?;
     if open == 0 {
         let mut v = Doc::new();
         v.insert("status".into(), json!("Picked"));
@@ -205,7 +227,19 @@ pub async fn replenish(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<u32> {
                 k,
                 ctx,
                 tx,
-                NewTask { warehouse: r.warehouse, kind: "Replenish", item: r.item, qty: take.qty, lot: take.lot, serial: take.serial, unit: take.unit, from_bin: take.bin, to_bin: Some(r.pick_bin), priority: 5, ..Default::default() },
+                NewTask {
+                    warehouse: r.warehouse,
+                    kind: "Replenish",
+                    item: r.item,
+                    qty: take.qty,
+                    lot: take.lot,
+                    serial: take.serial,
+                    unit: take.unit,
+                    from_bin: take.bin,
+                    to_bin: Some(r.pick_bin),
+                    priority: 5,
+                    ..Default::default()
+                },
             )
             .await?;
             made += 1;
@@ -218,7 +252,14 @@ pub async fn replenish(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<u32> {
 /// already at the line counts. The run's id marks it done, because this arrives at least once. What
 /// cannot be brought goes back to the run: otherwise it would show only when the material ran out.
 pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[Value]) -> Result<()> {
-    if sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing").bind(ctx.tenant).bind(run).execute(&mut **tx).await?.rows_affected() == 0 {
+    if sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing")
+        .bind(ctx.tenant)
+        .bind(run)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected()
+        == 0
+    {
         return Ok(());
     }
     let mut short = Vec::new();
@@ -240,7 +281,19 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         let takes = allocate(tx, ctx.tenant, warehouse, item, None, need, &rule, ctx.today(), &[line]).await?;
         let found: Decimal = takes.iter().map(|t| t.qty).sum();
         for take in takes {
-            let task = NewTask { warehouse, kind: "Move", item, qty: take.qty, lot: take.lot, serial: take.serial, unit: take.unit, status: "Available".into(), from_bin: take.bin, to_bin: Some(line), ..Default::default() };
+            let task = NewTask {
+                warehouse,
+                kind: "Move",
+                item,
+                qty: take.qty,
+                lot: take.lot,
+                serial: take.serial,
+                unit: take.unit,
+                status: "Available".into(),
+                from_bin: take.bin,
+                to_bin: Some(line),
+                ..Default::default()
+            };
             tasks::create(k, ctx, tx, task).await?;
         }
         if found < need {
@@ -249,7 +302,8 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         }
     }
     if !short.is_empty() {
-        ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "wms.supply.short", Some("ProductionRun"), Some(run), json!({"run": run, "short": short.join("; ")})).await?;
+        ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "wms.supply.short", Some("ProductionRun"), Some(run), json!({"run": run, "short": short.join("; ")}))
+            .await?;
     }
     Ok(())
 }

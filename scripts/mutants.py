@@ -37,7 +37,7 @@ MUTANTS = [
     ("wms-scan-counts-twice", "addons/wms/src/inbound.rs", '    if !first {\n        return Ok(json!({"repeated": true}));\n    }\n', "    let _ = first;\n", WMS),
     ("wms-part-of-a-code-matches", "addons/wms/src/slotting.rs", "upper(item_code) = upper($2)", "upper(item_code) like '%' || upper($2) || '%'", WMS),
     ("wms-held-stock-allocated", WAVES, "and p.status = 'Available' and p.qty > p.allocated \\\n", "and p.qty > p.allocated \\\n", WMS),
-    ("wms-run-supplied-twice", WAVES, ".rows_affected() == 0 {\n        return Ok(());", ".rows_affected() == 9 {\n        return Ok(());", WMS),
+    ("wms-run-supplied-twice", WAVES, ".rows_affected()\n        == 0\n    {\n        return Ok(());", ".rows_affected()\n        == 9\n    {\n        return Ok(());", WMS),
     ("wms-short-supply-silent", WAVES, "    if !short.is_empty() {\n", "    if false {\n", WMS),
     ("mes-unapproved-revision-runs", RUNS, 'if s(&rev, "status") != Some("Approved") {', "if false {", MES),
     ("mes-unqualified-operator-runs", RUNS, "    if qualified.is_none() {", "    if false {", MES),

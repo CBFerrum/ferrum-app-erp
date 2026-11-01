@@ -22,20 +22,44 @@ pub async fn receive(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rma: Uuid) -> Result<Va
     }
     let warehouse = id(&doc, "warehouse").ok_or_else(|| Error::internal("a return without a warehouse"))?;
     let w = posting::must_manage(tx, ctx.tenant, warehouse).await?;
-    let (inbound, quarantine) = (w.inbound_bin.ok_or_else(|| Error::invalid("no inbound bin"))?, w.quarantine_bin.ok_or_else(|| Error::invalid("no quarantine bin"))?);
+    let (inbound, quarantine) =
+        (w.inbound_bin.ok_or_else(|| Error::invalid("no inbound bin"))?, w.quarantine_bin.ok_or_else(|| Error::invalid("no quarantine bin"))?);
     let lines = rows(&doc, "items");
     let company = id(&doc, "company").ok_or_else(|| Error::internal("a return without a company"))?;
     let items: Vec<Value> = lines.iter().map(|l| json!({"item": l.get("item"), "qty": d(l, "qty"), "basic_rate": d(l, "rate"), "target_warehouse": warehouse, "batch_no": l.get("lot"), "serial_no": l.get("serial")})).collect();
     let elevated = elevated(ctx);
-    let entry = json!({"company": company, "purpose": "Material Receipt", "items": items, "remarks": format!("Return {}", s(&doc, "number").unwrap_or_default())});
+    let entry =
+        json!({"company": company, "purpose": "Material Receipt", "items": items, "remarks": format!("Return {}", s(&doc, "number").unwrap_or_default())});
     let made = k.insert_tx(&elevated, tx, "StockEntry", entry.as_object().cloned().unwrap_or_default()).await?;
     k.submit_tx(&elevated, tx, "StockEntry", id(&made, "id").ok_or_else(|| Error::internal("no id"))?, None).await?;
     for l in &lines {
         let item = id(l, "item").ok_or_else(|| Error::internal("a line without an item"))?;
-        let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_one(&mut **tx).await?;
-        let from = Key { bin: inbound, item, lot: s(l, "lot").unwrap_or_default().to_string(), serial: s(l, "serial").unwrap_or_default().to_string(), status: status.unwrap_or_else(|| "Available".into()), ..Default::default() };
+        let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2")
+            .bind(ctx.tenant)
+            .bind(item)
+            .fetch_one(&mut **tx)
+            .await?;
+        let from = Key {
+            bin: inbound,
+            item,
+            lot: s(l, "lot").unwrap_or_default().to_string(),
+            serial: s(l, "serial").unwrap_or_default().to_string(),
+            status: status.unwrap_or_else(|| "Available".into()),
+            ..Default::default()
+        };
         let to = Key { bin: quarantine, status: "Quarantine".into(), ..from.clone() };
-        position::transfer(tx, ctx, warehouse, Kind::Return, &from, &to, d(l, "qty"), Decimal::ZERO, &Cause { source: Some(("ReturnAuthorization".into(), rma)), reason: s(l, "reason").map(str::to_string), ..Default::default() }).await?;
+        position::transfer(
+            tx,
+            ctx,
+            warehouse,
+            Kind::Return,
+            &from,
+            &to,
+            d(l, "qty"),
+            Decimal::ZERO,
+            &Cause { source: Some(("ReturnAuthorization".into(), rma)), reason: s(l, "reason").map(str::to_string), ..Default::default() },
+        )
+        .await?;
         let mut v = Doc::new();
         v.insert("received_qty".into(), json!(d(l, "qty")));
         k.set_child_values_tx(&sys(ctx), tx, "ReturnAuthorization", "items", id(l, "id").ok_or_else(|| Error::internal("a line without an id"))?, v).await?;
@@ -71,7 +95,14 @@ pub async fn dispose(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rma: Uuid, c: &Disposit
     }
     let item = id(line, "item").ok_or_else(|| Error::internal("a line without an item"))?;
     let qty = d(line, "received_qty");
-    let held = Key { bin: quarantine, item, lot: s(line, "lot").unwrap_or_default().to_string(), serial: s(line, "serial").unwrap_or_default().to_string(), status: "Quarantine".into(), ..Default::default() };
+    let held = Key {
+        bin: quarantine,
+        item,
+        lot: s(line, "lot").unwrap_or_default().to_string(),
+        serial: s(line, "serial").unwrap_or_default().to_string(),
+        status: "Quarantine".into(),
+        ..Default::default()
+    };
     let cause = Cause { source: Some(("ReturnAuthorization".into(), rma)), reason: Some(c.reason.clone()), ..Default::default() };
     let elevated = elevated(ctx);
     let mut next = Value::Null;
@@ -80,7 +111,26 @@ pub async fn dispose(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rma: Uuid, c: &Disposit
             let good = Key { status: "Available".into(), ..held.clone() };
             position::transfer(tx, ctx, warehouse, Kind::Status, &held, &good, qty, Decimal::ZERO, &cause).await?;
             let to = slotting::suggest(tx, ctx.tenant, warehouse, item, qty).await?;
-            next = json!(tasks::create(k, ctx, tx, NewTask { warehouse, kind: "Putaway", item, qty, lot: held.lot.clone(), serial: held.serial.clone(), from_bin: quarantine, to_bin: to, status: "Available".into(), ..Default::default() }).await?);
+            next = json!(
+                tasks::create(
+                    k,
+                    ctx,
+                    tx,
+                    NewTask {
+                        warehouse,
+                        kind: "Putaway",
+                        item,
+                        qty,
+                        lot: held.lot.clone(),
+                        serial: held.serial.clone(),
+                        from_bin: quarantine,
+                        to_bin: to,
+                        status: "Available".into(),
+                        ..Default::default()
+                    }
+                )
+                .await?
+            );
         }
         "Scrap" => {
             let outbound = w.outbound_bin.ok_or_else(|| Error::invalid("no outbound bin"))?;

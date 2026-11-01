@@ -35,7 +35,12 @@ pub async fn start(k: &Kernel, ctx: &Ctx, tx: &mut Tx, count: Uuid) -> Result<Va
     if busy > 0 {
         return Err(Error::invalid(format!("{busy} positions there are promised to open tasks: finish those first")));
     }
-    sqlx::query("update e_storage_bin set frozen_by = $3 where tenant_id = $1 and zone = $2 and frozen_by is null").bind(ctx.tenant).bind(zone).bind(count).execute(&mut **tx).await?;
+    sqlx::query("update e_storage_bin set frozen_by = $3 where tenant_id = $1 and zone = $2 and frozen_by is null")
+        .bind(ctx.tenant)
+        .bind(zone)
+        .bind(count)
+        .execute(&mut **tx)
+        .await?;
     let lines: Vec<Value> = sqlx::query_scalar(
         "select jsonb_build_object('bin', p.bin_id, 'item', p.item_id, 'lot', p.lot, 'serial', p.serial, 'owner', p.owner_id, 'expected_qty', sum(p.qty)) \
          from wms_position p join e_storage_bin b on b.tenant_id = p.tenant_id and b.id = p.bin_id \
@@ -132,7 +137,8 @@ pub async fn approve(k: &Kernel, ctx: &Ctx, tx: &mut Tx, count: Uuid) -> Result<
     let warehouse = id(&doc, "warehouse").ok_or_else(|| Error::internal("a count without a warehouse"))?;
     let w = posting::must_manage(tx, ctx.tenant, warehouse).await?;
     let company = id(&doc, "company").ok_or_else(|| Error::internal("a count without a company"))?;
-    let (outbound, inbound) = (w.outbound_bin.ok_or_else(|| Error::invalid("no outbound bin"))?, w.inbound_bin.ok_or_else(|| Error::invalid("no inbound bin"))?);
+    let (outbound, inbound) =
+        (w.outbound_bin.ok_or_else(|| Error::invalid("no outbound bin"))?, w.inbound_bin.ok_or_else(|| Error::invalid("no inbound bin"))?);
     let lines: Vec<Doc> = rows(&doc, "lines").into_iter().filter(|l| !d(l, "variance").is_zero()).collect();
     if !lines.is_empty() && reason.trim().is_empty() {
         return Err(Error::field("reason", "say why stock is being adjusted"));
@@ -172,9 +178,24 @@ pub async fn approve(k: &Kernel, ctx: &Ctx, tx: &mut Tx, count: Uuid) -> Result<
         let made = k.insert_tx(&elevated, tx, "StockEntry", doc.as_object().cloned().unwrap_or_default()).await?;
         k.submit_tx(&elevated, tx, "StockEntry", id(&made, "id").ok_or_else(|| Error::internal("no id"))?, None).await?;
         for (key, qty, _) in receipts {
-            let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(key.item).fetch_one(&mut **tx).await?;
+            let status: Option<String> = sqlx::query_scalar::<_, Option<String>>("select wms_receive_status from e_item where tenant_id = $1 and id = $2")
+                .bind(ctx.tenant)
+                .bind(key.item)
+                .fetch_one(&mut **tx)
+                .await?;
             let from = Key { bin: inbound, status: status.unwrap_or_else(|| "Available".into()), ..key.clone() };
-            position::transfer(tx, ctx, warehouse, Kind::Count, &from, &key, qty, Decimal::ZERO, &Cause { source: Some(("CycleCount".into(), count)), reason: Some(reason.clone()), ..Default::default() }).await?;
+            position::transfer(
+                tx,
+                ctx,
+                warehouse,
+                Kind::Count,
+                &from,
+                &key,
+                qty,
+                Decimal::ZERO,
+                &Cause { source: Some(("CycleCount".into(), count)), reason: Some(reason.clone()), ..Default::default() },
+            )
+            .await?;
         }
     }
     unfreeze(tx, ctx.tenant, count).await?;

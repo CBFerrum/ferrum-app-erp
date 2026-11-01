@@ -104,9 +104,10 @@ impl EventSink for CommandEvents {
             return Ok(());
         }
         let Some(task) = ev.payload.get("workflow_id").and_then(Value::as_str).and_then(tasks::task_of) else { return Ok(()) };
-        let (Some(state), Some(command)) =
-            (ev.payload.get("state").and_then(Value::as_str).and_then(State::parse), ev.payload.get("command").and_then(Value::as_str).and_then(|c| c.parse::<Uuid>().ok()))
-        else {
+        let (Some(state), Some(command)) = (
+            ev.payload.get("state").and_then(Value::as_str).and_then(State::parse),
+            ev.payload.get("command").and_then(Value::as_str).and_then(|c| c.parse::<Uuid>().ok()),
+        ) else {
             return Ok(());
         };
         let schema = k.registry.schema(ev.tenant_id).await?;
