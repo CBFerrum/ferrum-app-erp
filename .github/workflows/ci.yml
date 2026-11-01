@@ -77,3 +77,4 @@ jobs:
         working-directory: ui
       - run: npm test
         working-directory: ui
+      - run: for app in wms mes; do (cd addons/$app/ui && npm run check && npm run typecheck && npm test) || exit 1; done

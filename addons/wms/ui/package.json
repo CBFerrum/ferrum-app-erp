@@ -1,0 +1,13 @@
+{
+  "name": "ferrum-wms-ui",
+  "private": true,
+  "type": "module",
+  "description": "Warehouse Management's own interface at /wms/, built with Ferrum-Frontend's packages from the sibling checkout",
+  "scripts": {
+    "build": "node ../../../../ferrum/web/packages/build/cli.mjs build",
+    "check": "node ../../../../ferrum/web/packages/build/cli.mjs check",
+    "typecheck": "node ../../../../ferrum/web/packages/build/cli.mjs typecheck",
+    "test": "node ../../../../ferrum/web/packages/build/cli.mjs test",
+    "dev": "node ../../../../ferrum/web/packages/build/cli.mjs dev"
+  }
+}
