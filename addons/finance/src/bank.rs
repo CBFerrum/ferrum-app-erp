@@ -676,7 +676,7 @@ async fn workbench(hc: &mut HookCtx<'_>, account: &Doc, params: &Value) -> Resul
     let rows: Vec<Value> = lines
         .iter()
         .map(|l| {
-            let balance = (!opening_date.is_some_and(|o| l.2 <= o)).then(|| (if opening_counts { opening } else { Decimal::ZERO }) + l.11);
+            let balance = opening_date.is_none_or(|o| l.2 > o).then(|| (if opening_counts { opening } else { Decimal::ZERO }) + l.11);
             let mine: Vec<Value> = allocations
                 .iter()
                 .filter(|a| a.0 == l.0)

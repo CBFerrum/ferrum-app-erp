@@ -1,7 +1,7 @@
 package: finance
 version: 0.1.0
 label: Finance
-description: Budgets with commitment control, bank accounts, statement import and reconciliation, period closing, payment terms and schedules, dunning, subscriptions and advance allocation.
+description: Budgets with commitment control, bank accounts, statement import and reconciliation, payment allocation, exchange revaluation, period closing, payment terms and schedules, dunning, subscriptions and advance allocation.
 depends: [accounting, selling, buying]
 field_prefix: fin_
 
