@@ -99,3 +99,7 @@ roles:
       - {entity: CostCenter, read: true}
       - {entity: Project, read: true}
       - {entity: Currency, read: true}
+export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation]
+merge_links:
+  - {table: open_item, column: customer_id, to: Customer}
+  - {table: open_item, column: supplier_id, to: Supplier}

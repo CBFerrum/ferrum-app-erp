@@ -278,17 +278,26 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
 
 async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
-    let (account, customer, supplier) = (p.uuid("account")?, p.uuid("customer")?, p.uuid("supplier")?);
+    let account = p.uuid("account")?;
+    // The journal keeps the id it was posted under: a merged party is every id it has had.
+    let customer = match p.uuid("customer")? {
+        Some(id) => Some(ferrum_kernel::merge::merged_ids(tx, ctx.tenant, "Customer", id).await?),
+        None => None,
+    };
+    let supplier = match p.uuid("supplier")? {
+        Some(id) => Some(ferrum_kernel::merge::merged_ids(tx, ctx.tenant, "Supplier", id).await?),
+        None => None,
+    };
     let opening: Decimal = sqlx::query_scalar(
         "select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and company_id = $2 and posting_date < $3 \
-         and ($4::uuid is null or account_id = $4) and ($5::uuid is null or customer_id = $5) and ($6::uuid is null or supplier_id = $6)",
+         and ($4::uuid is null or account_id = $4) and ($5::uuid[] is null or customer_id = any($5)) and ($6::uuid[] is null or supplier_id = any($6))",
     )
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
     .bind(account)
-    .bind(customer)
-    .bind(supplier)
+    .bind(&customer)
+    .bind(&supplier)
     .fetch_one(&mut **tx)
     .await?;
     #[allow(clippy::type_complexity)]
@@ -300,7 +309,7 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
          left join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
          left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date between $3 and $4 \
-         and ($5::uuid is null or l.account_id = $5) and ($6::uuid is null or l.customer_id = $6) and ($7::uuid is null or l.supplier_id = $7) \
+         and ($5::uuid is null or l.account_id = $5) and ($6::uuid[] is null or l.customer_id = any($6)) and ($7::uuid[] is null or l.supplier_id = any($7)) \
          order by l.posting_date, e.created_at, l.entry_id, l.line_no limit $8",
     )
     .bind(ctx.tenant)
@@ -308,8 +317,8 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     .bind(from)
     .bind(to)
     .bind(account)
-    .bind(customer)
-    .bind(supplier)
+    .bind(&customer)
+    .bind(&supplier)
     .bind(MAX_ROWS + 1)
     .fetch_all(&mut **tx)
     .await?;
