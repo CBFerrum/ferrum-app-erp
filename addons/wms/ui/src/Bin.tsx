@@ -30,7 +30,7 @@ function Contents({ w, code }: { w: Managed; code: string }) {
         {b.bin} {b.status === "Blocked" ? <Badge tone="red">Blocked</Badge> : null} {b.frozen ? <Badge tone="amber">Being counted</Badge> : null}
       </h2>
       {b.positions.length === 0 ? (
-        <EmptyState title="Empty" icon="box" />
+        <EmptyState title="Empty" icon="list" />
       ) : (
         <ul className="wms-list">
           {b.positions.map((p) => (

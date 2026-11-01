@@ -1,10 +1,10 @@
 //! Shipping. Picked stock waits at the outbound bin. Each unit is verified before it may leave,
 //! the weight and label are checked against what is expected, and only what was verified goes:
-//! a partial shipment is a true one. Handing over posts ERP's delivery note, which takes the stock
+//! a partial shipment is a true one, and each parcel carries only what has not gone yet. Handing over posts ERP's delivery note, which takes the stock
 //! out of the bin. A carrier's failure repeats nothing, because the shipment records what went.
 
 use crate::position::{self, Cause, Key, Kind};
-use crate::posting;
+use crate::{posting, slotting};
 use ferrum_domain::util::{d, elevated, id, rows, s, sys};
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx, audit};
 use rust_decimal::Decimal;
@@ -28,8 +28,8 @@ pub async fn prepare(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: &Doc, order: Uuid
 
 #[derive(Debug, Deserialize)]
 pub struct Verify {
-    /// The barcode scanned: an item code.
-    pub item_code: String,
+    /// What was scanned: an item's barcode, or its code.
+    pub code: String,
     #[serde(default)]
     pub lot: Option<String>,
     pub qty: Decimal,
@@ -38,14 +38,14 @@ pub struct Verify {
 /// A scan at packing. The wrong item is refused, and so is more than was picked for this shipment.
 pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Verify) -> Result<Value> {
     let doc = k.get_tx(&sys(ctx), tx, "Shipment", shipment, true).await?;
-    let item: Option<Uuid> = sqlx::query_scalar("select id from e_item where tenant_id = $1 and item_code = $2").bind(ctx.tenant).bind(&v.item_code).fetch_optional(&mut **tx).await?;
+    let item = slotting::item_by_scan(tx, ctx.tenant, &v.code).await?;
     let lines = rows(&doc, "items");
     let line = lines.iter().find(|l| {
-        id(l, "item") == item && (v.lot.is_none() || s(l, "lot") == v.lot.as_deref() || s(l, "lot").unwrap_or_default().is_empty()) && d(l, "verified_qty") < d(l, "qty")
+        item.is_some() && id(l, "item") == item && (v.lot.is_none() || s(l, "lot") == v.lot.as_deref() || s(l, "lot").unwrap_or_default().is_empty()) && d(l, "verified_qty") < d(l, "qty")
     });
     let Some(line) = line else {
-        audit::record(tx, ctx, "Shipment", shipment, "wms.wrong_scan", None, json!({"scanned": v.item_code, "lot": v.lot})).await?;
-        return Err(Error::invalid(format!("{} is not waiting on this shipment", v.item_code)));
+        audit::record(tx, ctx, "Shipment", shipment, "wms.wrong_scan", None, json!({"scanned": v.code, "lot": v.lot})).await?;
+        return Err(Error::invalid(format!("{} is not waiting on this shipment", v.code)));
     };
     let verified = d(line, "verified_qty") + v.qty;
     if v.qty <= Decimal::ZERO || verified > d(line, "qty") {
@@ -56,19 +56,21 @@ pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Veri
     let line_id = id(line, "id").ok_or_else(|| Error::internal("a line without an id"))?;
     k.set_child_values_tx(&sys(ctx), tx, "Shipment", "items", line_id, values).await?;
     let all = lines.iter().all(|l| if id(l, "id") == Some(line_id) { verified == d(l, "qty") } else { d(l, "verified_qty") == d(l, "qty") });
+    // What this parcel should weigh: what is verified and has not gone in an earlier one.
+    let weight: Option<Decimal> = sqlx::query_scalar(
+        "select sum((coalesce(l.verified_qty, 0) - coalesce(l.handed_over_qty, 0)) * coalesce(i.wms_weight_kg, 0)) from e_shipment__items l \
+         join e_item i on i.tenant_id = l.tenant_id and i.id = l.item where l.tenant_id = $1 and l.parent_id = $2",
+    )
+    .bind(ctx.tenant)
+    .bind(shipment)
+    .fetch_one(&mut **tx)
+    .await?;
+    let mut done = Doc::new();
     if all {
-        let weight: Option<Decimal> = sqlx::query_scalar(
-            "select sum(l.verified_qty * coalesce(i.wms_weight_kg, 0)) from e_shipment__items l join e_item i on i.tenant_id = l.tenant_id and i.id = l.item where l.tenant_id = $1 and l.parent_id = $2",
-        )
-        .bind(ctx.tenant)
-        .bind(shipment)
-        .fetch_one(&mut **tx)
-        .await?;
-        let mut done = Doc::new();
         done.insert("status".into(), json!("Packed"));
-        done.insert("expected_weight_kg".into(), json!(weight.unwrap_or_default()));
-        k.set_values_tx(&sys(ctx), tx, "Shipment", shipment, done).await?;
     }
+    done.insert("expected_weight_kg".into(), json!(weight.unwrap_or_default()));
+    k.set_values_tx(&sys(ctx), tx, "Shipment", shipment, done).await?;
     Ok(json!({"verified": verified, "complete": all}))
 }
 
@@ -80,6 +82,11 @@ pub struct Handover {
     pub label: String,
     #[serde(default)]
     pub weighed_kg: Option<Decimal>,
+}
+
+/// What on a line has been verified and has not gone yet.
+fn unsent(line: &Doc) -> Decimal {
+    d(line, "verified_qty") - d(line, "handed_over_qty")
 }
 
 fn weight_off(expected: Decimal, weighed: Decimal) -> bool {
@@ -100,9 +107,9 @@ pub async fn hand_over(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, h: &H
         return Err(Error::invalid("the label on the parcel is not this shipment's"));
     }
     let lines: Vec<Doc> = rows(&doc, "items");
-    let going: Vec<&Doc> = lines.iter().filter(|l| d(l, "verified_qty") > Decimal::ZERO).collect();
+    let going: Vec<(&Doc, Decimal)> = lines.iter().map(|l| (l, unsent(l))).filter(|(_, q)| *q > Decimal::ZERO).collect();
     if going.is_empty() {
-        return Err(Error::invalid("nothing on this shipment has been verified"));
+        return Err(Error::invalid("nothing on this shipment has been verified since it last left"));
     }
     if let Some(weighed) = h.weighed_kg
         && weight_off(d(&doc, "expected_weight_kg"), weighed)
@@ -115,19 +122,28 @@ pub async fn hand_over(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, h: &H
     let mut delivery = None;
     if let Some(owner) = id(&doc, "owner") {
         // A customer's own stock is not this company's to deliver in ERP.
-        for l in &going {
+        for (l, qty) in &going {
             let key = Key { bin: outbound, item: id(l, "item").unwrap_or_default(), owner: Some(owner), lot: s(l, "lot").unwrap_or_default().to_string(), status: "Available".into(), ..Default::default() };
-            position::depart(tx, ctx, warehouse, Kind::Issue, &key, d(l, "verified_qty"), &Cause::source("Shipment", shipment)).await?;
+            position::depart(tx, ctx, warehouse, Kind::Issue, &key, *qty, &Cause::source("Shipment", shipment)).await?;
         }
     } else {
         delivery = Some(post_delivery(k, ctx, tx, shipment, &going).await?);
     }
+    for (l, _) in &going {
+        let line = id(l, "id").ok_or_else(|| Error::internal("a line without an id"))?;
+        let mut gone = Doc::new();
+        gone.insert("handed_over_qty".into(), json!(d(l, "verified_qty")));
+        k.set_child_values_tx(&sys(ctx), tx, "Shipment", "items", line, gone).await?;
+    }
     let whole = lines.iter().all(|l| d(l, "verified_qty") == d(l, "qty"));
+    // One shipment can leave in several parcels, and its fields say the last: the audit keeps each.
+    audit::record(tx, ctx, "Shipment", shipment, "wms.handed_over", None, json!({"carrier": h.carrier, "tracking": h.tracking, "weighed_kg": h.weighed_kg, "lines": going.iter().map(|(l, q)| json!({"item": l.get("item"), "lot": l.get("lot"), "qty": q})).collect::<Vec<_>>()})).await?;
     let mut v = Doc::new();
     v.insert("status".into(), json!(if whole { "Handed Over" } else { "Partially Handed Over" }));
     v.insert("carrier".into(), json!(h.carrier));
     v.insert("tracking".into(), json!(h.tracking));
     v.insert("weighed_kg".into(), json!(h.weighed_kg));
+    v.insert("expected_weight_kg".into(), json!(Decimal::ZERO));
     v.insert("label_checked".into(), json!(true));
     v.insert("handed_over_at".into(), json!(chrono::Utc::now().to_rfc3339()));
     v.insert("delivery_note".into(), json!(delivery));
@@ -136,11 +152,11 @@ pub async fn hand_over(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, h: &H
 }
 
 /// ERP's delivery note for what left, through the order's own mapping, cut down to what went.
-async fn post_delivery(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, going: &[&Doc]) -> Result<Uuid> {
+async fn post_delivery(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, going: &[(&Doc, Decimal)]) -> Result<Uuid> {
     let elevated = elevated(ctx);
-    let mut by_order: BTreeMap<Uuid, Vec<&Doc>> = BTreeMap::new();
-    for l in going {
-        by_order.entry(id(l, "sales_order").ok_or_else(|| Error::invalid("this line came from no order"))?).or_default().push(l);
+    let mut by_order: BTreeMap<Uuid, Vec<(&Doc, Decimal)>> = BTreeMap::new();
+    for &(l, qty) in going {
+        by_order.entry(id(l, "sales_order").ok_or_else(|| Error::invalid("this line came from no order"))?).or_default().push((l, qty));
     }
     let mut last = None;
     for (order, lines) in by_order {
@@ -150,10 +166,10 @@ async fn post_delivery(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, going
         let mut items = Vec::new();
         for row in rows(&draft, "items") {
             let so_line = s(&row, "so_line").unwrap_or_default().to_string();
-            for l in lines.iter().filter(|l| s(l, "so_line") == Some(so_line.as_str())) {
+            for (l, qty) in lines.iter().filter(|(l, _)| s(l, "so_line") == Some(so_line.as_str())) {
                 let mut r = row.clone();
                 r.remove("id");
-                r.insert("qty".into(), json!(d(l, "verified_qty")));
+                r.insert("qty".into(), json!(qty));
                 r.insert("batch_no".into(), l.get("lot").cloned().unwrap_or(Value::Null));
                 r.insert("serial_no".into(), l.get("serial").cloned().unwrap_or(Value::Null));
                 items.push(Value::Object(r));

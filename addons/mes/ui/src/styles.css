@@ -120,6 +120,12 @@
   align-items: end;
 }
 
+.mes-trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .mes-figures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));

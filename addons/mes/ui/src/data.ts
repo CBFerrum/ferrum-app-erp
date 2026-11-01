@@ -13,7 +13,7 @@ export function rows<T>(entity: string, filters: unknown[], extra: Record<string
 
 export interface Run {
   id: string;
-  reference?: string | null;
+  number?: string | null;
   work_order: string;
   workstation: string;
   revision: string;

@@ -78,18 +78,33 @@ impl EventSink for Events {
     async fn on_event(&self, k: &Kernel, ev: &Event) -> Result<()> {
         let schema = || k.registry.schema(ev.tenant_id);
         if ev.topic == "ops.fact.mes.event" {
-            // Recorded at a terminal with the link down, and arriving now.
-            let Some(run) = ev.payload["body"]["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) else { return Ok(()) };
+            // Recorded at a terminal with the link down, and arriving now. A console knows a run by
+            // the reference on its job sheet.
             let Ok(step) = serde_json::from_value::<runs::Event>(ev.payload["body"].clone()) else { return Ok(()) };
             let mut ctx = Ctx::system(ev.tenant_id, schema().await?);
             ctx.email = ev.payload["actor"].as_str().unwrap_or("site").to_string();
             let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+            let run = match ev.payload["body"]["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) {
+                Some(run) => Some(run),
+                None => sqlx::query_scalar("select id from e_production_run where tenant_id = $1 and number = $2").bind(ev.tenant_id).bind(ev.payload["body"]["reference"].as_str()).fetch_optional(&mut *tx).await?,
+            };
+            let Some(run) = run else { return Ok(()) };
             match runs::record(k, &ctx, &mut tx, run, &step).await {
                 Ok(_) => tx.commit().await?,
                 // What the record refuses now stays in the fact, for a person: a retry cannot help.
                 Err(Error::Invalid(_)) => {}
                 Err(e) => return Err(e),
             }
+            return Ok(());
+        }
+        if ev.topic == "wms.supply.short" {
+            let Some(run) = ev.payload["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) else { return Ok(()) };
+            let ctx = Ctx::system(ev.tenant_id, schema().await?);
+            let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+            let mut note = Doc::new();
+            note.insert("note".into(), json!(format!("The warehouse cannot bring all of this to the line: {}", ev.payload["short"].as_str().unwrap_or_default())));
+            k.set_values_tx(&ctx, &mut tx, "ProductionRun", run, note).await?;
+            tx.commit().await?;
             return Ok(());
         }
         if !ev.topic.starts_with("ops.command.") {

@@ -44,6 +44,7 @@ function Floor({ w }: { w: Managed }) {
   const work = useQuery({ queryKey: ["wms", "tasks", w.warehouse], queryFn: () => tasks(w.warehouse), refetchInterval: 15_000 });
   const filter = [["warehouse", "=", w.warehouse]];
   const inbound = useQuery({ queryKey: ["wms", "inbound", w.warehouse], queryFn: () => rows<Doc>("InboundShipment", [...filter, ["status", "in", ["Expected", "Receiving"]]]) });
+  const differences = useQuery({ queryKey: ["wms", "differences", w.warehouse], queryFn: () => rows<Doc>("InboundShipment", [...filter, ["status", "=", "Discrepancy"]]) });
   const shipments = useQuery({ queryKey: ["wms", "shipments", w.warehouse], queryFn: () => rows<Doc>("Shipment", [...filter, ["status", "in", ["Picking", "Packed", "Partially Handed Over"]]]) });
   const counts = useQuery({ queryKey: ["wms", "counts", w.warehouse], queryFn: () => rows<Doc>("CycleCount", [...filter, ["status", "in", ["Draft", "Counting", "Review"]]]) });
   if (overview.isPending || work.isPending) return <PageLoading />;
@@ -90,7 +91,7 @@ function Floor({ w }: { w: Managed }) {
                         {t.from_bin ?? "?"} → {t.to_bin ?? "?"}
                       </span>
                     </span>
-                    <Icon name="chevron-right" size={14} />
+                    <Icon name="chevronRight" size={14} />
                   </Link>
                 </li>
               ))}
@@ -105,12 +106,13 @@ function Floor({ w }: { w: Managed }) {
             </p>
             {out.map(([s, q]) => (
               <p key={s} className="muted">
-                {formatDecimal(q)} {s.toLowerCase()}
+                {formatDecimal(Number(q))} {s.toLowerCase()}
               </p>
             ))}
             <Link to="/bin">What is in a bin?</Link>
           </section>
           <Queue title="To receive" to={(d) => `/receive/${d.id}`} items={inbound.data ?? []} />
+          <Queue title="Differences to settle" to={(d) => `/receive/${d.id}`} items={differences.data ?? []} />
           <Queue title="To ship" to={(d) => `/ship/${d.id}`} items={shipments.data ?? []} />
           <Queue title="To count" to={(d) => `/count/${d.id}`} items={counts.data ?? []} />
         </div>

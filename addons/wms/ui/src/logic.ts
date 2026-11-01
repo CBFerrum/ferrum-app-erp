@@ -41,8 +41,8 @@ export function taskWords(status: string): { label: string; tone: Tone; says: st
   }
 }
 
-export function custodyWords(custody: string | null): string | null {
-  if (custody === "In Transit") return "On its way, and still counted at its source";
+export function custodyWords(custody: string | null, status?: string): string | null {
+  if (custody === "In Transit") return status === "Arrived" ? "Still counted at its source until you confirm it" : "On its way, and still counted at its source";
   if (custody === "Uncertain") return "Nobody can say where this is. It stays out of reach until someone finds it";
   return null;
 }
@@ -82,8 +82,12 @@ export interface ShipLine {
   item: string;
   qty: string;
   verified_qty?: string | null;
+  handed_over_qty?: string | null;
   lot?: string | null;
   _titles?: Record<string, string>;
 }
+
+/** Verified and not gone yet: what the next parcel carries. */
+export const readyToGo = (lines: ShipLine[]) => lines.filter((l) => Number(l.verified_qty ?? 0) > Number(l.handed_over_qty ?? 0));
 
 export const unverified = (lines: ShipLine[]) => lines.filter((l) => Number(l.verified_qty ?? 0) < Number(l.qty));

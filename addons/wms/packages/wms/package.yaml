@@ -25,6 +25,8 @@ roles:
   - name: Warehouse Viewer
     description: Sees what is where and what is happening.
     permissions:
+      - {entity: Item, read: true}
+      - {entity: Warehouse, read: true}
       - {entity: ManagedWarehouse, read: true}
       - {entity: StorageZone, read: true}
       - {entity: StorageBin, read: true}
@@ -41,22 +43,36 @@ roles:
   - name: Warehouse Operator
     description: "Works the tasks: receives, moves, picks, packs and counts. Cannot adjust stock or approve a difference."
     permissions:
+      - {entity: Item, read: true}
+      - {entity: Warehouse, read: true}
       - {entity: ManagedWarehouse, read: true}
       - {entity: StorageZone, read: true}
       - {entity: StorageBin, read: true}
       - {entity: HandlingUnitType, read: true}
       - {entity: HandlingUnit, read: true, write: true, create: true}
-      - {entity: InboundShipment, read: true, write: true}
+      - {entity: InboundShipment, read: true}
       - {entity: PickWave, read: true}
       - {entity: WarehouseTask, read: true}
-      - {entity: Shipment, read: true, write: true}
-      - {entity: CycleCount, read: true, write: true}
-      - {entity: ReturnAuthorization, read: true, write: true}
+      - {entity: Shipment, read: true}
+      - {entity: CycleCount, read: true}
+      - {entity: ReturnAuthorization, read: true}
       - {entity: ReplenishmentRule, read: true}
       - {entity: StorageContract, read: true}
   - name: Warehouse Manager
     description: Sets up the warehouse, releases work, approves differences and decides what happens to held stock.
     permissions:
+      - {entity: Company, read: true}
+      - {entity: Customer, read: true}
+      - {entity: DeliveryNote, read: true}
+      - {entity: Device, read: true}
+      - {entity: Item, read: true}
+      - {entity: PurchaseOrder, read: true}
+      - {entity: PurchaseReceipt, read: true}
+      - {entity: SalesOrder, read: true}
+      - {entity: Site, read: true}
+      - {entity: SiteArea, read: true}
+      - {entity: Supplier, read: true}
+      - {entity: Warehouse, read: true}
       - {entity: ManagedWarehouse, read: true, write: true, create: true, export: true}
       - {entity: StorageZone, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: StorageBin, read: true, write: true, create: true, delete: true, export: true, import: true}

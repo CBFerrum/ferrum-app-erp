@@ -4,10 +4,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, docPath, errorMessage, formatDecimal } from "@ferrum/client";
+import { api, docPath, formatDecimal, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { post } from "./data";
-import { type ShipLine, unverified } from "./logic";
+import { readyToGo, type ShipLine, unverified } from "./logic";
 import { ScanBox } from "./Scan";
 
 interface ShipmentDoc {
@@ -27,24 +27,31 @@ export function Ship() {
   const q = useQuery({ queryKey: ["wms", "shipment", id], queryFn: () => api.get<ShipmentDoc>(docPath("Shipment", id), { titles: true }) });
   useShellTitle("Packing");
   const box = useId();
-  const [form, setForm] = useState({ carrier: "", tracking: "", label: "", weighed_kg: "" });
+  const blank = { carrier: "", tracking: "", label: "", weighed_kg: "" };
+  const [form, setForm] = useState(blank);
+  const [qty, setQty] = useState("1");
   const verify = useMutation({
-    mutationFn: (item_code: string) => post(`/shipments/${id}/verify`, { item_code, qty: 1 }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["wms", "shipment", id] }),
-    onError: (e) => toast(errorMessage(e), "error"),
+    mutationFn: (code: string) => post(`/shipments/${id}/verify`, { code, qty }),
+    onSuccess: () => {
+      setQty("1");
+      void qc.invalidateQueries({ queryKey: ["wms", "shipment", id] });
+    },
+    onError: (e) => toast(refusal(e), "error"),
   });
   const hand = useMutation({
     mutationFn: () => post<{ whole: boolean }>(`/shipments/${id}/hand-over`, { ...form, weighed_kg: form.weighed_kg || null }),
     onSuccess: (r) => {
       toast(r.whole ? "Handed over" : "Handed over in part: the rest stays on the shipment");
+      setForm(blank);
       void qc.invalidateQueries({ queryKey: ["wms"] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const s = q.data;
   const left = unverified(s.items);
+  const ready = readyToGo(s.items);
   const done = s.status === "Handed Over" || s.status === "Cancelled";
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
   return (
@@ -54,7 +61,14 @@ export function Ship() {
       </Link>
       <h1 className="wms-title">{s.reference ?? "Shipment"}</h1>
       <Badge>{s.status}</Badge>
-      {!done && left.length > 0 ? <ScanBox label="Scan each unit" onScan={(code) => verify.mutate(code)} busy={verify.isPending} /> : null}
+      {!done && left.length > 0 ? (
+        <section className="card card-pad stack">
+          <Field label="How many" htmlFor={`${box}-q`}>
+            <input id={`${box}-q`} className="input" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} />
+          </Field>
+          <ScanBox label="Scan the item" onScan={(code) => verify.mutate(code)} busy={verify.isPending} />
+        </section>
+      ) : null}
       <ul className="wms-list card card-pad">
         {s.items.map((l) => (
           <li key={l.id} className="wms-line">
@@ -63,6 +77,7 @@ export function Ship() {
             </span>
             <span>
               {formatDecimal(l.verified_qty ?? 0)} of {formatDecimal(l.qty)}
+              {Number(l.handed_over_qty ?? 0) > 0 ? <span className="faint"> · {formatDecimal(l.handed_over_qty ?? 0)} gone</span> : null}
             </span>
           </li>
         ))}
@@ -76,7 +91,8 @@ export function Ship() {
       ) : (
         <section className="card card-pad stack">
           <h2>The door</h2>
-          {left.length > 0 ? <Alert tone="warning">Not everything is verified. Only what is verified will go.</Alert> : null}
+          {left.length > 0 && ready.length > 0 ? <Alert tone="warning">Not everything is verified. Only what is verified will go.</Alert> : null}
+          {ready.length === 0 ? <p className="muted">Nothing is verified and waiting to go.</p> : null}
           <Field label="Carrier" htmlFor={`${box}-c`} required>
             <input id={`${box}-c`} className="input" value={form.carrier} onChange={set("carrier")} />
           </Field>
@@ -90,7 +106,7 @@ export function Ship() {
             <input id={`${box}-w`} className="input" inputMode="decimal" value={form.weighed_kg} onChange={set("weighed_kg")} />
           </Field>
           <div>
-            <Button variant="primary" loading={hand.isPending} disabled={!form.carrier || !form.tracking || !form.label} onClick={() => hand.mutate()}>
+            <Button variant="primary" loading={hand.isPending} disabled={ready.length === 0 || !form.carrier || !form.tracking || !form.label} onClick={() => hand.mutate()}>
               Hand it over
             </Button>
           </div>

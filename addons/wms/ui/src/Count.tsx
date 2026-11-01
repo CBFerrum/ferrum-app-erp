@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, docPath, errorMessage, formatDecimal } from "@ferrum/client";
+import { api, docPath, formatDecimal, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { post } from "./data";
 
@@ -38,7 +38,7 @@ function Row({ id, line, recount }: { id: string; line: Line; recount: boolean }
       setValue("");
       void qc.invalidateQueries({ queryKey: ["wms", "count", id] });
     },
-    onError: (e) => toast(errorMessage(e), "error"),
+    onError: (e) => toast(refusal(e), "error"),
   });
   const counted = recount ? line.recount_qty : line.counted_qty;
   return (
@@ -71,7 +71,7 @@ export function Count() {
   const step = (verb: string) => () => post(`/counts/${id}/${verb}`);
   const after = {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["wms"] }),
-    onError: (e: unknown) => toast(errorMessage(e), "error"),
+    onError: (e: unknown) => toast(refusal(e), "error"),
   };
   const start = useMutation({ mutationFn: step("start"), ...after });
   const finish = useMutation({ mutationFn: step("finish"), ...after });

@@ -159,6 +159,12 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
             may(ctx, MANAGE)?;
             inbound::close(k, ctx, tx, uuid(id)?).await
         }
+        ("POST", ["inbound", id, "settle"]) => {
+            may(ctx, MANAGE)?;
+            let b: Value = body(req)?;
+            inbound::settle(k, ctx, tx, uuid(id)?, b["note"].as_str().unwrap_or_default()).await?;
+            Ok(json!({"settled": true}))
+        }
         ("POST", ["shipments", id, "verify"]) => {
             may(ctx, WORK)?;
             shipping::verify(k, ctx, tx, uuid(id)?, &body(req)?).await

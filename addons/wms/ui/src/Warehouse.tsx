@@ -10,7 +10,7 @@ export function InWarehouse({ children }: { children: (w: Managed) => React.Reac
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   if (!current) {
     return (
-      <EmptyState title="No warehouse is managed here yet" icon="warehouse">
+      <EmptyState title="No warehouse is managed here yet" icon="store">
         <Link to="/e/ManagedWarehouse">Set one up</Link>
       </EmptyState>
     );

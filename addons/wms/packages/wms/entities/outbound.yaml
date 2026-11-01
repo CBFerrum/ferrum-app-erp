@@ -10,6 +10,7 @@
     - {name: sales_order, type: link, to: SalesOrder}
     - {name: so_line, type: data}
     - {name: verified_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: handed_over_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "What has already left, in earlier parcels"}
 
 - name: Shipment
   label: Shipment
