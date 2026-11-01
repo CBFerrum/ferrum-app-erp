@@ -47,3 +47,4 @@ roles:
       - {entity: Company, read: true}
       - {entity: Uom, read: true}
       - {entity: Account, read: true}
+export_tables: [stock_move, stock_balance, cost_layer, serial_no]
