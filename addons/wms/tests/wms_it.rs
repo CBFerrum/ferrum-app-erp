@@ -72,7 +72,16 @@ impl T {
 
     async fn call(&self, ctx: &Ctx, method: &str, path: &str, query: Map<String, Value>, body: Value) -> Result<Value, Error> {
         let site = self.k.hooks.site("wms").unwrap().clone();
-        let req = SiteRequest { tenant: self.tenant, user: Some(ctx.clone()), method: method.into(), path: path.into(), query, headers: Map::new(), body: body.to_string().into_bytes(), client_ip: "::1".into() };
+        let req = SiteRequest {
+            tenant: self.tenant,
+            user: Some(ctx.clone()),
+            method: method.into(),
+            path: path.into(),
+            query,
+            headers: Map::new(),
+            body: body.to_string().into_bytes(),
+            client_ip: "::1".into(),
+        };
         site.handle(&self.k, req).await.map(|r| serde_json::from_slice(&r.body).unwrap_or(Value::Null))
     }
 
@@ -89,7 +98,13 @@ impl T {
     async fn bin(&self, code: &str, item: &str) -> Vec<(String, Decimal, Decimal)> {
         let q = obj(json!({"warehouse": self.wh}));
         let v = self.call(&self.admin, "GET", &format!("/bins/{code}"), q, Value::Null).await.unwrap();
-        v["positions"].as_array().unwrap().iter().filter(|p| p["item_code"] == json!(item)).map(|p| (p["status"].as_str().unwrap().to_string(), dec(&p["qty"]), dec(&p["allocated"]))).collect()
+        v["positions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["item_code"] == json!(item))
+            .map(|p| (p["status"].as_str().unwrap().to_string(), dec(&p["qty"]), dec(&p["allocated"])))
+            .collect()
     }
 
     async fn qty_in(&self, code: &str, item: &str) -> Decimal {
@@ -98,7 +113,13 @@ impl T {
 
     async fn on_books(&self, item: Uuid) -> Decimal {
         let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
-        let q: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3").bind(self.tenant).bind(item).bind(self.wh).fetch_optional(&mut *tx).await.unwrap();
+        let q: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3")
+            .bind(self.tenant)
+            .bind(item)
+            .bind(self.wh)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         q.unwrap_or_default()
     }
@@ -110,7 +131,11 @@ impl T {
     }
 
     async fn person(&self, email: &str, roles: &[&str]) -> Ctx {
-        let id = self.k.create_user(&self.admin, email, "Someone", Some("Correct-Horse-9"), &roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), false).await.expect("user");
+        let id = self
+            .k
+            .create_user(&self.admin, email, "Someone", Some("Correct-Horse-9"), &roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), false)
+            .await
+            .expect("user");
         self.k.load_ctx(self.tenant, id, None, "it".into()).await.unwrap()
     }
 
@@ -197,11 +222,22 @@ async fn scenario() {
     let customer = uid(&t.insert("Customer", json!({"customer_name": "Acme Retail"})).await);
     let tenant_customer = uid(&t.insert("Customer", json!({"customer_name": "Stored Goods Ltd"})).await);
 
-    let opening = t.insert("StockEntry", json!({"company": company, "purpose": "Material Receipt", "items": [{"item": nut, "qty": 40, "basic_rate": 2, "target_warehouse": wh}]})).await;
+    let opening = t
+        .insert(
+            "StockEntry",
+            json!({"company": company, "purpose": "Material Receipt", "items": [{"item": nut, "qty": 40, "basic_rate": 2, "target_warehouse": wh}]}),
+        )
+        .await;
     k.submit(&t.admin, "StockEntry", uid(&opening), None).await.expect("opening stock");
 
     let zone = async |code: &str, kind: &str| uid(&t.insert("StorageZone", json!({"warehouse": wh, "zone_code": code, "kind": kind})).await);
-    let (rcv, sto, pck, shp, qua) = (zone("RCV", "Receiving").await, zone("STO", "Storage").await, zone("PCK", "Picking").await, zone("SHP", "Shipping").await, zone("QUA", "Quarantine").await);
+    let (rcv, sto, pck, shp, qua) = (
+        zone("RCV", "Receiving").await,
+        zone("STO", "Storage").await,
+        zone("PCK", "Picking").await,
+        zone("SHP", "Shipping").await,
+        zone("QUA", "Quarantine").await,
+    );
     let bin = async |code: &str, zone: Uuid, extra: Value| {
         let mut v = json!({"warehouse": wh, "zone": zone, "bin_code": code});
         for (k, x) in extra.as_object().unwrap() {
@@ -209,12 +245,18 @@ async fn scenario() {
         }
         uid(&t.insert("StorageBin", v).await)
     };
-    let (dock, door, jail) = (bin("DOCK", rcv, json!({"kind": "Dock"})).await, bin("DOOR", shp, json!({"kind": "Dock"})).await, bin("JAIL", qua, json!({})).await);
+    let (dock, door, jail) =
+        (bin("DOCK", rcv, json!({"kind": "Dock"})).await, bin("DOOR", shp, json!({"kind": "Dock"})).await, bin("JAIL", qua, json!({})).await);
     let a1 = bin("A-01", sto, json!({"pick_sequence": 1})).await;
     let a2 = bin("A-02", sto, json!({"pick_sequence": 2, "max_units": 10})).await;
     let p1 = bin("P-01", pck, json!({"pick_sequence": 3})).await;
     let site = uid(&t.insert("Site", json!({"site_name": "North", "site_code": "north"})).await);
-    let managed = uid(&t.insert("ManagedWarehouse", json!({"warehouse": wh, "site": site, "inbound_bin": dock, "outbound_bin": door, "quarantine_bin": jail, "allocation_rule": "FEFO"})).await);
+    let managed = uid(&t
+        .insert(
+            "ManagedWarehouse",
+            json!({"warehouse": wh, "site": site, "inbound_bin": dock, "outbound_bin": door, "quarantine_bin": jail, "allocation_rule": "FEFO"}),
+        )
+        .await);
     let placed = k.run_action(&t.admin, "ManagedWarehouse", managed, "start_managing", json!({})).await.expect("managed");
     assert_eq!(placed["placed"], json!(1));
     assert_eq!(t.qty_in("DOCK", "NUT").await, n("40"), "what ERP held is at the door, until someone walks it");
@@ -231,7 +273,13 @@ async fn scenario() {
     let e = tx.commit().await.expect_err("positions alone cannot change");
     assert!(e.to_string().contains("stock and positions differ"), "{e}");
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    sqlx::query("update stock_balance set qty = qty + 1 where tenant_id = $1 and item_id = $2 and warehouse_id = $3").bind(tenant).bind(nut).bind(wh).execute(&mut *tx).await.unwrap();
+    sqlx::query("update stock_balance set qty = qty + 1 where tenant_id = $1 and item_id = $2 and warehouse_id = $3")
+        .bind(tenant)
+        .bind(nut)
+        .bind(wh)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     assert!(tx.commit().await.is_err(), "nor can the books");
     // The ledger is append-only.
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
@@ -239,21 +287,35 @@ async fn scenario() {
     drop(tx);
 
     // ───── ERP cannot issue what nobody picked ─────
-    let refused = t.insert("StockEntry", json!({"company": company, "purpose": "Material Issue", "items": [{"item": nut, "qty": 5, "source_warehouse": wh}]})).await;
+    let refused =
+        t.insert("StockEntry", json!({"company": company, "purpose": "Material Issue", "items": [{"item": nut, "qty": 5, "source_warehouse": wh}]})).await;
     let e = k.submit(&t.admin, "StockEntry", uid(&refused), None).await.expect_err("nothing is at the outbound bin");
     assert!(text(&e).contains("picked to the outbound bin"), "{e:?}");
     assert_eq!(t.on_books(nut).await, n("40"), "and the whole document rolled back");
 
     // ───── receiving ─────
-    let inbound = t.insert("InboundShipment", json!({"company": company, "warehouse": wh, "supplier": supplier, "reference": "DN-77", "items": [
+    let inbound = t
+        .insert(
+            "InboundShipment",
+            json!({"company": company, "warehouse": wh, "supplier": supplier, "reference": "DN-77", "items": [
         {"item": bolt, "expected_qty": 100, "rate": 5},
         {"item": milk, "expected_qty": 10, "lot": "M-1", "expiry": (Utc::now() + Duration::days(40)).date_naive().to_string(), "rate": 3},
-        {"item": milk, "expected_qty": 10, "lot": "M-2", "expiry": (Utc::now() + Duration::days(10)).date_naive().to_string(), "rate": 3}]})).await;
+        {"item": milk, "expected_qty": 10, "lot": "M-2", "expiry": (Utc::now() + Duration::days(10)).date_naive().to_string(), "rate": 3}]}),
+        )
+        .await;
     let asn = uid(&inbound);
-    assert!(k.update(&operator, "InboundShipment", asn, obj(json!({"reference": "DN-78"})), None).await.is_err(), "a shipment changes through its scans, not by editing it");
+    assert!(
+        k.update(&operator, "InboundShipment", asn, obj(json!({"reference": "DN-78"})), None).await.is_err(),
+        "a shipment changes through its scans, not by editing it"
+    );
     let scan = Uuid::now_v7();
     let path = format!("/inbound/{asn}/scan");
-    assert!(t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "OLT", "qty": 1})).await.is_err_and(|e| text(&e).contains("not on this shipment")), "part of a code is no match");
+    assert!(
+        t.api_as(&operator, "POST", &path, json!({"scan_id": Uuid::now_v7(), "code": "OLT", "qty": 1}))
+            .await
+            .is_err_and(|e| text(&e).contains("not on this shipment")),
+        "part of a code is no match"
+    );
     let body = json!({"scan_id": scan, "code": "BOLT", "qty": 96});
     assert_eq!(dec(&t.api_as(&operator, "POST", &path, body.clone()).await.unwrap()["received"]), n("96"));
     assert_eq!(t.api_as(&operator, "POST", &path, body).await.unwrap()["repeated"], json!(true), "a scanner repeating itself counts once");
@@ -269,9 +331,15 @@ async fn scenario() {
     let closed = t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.expect("closed");
     assert_eq!(closed["status"], json!("Discrepancy"), "the unknown pallet is still somebody's to sort out");
     assert_eq!(t.on_books(bolt).await, n("100"), "ERP received it, damaged included: it is here");
-    assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.is_err_and(|e| text(&e).contains("already received")), "a shipment that closed with a difference does not receive twice");
+    assert!(
+        t.api_as(&manager, "POST", &format!("/inbound/{asn}/close"), Value::Null).await.is_err_and(|e| text(&e).contains("already received")),
+        "a shipment that closed with a difference does not receive twice"
+    );
     assert_eq!(t.on_books(bolt).await, n("100"));
-    assert!(t.api_as(&operator, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.is_err(), "settling a difference is a manager's");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.is_err(),
+        "settling a difference is a manager's"
+    );
     assert!(t.api_as(&manager, "POST", &format!("/inbound/{asn}/settle"), json!({"note": " "})).await.is_err(), "and says what became of it");
     t.api_as(&manager, "POST", &format!("/inbound/{asn}/settle"), json!({"note": "Returned to sender"})).await.expect("settled");
     let settled = t.get("InboundShipment", asn).await;
@@ -291,11 +359,16 @@ async fn scenario() {
     let small = t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "A-02"})).await;
     assert!(small.is_err_and(|e| text(&e).contains("no room")), "A-02 holds ten");
     k.update(&t.admin, "StorageBin", a1, obj(json!({"status": "Blocked", "blocked_reason": "racking damaged"})), None).await.unwrap();
-    assert!(t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "P-01"})).await.is_ok(), "an operator may choose another that fits");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "P-01"})).await.is_ok(),
+        "an operator may choose another that fits"
+    );
     k.update(&t.admin, "StorageBin", a1, obj(json!({"status": "Open"})), None).await.unwrap();
     assert_eq!(t.qty_in("P-01", "BOLT").await, n("96"));
     assert!(t.qty_in("DOCK", "BOLT").await.is_zero());
-    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "P-01", "scan_id": Uuid::now_v7()})).await.expect("a repeat of a finished task with a scan id does nothing");
+    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "P-01", "scan_id": Uuid::now_v7()}))
+        .await
+        .expect("a repeat of a finished task with a scan id does nothing");
     t.reconciled().await;
     for (lot, expect) in [("M-1", "A-01"), ("M-2", "A-01")] {
         let task = t.tasks().await.into_iter().find(|x| x["kind"] == json!("Putaway") && x["lot"] == json!(lot)).unwrap();
@@ -304,12 +377,19 @@ async fn scenario() {
     }
 
     // Hazard rules are not hints.
-    let hazard = t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": acid, "from_bin": "DOCK", "to_bin": "A-01", "qty": 1, "reason": "x"})).await;
+    let hazard = t
+        .api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": acid, "from_bin": "DOCK", "to_bin": "A-01", "qty": 1, "reason": "x"}))
+        .await;
     assert!(hazard.is_err_and(|e| text(&e).contains("hazard")));
 
     // ───── a wave, by first to expire ─────
-    let order = t.insert("SalesOrder", json!({"company": company, "customer": customer, "delivery_date": Utc::now().date_naive().to_string(), "set_warehouse": wh, "items": [
-        {"item": milk, "qty": 15, "rate": 9}, {"item": bolt, "qty": 90, "rate": 9}]})).await;
+    let order = t
+        .insert(
+            "SalesOrder",
+            json!({"company": company, "customer": customer, "delivery_date": Utc::now().date_naive().to_string(), "set_warehouse": wh, "items": [
+        {"item": milk, "qty": 15, "rate": 9}, {"item": bolt, "qty": 90, "rate": 9}]}),
+        )
+        .await;
     k.submit(&t.admin, "SalesOrder", uid(&order), None).await.expect("order");
     let wave = uid(&t.insert("PickWave", json!({"company": company, "warehouse": wh, "orders": [{"sales_order": uid(&order)}]})).await);
     assert!(k.run_action(&viewer, "PickWave", wave, "release", json!({})).await.is_err());
@@ -327,9 +407,18 @@ async fn scenario() {
     assert_eq!(dec(&second["shortfall"][0]["allocated"]), n("6"), "only what was free, and the shortfall is written down: {second}");
     assert_eq!(dec(&second["shortfall"][0]["wanted"]), n("50"));
     // People can take what they want off the shelf, but not what a task is counting on.
-    let robbed = t.api_as(&operator, "POST", "/positions/move", json!({"warehouse": wh, "item": bolt, "from_bin": "P-01", "to_bin": "A-02", "qty": 3, "reason": "tidying"})).await;
+    let robbed = t
+        .api_as(
+            &operator,
+            "POST",
+            "/positions/move",
+            json!({"warehouse": wh, "item": bolt, "from_bin": "P-01", "to_bin": "A-02", "qty": 3, "reason": "tidying"}),
+        )
+        .await;
     assert!(robbed.is_err_and(|e| text(&e).contains("promised")));
-    let no_reason = t.api_as(&operator, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "A-02", "qty": 3, "reason": " "})).await;
+    let no_reason = t
+        .api_as(&operator, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "A-02", "qty": 3, "reason": " "}))
+        .await;
     assert!(no_reason.is_err(), "a move with no task says why");
 
     // ───── picking, and a short pick ─────
@@ -343,7 +432,9 @@ async fn scenario() {
         let done = t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), body.clone()).await;
         if is_short {
             assert!(done.is_err(), "less than asked says why");
-            t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "DOOR", "qty": 88, "reason": "Two were bent"})).await.expect("short");
+            t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "DOOR", "qty": 88, "reason": "Two were bent"}))
+                .await
+                .expect("short");
         } else {
             done.expect("picked");
         }
@@ -404,7 +495,10 @@ async fn scenario() {
     let arrived = t.get("WarehouseTask", job).await;
     assert_eq!(arrived["status"], json!("Arrived"));
     assert!(t.qty_in("P-01", "MILK").await.is_zero(), "the robot says it got there. The stock has not moved");
-    assert!(t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "A-02"})).await.is_err_and(|e| text(&e).contains("goes to")), "wrong station");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "A-02"})).await.is_err_and(|e| text(&e).contains("goes to")),
+        "wrong station"
+    );
     t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "P-01"})).await.expect("confirmed at the station");
     assert_eq!(t.qty_in("P-01", "MILK").await, n("5"));
     t.reconciled().await;
@@ -427,9 +521,14 @@ async fn scenario() {
     let doubt = t.get("WarehouseTask", lost).await;
     assert_eq!((doubt["status"].as_str(), doubt["custody"].as_str()), (Some("Exception"), Some("Uncertain")));
     assert_eq!(t.bin("P-01", "MILK").await.iter().map(|p| p.2).sum::<Decimal>(), n("2"), "uncertain stock stays out of reach");
-    assert!(t.api_as(&operator, "POST", &format!("/tasks/{lost}/recover"), json!({"found_bin": "A-02", "qty": 2, "note": "x"})).await.is_err(), "a manager says where it is");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/tasks/{lost}/recover"), json!({"found_bin": "A-02", "qty": 2, "note": "x"})).await.is_err(),
+        "a manager says where it is"
+    );
     assert!(t.api_as(&manager, "POST", &format!("/tasks/{lost}/recover"), json!({"found_bin": "A-02", "qty": 2, "note": " "})).await.is_err());
-    t.api_as(&manager, "POST", &format!("/tasks/{lost}/recover"), json!({"found_bin": "A-02", "qty": 2, "note": "On the floor by A-02, tote intact"})).await.expect("found");
+    t.api_as(&manager, "POST", &format!("/tasks/{lost}/recover"), json!({"found_bin": "A-02", "qty": 2, "note": "On the floor by A-02, tote intact"}))
+        .await
+        .expect("found");
     assert_eq!(t.qty_in("A-02", "MILK").await, n("2"), "where it was found is where it is");
     let settled = commands::describe(&k, &t.admin, c2).await.unwrap();
     assert_eq!(settled["state"], json!("Completed"), "and the ledger's unknown is settled by the same finding");
@@ -448,7 +547,16 @@ async fn scenario() {
     let blocked = k.run_action(&manager, "PickWave", wave3, "release", json!({})).await.expect("released");
     assert_eq!(dec(&blocked["shortfall"][0]["allocated"]), Decimal::ZERO, "nothing held can be promised: {blocked}");
     let site_ep = k.hooks.site("quality").unwrap().clone();
-    let req = SiteRequest { tenant, user: Some(quality.clone()), method: "POST".into(), path: format!("/holds/{hold}/release"), query: Map::new(), headers: Map::new(), body: json!({"note": "Logger shows 2-6 C throughout"}).to_string().into_bytes(), client_ip: "::1".into() };
+    let req = SiteRequest {
+        tenant,
+        user: Some(quality.clone()),
+        method: "POST".into(),
+        path: format!("/holds/{hold}/release"),
+        query: Map::new(),
+        headers: Map::new(),
+        body: json!({"note": "Logger shows 2-6 C throughout"}).to_string().into_bytes(),
+        client_ip: "::1".into(),
+    };
     site_ep.handle(&k, req).await.expect("released");
     while k.dispatch_outbox_once().await.unwrap() > 0 {}
     assert_eq!(t.bin("P-01", "MILK").await.iter().filter(|p| p.0 == "Hold").count(), 0, "released, it is available again");
@@ -458,16 +566,33 @@ async fn scenario() {
     // ───── a count: frozen, blind, twice, and someone else approves ─────
     let spare = uid(&t.insert("StorageZone", json!({"warehouse": wh, "zone_code": "CNT", "kind": "Storage"})).await);
     bin("C-01", spare, json!({})).await;
-    t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 30, "reason": "walked it"})).await.expect("placed");
-    let count = uid(&t.insert("CycleCount", json!({"reference": "CC-1", "company": company, "warehouse": wh, "zone": spare, "blind": true, "reason": "Annual count"})).await);
+    t.api_as(
+        &manager,
+        "POST",
+        "/positions/move",
+        json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 30, "reason": "walked it"}),
+    )
+    .await
+    .expect("placed");
+    let count = uid(&t
+        .insert("CycleCount", json!({"reference": "CC-1", "company": company, "warehouse": wh, "zone": spare, "blind": true, "reason": "Annual count"}))
+        .await);
     let lines = t.api_as(&operator, "POST", &format!("/counts/{count}/start"), Value::Null).await.expect("started");
     assert_eq!(lines["lines"], json!(1));
-    assert!(t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 1, "reason": "more"})).await.is_err_and(|e| text(&e).contains("being counted")), "a frozen bin takes nothing");
+    assert!(
+        t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 1, "reason": "more"}))
+            .await
+            .is_err_and(|e| text(&e).contains("being counted")),
+        "a frozen bin takes nothing"
+    );
     let doc = t.get("CycleCount", count).await;
     let line = doc["lines"][0]["id"].as_str().unwrap().to_string();
     let told = t.api_as(&operator, "POST", &format!("/counts/{count}/enter"), json!({"line": line, "qty": 27})).await.unwrap();
     assert!(told.get("expected").is_none(), "a blind count tells the counter nothing");
-    assert!(t.api_as(&operator, "POST", &format!("/counts/{count}/finish"), Value::Null).await.is_err_and(|e| text(&e).contains("again")), "a difference is counted twice");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/counts/{count}/finish"), Value::Null).await.is_err_and(|e| text(&e).contains("again")),
+        "a difference is counted twice"
+    );
     t.api_as(&operator, "POST", &format!("/counts/{count}/enter"), json!({"line": line, "qty": 28, "recount": true})).await.unwrap();
     assert!(t.api_as(&operator, "POST", &format!("/counts/{count}/finish"), Value::Null).await.is_err_and(|e| text(&e).contains("disagree")));
     t.api_as(&operator, "POST", &format!("/counts/{count}/enter"), json!({"line": line, "qty": 27, "recount": true})).await.unwrap();
@@ -477,27 +602,44 @@ async fn scenario() {
     assert_eq!(t.qty_in("C-01", "NUT").await, n("27"));
     assert_eq!(t.on_books(nut).await, n("37"), "ERP followed the count");
     t.reconciled().await;
-    assert!(t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 1, "reason": "after"})).await.is_ok(), "and the bins are open again");
+    assert!(
+        t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 1, "reason": "after"}))
+            .await
+            .is_ok(),
+        "and the bins are open again"
+    );
 
     // ───── returns stay out of reach until someone decides ─────
-    let rma = uid(&t.insert("ReturnAuthorization", json!({"company": company, "warehouse": wh, "customer": customer, "items": [
-        {"item": bolt, "qty": 3, "rate": 5, "reason": "Wrong size"}, {"item": bolt, "qty": 1, "rate": 5, "reason": "Rusted"}]})).await);
+    let rma = uid(&t
+        .insert(
+            "ReturnAuthorization",
+            json!({"company": company, "warehouse": wh, "customer": customer, "items": [
+        {"item": bolt, "qty": 3, "rate": 5, "reason": "Wrong size"}, {"item": bolt, "qty": 1, "rate": 5, "reason": "Rusted"}]}),
+        )
+        .await);
     t.api_as(&operator, "POST", &format!("/returns/{rma}/receive"), Value::Null).await.expect("received");
     assert_eq!(t.bin("JAIL", "BOLT").await.iter().filter(|p| p.0 == "Quarantine").map(|p| p.1).sum::<Decimal>(), n("4"));
     let books_before = t.on_books(bolt).await;
     assert_eq!(books_before, n("16"), "back on the books, off allocation");
     let doc = t.get("ReturnAuthorization", rma).await;
     let (l0, l1) = (doc["items"][0]["id"].as_str().unwrap().to_string(), doc["items"][1]["id"].as_str().unwrap().to_string());
-    assert!(t.api_as(&operator, "POST", &format!("/returns/{rma}/dispose"), json!({"line": l0, "decision": "Restock"})).await.is_err(), "deciding is a manager's");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/returns/{rma}/dispose"), json!({"line": l0, "decision": "Restock"})).await.is_err(),
+        "deciding is a manager's"
+    );
     t.api_as(&manager, "POST", &format!("/returns/{rma}/dispose"), json!({"line": l0, "decision": "Restock", "reason": "Unopened"})).await.expect("restocked");
-    t.api_as(&manager, "POST", &format!("/returns/{rma}/dispose"), json!({"line": l1, "decision": "Scrap", "reason": "Rusted through"})).await.expect("scrapped");
+    t.api_as(&manager, "POST", &format!("/returns/{rma}/dispose"), json!({"line": l1, "decision": "Scrap", "reason": "Rusted through"}))
+        .await
+        .expect("scrapped");
     assert_eq!(t.on_books(bolt).await, n("15"), "scrap leaves through ERP");
     assert_eq!(t.get("ReturnAuthorization", rma).await["status"], json!("Dispositioned"));
     t.reconciled().await;
 
     // ───── a customer's stock is theirs: off the books, and billed ─────
     let goods = item("CRATE", json!({})).await;
-    let stored = t.insert("InboundShipment", json!({"company": company, "warehouse": wh, "owner": tenant_customer, "items": [{"item": goods, "expected_qty": 20}]})).await;
+    let stored = t
+        .insert("InboundShipment", json!({"company": company, "warehouse": wh, "owner": tenant_customer, "items": [{"item": goods, "expected_qty": 20}]}))
+        .await;
     t.api_as(&operator, "POST", &format!("/inbound/{}/scan", uid(&stored)), json!({"scan_id": Uuid::now_v7(), "code": "CRATE", "qty": 20})).await.unwrap();
     t.api_as(&manager, "POST", &format!("/inbound/{}/close", uid(&stored)), Value::Null).await.expect("closed");
     assert_eq!(t.qty_in("DOCK", "CRATE").await, n("20"));
@@ -508,7 +650,11 @@ async fn scenario() {
     tx.commit().await.unwrap();
     assert!(company_can_promise.is_zero(), "and nobody else's order can have it");
     let service = item("STORAGE", json!({"is_stock_item": false})).await;
-    t.insert("StorageContract", json!({"customer": tenant_customer, "company": company, "service_item": service, "rate_per_bin_day": 10, "rate_per_unit_moved": 1})).await;
+    t.insert(
+        "StorageContract",
+        json!({"customer": tenant_customer, "company": company, "service_item": service, "rate_per_bin_day": 10, "rate_per_unit_moved": 1}),
+    )
+    .await;
     let today = Utc::now().date_naive();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
     ferrum_wms::billing::snapshot(&mut tx, tenant, today).await.unwrap();
@@ -539,9 +685,21 @@ async fn scenario() {
 
     // ───── the line: a released run brings its material, and production takes it from there ─────
     let part = item("PART", json!({})).await;
-    let more = t.insert("StockEntry", json!({"company": company, "purpose": "Material Receipt", "items": [{"item": part, "qty": 10, "basic_rate": 2, "target_warehouse": wh}]})).await;
+    let more = t
+        .insert(
+            "StockEntry",
+            json!({"company": company, "purpose": "Material Receipt", "items": [{"item": part, "qty": 10, "basic_rate": 2, "target_warehouse": wh}]}),
+        )
+        .await;
     k.submit(&t.admin, "StockEntry", uid(&more), None).await.unwrap();
-    t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": part, "from_bin": "DOCK", "to_bin": "P-01", "qty": 10, "reason": "Walked the warehouse"})).await.expect("shelved");
+    t.api_as(
+        &manager,
+        "POST",
+        "/positions/move",
+        json!({"warehouse": wh, "item": part, "from_bin": "DOCK", "to_bin": "P-01", "qty": 10, "reason": "Walked the warehouse"}),
+    )
+    .await
+    .expect("shelved");
     let line_side = bin("LINE", zone("LIN", "Production").await, json!({})).await;
     k.update(&t.admin, "ManagedWarehouse", managed, obj(json!({"production_bin": line_side})), None).await.expect("a line");
     let run = Uuid::now_v7();
@@ -556,7 +714,13 @@ async fn scenario() {
     assert_eq!(moves[0]["to_bin"], json!("LINE"));
     assert_eq!(dec(&moves[0]["qty"]), n("10"), "as much as there is");
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    let told: Option<String> = sqlx::query_scalar("select payload->>'short' from outbox where tenant_id = $1 and topic = 'wms.supply.short' and record_id = $2").bind(tenant).bind(run).fetch_optional(&mut *tx).await.unwrap();
+    let told: Option<String> =
+        sqlx::query_scalar("select payload->>'short' from outbox where tenant_id = $1 and topic = 'wms.supply.short' and record_id = $2")
+            .bind(tenant)
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(told.as_deref(), Some("PART: 10 of 12"), "and what is missing goes back to the run");
     let issue = |qty: i64| json!({"company": company, "purpose": "Material Issue", "items": [{"item": part, "qty": qty, "source_warehouse": wh}]});
@@ -578,7 +742,15 @@ async fn scenario() {
 
     // ───── another workspace sees none of it ─────
     let other = k
-        .create_tenant(NewTenant { slug: "other".into(), name: "Other".into(), admin_email: "a@other.test".into(), admin_password: "Correct-Horse-9".into(), admin_name: None, packages: vec!["wms".into()], settings: None })
+        .create_tenant(NewTenant {
+            slug: "other".into(),
+            name: "Other".into(),
+            admin_email: "a@other.test".into(),
+            admin_password: "Correct-Horse-9".into(),
+            admin_name: None,
+            packages: vec!["wms".into()],
+            settings: None,
+        })
         .await
         .unwrap();
     let mut tx = k.db.tenant_tx(other).await.unwrap();

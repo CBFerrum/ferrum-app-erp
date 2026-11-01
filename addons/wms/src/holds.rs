@@ -75,7 +75,12 @@ pub async fn released(k: &Kernel, ev: &Event) -> Result<()> {
     for (seq, warehouse, bin, item, owner, lot, serial, unit, qty) in moves {
         let from = Key { bin, item, owner, lot, serial, unit, status: "Hold".into() };
         let to = Key { status: "Available".into(), ..from.clone() };
-        let cause = Cause { source: Some(("QualityHold".into(), hold)), reason: Some("Hold released".into()), operation: Some(format!("release:{hold}:{seq}")), ..Default::default() };
+        let cause = Cause {
+            source: Some(("QualityHold".into(), hold)),
+            reason: Some("Hold released".into()),
+            operation: Some(format!("release:{hold}:{seq}")),
+            ..Default::default()
+        };
         // Someone may since have disposed of part of it: what is still there goes back.
         let there: Option<Decimal> = sqlx::query_scalar(
             "select qty - allocated from wms_position where tenant_id = $1 and bin_id = $2 and item_id = $3 and owner_id is not distinct from $4 and lot = $5 and serial = $6 \

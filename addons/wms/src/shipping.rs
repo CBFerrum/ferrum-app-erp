@@ -18,8 +18,10 @@ const WEIGHT_TOLERANCE_PERCENT: i64 = 5;
 
 /// A shipment for what a wave allocated to one order.
 pub async fn prepare(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: &Doc, order: Uuid, warehouse: Uuid, items: Vec<Value>) -> Result<Uuid> {
-    let customer: Uuid = sqlx::query_scalar("select customer from e_sales_order where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(order).fetch_one(&mut **tx).await?;
-    let number: Option<String> = sqlx::query_scalar("select number from e_sales_order where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(order).fetch_one(&mut **tx).await?;
+    let customer: Uuid =
+        sqlx::query_scalar("select customer from e_sales_order where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(order).fetch_one(&mut **tx).await?;
+    let number: Option<String> =
+        sqlx::query_scalar("select number from e_sales_order where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(order).fetch_one(&mut **tx).await?;
     let reference = format!("{} / {}", s(wave, "number").unwrap_or_default(), number.unwrap_or_default());
     let doc = json!({"reference": reference, "company": wave.get("company"), "warehouse": warehouse, "customer": customer, "items": items});
     let made = k.insert_tx(&elevated(ctx), tx, "Shipment", doc.as_object().cloned().unwrap_or_default()).await?;
@@ -41,7 +43,10 @@ pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Veri
     let item = slotting::item_by_scan(tx, ctx.tenant, &v.code).await?;
     let lines = rows(&doc, "items");
     let line = lines.iter().find(|l| {
-        item.is_some() && id(l, "item") == item && (v.lot.is_none() || s(l, "lot") == v.lot.as_deref() || s(l, "lot").unwrap_or_default().is_empty()) && d(l, "verified_qty") < d(l, "qty")
+        item.is_some()
+            && id(l, "item") == item
+            && (v.lot.is_none() || s(l, "lot") == v.lot.as_deref() || s(l, "lot").unwrap_or_default().is_empty())
+            && d(l, "verified_qty") < d(l, "qty")
     });
     let Some(line) = line else {
         audit::record(tx, ctx, "Shipment", shipment, "wms.wrong_scan", None, json!({"scanned": v.code, "lot": v.lot})).await?;
@@ -114,7 +119,11 @@ pub async fn hand_over(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, h: &H
     if let Some(weighed) = h.weighed_kg
         && weight_off(d(&doc, "expected_weight_kg"), weighed)
     {
-        return Err(Error::invalid(format!("it weighs {} kg and should weigh {} kg: open it and check", weighed.normalize(), d(&doc, "expected_weight_kg").normalize())));
+        return Err(Error::invalid(format!(
+            "it weighs {} kg and should weigh {} kg: open it and check",
+            weighed.normalize(),
+            d(&doc, "expected_weight_kg").normalize()
+        )));
     }
     let warehouse = id(&doc, "warehouse").ok_or_else(|| Error::internal("a shipment without a warehouse"))?;
     let w = posting::must_manage(tx, ctx.tenant, warehouse).await?;
@@ -123,7 +132,14 @@ pub async fn hand_over(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, h: &H
     if let Some(owner) = id(&doc, "owner") {
         // A customer's own stock is not this company's to deliver in ERP.
         for (l, qty) in &going {
-            let key = Key { bin: outbound, item: id(l, "item").unwrap_or_default(), owner: Some(owner), lot: s(l, "lot").unwrap_or_default().to_string(), status: "Available".into(), ..Default::default() };
+            let key = Key {
+                bin: outbound,
+                item: id(l, "item").unwrap_or_default(),
+                owner: Some(owner),
+                lot: s(l, "lot").unwrap_or_default().to_string(),
+                status: "Available".into(),
+                ..Default::default()
+            };
             position::depart(tx, ctx, warehouse, Kind::Issue, &key, *qty, &Cause::source("Shipment", shipment)).await?;
         }
     } else {

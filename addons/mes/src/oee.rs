@@ -14,12 +14,36 @@ pub async fn for_workstation(tx: &mut Tx, tenant: Uuid, workstation: Uuid, from:
     if to <= from {
         return Err(Error::invalid("the period ends before it starts"));
     }
-    let device: Option<Option<Uuid>> = sqlx::query_scalar("select mes_device from e_workstation where tenant_id = $1 and id = $2").bind(tenant).bind(workstation).fetch_optional(&mut **tx).await?;
+    let device: Option<Option<Uuid>> = sqlx::query_scalar("select mes_device from e_workstation where tenant_id = $1 and id = $2")
+        .bind(tenant)
+        .bind(workstation)
+        .fetch_optional(&mut **tx)
+        .await?;
     let device = device.flatten().ok_or_else(|| Error::invalid("this workstation has no equipment to measure"))?;
-    let events: Vec<(DateTime<Utc>, String, Option<String>)> = sqlx::query_as("select at, state, reason from op_equipment_event where tenant_id = $1 and device_id = $2 and at < $3 and at >= $4 order by at").bind(tenant).bind(device).bind(to).bind(from).fetch_all(&mut **tx).await?;
-    let before: Option<String> = sqlx::query_scalar("select state from op_equipment_event where tenant_id = $1 and device_id = $2 and at < $3 order by at desc limit 1").bind(tenant).bind(device).bind(from).fetch_optional(&mut **tx).await?;
-    let planned_stops: Vec<String> = sqlx::query_scalar("select reason from e_downtime_reason where tenant_id = $1 and planned").bind(tenant).fetch_all(&mut **tx).await?;
-    let states: Vec<StateAt> = events.iter().map(|(at, state, reason)| StateAt { at: *at, state: if reason.as_ref().is_some_and(|r| planned_stops.contains(r)) { "Planned".into() } else { state.clone() } }).collect();
+    let events: Vec<(DateTime<Utc>, String, Option<String>)> =
+        sqlx::query_as("select at, state, reason from op_equipment_event where tenant_id = $1 and device_id = $2 and at < $3 and at >= $4 order by at")
+            .bind(tenant)
+            .bind(device)
+            .bind(to)
+            .bind(from)
+            .fetch_all(&mut **tx)
+            .await?;
+    let before: Option<String> =
+        sqlx::query_scalar("select state from op_equipment_event where tenant_id = $1 and device_id = $2 and at < $3 order by at desc limit 1")
+            .bind(tenant)
+            .bind(device)
+            .bind(from)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let planned_stops: Vec<String> =
+        sqlx::query_scalar("select reason from e_downtime_reason where tenant_id = $1 and planned").bind(tenant).fetch_all(&mut **tx).await?;
+    let states: Vec<StateAt> = events
+        .iter()
+        .map(|(at, state, reason)| StateAt {
+            at: *at,
+            state: if reason.as_ref().is_some_and(|r| planned_stops.contains(r)) { "Planned".into() } else { state.clone() },
+        })
+        .collect();
     let t = oee::time_in_states(before.as_deref(), &states, from, to);
     let (good, scrap, weighted): (Option<Decimal>, Option<Decimal>, Option<Decimal>) = sqlx::query_as(
         "select sum(e.qty), sum(e.scrap), sum((coalesce(e.qty, 0) + coalesce(e.scrap, 0)) * coalesce(v.ideal_cycle_secs, 0)) from mes_event e \

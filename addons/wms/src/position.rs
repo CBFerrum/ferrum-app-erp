@@ -97,7 +97,17 @@ const FIND: &str = "select id, qty, allocated, expiry, received_on from wms_posi
     and owner_id is not distinct from $4 and lot = $5 and serial = $6 and unit_id is not distinct from $7 and status = $8 for update";
 
 async fn find(tx: &mut Tx, tenant: Uuid, k: &Key) -> Result<Option<Held>> {
-    Ok(sqlx::query_as(FIND).bind(tenant).bind(k.bin).bind(k.item).bind(k.owner).bind(&k.lot).bind(&k.serial).bind(k.unit).bind(&k.status).fetch_optional(&mut **tx).await?)
+    Ok(sqlx::query_as(FIND)
+        .bind(tenant)
+        .bind(k.bin)
+        .bind(k.item)
+        .bind(k.owner)
+        .bind(&k.lot)
+        .bind(&k.serial)
+        .bind(k.unit)
+        .bind(&k.status)
+        .fetch_optional(&mut **tx)
+        .await?)
 }
 
 /// Adds to a position, creating it if it is new. The oldest expiry of what is merged stands, so
@@ -139,13 +149,24 @@ pub async fn take(tx: &mut Tx, tenant: Uuid, k: &Key, qty: Decimal, released: De
     if held.qty - qty < held.allocated - released {
         return Err(Error::invalid("what is left in that bin is promised to other tasks"));
     }
-    sqlx::query("update wms_position set qty = qty - $3, allocated = allocated - $4 where tenant_id = $1 and id = $2").bind(tenant).bind(held.id).bind(qty).bind(released).execute(&mut **tx).await?;
+    sqlx::query("update wms_position set qty = qty - $3, allocated = allocated - $4 where tenant_id = $1 and id = $2")
+        .bind(tenant)
+        .bind(held.id)
+        .bind(qty)
+        .bind(released)
+        .execute(&mut **tx)
+        .await?;
     Ok(held)
 }
 
 /// Promises stock to a task.
 pub async fn allocate(tx: &mut Tx, tenant: Uuid, id: Uuid, qty: Decimal) -> Result<()> {
-    let done = sqlx::query("update wms_position set allocated = allocated + $3 where tenant_id = $1 and id = $2 and allocated + $3 <= qty").bind(tenant).bind(id).bind(qty).execute(&mut **tx).await?;
+    let done = sqlx::query("update wms_position set allocated = allocated + $3 where tenant_id = $1 and id = $2 and allocated + $3 <= qty")
+        .bind(tenant)
+        .bind(id)
+        .bind(qty)
+        .execute(&mut **tx)
+        .await?;
     if done.rows_affected() == 0 {
         return Err(Error::Conflict("that stock has just been promised to something else".into()));
     }
@@ -155,7 +176,12 @@ pub async fn allocate(tx: &mut Tx, tenant: Uuid, id: Uuid, qty: Decimal) -> Resu
 /// Takes back a promise, for a task that did not happen.
 pub async fn release(tx: &mut Tx, tenant: Uuid, k: &Key, qty: Decimal) -> Result<()> {
     if let Some(held) = find(tx, tenant, k).await? {
-        sqlx::query("update wms_position set allocated = greatest(allocated - $3, 0) where tenant_id = $1 and id = $2").bind(tenant).bind(held.id).bind(qty).execute(&mut **tx).await?;
+        sqlx::query("update wms_position set allocated = greatest(allocated - $3, 0) where tenant_id = $1 and id = $2")
+            .bind(tenant)
+            .bind(held.id)
+            .bind(qty)
+            .execute(&mut **tx)
+            .await?;
     }
     Ok(())
 }
@@ -216,7 +242,17 @@ pub async fn depart(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, kind: Kind, k: &Key
 
 /// Moves stock between positions: from `from` to `to`, which may differ in bin, unit or status.
 /// `released` of it was allocated to this move.
-pub async fn transfer(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, kind: Kind, from: &Key, to: &Key, qty: Decimal, released: Decimal, cause: &Cause) -> Result<bool> {
+pub async fn transfer(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    warehouse: Uuid,
+    kind: Kind,
+    from: &Key,
+    to: &Key,
+    qty: Decimal,
+    released: Decimal,
+    cause: &Cause,
+) -> Result<bool> {
     if (from.item, from.owner, &from.lot, &from.serial) != (to.item, to.owner, &to.lot, &to.serial) {
         return Err(Error::internal("a transfer does not change what the stock is"));
     }

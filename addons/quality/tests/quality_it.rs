@@ -19,7 +19,16 @@ fn uid(d: &Doc) -> Uuid {
 
 async fn post(k: &Arc<Kernel>, ctx: &Ctx, path: &str, body: Value) -> Result<Value, Error> {
     let site = k.hooks.site("quality").unwrap().clone();
-    let req = SiteRequest { tenant: ctx.tenant, user: Some(ctx.clone()), method: "POST".into(), path: path.into(), query: Map::new(), headers: Map::new(), body: body.to_string().into_bytes(), client_ip: "::1".into() };
+    let req = SiteRequest {
+        tenant: ctx.tenant,
+        user: Some(ctx.clone()),
+        method: "POST".into(),
+        path: path.into(),
+        query: Map::new(),
+        headers: Map::new(),
+        body: body.to_string().into_bytes(),
+        client_ip: "::1".into(),
+    };
     site.handle(k, req).await.map(|r| serde_json::from_slice(&r.body).unwrap())
 }
 
@@ -53,13 +62,22 @@ async fn scenario() {
     ferrum_domain::maintenance(&k).await.unwrap();
     ferrum_app_erp::maintenance(&k).await.unwrap();
     let tenant = k
-        .create_tenant(NewTenant { slug: "qa".into(), name: "QA Co".into(), admin_email: "admin@qa.test".into(), admin_password: "Correct-Horse-9".into(), admin_name: None, packages: vec!["quality".into()], settings: Some(json!({"fiscal_year_start_month": 4})) })
+        .create_tenant(NewTenant {
+            slug: "qa".into(),
+            name: "QA Co".into(),
+            admin_email: "admin@qa.test".into(),
+            admin_password: "Correct-Horse-9".into(),
+            admin_name: None,
+            packages: vec!["quality".into()],
+            settings: Some(json!({"fiscal_year_start_month": 4})),
+        })
         .await
         .unwrap();
     let session = k.login("qa", "admin@qa.test", "Correct-Horse-9").await.unwrap();
     let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.unwrap();
     let person = async |email: &str, roles: &[&str]| {
-        let id = k.create_user(&admin, email, "Someone", Some("Correct-Horse-9"), &roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), false).await.unwrap();
+        let id =
+            k.create_user(&admin, email, "Someone", Some("Correct-Horse-9"), &roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), false).await.unwrap();
         k.load_ctx(tenant, id, None, "it".into()).await.unwrap()
     };
     let inr = find(&k, &admin, "Currency", json!({"code": "INR"})).await;
@@ -78,7 +96,14 @@ async fn scenario() {
     let boss = person("boss@qa.test", &["Quality Manager"]).await;
 
     let issue = async |lot: &str| {
-        let d = k.insert(&admin, "StockEntry", obj(json!({"company": company, "purpose": "Material Issue", "items": [{"item": item, "qty": 1, "source_warehouse": wh, "batch_no": lot}]}))).await.unwrap();
+        let d = k
+            .insert(
+                &admin,
+                "StockEntry",
+                obj(json!({"company": company, "purpose": "Material Issue", "items": [{"item": item, "qty": 1, "source_warehouse": wh, "batch_no": lot}]})),
+            )
+            .await
+            .unwrap();
         k.submit(&admin, "StockEntry", uid(&d), None).await
     };
 
@@ -93,11 +118,21 @@ async fn scenario() {
     k.submit(&admin, "StockEntry", uid(&more), None).await.expect("a hold never stops a receipt");
 
     // Who may lift it.
-    assert!(matches!(post(&k, &inspector, &format!("/holds/{hold}/release"), json!({"note": "looks fine"})).await, Err(Error::Forbidden(_))), "not without the role");
+    assert!(
+        matches!(post(&k, &inspector, &format!("/holds/{hold}/release"), json!({"note": "looks fine"})).await, Err(Error::Forbidden(_))),
+        "not without the role"
+    );
     assert!(post(&k, &boss, &format!("/holds/{hold}/release"), json!({"note": " "})).await.is_err(), "not without a reason");
     let own = uid(&k.insert(&boss, "QualityHold", obj(json!({"item": item, "lot": "L2", "reason": "Mine"}))).await.unwrap());
-    assert!(matches!(post(&k, &boss, &format!("/holds/{own}/release"), json!({"note": "fine"})).await, Err(Error::Forbidden(_))), "not by who placed it, even a manager");
-    assert!(k.update(&admin, "QualityHold", hold, obj(json!({"status": "Released"})), None).await.is_err() || k.get(&admin, "QualityHold", hold, false).await.unwrap()["status"] == json!("Active"), "and not by editing the record");
+    assert!(
+        matches!(post(&k, &boss, &format!("/holds/{own}/release"), json!({"note": "fine"})).await, Err(Error::Forbidden(_))),
+        "not by who placed it, even a manager"
+    );
+    assert!(
+        k.update(&admin, "QualityHold", hold, obj(json!({"status": "Released"})), None).await.is_err()
+            || k.get(&admin, "QualityHold", hold, false).await.unwrap()["status"] == json!("Active"),
+        "and not by editing the record"
+    );
     post(&k, &boss, &format!("/holds/{hold}/release"), json!({"note": "Lab report 114 clear"})).await.expect("released");
     issue("L1").await.expect("usable again");
     assert_eq!(k.get(&admin, "QualityHold", hold, false).await.unwrap()["released_by"], json!("boss@qa.test"));
@@ -109,7 +144,10 @@ async fn scenario() {
     assert!(post(&k, &boss, &format!("/ncr/{ncr}/disposition"), json!({"disposition": "Use As Is", "note": "changed my mind"})).await.is_err());
 
     // Corrective action closes on evidence, verified by someone else.
-    let capa = uid(&k.insert(&boss, "Capa", obj(json!({"title": "Lid press", "owner_email": "boss@qa.test", "actions": [{"action": "Service the press"}]}))).await.unwrap());
+    let capa = uid(&k
+        .insert(&boss, "Capa", obj(json!({"title": "Lid press", "owner_email": "boss@qa.test", "actions": [{"action": "Service the press"}]})))
+        .await
+        .unwrap());
     let tester = person("audit@qa.test", &["Quality Manager"]).await;
     assert!(post(&k, &boss, &format!("/capa/{capa}/verify"), json!({"note": "ok"})).await.is_err(), "not by its owner");
     assert!(post(&k, &tester, &format!("/capa/{capa}/verify"), json!({"note": "ok"})).await.is_err(), "not with actions open");
@@ -120,7 +158,13 @@ async fn scenario() {
     post(&k, &tester, &format!("/capa/{capa}/verify"), json!({"note": "No rejects in 400 units"})).await.expect("verified");
 
     // An approved plan is frozen, and a new revision takes over.
-    let template = k.insert(&admin, "QualityInspectionTemplate", obj(json!({"template_name": "Paste", "parameters": [{"parameter": "Viscosity", "numeric": true, "min_value": 1, "max_value": 2}]}))).await;
+    let template = k
+        .insert(
+            &admin,
+            "QualityInspectionTemplate",
+            obj(json!({"template_name": "Paste", "parameters": [{"parameter": "Viscosity", "numeric": true, "min_value": 1, "max_value": 2}]})),
+        )
+        .await;
     let template = template.map(|t| uid(&t)).unwrap_or_else(|e| panic!("{e:?}"));
     let plan = uid(&k.insert(&boss, "InspectionPlan", obj(json!({"item": item, "revision": "A", "template": template}))).await.unwrap());
     post(&k, &boss, &format!("/plans/{plan}/approve"), Value::Null).await.expect("approved");

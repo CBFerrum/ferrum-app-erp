@@ -85,7 +85,12 @@ impl Task {
 }
 
 pub async fn load(tx: &mut Tx, tenant: Uuid, id: Uuid) -> Result<Task> {
-    sqlx::query_as::<_, Task>(sqlx::AssertSqlSafe(format!("{TASK} for update"))).bind(tenant).bind(id).fetch_optional(&mut **tx).await?.ok_or_else(|| Error::NotFound("task".into()))
+    sqlx::query_as::<_, Task>(sqlx::AssertSqlSafe(format!("{TASK} for update")))
+        .bind(tenant)
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| Error::NotFound("task".into()))
 }
 
 async fn set(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, values: Value) -> Result<()> {
@@ -145,7 +150,11 @@ async fn ready(tx: &mut Tx, tenant: Uuid, t: &Task) -> Result<()> {
         return Err(Error::invalid(format!("this task is {}", t.state())));
     }
     if let Some(first) = t.after_task {
-        let done: Option<Option<String>> = sqlx::query_scalar("select status from e_warehouse_task where tenant_id = $1 and id = $2").bind(tenant).bind(first).fetch_optional(&mut **tx).await?;
+        let done: Option<Option<String>> = sqlx::query_scalar("select status from e_warehouse_task where tenant_id = $1 and id = $2")
+            .bind(tenant)
+            .bind(first)
+            .fetch_optional(&mut **tx)
+            .await?;
         if !matches!(done.flatten().as_deref(), Some("Done" | "Short")) {
             return Err(Error::invalid("the task this one waits for has not finished"));
         }
@@ -173,13 +182,25 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, executor: Exe
     let to = bin_code(tx, ctx.tenant, t.to_bin.ok_or_else(|| Error::invalid("choose where it goes"))?).await?;
     let code = slotting::goods(tx, ctx.tenant, t.item).await?.item_code;
     let unit = match t.handling_unit {
-        Some(u) => sqlx::query_scalar::<_, String>("select unit_code from e_handling_unit where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(u).fetch_optional(&mut **tx).await?,
+        Some(u) => {
+            sqlx::query_scalar::<_, String>("select unit_code from e_handling_unit where tenant_id = $1 and id = $2")
+                .bind(ctx.tenant)
+                .bind(u)
+                .fetch_optional(&mut **tx)
+                .await?
+        }
         None => None,
     };
     let (target, operation, payload) = match executor {
-        Executor::Robot(robot) => (Some(robot), "warehouse.move", json!({"task": {"zone": Value::Null, "station": to}, "item": code, "qty": t.qty, "lot": t.lot, "from": from, "to": to, "unit": unit})),
+        Executor::Robot(robot) => (
+            Some(robot),
+            "warehouse.move",
+            json!({"task": {"zone": Value::Null, "station": to}, "item": code, "qty": t.qty, "lot": t.lot, "from": from, "to": to, "unit": unit}),
+        ),
         Executor::Person => match w.person_station {
-            Some(station) => (Some(station), "warehouse.pick", json!({"item": code, "qty": t.qty, "lot": t.lot, "from": from, "to": to, "unit": unit, "verify": to})),
+            Some(station) => {
+                (Some(station), "warehouse.pick", json!({"item": code, "qty": t.qty, "lot": t.lot, "from": from, "to": to, "unit": unit, "verify": to}))
+            }
             None => (None, "", Value::Null),
         },
     };
@@ -187,7 +208,11 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, executor: Exe
         return set(k, ctx, tx, id, json!({"status": "Released"})).await;
     };
     // A new mission for each release: one that ended cannot be mistaken for this one.
-    let attempt: i64 = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2").bind(ctx.tenant).bind(format!("{WORKFLOW}{id}")).fetch_one(&mut **tx).await?;
+    let attempt: i64 = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2")
+        .bind(ctx.tenant)
+        .bind(format!("{WORKFLOW}{id}"))
+        .fetch_one(&mut **tx)
+        .await?;
     let issued = commands::issue(
         tx,
         ctx,
@@ -372,7 +397,11 @@ pub async fn recover(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, found_bin: &s
     }
     let moved = bin.id != source.bin && !qty.is_zero();
     if let Some(command) = t.command.as_deref().and_then(|c| c.parse().ok()) {
-        let unknown: Option<bool> = sqlx::query_scalar("select state = 'OutcomeUnknown' from op_command where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(command).fetch_optional(&mut **tx).await?;
+        let unknown: Option<bool> = sqlx::query_scalar("select state = 'OutcomeUnknown' from op_command where tenant_id = $1 and id = $2")
+            .bind(ctx.tenant)
+            .bind(command)
+            .fetch_optional(&mut **tx)
+            .await?;
         if unknown == Some(true) {
             commands::reconcile(tx, ctx, command, if moved { State::Completed } else { State::Failed }, note).await?;
         }
@@ -438,7 +467,9 @@ pub async fn on_command(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, state: Sta
 
 async fn robot_label(tx: &mut Tx, tenant: Uuid, robot: Option<Uuid>) -> Result<Option<String>> {
     match robot {
-        Some(r) => Ok(sqlx::query_scalar("select device_code from e_device where tenant_id = $1 and id = $2").bind(tenant).bind(r).fetch_optional(&mut **tx).await?),
+        Some(r) => {
+            Ok(sqlx::query_scalar("select device_code from e_device where tenant_id = $1 and id = $2").bind(tenant).bind(r).fetch_optional(&mut **tx).await?)
+        }
         None => Ok(None),
     }
 }

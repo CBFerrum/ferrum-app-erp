@@ -29,7 +29,11 @@ pub struct Managed {
 const MANAGED: &str = "select warehouse, inbound_bin, outbound_bin, quarantine_bin, production_bin, allocation_rule, person_station, status from e_managed_warehouse where tenant_id = $1";
 
 pub async fn managed(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<Option<Managed>> {
-    Ok(sqlx::query_as::<_, Managed>(sqlx::AssertSqlSafe(format!("{MANAGED} and warehouse = $2 and status = 'Managed'"))).bind(tenant).bind(warehouse).fetch_optional(&mut **tx).await?)
+    Ok(sqlx::query_as::<_, Managed>(sqlx::AssertSqlSafe(format!("{MANAGED} and warehouse = $2 and status = 'Managed'")))
+        .bind(tenant)
+        .bind(warehouse)
+        .fetch_optional(&mut **tx)
+        .await?)
 }
 
 /// `Managed` or an error a person can act on.
@@ -49,7 +53,8 @@ struct StockMove {
 
 /// The status stock takes on arrival, by its item.
 async fn receive_status(tx: &mut Tx, tenant: Uuid, item: Uuid) -> Result<String> {
-    let status: Option<Option<String>> = sqlx::query_scalar("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(tenant).bind(item).fetch_optional(&mut **tx).await?;
+    let status: Option<Option<String>> =
+        sqlx::query_scalar("select wms_receive_status from e_item where tenant_id = $1 and id = $2").bind(tenant).bind(item).fetch_optional(&mut **tx).await?;
     Ok(status.flatten().unwrap_or_else(|| "Available".into()))
 }
 
@@ -57,7 +62,13 @@ async fn expiry_of(tx: &mut Tx, tenant: Uuid, item: Uuid, lot: &str) -> Result<O
     if lot.is_empty() {
         return Ok(None);
     }
-    Ok(sqlx::query_scalar("select expiry_date from e_batch where tenant_id = $1 and item = $2 and batch_id = $3").bind(tenant).bind(item).bind(lot).fetch_optional(&mut **tx).await?.flatten())
+    Ok(sqlx::query_scalar("select expiry_date from e_batch where tenant_id = $1 and item = $2 and batch_id = $3")
+        .bind(tenant)
+        .bind(item)
+        .bind(lot)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten())
 }
 
 /// Mirrors what ERP just posted for a document. Safe to repeat: each stock move lands once.
@@ -96,7 +107,18 @@ pub async fn mirror(tx: &mut Tx, ctx: &Ctx, entity: &str, doc: Uuid) -> Result<(
 /// Issues from the line if there is one, then from the outbound bin, across units: what ERP issues
 /// is an item, and it may sit on several.
 #[allow(clippy::too_many_arguments)]
-async fn issue(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, line: Option<Uuid>, outbound: Uuid, item: Uuid, lot: &str, serial: &str, qty: Decimal, cause: &Cause) -> Result<()> {
+async fn issue(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    warehouse: Uuid,
+    line: Option<Uuid>,
+    outbound: Uuid,
+    item: Uuid,
+    lot: &str,
+    serial: &str,
+    qty: Decimal,
+    cause: &Cause,
+) -> Result<()> {
     let bins: Vec<Uuid> = line.into_iter().chain([outbound]).collect();
     let rows: Vec<(Uuid, Option<Uuid>, String, Decimal)> = sqlx::query_as(
         "select bin_id, unit_id, status, qty from wms_position where tenant_id = $1 and bin_id = any($2) and item_id = $3 and owner_id is null and lot = $4 and serial = $5 and qty > 0 \
@@ -111,7 +133,8 @@ async fn issue(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, line: Option<Uuid>, outb
     .await?;
     let waiting: Decimal = rows.iter().filter(|r| r.2 == "Available").map(|r| r.3).sum();
     if waiting < qty {
-        let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
+        let code: Option<String> =
+            sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
         let place = if line.is_some() { "brought to the line" } else { "picked to the outbound bin" };
         return Err(Error::field("items", format!("{}: only {} of {} has been {place}", code.unwrap_or_default(), waiting.normalize(), qty.normalize())));
     }

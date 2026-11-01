@@ -39,12 +39,10 @@ pub async fn differences(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<V
 
 /// Where a lot went: every move of it, for a recall.
 pub async fn trace(tx: &mut Tx, tenant: Uuid, item: Uuid, lot: &str) -> Result<Vec<Value>> {
-    Ok(sqlx::query_scalar(
-        "select to_jsonb(m) - 'tenant_id' from wms_move m where tenant_id = $1 and item_id = $2 and lot = $3 order by seq",
-    )
-    .bind(tenant)
-    .bind(item)
-    .bind(lot)
-    .fetch_all(&mut **tx)
-    .await?)
+    Ok(sqlx::query_scalar("select to_jsonb(m) - 'tenant_id' from wms_move m where tenant_id = $1 and item_id = $2 and lot = $3 order by seq")
+        .bind(tenant)
+        .bind(item)
+        .bind(lot)
+        .fetch_all(&mut **tx)
+        .await?)
 }
