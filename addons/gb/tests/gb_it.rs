@@ -294,9 +294,7 @@ async fn scenario() {
                          "timezone": "UTC+00:00", "device_id": "beec798b-b366-47fa-b1f8-92cede14a1ce"});
     let filed = site.handle(&k, request("POST", &format!("/returns/{}/file", uid(&ret)), Value::Null, browser)).await.unwrap();
     assert_eq!(filed.status, 200);
-    for _ in 0..3 {
-        k.dispatch_outbox_once().await.expect("outbox");
-    }
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
     let ret = k.get(&ctx, "GbVatReturn", uid(&ret), false).await.unwrap();
     assert_eq!(
         (ret["hmrc_status"].clone(), ret["form_bundle_number"].clone(), ret["receipt_id"].clone()),
@@ -328,9 +326,7 @@ async fn scenario() {
         insert("GbVatReturn", json!({"company": cid.to_string(), "period_key": "DUPL", "from_date": "2000-01-01", "to_date": "2000-03-31", "finalised": true}))
             .await;
     k.submit(&ctx, "GbVatReturn", uid(&dup), None).await.expect("submitted");
-    for _ in 0..3 {
-        k.dispatch_outbox_once().await.expect("outbox");
-    }
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
     let dup = k.get(&ctx, "GbVatReturn", uid(&dup), false).await.unwrap();
     assert_eq!(dup["hmrc_status"], json!("Failed"));
     assert!(dup["hmrc_error"].as_str().unwrap().contains("DUPLICATE_SUBMISSION"), "{dup:?}");

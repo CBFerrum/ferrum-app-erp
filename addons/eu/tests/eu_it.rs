@@ -158,9 +158,7 @@ impl T {
         .unwrap()
     }
     async fn drain(&self) {
-        for _ in 0..5 {
-            self.k.dispatch_outbox_once().await.expect("outbox");
-        }
+        while self.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
     }
     async fn report(&self, name: &str, params: &[(&str, String)]) -> Value {
         let p: HashMap<String, String> = params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
