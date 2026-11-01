@@ -16,7 +16,7 @@ import "./styles.css";
 /** ERP's packages and its add-ons': the sidebar shows their modules (Studio has its own interface). */
 const ERP_PACKAGES = [
   ...["core", "parties", "products", "accounting", "selling", "buying", "inventory", "manufacturing"],
-  ...["india", "finance", "procurement", "stock_ops", "mfg_ops"],
+  ...["india", "finance", "procurement", "stock_ops", "mfg_ops", "quality"],
 ];
 
 const queryClient = new QueryClient({
