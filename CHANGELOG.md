@@ -1,5 +1,47 @@
 # Changelog
 
+## ERP 0.5.0 and Finance 0.2.0: the accountant's screens
+
+ERP's own interface now has hand-made screens for the accountant's work, each with its rules in the
+server and its figures worked out by hand in the tests.
+
+- **Bank reconciliation** (Finance, in the sidebar): a bank account's statement lines beside what
+  the books have for the selected one, with the bank's balance after each line. The statement's
+  balance, the books' and the difference are always in view, with what makes the difference up.
+  Exact matches are paired so that no payment and no line is used twice; `j` and `k` walk the
+  lines, `Enter` accepts the match, `Shift+A` settles every exact match after showing them, and a
+  line can be matched with several entries (with amounts you edit), turned into a payment or
+  journal entry, or undone. A statement file is checked before it is imported: its columns are
+  guessed, and the server's own trial run counts the new lines and the ones the account already has.
+  New in the server: the account's `workbench` and `accept_matches` actions, and a `dry_run` for
+  the statement import.
+- **Payment allocation** (Finance, New Payment Allocation): a customer's or supplier's payments,
+  credit notes and journal credits applied to their open invoices in one document, oldest invoices
+  first with one button, with what is left over on both sides always shown. Each pairing's
+  exchange gain or loss is worked out by the server before anything is posted. The document
+  applies every pairing or none, and cancelling it opens them again; the payments, invoices and
+  journals it applied cannot be cancelled before it.
+- **Financial statements**: the profit and loss and the balance sheet can be set beside up to three
+  earlier periods (the period before, or the same one a year back), each row with how much it moved
+  and by what share; the profit and loss can be narrowed to a cost centre (with the ones below it)
+  or a project. The new cash flow statement (indirect method) sorts what moved in the other
+  accounts into operating, investing and financing by the account's type or by a new Cash Flow
+  Section on the account (the standard chart marks its loans as financing), and must end where the
+  bank and cash accounts did. The general ledger opens a group account as every account below it
+  and can leave out the year-end closing, so any figure opens the entries behind it.
+- **Exchange revaluation** (Finance, New Exchange Revaluation): at a period's end, each foreign
+  currency balance (bank and cash accounts, each customer's receivable and supplier's payable,
+  accounts kept in another currency) is carried at the day's rate and the difference goes to the
+  exchange gain/loss account in one entry. As the gain is not realised, it is reversed the day after
+  (or a day chosen; the daily upkeep posts a reversal whose day has not come), and cancelling takes
+  it out at once. A day with no exchange rate is refused with the reason.
+- **Accounts today** (Finance Overview, and a line on ERP's home for those who keep the books):
+  overdue and soon-due receivables and payables, bank lines to reconcile, drafts waiting, months
+  and years that have ended and are not closed (an Accounts Manager closes a month from there),
+  and the cash there is.
+- Not in this version: deferred revenue and expense (the invoice lines would have to post to a
+  deferred account and a schedule recognise it), and dimensions beyond cost centre and project.
+
 ## ERP 0.4.1: tax rates as data
 
 - Tax Rate (Accounting): a country's rate for a tax category from a day (and, optionally, to a

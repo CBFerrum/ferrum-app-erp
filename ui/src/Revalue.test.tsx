@@ -16,9 +16,11 @@ const draft: Draft = {
   ],
 };
 
-function screen(data: Draft | null) {
+function screen(data: Draft | null, all = true) {
   const qc = new QueryClient();
   qc.setQueryData(["me"], { default_company: "co-1", user: { id: "u", email: "a@b.test", full_name: "A B", is_admin: false, roles: [] } });
+  const perms = { read: "all", write: "all", create: all ? "all" : "none", delete: "none", submit: all ? "all" : "none", cancel: "none", export: "all", import: "none" };
+  qc.setQueryData(["meta"], { entities: [{ name: "ExchangeRevaluation", label: "Exchange Revaluation", label_plural: "Exchange Revaluations", kind: "document", submittable: true, permissions: perms }], modules: [], packages: [] });
   const body = bodyOf({ company: "co-1", date: "2026-04-30", reverse: true, reversalDate: "", account: null });
   if (data) qc.setQueryData(["erp", "revalue", body], data);
   return renderToString(
@@ -46,6 +48,11 @@ describe("the revaluation screen", () => {
 
   it("says when there is nothing to revalue", () => {
     expect(text(screen({ ...draft, rows: [], total_gain_loss: "0" }))).toContain("Nothing to revalue on this day");
+  });
+
+  it("lets someone who cannot post look, and says who posts it", () => {
+    expect(text(screen(draft, false))).toContain("An Accounts Manager posts it.");
+    expect(text(screen(draft, true))).not.toContain("An Accounts Manager posts it.");
   });
 
   it("waits while the server works the balances out", () => {

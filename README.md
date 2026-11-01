@@ -5,7 +5,7 @@
   <img alt="Ferrum ERP" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.4.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.1%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.5.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.1%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -31,9 +31,9 @@ and CRM build on its engine.
 
 | At a glance | |
 |---|---|
-| 📦 Version | `0.4.0`, with each add-on's own version in [the add-ons table](#add-ons) |
+| 📦 Version | `0.5.0`, with each add-on's own version in [the add-ons table](#add-ons) |
 | 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
-| 🖥️ Interface | its own, at `/erp/`, and the portal's invoices at `/portal/invoices/` |
+| 🖥️ Interface | its own, at `/erp/`: bank reconciliation, applying payments, the financial statements, accounts today and exchange revaluation hand-crafted, the rest in the records frame; and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
 | 🧩 Add-ons | Finance, Procurement, Stock Operations and Manufacturing Operations, and every country's (`addons/`) |
 | 🌍 Countries | 26 on the localization seam: India, the European Union and eight of its members, the United Kingdom, the United States, Canada, and thirteen more in South East Asia, the Gulf, Oceania, East Asia and Mexico; next, Croatia, Greece and Hungary ([localization.md](https://github.com/CBFerrum/Ferrum/blob/main/docs/plan/localization.md)) |
@@ -68,7 +68,7 @@ and CRM build on its engine.
 | 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.0` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | `0.2.1` | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
-| 💰 | **Finance** | `0.1.1` | budgets, bank reconciliation, period closing, dunning, subscriptions and payment terms |
+| 💰 | **Finance** | `0.2.0` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | `0.1.1` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
@@ -290,7 +290,7 @@ and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in erp eu de eu_members gb ca us countries finance procurement stock_ops mfg_ops; do
+for db in erp eu de eu_members gb ca us countries finance finance_books procurement stock_ops mfg_ops; do
   createdb -O ferrum ferrum_${db}_test
 done
 cargo test --workspace
@@ -333,6 +333,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.5.0, Finance 0.2.0** | The accountant's screens, each with its rules in the server. A bank reconciliation workbench (statement lines beside what the books have, the bank's balance after each, exact matches paired so none is used twice and accepted with one key, the difference always in view, a statement checked before it is imported). Payment allocation: a party's payments, credit notes and journal credits applied to their open invoices in one document, with the exchange gain or loss of each pairing. Comparative profit and loss and balance sheet (up to three earlier periods, by cost centre or project), a cash flow statement that must end where the bank does, and a general ledger that opens a group as every account below it, so a figure opens the entries behind it. Exchange revaluation at a period's end, reversed the day after. A finance overview of what needs attention today. |
 | **Portugal 0.1.0** | Portugal in `ferrum-eu-members`: invoices from certified software. Each takes the next number of a series communicated to the AT and its ATCUD, is signed (RSA) over its date, number, total and the series' previous signature, so each series forms a hash chain, and carries the QR code (Portaria 195/2020); NIFs checked; the small business exemption (article 53) and the construction reverse charge. The software producer's key and certificate number are set on the server (`FERRUM_PT_SIGNING_KEY`, `FERRUM_PT_CERTIFICATE`, `FERRUM_PT_KEY_VERSION`); without them, submitting is refused. |
 | **Romania 0.1.1** | The connection to ANAF's e-Factura in `ferrum-eu-members`: OAuth sign-in with the company's qualified certificate, its tokens stored encrypted and refreshed; queued CIUS-RO invoices uploaded (test or production), and ANAF asked after each until it accepts it (the signed invoice's download ID recorded) or rejects it (with its errors). With the connection Off, invoices wait for ANAF's answer to be recorded by hand. |
 | **Malaysia 0.1.1** | Malaysia's e-invoices through LHDN's MyInvois in `ferrum-countries`: a submitted invoice or credit note as UBL 2.1 JSON with the supplier's TIN, BRN, SST number and MSIC code, submitted with its SHA-256 and followed until LHDN validates it, its UUID, long ID and validation link recorded; cancelled at LHDN within 72 hours, corrected by a credit note after; the general public's and foreign buyers' TINs. With AvaTax or HMRC set to Off, the US and UK add-ons never reach the service, even with the test address override. |

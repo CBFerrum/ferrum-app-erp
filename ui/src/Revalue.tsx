@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, todayIso } from "@ferrum/client";
 import { Alert, Button, confirmDialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
-import { LinkInput, LinkTitle, useMe } from "@ferrum/records";
+import { can, LinkInput, LinkTitle, useMe, useMetaIndex } from "@ferrum/records";
 import { cmp } from "./decimal";
 import { show } from "./money";
 import { bodyOf, defaultDay, type Draft, outcome, party } from "./revaluation";
@@ -20,6 +20,8 @@ export function Revalue() {
   useShellTitle("Revalue foreign currency balances");
   const navigate = useNavigate();
   const me = useMe().data;
+  const perms = useMetaIndex().data?.entities.find((e) => e.name === "ExchangeRevaluation")?.permissions;
+  const mayPost = can(perms, "create") && can(perms, "submit");
   const [sp, setSp] = useSearchParams();
   const company = sp.get("company") ?? me?.default_company ?? null;
   const date = sp.get("date") ?? defaultDay(todayIso());
@@ -188,9 +190,13 @@ export function Revalue() {
       {table}
       <div className="erp-sticky-foot">
         <span className="muted" aria-live="polite">
-          {d && d.rows.length > 0 ? `${d.rows.length} ${d.rows.length === 1 ? "balance" : "balances"}. The gain is unrealised: the real difference is booked when a balance is settled.` : ""}
+          {!mayPost
+            ? "You can look at what a revaluation would do. An Accounts Manager posts it."
+            : d && d.rows.length > 0
+              ? `${d.rows.length} ${d.rows.length === 1 ? "balance" : "balances"}. The gain is unrealised: the real difference is booked when a balance is settled.`
+              : ""}
         </span>
-        <Button variant="primary" loading={busy} disabled={!d || d.rows.length === 0} onClick={() => void post()}>
+        <Button variant="primary" loading={busy} disabled={!mayPost || !d || d.rows.length === 0} onClick={() => void post()}>
           Post the revaluation
         </Button>
       </div>

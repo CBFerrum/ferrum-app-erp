@@ -298,7 +298,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
   );
 }
 
-function PaymentTab({ line, busy, onMake }: { line: Line; busy: boolean; onMake: (body: { party: string; allocate_invoices: boolean }) => void }) {
+function PaymentTab({ line, precision, busy, onMake }: { line: Line; precision: number; busy: boolean; onMake: (body: { party: string; allocate_invoices: boolean }) => void }) {
   const deposit = isDeposit(line);
   const [party, setParty] = useState<string | null>(null);
   const [settle, setSettle] = useState(false);
@@ -309,7 +309,7 @@ function PaymentTab({ line, busy, onMake }: { line: Line; busy: boolean; onMake:
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        Makes {deposit ? "a payment received from a customer" : "a payment made to a supplier"} for the {fmt(line.unallocated, 2)} still to reconcile, and matches it with this line.
+        Makes {deposit ? "a payment received from a customer" : "a payment made to a supplier"} for the {fmt(line.unallocated, precision)} still to reconcile, and matches it with this line.
       </p>
       <Field label={deposit ? "Customer" : "Supplier"} htmlFor="bk-party" required>
         <LinkInput to={deposit ? "Customer" : "Supplier"} id="bk-party" value={party} required onChange={setParty} />
@@ -328,7 +328,7 @@ function PaymentTab({ line, busy, onMake }: { line: Line; busy: boolean; onMake:
   );
 }
 
-function JournalTab({ line, busy, onMake }: { line: Line; busy: boolean; onMake: (body: { account: string; cost_center: string | null; project: string | null; remark: string | null }) => void }) {
+function JournalTab({ line, precision, busy, onMake }: { line: Line; precision: number; busy: boolean; onMake: (body: { account: string; cost_center: string | null; project: string | null; remark: string | null }) => void }) {
   const [account, setAccount] = useState<string | null>(null);
   const [costCenter, setCostCenter] = useState<string | null>(null);
   const [project, setProject] = useState<string | null>(null);
@@ -340,7 +340,7 @@ function JournalTab({ line, busy, onMake }: { line: Line; busy: boolean; onMake:
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        Books the {fmt(line.unallocated, 2)} between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.
+        Books the {fmt(line.unallocated, precision)} between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.
       </p>
       <Field label="Other account" htmlFor="bk-account" required hint="The bank's own account is not offered.">
         <LinkInput to="Account" id="bk-account" value={account} required linkFilters={{ is_group: false }} onChange={setAccount} />
@@ -433,9 +433,9 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
             {mode === "match" ? (
               <MatchTab wb={wb} line={line} books={wb.books} busy={busy} onReconcile={(body) => void act.reconcile(line, body)} />
             ) : mode === "payment" ? (
-              <PaymentTab line={line} busy={busy} onMake={(body) => void act.make(line, "make_payment_entry", body, "payment")} />
+              <PaymentTab line={line} precision={wb.precision} busy={busy} onMake={(body) => void act.make(line, "make_payment_entry", body, "payment")} />
             ) : (
-              <JournalTab line={line} busy={busy} onMake={(body) => void act.make(line, "make_journal_entry", body, "journal entry")} />
+              <JournalTab line={line} precision={wb.precision} busy={busy} onMake={(body) => void act.make(line, "make_journal_entry", body, "journal entry")} />
             )}
           </TabPanel>
           {line.allocations.length > 0 && (
