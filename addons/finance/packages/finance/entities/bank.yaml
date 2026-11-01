@@ -24,6 +24,10 @@
   unique: [[company, account_name]]
   actions:
     - {name: import_transactions, label: Import Bank Statement (CSV), permission: write}
+    # The reconciliation screen's two calls. The first only reads; the second reconciles lines through
+    # their own Reconcile action, so the caller needs the rights on the lines, not on the account.
+    - {name: workbench, label: Reconciliation Workbench, permission: read, read_only: true, hidden: true}
+    - {name: accept_matches, label: Accept Matches, permission: read, hidden: true}
   list: {columns: [account_name, bank, masked_number, account, is_default], sort: account_name asc}
 
 - name: BankTransactionPayment
