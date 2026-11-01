@@ -97,8 +97,15 @@ impl EventSink for Events {
             let Some(run) = run else { return Ok(()) };
             match runs::record(k, &ctx, &mut tx, run, &step).await {
                 Ok(_) => tx.commit().await?,
-                // What the record refuses now stays in the fact, for a person: a retry cannot help.
-                Err(Error::Invalid(_)) => {}
+                // What the record refuses now stays in the fact, and the run says so: a retry cannot help.
+                Err(e @ (Error::Invalid(_) | Error::Validation(_))) => {
+                    drop(tx);
+                    let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+                    let mut note = Doc::new();
+                    note.insert("note".into(), json!(format!("A report from the site could not be applied: {e}")));
+                    k.set_values_tx(&ctx, &mut tx, "ProductionRun", run, note).await?;
+                    tx.commit().await?;
+                }
                 Err(e) => return Err(e),
             }
             return Ok(());

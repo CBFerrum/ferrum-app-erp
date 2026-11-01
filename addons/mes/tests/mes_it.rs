@@ -406,6 +406,20 @@ async fn scenario() {
     tx.commit().await.unwrap();
     while k.dispatch_outbox_once().await.unwrap() > 0 {}
     assert_eq!(t.get("ProductionRun", r2).await["status"], json!("Running"), "a console knows a run by the reference on its job sheet");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    outbox::enqueue(
+        &mut tx,
+        tenant,
+        "ops.fact.mes.event",
+        None,
+        None,
+        json!({"actor": "pia", "body": {"reference": reference, "event_id": Uuid::now_v7(), "kind": "report", "good": 9000}}),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+    assert!(t.get("ProductionRun", r2).await["note"].as_str().unwrap().contains("could not be applied"), "what a run cannot take, it says");
 
     // ───── a controller that refuses: a person sees it ─────
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
