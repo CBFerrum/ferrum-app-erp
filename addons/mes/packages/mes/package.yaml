@@ -1,0 +1,34 @@
+package: mes
+version: 0.1.0
+label: Manufacturing Execution
+description: Approved revisions, release gates, execution events, lot genealogy and OEE
+depends: [manufacturing, mfg_ops, quality, ops]
+field_prefix: mes_
+
+modules:
+  - name: mes
+    label: Shop Floor
+    icon: factory
+    order: 47
+    items: [ProductionRun, ProductionRevision, OperatorQualification, DowntimeReason]
+
+overlays:
+  - entity: Workstation
+    ops:
+      - {op: add_field, column: true, field: {name: mes_device, type: link, to: Device, label: Equipment, description: "The device that stands for this machine: its lifecycle says whether it can run, and its states feed OEE"}}
+
+roles:
+  - name: Production Operator
+    description: Starts, pauses and reports the runs they are on.
+    permissions:
+      - {entity: ProductionRun, read: true}
+      - {entity: ProductionRevision, read: true}
+      - {entity: OperatorQualification, read: true}
+      - {entity: DowntimeReason, read: true}
+  - name: Production Supervisor
+    description: Plans and releases runs, approves revisions and records who is qualified.
+    permissions:
+      - {entity: ProductionRun, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: ProductionRevision, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: OperatorQualification, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: DowntimeReason, read: true, write: true, create: true, delete: true, import: true}
