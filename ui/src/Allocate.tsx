@@ -402,7 +402,7 @@ export function Allocate() {
   );
   const q = useQuery({
     queryKey: [...ROOT, "open", partyType, party, company],
-    enabled: !!party,
+    enabled: !!party && !!company,
     queryFn: ({ signal }) =>
       api.get<Report>(`/api/reports/${partyType === "Customer" ? "receivables" : "payables"}`, { company, [partyType.toLowerCase()]: party, as_of: todayIso() }, signal),
   });
@@ -419,8 +419,14 @@ export function Allocate() {
         <p className="muted">Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.</p>
       </EmptyState>
     );
+  } else if (!company) {
+    body = (
+      <EmptyState title="Choose a company" icon="home">
+        <p className="muted">What is open is kept for one company at a time.</p>
+      </EmptyState>
+    );
   } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load what is open" />;
-  else if (!q.data || !company) body = <PageLoading label="Loading what is open" />;
+  else if (!q.data) body = <PageLoading label="Loading what is open" />;
   else body = <Body key={`${partyType}-${party}`} items={items} company={company} partyType={partyType} party={party} onApplied={refresh} />;
 
   return (
