@@ -1,0 +1,49 @@
+- name: CountLine
+  label: Count Line
+  kind: child
+  fields:
+    - {name: bin, type: link, to: StorageBin, required: true, in_list: true}
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: lot, type: data, in_list: true}
+    - {name: serial, type: data}
+    - {name: owner, type: link, to: Customer}
+    - {name: expected_qty, type: decimal, read_only: true, in_list: true, perm_group: count_review}
+    - {name: counted_qty, type: decimal, min: "0", in_list: true}
+    - {name: recount_qty, type: decimal, min: "0", in_list: true}
+    - {name: variance, type: decimal, read_only: true, in_list: true, perm_group: count_review}
+
+- name: CycleCount
+  label: Cycle Count
+  label_plural: Cycle Counts
+  kind: master
+  module: wms
+  title_field: reference
+  description: Counts freeze their bins. A difference needs a recount and someone other than the counter to approve it.
+  fields:
+    - {name: reference, type: data, read_only: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: zone, type: link, to: StorageZone, description: "Every bin of this zone"}
+    - {name: blind, type: check, default: true, in_list: true, description: "Counters do not see what the system expects"}
+    - {name: status, type: select, options: [Draft, Counting, Review, Applied, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: lines, type: table, of: CountLine}
+    - {name: counted_by, type: data, read_only: true, no_copy: true}
+    - {name: approved_by, type: data, read_only: true, no_copy: true}
+    - {name: reason, type: data, description: "Why stock is being adjusted, for the books"}
+  list: {columns: [reference, warehouse, zone, blind, status], sort: reference desc}
+
+- name: StorageContract
+  label: Storage Contract
+  label_plural: Storage Contracts
+  kind: master
+  module: wms
+  title_field: customer
+  description: What a customer pays for holding their stock.
+  fields:
+    - {name: customer, type: link, to: Customer, required: true, unique: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company"}
+    - {name: service_item, type: link, to: Item, required: true, description: "The line on the invoice"}
+    - {name: rate_per_bin_day, type: currency, required: true, min: "0", in_list: true, label: Rate per Bin per Day}
+    - {name: rate_per_unit_moved, type: currency, default: 0, min: "0", in_list: true, label: Rate per Unit Handled}
+    - {name: active, type: check, default: true}
+  list: {columns: [customer, rate_per_bin_day, rate_per_unit_moved, active], sort: customer asc}

@@ -1,0 +1,81 @@
+- name: ProductionParameter
+  label: Process Parameter
+  kind: child
+  fields:
+    - {name: parameter, type: data, required: true, in_list: true}
+    - {name: target, type: decimal, in_list: true}
+    - {name: min_value, type: decimal, in_list: true}
+    - {name: max_value, type: decimal, in_list: true}
+    - {name: unit, type: data, in_list: true}
+
+- name: ProductionRevision
+  label: Production Revision
+  label_plural: Production Revisions
+  kind: master
+  module: mes
+  title_field: revision
+  description: How an item is made, as approved. Used revisions never change, so the record of a batch always says what was really applied.
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true, in_filter: true}
+    - {name: revision, type: data, required: true, in_list: true}
+    - {name: bom, type: link, to: Bom, required: true, in_list: true}
+    - {name: job_number, type: int, min: 0, max: 65535, in_list: true, label: Controller Job Number, description: "The program already in the controller. Ferrum sends this reference, never the program"}
+    - {name: ideal_cycle_secs, type: decimal, min: "0", label: Ideal Cycle (Seconds), description: "One unit at full speed. OEE's performance is measured against this"}
+    - {name: instructions, type: markdown}
+    - {name: parameters, type: table, of: ProductionParameter}
+    - {name: status, type: select, options: [Draft, Approved, Superseded], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: approved_by, type: data, read_only: true, no_copy: true}
+    - {name: approved_at, type: datetime, read_only: true, no_copy: true}
+  unique: [[item, revision]]
+  list: {columns: [item, revision, bom, status], sort: revision desc}
+
+- name: OperatorQualification
+  label: Operator Qualification
+  label_plural: Operator Qualifications
+  kind: master
+  module: mes
+  title_field: user_email
+  fields:
+    - {name: user_email, type: email, required: true, in_list: true}
+    - {name: operation, type: link, to: Operation, required: true, in_list: true, in_filter: true}
+    - {name: valid_until, type: date, required: true, in_list: true}
+    - {name: evidence, type: data, description: "The training or assessment behind it"}
+  unique: [[user_email, operation]]
+  list: {columns: [user_email, operation, valid_until], sort: valid_until asc}
+
+- name: DowntimeReason
+  label: Downtime Reason
+  label_plural: Downtime Reasons
+  kind: master
+  module: mes
+  title_field: reason
+  fields:
+    - {name: reason, type: data, required: true, unique: true, in_list: true}
+    - {name: category, type: select, options: [Breakdown, Changeover, Material, Quality, Planned, Other], default: Other, in_list: true, in_filter: true}
+    - {name: planned, type: check, in_list: true, description: "Planned stops are not lost time in OEE"}
+  list: {columns: [reason, category, planned], sort: reason asc}
+
+- name: ProductionRun
+  label: Production Run
+  label_plural: Production Runs
+  kind: document
+  module: mes
+  description: One piece of a work order on one workstation, from release to its last count.
+  numbering: {template: "RUN-{FY}-{seq:5}"}
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: work_order, type: link, to: WorkOrder, required: true, in_list: true, in_filter: true}
+    - {name: revision, type: link, to: ProductionRevision, required: true, in_list: true}
+    - {name: operation, type: link, to: Operation, required: true, in_list: true}
+    - {name: workstation, type: link, to: Workstation, required: true, in_list: true, in_filter: true}
+    - {name: operator_email, type: email, required: true, in_list: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: status, type: select, options: [Planned, Released, Running, Paused, Completed, Cancelled], default: Planned, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: good_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: scrap_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: rework_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: started_at, type: datetime, read_only: true, no_copy: true}
+    - {name: finished_at, type: datetime, read_only: true, no_copy: true}
+    - {name: command, type: data, read_only: true, no_copy: true, label: Ledger Command}
+    - {name: note, type: text, read_only: true, no_copy: true}
+  list: {columns: [number, workstation, qty, good_qty, status], sort: number desc}

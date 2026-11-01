@@ -1,0 +1,84 @@
+- name: ManagedWarehouse
+  label: Managed Warehouse
+  label_plural: Managed Warehouses
+  kind: master
+  module: wms
+  title_field: name_of_warehouse
+  description: A warehouse this app runs down to the bin. From the moment it is managed, its positions always add up to ERP's stock.
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, unique: true, link_filters: {is_group: false}, in_list: true}
+    - {name: name_of_warehouse, type: data, fetch_from: warehouse.warehouse_name, read_only: true, in_list: true, label: Warehouse Name}
+    - {name: site, type: link, to: Site, in_list: true, description: "Where it is, for its gateway and its devices"}
+    - {name: inbound_bin, type: link, to: StorageBin, label: Inbound Bin, description: "Where stock lands when ERP receives it"}
+    - {name: outbound_bin, type: link, to: StorageBin, label: Outbound Bin, description: "Where picked stock waits. ERP can issue only what is here"}
+    - {name: quarantine_bin, type: link, to: StorageBin, label: Quarantine Bin}
+    - {name: production_bin, type: link, to: StorageBin, label: Production Bin, description: "Where material waits for the line. Production takes from here, and releasing a run brings what it needs"}
+    - {name: allocation_rule, type: select, options: [FEFO, FIFO], default: FEFO, in_list: true, description: "First to expire, or first received, goes out first"}
+    - {name: over_receipt_percent, type: percent, default: 0, min: "0", max: "100", label: Over-Receipt Allowed, description: "More than this above what was expected needs a manager"}
+    - {name: person_station, type: link, to: Device, label: Station for People, description: "When set, tasks for people go through the site runtime and keep working offline"}
+    - {name: status, type: select, options: [Draft, Managed], default: Draft, read_only: true, no_copy: true, in_list: true}
+  actions:
+    - {name: start_managing, label: Start Managing, permission: write, condition: "doc.status == 'Draft'"}
+  list: {columns: [warehouse, site, allocation_rule, status], sort: name_of_warehouse asc}
+
+- name: StorageZone
+  label: Storage Zone
+  label_plural: Storage Zones
+  kind: master
+  module: wms
+  title_field: zone_code
+  search_fields: [zone_code]
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: zone_code, type: data, required: true, in_list: true, max_length: 40}
+    - {name: kind, type: select, options: [Receiving, Storage, Picking, Packing, Shipping, Quarantine, Returns, Production], default: Storage, in_list: true, in_filter: true}
+    - {name: temperature_class, type: select, options: [Ambient, Chilled, Frozen], default: Ambient, in_list: true}
+    - {name: available, type: check, default: true, in_list: true, in_filter: true, description: "Off while it cannot be used: an AS/RS down, an aisle blocked. Nothing is released into it"}
+    - {name: unavailable_reason, type: data, visible_if: "!doc.available"}
+    - {name: area, type: link, to: SiteArea, label: Site Area}
+  unique: [[warehouse, zone_code]]
+  list: {columns: [zone_code, warehouse, kind, available], sort: zone_code asc}
+
+- name: StorageBin
+  label: Storage Bin
+  label_plural: Storage Bins
+  kind: master
+  module: wms
+  title_field: bin_code
+  search_fields: [bin_code]
+  description: A place stock can be. Its code is what people and scanners see.
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: zone, type: link, to: StorageZone, required: true, in_list: true, in_filter: true}
+    - {name: bin_code, type: data, required: true, in_list: true, max_length: 40, description: "As on its label"}
+    - {name: kind, type: select, options: [Shelf, Pallet, Floor, Dock, Staging, Station], default: Shelf, in_list: true}
+    - {name: pick_sequence, type: int, default: 0, description: "Picking walks bins in this order"}
+    - {name: max_weight_kg, type: decimal, min: "0", label: Weight Limit (kg)}
+    - {name: max_volume_l, type: decimal, min: "0", label: Volume Limit (litres)}
+    - {name: max_units, type: decimal, min: "0", label: Unit Limit}
+    - {name: mixed_items, type: check, default: true, description: "Off: one item at a time"}
+    - {name: hazard_classes, type: data, label: Hazard Classes Allowed, description: "Comma separated. Empty means none"}
+    - {name: status, type: select, options: [Open, Blocked], default: Open, in_list: true, in_filter: true}
+    - {name: blocked_reason, type: data, visible_if: "doc.status == 'Blocked'"}
+    - {name: frozen_by, type: link, to: CycleCount, read_only: true, no_copy: true, label: Being Counted By}
+  unique: [[warehouse, bin_code]]
+  list: {columns: [bin_code, zone, kind, status], sort: pick_sequence asc}
+
+- name: ReplenishmentRule
+  label: Replenishment Rule
+  label_plural: Replenishment Rules
+  kind: master
+  module: wms
+  title_field: item
+  description: Keeps a pick bin stocked from reserve.
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: pick_bin, type: link, to: StorageBin, required: true, in_list: true}
+    - {name: min_qty, type: decimal, required: true, min: "0", in_list: true, description: "Below this a replenishment is opened"}
+    - {name: max_qty, type: decimal, required: true, min: "0", in_list: true, description: "It fills up to this"}
+    - {name: active, type: check, default: true, in_filter: true}
+  unique: [[item, pick_bin]]
+  rules:
+    - {name: max_above_min, check: "doc.max_qty >= doc.min_qty", message: "The most to hold is below the least"}
+  list: {columns: [item, pick_bin, min_qty, max_qty, active], sort: item asc}

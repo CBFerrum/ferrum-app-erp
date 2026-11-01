@@ -1,0 +1,36 @@
+- name: InboundItem
+  label: Inbound Item
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: expected_qty, type: decimal, required: true, min: "0", in_list: true}
+    - {name: lot, type: data, in_list: true}
+    - {name: expiry, type: date}
+    - {name: rate, type: currency, min: "0", description: "Incoming unit cost, for ERP"}
+    - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: damaged_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: purchase_order, type: link, to: PurchaseOrder}
+    - {name: po_line, type: data}
+
+- name: InboundShipment
+  label: Inbound Shipment
+  label_plural: Inbound Shipments
+  kind: document
+  module: wms
+  title_field: reference
+  company_scoped: true
+  description: What is expected at the dock, and what arrived.
+  numbering: {template: "ASN-{FY}-{seq:5}", date_field: expected_on}
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: supplier, type: link, to: Supplier, in_list: true, in_filter: true, description: "Empty for a customer's goods: see Owner"}
+    - {name: owner, type: link, to: Customer, in_list: true, in_filter: true, description: "A customer's stock, held for them. It stays off this company's books"}
+    - {name: reference, type: data, in_list: true, description: "The sender's advice note"}
+    - {name: expected_on, type: date, required: true, default_expr: today, in_list: true}
+    - {name: items, type: table, of: InboundItem, required: true}
+    - {name: status, type: select, options: [Expected, Receiving, Received, Discrepancy], default: Expected, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true, no_copy: true}
+    - {name: notes, type: text}
+  list: {columns: [number, supplier, warehouse, expected_on, status], sort: expected_on desc}

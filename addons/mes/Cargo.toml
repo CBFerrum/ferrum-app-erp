@@ -1,0 +1,31 @@
+[package]
+name = "ferrum-mes"
+description = "Manufacturing execution on ERP's work orders: approved revisions, release gates, execution events, lot genealogy and OEE"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+ferrum-kernel = { workspace = true }
+ferrum-meta = { workspace = true }
+ferrum-domain = { workspace = true }
+ferrum-ops = { workspace = true }
+ferrum-app-erp = { path = "../.." }
+ferrum-quality = { path = "../quality" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast"] }
+ferrum-mfg-ops = { path = "../mfg-ops" }
+ferrum-stock-ops = { path = "../stock-ops" }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

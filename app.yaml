@@ -41,6 +41,7 @@ contributes:
     - {id: procurement, package: procurement, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: stock_ops, package: stock_ops, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: mfg_ops, package: mfg_ops, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
+    - {id: quality, package: quality, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: project_records, package: project_records, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
   # The workspace's portal: a customer's own invoices at /portal/invoices/ (the selling package's
   # endpoints), where /open of an invoice takes portal people.
