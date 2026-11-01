@@ -1,0 +1,34 @@
+- name: ExchangeRevaluationRow
+  label: Revalued Balance
+  kind: child
+  fields:
+    - {name: account, type: link, to: Account, read_only: true, in_list: true}
+    - {name: party_type, type: select, options: [Customer, Supplier], read_only: true}
+    - {name: customer, type: link, to: Customer, read_only: true, in_list: true}
+    - {name: supplier, type: link, to: Supplier, read_only: true, in_list: true}
+    - {name: currency, type: link, to: Currency, read_only: true, in_list: true}
+    - {name: balance, type: decimal, read_only: true, label: Balance in Its Currency, description: "Debit positive, credit negative"}
+    - {name: book_value, type: currency, read_only: true, label: In the Books}
+    - {name: exchange_rate, type: decimal, read_only: true, label: Rate}
+    - {name: revalued, type: currency, read_only: true, label: Revalued}
+    - {name: gain_loss, type: currency, read_only: true, in_list: true, label: Gain (Loss)}
+
+- name: ExchangeRevaluation
+  label: Exchange Revaluation
+  module: finance
+  kind: document
+  submittable: true
+  company_scoped: true
+  numbering: {template: "ERV-{FY}-{seq:5}", gapless: true, on: submit, date_field: posting_date}
+  description: Carries the foreign currency balances (bank, receivables, payables) at the rate of a day, the difference to exchange gain/loss, reversed on the day after.
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true, label: Revalue At, description: "The day whose rates the balances are carried at: usually a period's last day"}
+    - {name: gain_loss_account, type: link, to: Account, link_filters: {is_group: false}, label: Exchange Gain/Loss Account, description: "The company's exchange gain/loss account when empty"}
+    - {name: auto_reverse, type: check, default: true, label: Reverse Afterwards, description: "The difference is not realised: it is taken out again on the reversal day, and the real difference is booked when the balance is settled"}
+    - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", description: "The day after, when empty"}
+    - {name: rows, type: table, of: ExchangeRevaluationRow, read_only: true, label: Balances to Revalue}
+    - {name: total_gain_loss, type: currency, read_only: true, in_list: true, label: Net Gain (Loss)}
+    - {name: reversed_on, type: date, read_only: true, no_copy: true, in_list: true}
+    - {name: remarks, type: text}
+  list: {columns: [number, posting_date, total_gain_loss, reversed_on], sort: posting_date desc}

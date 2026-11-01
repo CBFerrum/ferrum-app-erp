@@ -186,8 +186,8 @@ mod tests {
 
     #[test]
     fn each_side_rounds_on_its_own() {
-        // 33.33 at 92.5 is 3083.025, which rounds up to 3083.03; at 90.1 it is 3002.997, which is 3003.00:
-        // the invoice side is 80.03 above, so a customer lost 80.03.
-        assert_eq!(difference(n("92.5"), n("90.1"), n("33.33"), 2, true), (n("3083.03"), n("3003.00"), n("-80.03")));
+        // 33.33 at 92.5 is 3083.025, which rounds up to 3083.03; at 90.1 it is 3003.033, which is 3003.03. The
+        // difference of the two rounded values is 80.00 (the unrounded 79.992 would have said 79.99).
+        assert_eq!(difference(n("92.5"), n("90.1"), n("33.33"), 2, true), (n("3083.03"), n("3003.03"), n("-80.00")));
     }
 }

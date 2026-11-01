@@ -219,6 +219,25 @@ struct LineRow {
 /// Appends reversing entries for every not-yet-reversed entry of a source document. The
 /// reversal is dated like the original unless that period is closed (then it is dated `fallback`).
 pub async fn reverse(tx: &mut Tx, ctx: &Ctx, source_entity: &str, source_id: Uuid, fallback: NaiveDate, precision: u32) -> Result<usize> {
+    reversed(tx, ctx, source_entity, source_id, Err(fallback), precision).await
+}
+
+/// The same, with every reversal dated `on`: for a reversal that has a day of its own, such as an
+/// accrual's, the day after. The database refuses it when that day's period is closed.
+pub async fn reverse_on(tx: &mut Tx, ctx: &Ctx, source_entity: &str, source_id: Uuid, on: NaiveDate, precision: u32) -> Result<usize> {
+    reversed(tx, ctx, source_entity, source_id, Ok(on), precision).await
+}
+
+/// `when`: `Ok(day)` dates every reversal that day; `Err(fallback)` dates it like its original, or
+/// `fallback` when the original's period is closed.
+async fn reversed(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    source_entity: &str,
+    source_id: Uuid,
+    when: std::result::Result<NaiveDate, NaiveDate>,
+    precision: u32,
+) -> Result<usize> {
     let entries: Vec<(Uuid, Uuid, NaiveDate, Option<String>)> = sqlx::query_as(
         "select e.id, e.company_id, e.posting_date, e.source_number from journal_entry e \
          where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 and e.reversal_of is null \
@@ -239,7 +258,16 @@ pub async fn reverse(tx: &mut Tx, ctx: &Ctx, source_entity: &str, source_id: Uui
         .bind(date)
         .fetch_all(&mut **tx)
         .await?;
-        let on = if period_open(tx, ctx.tenant, *company, *date).await? { *date } else { fallback };
+        let on = match when {
+            Ok(day) => day,
+            Err(fallback) => {
+                if period_open(tx, ctx.tenant, *company, *date).await? {
+                    *date
+                } else {
+                    fallback
+                }
+            }
+        };
         let reversed: Vec<Line> = lines
             .into_iter()
             .map(|l| Line {
