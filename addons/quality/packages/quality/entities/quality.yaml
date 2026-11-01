@@ -1,0 +1,83 @@
+- name: QualityHold
+  label: Quality Hold
+  label_plural: Quality Holds
+  kind: master
+  module: quality
+  title_field: reason
+  description: Suspect stock stops here. While a hold is active nothing ships or consumes what it covers, wherever the document comes from.
+  fields:
+    - {name: item, type: link, to: Item, required: true, locked: true, in_list: true, in_filter: true}
+    - {name: lot, type: data, locked: true, in_list: true, description: "Empty holds every lot of the item"}
+    - {name: reason, type: data, required: true, in_list: true}
+    - {name: status, type: select, options: [Active, Released, Disposed], default: Active, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: nonconformance, type: link, to: Nonconformance}
+    - {name: rework_order, type: data, label: Approved Rework Order, description: "The one work order that may consume this stock while it is held"}
+    - {name: placed_by, type: data, read_only: true, no_copy: true}
+    - {name: released_by, type: data, read_only: true, no_copy: true}
+    - {name: released_at, type: datetime, read_only: true, no_copy: true}
+    - {name: release_note, type: text, read_only: true, no_copy: true}
+  list: {columns: [item, lot, reason, status], sort: reason asc}
+
+- name: Nonconformance
+  label: Nonconformance
+  label_plural: Nonconformances
+  kind: master
+  module: quality
+  title_field: title
+  fields:
+    - {name: title, type: data, required: true, in_list: true}
+    - {name: source, type: select, options: [Receiving, Production, Customer, Audit, Inspection], default: Production, in_list: true, in_filter: true}
+    - {name: severity, type: select, options: [Minor, Major, Critical], default: Minor, in_list: true, in_filter: true}
+    - {name: item, type: link, to: Item, in_list: true}
+    - {name: lot, type: data}
+    - {name: qty, type: decimal, min: "0"}
+    - {name: description, type: text}
+    - {name: status, type: select, options: [Open, Contained, Dispositioned, Closed], default: Open, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: disposition, type: select, options: [Undecided, Use As Is, Rework, Scrap, Return to Supplier], default: Undecided, read_only: true, no_copy: true, in_list: true}
+    - {name: disposition_note, type: text, read_only: true, no_copy: true}
+    - {name: decided_by, type: data, read_only: true, no_copy: true}
+  list: {columns: [title, severity, source, status, disposition], sort: title asc}
+
+- name: CapaAction
+  label: Corrective Action
+  kind: child
+  fields:
+    - {name: action, type: data, required: true, in_list: true}
+    - {name: owner_email, type: email, in_list: true}
+    - {name: due_on, type: date, in_list: true}
+    - {name: done_on, type: date, in_list: true}
+
+- name: Capa
+  label: Corrective Action
+  label_plural: Corrective Actions
+  kind: master
+  module: quality
+  title_field: title
+  description: Why it happened and what stops it happening again. It closes only when someone other than its owner has seen it work.
+  fields:
+    - {name: title, type: data, required: true, in_list: true}
+    - {name: nonconformance, type: link, to: Nonconformance, in_list: true}
+    - {name: root_cause, type: text}
+    - {name: actions, type: table, of: CapaAction}
+    - {name: status, type: select, options: [Open, Implemented, Verified], default: Open, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: effectiveness_note, type: text, read_only: true, no_copy: true}
+    - {name: owner_email, type: email, in_list: true}
+    - {name: verified_by, type: data, read_only: true, no_copy: true}
+  list: {columns: [title, nonconformance, status], sort: title asc}
+
+- name: InspectionPlan
+  label: Inspection Plan
+  label_plural: Inspection Plans
+  kind: master
+  module: quality
+  title_field: revision
+  description: What is checked for an item, in which revision. Approved plans do not change. A new revision takes over.
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true, in_filter: true}
+    - {name: revision, type: data, required: true, in_list: true}
+    - {name: template, type: link, to: QualityInspectionTemplate, required: true, in_list: true}
+    - {name: sample_size, type: int, default: 1, min: 1, in_list: true}
+    - {name: status, type: select, options: [Draft, Approved, Superseded], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: approved_by, type: data, read_only: true, no_copy: true}
+  unique: [[item, revision]]
+  list: {columns: [item, revision, sample_size, status], sort: revision desc}

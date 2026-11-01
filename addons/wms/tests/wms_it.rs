@@ -145,6 +145,7 @@ async fn scenario() {
     packages.extend(ferrum_app_erp::packages().expect("ERP"));
     packages.extend(ferrum_stock_ops::packages().expect("stock ops"));
     packages.extend(ferrum_ops::packages().expect("ops"));
+    packages.extend(ferrum_quality::packages().expect("quality"));
     packages.extend(ferrum_wms::packages().expect("wms"));
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
@@ -152,6 +153,7 @@ async fn scenario() {
     ferrum_app_erp::register(&mut hooks);
     ferrum_stock_ops::register(&mut hooks);
     ferrum_ops::register(&mut hooks);
+    ferrum_quality::register(&mut hooks);
     ferrum_wms::register(&mut hooks);
     let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
@@ -422,9 +424,28 @@ async fn scenario() {
     t.reconciled().await;
     let _ = gw;
 
+    // ───── a quality hold takes stock out of reach, everywhere, and its release gives it back ─────
+    let quality = t.person("qa@dock.test", &["Quality Manager"]).await;
+    let held_before = t.qty_in("P-01", "MILK").await;
+    assert!(held_before > Decimal::ZERO);
+    let hold = uid(&k.insert(&t.admin, "QualityHold", obj(json!({"item": milk, "lot": "M-1", "reason": "Cold chain broken"}))).await.expect("hold"));
+    assert!(t.bin("P-01", "MILK").await.iter().filter(|p| p.0 == "Hold").map(|p| p.1).sum::<Decimal>() > Decimal::ZERO, "it changes status where it stands");
+    let suspect = t.insert("SalesOrder", json!({"company": company, "customer": customer, "delivery_date": Utc::now().date_naive().to_string(), "set_warehouse": wh, "items": [{"item": milk, "qty": 1, "rate": 9}]})).await;
+    k.submit(&t.admin, "SalesOrder", uid(&suspect), None).await.unwrap();
+    let wave3 = uid(&t.insert("PickWave", json!({"company": company, "warehouse": wh, "orders": [{"sales_order": uid(&suspect)}]})).await);
+    let blocked = k.run_action(&manager, "PickWave", wave3, "release", json!({})).await.expect("released");
+    assert_eq!(dec(&blocked["shortfall"][0]["allocated"]), Decimal::ZERO, "nothing held can be promised: {blocked}");
+    let site_ep = k.hooks.site("quality").unwrap().clone();
+    let req = SiteRequest { tenant, user: Some(quality.clone()), method: "POST".into(), path: format!("/holds/{hold}/release"), query: Map::new(), headers: Map::new(), body: json!({"note": "Logger shows 2-6 C throughout"}).to_string().into_bytes(), client_ip: "::1".into() };
+    site_ep.handle(&k, req).await.expect("released");
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+    assert_eq!(t.bin("P-01", "MILK").await.iter().filter(|p| p.0 == "Hold").count(), 0, "released, it is available again");
+    assert_eq!(t.qty_in("P-01", "MILK").await, held_before, "all of it");
+    t.reconciled().await;
+
     // ───── a count: frozen, blind, twice, and someone else approves ─────
     let spare = uid(&t.insert("StorageZone", json!({"warehouse": wh, "zone_code": "CNT", "kind": "Storage"})).await);
-    let c1 = bin("C-01", spare, json!({})).await;
+    bin("C-01", spare, json!({})).await;
     t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": 30, "reason": "walked it"})).await.expect("placed");
     let count = uid(&t.insert("CycleCount", json!({"reference": "CC-1", "company": company, "warehouse": wh, "zone": spare, "blind": true, "reason": "Annual count"})).await);
     let lines = t.api_as(&operator, "POST", &format!("/counts/{count}/start"), Value::Null).await.expect("started");

@@ -1,0 +1,17 @@
+id: quality
+name: Quality
+version: 0.1.0
+publisher: cbferrum
+summary: Holds that stop stock from moving, nonconformance and disposition, corrective action, versioned inspection plans
+description: README.md
+categories: [manufacturing, inventory]
+license: AGPL-3.0-only
+runtime: native
+platform: ">=0.3.2, <0.4"
+requires: {erp: ">=0.1", stock-ops: ">=0.1"}
+parent: erp
+packages: [quality]
+uninstall: ask
+contributes:
+  shell.open:
+    - {id: quality, package: quality, path: "data/quality/e/{entity}/{id}", list: "data/quality/e/{entity}"}

@@ -14,6 +14,7 @@
 
 pub mod billing;
 pub mod counts;
+pub mod holds;
 pub mod inbound;
 pub mod position;
 pub mod posting;
@@ -49,7 +50,7 @@ pub fn register(h: &mut HookRegistry) {
     for entity in posting::STOCK_DOCUMENTS {
         h.register(entity, Arc::new(posting::MirrorHook(entity)));
     }
-    h.register("ManagedWarehouse", Arc::new(ManagedHook)).register("PickWave", Arc::new(waves::WaveHook));
+    h.register("ManagedWarehouse", Arc::new(ManagedHook)).register("PickWave", Arc::new(waves::WaveHook)).register("QualityHold", Arc::new(holds::HoldHook));
     h.add_event_sink(Arc::new(CommandEvents));
     h.add_site("wms", Arc::new(site::WmsSite));
 }
@@ -87,6 +88,9 @@ struct CommandEvents;
 #[async_trait]
 impl EventSink for CommandEvents {
     async fn on_event(&self, k: &Kernel, ev: &Event) -> Result<()> {
+        if ev.topic == "quality.hold.released" {
+            return holds::released(k, ev).await;
+        }
         if !ev.topic.starts_with("ops.command.") {
             return Ok(());
         }

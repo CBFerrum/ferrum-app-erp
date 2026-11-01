@@ -245,6 +245,9 @@ pub async fn confirm(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, c: &Confirm) 
         return Err(Error::invalid("a robot has this: wait for it to arrive, or cancel it first"));
     }
     let source = t.source()?;
+    if t.kind == "Pick" && ferrum_quality::hold_on(tx, ctx.tenant, t.item, &source.lot).await?.is_some() {
+        return Err(Error::invalid("this stock went on quality hold after it was promised: leave it where it is"));
+    }
     let from = slotting::bin(tx, ctx.tenant, source.bin).await?;
     if let Some(scan) = c.from_scan.as_deref().filter(|_| !arrived)
         && scan != from.bin_code
