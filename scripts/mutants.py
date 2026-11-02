@@ -46,7 +46,7 @@ MUTANTS = [
     ("wms-rejected-after-taken-sticks", TASKS, '(State::Failed | State::Aborted | State::OutcomeUnknown | State::Rejected, "Released" | "Moving" | "Arrived")', '(State::Failed | State::Aborted | State::OutcomeUnknown, "Released" | "Moving" | "Arrived")', WMS),
     ("wms-platform-finishes-a-stations-task", TASKS, "    if t.command.is_some() && !arrived {", "    if t.robot.is_some() && !arrived {", WMS),
     ("wms-held-stock-reaches-the-line", TASKS, '(t.kind == "Pick" || t.production_run.is_some()) && ferrum_quality', 't.kind == "Pick" && ferrum_quality', LINE),
-    ("wms-line-stock-claimed-twice", WAVES, "let claim = wanted.min((there - claimed).max(Decimal::ZERO));", "let claim = wanted.min(there.max(Decimal::ZERO));", LINE),
+    ("wms-line-stock-claimed-twice", WAVES, "let free = wanted.min((there - claimed).max(Decimal::ZERO));", "let free = wanted.min(there.max(Decimal::ZERO));", LINE),
     ("wms-ready-while-on-its-way", WAVES, "        if have < need {\n            missing = true;\n            continue;\n        }\n", "", LINE),
     ("wms-hold-tells-no-run", "addons/wms/src/holds.rs", "    crate::waves::recheck_supply(tx, ctx, item).await\n", "    Ok(())\n", WMS),
     ("wms-lifted-hold-tells-no-run", "addons/wms/src/holds.rs", "    if let Some(item) = held_item {\n", "    if let Some(item) = held_item.filter(|_| false) {\n", LINE),
