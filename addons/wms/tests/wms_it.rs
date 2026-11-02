@@ -790,6 +790,41 @@ async fn scenario() {
     assert_eq!(t.on_books(part).await, n("6"));
     t.reconciled().await;
 
+    // ───── what a run is told as things change at the line ─────
+    let told = async |topic: &str, about: Uuid| -> i64 {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        let c = sqlx::query_scalar("select count(*) from outbox where tenant_id = $1 and topic = $2 and record_id = $3")
+            .bind(tenant)
+            .bind(topic)
+            .bind(about)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        c
+    };
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ferrum_wms::waves::close_supply(&mut tx, tenant, run).await.unwrap();
+    let next_run = Uuid::now_v7();
+    ferrum_wms::waves::supply(&k, &t.admin, &mut tx, next_run, &[json!({"item": part, "warehouse": wh, "qty": 3})]).await.expect("supplied");
+    tx.commit().await.unwrap();
+    assert_eq!(told("wms.supply.ready", next_run).await, 1, "the last run let go of it, so what stands at the line is this one's");
+    let quality_hold = uid(&t.insert("QualityHold", json!({"item": part, "reason": "Rust found on one"})).await);
+    assert_eq!(told("wms.supply.short", next_run).await, 1, "a hold takes it, and the run hears at once");
+    let release_hold = SiteRequest {
+        tenant,
+        user: Some(t.person("qa2@dock.test", &["Quality Manager"]).await),
+        method: "POST".into(),
+        path: format!("/holds/{quality_hold}/release"),
+        query: Map::new(),
+        headers: Map::new(),
+        body: json!({"note": "It wiped off"}).to_string().into_bytes(),
+        client_ip: "::1".into(),
+    };
+    k.hooks.site("quality").unwrap().clone().handle(&k, release_hold).await.expect("lifted");
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+    assert_eq!(told("wms.supply.ready", next_run).await, 2, "and hears again when it is lifted");
+
     // ───── a lot can be followed, for a recall ─────
     let q = obj(json!({"item": milk, "lot": "M-1"}));
     let moves = t.call(&t.admin, "GET", "/trace", q, Value::Null).await.unwrap()["moves"].as_array().unwrap().len();

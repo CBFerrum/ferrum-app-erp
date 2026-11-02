@@ -238,8 +238,8 @@ async fn scenario() {
         .insert(
             "StockEntry",
             json!({"company": company, "purpose": "Material Receipt", "items": [
-        {"item": steel, "qty": 20, "basic_rate": 10, "target_warehouse": wh, "batch_no": "S-1"},
-        {"item": steel, "qty": 20, "basic_rate": 12, "target_warehouse": wh, "batch_no": "S-2"}]}),
+        {"item": steel, "qty": 30, "basic_rate": 10, "target_warehouse": wh, "batch_no": "S-1"},
+        {"item": steel, "qty": 30, "basic_rate": 12, "target_warehouse": wh, "batch_no": "S-2"}]}),
         )
         .await;
     k.submit(&t.admin, "StockEntry", uid(&opening), None).await.expect("opening");
@@ -247,7 +247,7 @@ async fn scenario() {
         t.wms(
             &t.admin,
             "/positions/move",
-            json!({"warehouse": wh, "item": steel, "lot": lot, "from_bin": "DOCK", "to_bin": "A-01", "qty": 20, "reason": "shelved"}),
+            json!({"warehouse": wh, "item": steel, "lot": lot, "from_bin": "DOCK", "to_bin": "A-01", "qty": 30, "reason": "shelved"}),
         )
         .await
         .expect("shelved");
@@ -296,9 +296,9 @@ async fn scenario() {
     assert_eq!(t.commands_of(first).await, 0, "the warehouse's consumer is late, and nothing depends on it being quick");
     assert_eq!(t.line_tasks(first).await.len(), 0);
 
-    // Two runs after the same stock: 40 exist, 12 are taken, 28 are left for the second.
-    let greedy = run(15).await;
-    assert!(release(greedy).await.is_err_and(|e| text(&e).contains("STEEL: 28 of 30")), "the second cannot have what the first set aside");
+    // Two runs after the same stock: 60 exist, 12 are taken, 48 are left for the second.
+    let greedy = run(25).await;
+    assert!(release(greedy).await.is_err_and(|e| text(&e).contains("STEEL: 48 of 50")), "the second cannot have what the first set aside");
     let second = run(14).await;
     release(second).await.expect("what is left");
 
@@ -309,7 +309,7 @@ async fn scenario() {
     assert!(!moves.is_empty(), "the warehouse opened moves to the line");
 
     // ───── a lot goes on hold on its way: the run does not start ─────
-    let hold = uid(&t.insert("QualityHold", json!({"item": steel, "lot": "S-1", "reason": "Certificate missing"})).await);
+    let hold = uid(&t.insert("QualityHold", json!({"item": steel, "lot": moves[0]["lot"], "reason": "Certificate missing"})).await);
     t.deliver().await;
     assert_eq!(t.run(first).await["material_status"], json!("Short"), "{:?}", t.run(first).await);
     let id = moves[0]["id"].as_str().unwrap().to_string();
@@ -372,12 +372,20 @@ async fn scenario() {
     tx.commit().await.unwrap();
     assert_eq!(t.commands_of(first).await, 1, "the machine ran this already");
 
-    // ───── the second run's material cannot be the first's ─────
+    // ───── what is at the line for one run is not at the line for the next ─────
     t.deliver().await;
     let rest = t.line_tasks(second).await;
     let brought: Decimal = rest.iter().map(|m| dec(&m["qty"])).sum();
-    assert_eq!(brought, n("28"), "the twelve at the line are the first run's, so all 28 come from the shelf");
+    assert_eq!(brought, n("28"));
     assert_eq!(t.commands_of(second).await, 0);
+    let third = run(4).await;
+    release(third).await.expect("released");
+    t.deliver().await;
+    assert_eq!(t.at("LINE", "STEEL").await, n("12"), "twelve stand at the line, and they are the first run's");
+    let own: Decimal = t.line_tasks(third).await.iter().map(|m| dec(&m["qty"])).sum();
+    assert_eq!(own, n("8"), "so this run brings all of its own");
+    assert_eq!(t.run(third).await["material_status"], json!("Reserved"), "and is not told it is ready on stock it cannot have");
+    assert_eq!(t.commands_of(third).await, 0);
 
     // ───── the run happens: material in, good out, posted once, and everything still adds up ─────
     t.mes(&operator, &format!("/runs/{first}/events"), json!({"event_id": Uuid::now_v7(), "kind": "start"})).await.expect("started");
@@ -420,7 +428,7 @@ async fn scenario() {
     let more =
         t.insert("WorkOrder", json!({"company": company, "item": widget, "bom": uid(&bom), "qty": 5, "source_warehouse": wh, "target_warehouse": fg})).await;
     k.submit(&t.admin, "WorkOrder", uid(&more), None).await.expect("work order");
-    let unreleasable = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&more), "revision": revision, "operation": operation, "workstation": station, "operator_email": "op@line.test", "qty": 1})).await);
+    let unreleasable = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&more), "revision": revision, "operation": operation, "workstation": station, "operator_email": "op@line.test", "qty": 7})).await);
     assert!(release(unreleasable).await.is_err_and(|e| text(&e).contains("material is short")), "everything is set aside or gone");
     let _ = (fg, widget);
 }
