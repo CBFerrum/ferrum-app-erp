@@ -769,6 +769,10 @@ async fn scenario() {
     assert_eq!(moves[0]["to_bin"], json!("LINE"));
     assert_eq!(dec(&moves[0]["qty"]), n("10"), "as much as there is");
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    // One task proves little here: the first delivery took all the stock. What it wanted is the proof.
+    let wanted: Decimal =
+        sqlx::query_scalar("select need from wms_supply where tenant_id = $1 and run_id = $2").bind(tenant).bind(run).fetch_one(&mut *tx).await.unwrap();
+    assert_eq!(wanted, n("12"), "and an event that arrives twice is not wanted twice");
     let told: Option<String> =
         sqlx::query_scalar("select payload->>'short' from outbox where tenant_id = $1 and topic = 'wms.supply.short' and record_id = $2")
             .bind(tenant)
