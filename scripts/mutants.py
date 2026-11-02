@@ -80,6 +80,8 @@ MUTANTS = [
     ("wms-run-supplied-twice", WAVES, ".rows_affected()\n        == 0\n    {\n        return Ok(());", ".rows_affected()\n        == 9\n    {\n        return Ok(());", WMS),
     ("wms-short-supply-silent", WAVES, "    if !short.is_empty() {\n", "    if false {\n", WMS),
     ("mes-unapproved-revision-runs", RUNS, 'if s(&rev, "status") != Some("Approved") {', "if false {", MES),
+    ("mes-wrong-lot-sticks", RUNS, "            if *qty < Decimal::ZERO {\n                // A wrong lot", "            if false {\n                // A wrong lot", MES),
+    ("mes-take-back-unbounded", RUNS, "                if -*qty > left {", "                if false {", MES),
     ("mes-unqualified-operator-runs", RUNS, "    if qualified.is_none() {", "    if false {", MES),
     ("mes-short-material-released", RUNS, "    if !missing.is_empty() {", "    if false {", MES),
     ("mes-author-approves", RUNS, 'if s(&doc, "created_by") == Some(ctx.user.to_string().as_str()) && !ctx.is_admin {', "if false {", MES),
