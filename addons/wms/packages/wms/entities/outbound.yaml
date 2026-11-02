@@ -21,6 +21,7 @@
   description: What leaves, verified piece by piece, handed to a carrier. A shipment becomes a delivery note when it goes.
   fields:
     - {name: reference, type: data, read_only: true, in_list: true}
+    - {name: wave, type: link, to: PickWave, read_only: true, no_copy: true}
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
     - {name: customer, type: link, to: Customer, required: true, in_list: true}

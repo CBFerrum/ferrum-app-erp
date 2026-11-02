@@ -148,7 +148,7 @@ async fn gate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Option<(U
     let Some(allowed) = ferrum_ops::devices::operation(tx, ctx.tenant, device, JOB_OPERATION).await? else { return Ok(None) };
     // A start that can be asked for around this gate is not behind it.
     if !allowed.engine_only {
-        return Err(Error::invalid(format!("{JOB_OPERATION} on {code} can be asked for by others: keep it to its app first")));
+        return Err(Error::invalid(format!("{JOB_OPERATION} on {code} can be asked for by others: tick Through Its App Only on the device first")));
     }
     let Some(job) = rev.get("job_number").and_then(Value::as_i64) else { return Ok(None) };
     Ok(Some((device, json!({"job": job, "revision": s(&rev, "revision"), "qty": d(doc, "qty")}))))

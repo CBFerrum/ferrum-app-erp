@@ -1160,6 +1160,88 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     assert_eq!((finished["status"].as_str(), finished["evidence_source"].as_str()), (Some("Done"), Some("Station")));
     k.update(&t.admin, "ManagedWarehouse", uid(&managed), obj(json!({"person_station": Value::Null})), None).await.expect("no station");
     t.reconciled().await;
+
+    // ───── what a lost mission was bringing is still owed ─────
+    let buyer = t.insert("Customer", json!({"customer_name": "Owed Ltd"})).await;
+    let wave_for = async |qty: i64| {
+        let order = t.insert("SalesOrder", json!({"company": company, "customer": buyer["id"], "delivery_date": Utc::now().date_naive().to_string(), "set_warehouse": wh, "items": [{"item": gear, "qty": qty, "rate": 9}]})).await;
+        k.submit(&t.admin, "SalesOrder", uid(&order), None).await.unwrap();
+        let wave = uid(&t.insert("PickWave", json!({"company": company, "warehouse": wh, "orders": [{"sales_order": uid(&order)}]})).await);
+        k.run_action(manager, "PickWave", wave, "release", json!({})).await.expect("released");
+        wave
+    };
+    let open_of = async |wave: Uuid| -> Vec<Uuid> {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        sqlx::query_scalar("select id from e_warehouse_task where tenant_id = $1 and wave = $2 and status = 'Open'")
+            .bind(tenant)
+            .bind(wave)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap()
+    };
+    let shipment_of = async |wave: Uuid| -> Uuid {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        sqlx::query_scalar("select id from e_shipment where tenant_id = $1 and wave = $2").bind(tenant).bind(wave).fetch_one(&mut *tx).await.unwrap()
+    };
+    let lose = async |id: Uuid| {
+        release(Some(amr), id).await.expect("sent");
+        let c = command(id).await;
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+        tx.commit().await.unwrap();
+        t.robot_reports(c, State::Accepted, None).await;
+        t.robot_reports(c, State::OutcomeUnknown, None).await;
+    };
+    let found = async |id: Uuid, bin: &str, qty: i64| {
+        t.api_as(manager, "POST", &format!("/tasks/{id}/recover"), json!({"found_bin": bin, "qty": qty, "note": "Walked the aisle"})).await.expect("found");
+    };
+    let wave = wave_for(5).await;
+    let lost = open_of(wave).await[0];
+    let lot = t.get("WarehouseTask", lost).await["lot"].as_str().unwrap().to_string();
+    let promised = async |bin: &str| t.bin(bin, "GEAR").await.iter().map(|p| p.2).sum::<Decimal>();
+    let shelved = promised("S-01").await;
+    lose(lost).await;
+    found(lost, "S-01", 5).await;
+    assert_eq!(t.get("WarehouseTask", lost).await["status"], json!("Cancelled"), "that mission is over");
+    assert_eq!(t.get("PickWave", wave).await["status"], json!("Released"), "and the order's stock has not reached it");
+    let on = open_of(wave).await;
+    assert_eq!(on.len(), 1, "someone still has to bring it");
+    let next = t.get("WarehouseTask", on[0]).await;
+    assert_eq!((dec(&next["qty"]), next["lot"].as_str(), next["from_bin"].as_str()), (n("5"), Some(lot.as_str()), Some(shelf.to_string().as_str())));
+    assert_eq!(promised("S-01").await, shelved, "promised all along: nobody took it meanwhile");
+    assert!(t.get("PickWave", wave).await["shortfall"].as_array().is_none_or(|s| s.is_empty()), "nothing is missing yet");
+
+    // Found on the way, and not all of it: the rest of the journey starts there, and what is gone is
+    // written down.
+    lose(on[0]).await;
+    found(on[0], "S-02", 4).await;
+    let on2 = open_of(wave).await;
+    assert_eq!(on2.len(), 1);
+    let next = t.get("WarehouseTask", on2[0]).await;
+    assert_eq!((dec(&next["qty"]), next["from_bin"].as_str()), (n("4"), Some(bench.to_string().as_str())));
+    assert_eq!(t.get("WarehouseTask", on[0]).await["status"], json!("Cancelled"), "it never got there, so it is not done");
+    let short = t.get("PickWave", wave).await;
+    assert_eq!((short["status"].as_str(), short["shortfall"].as_array().map(Vec::len)), (Some("Released"), Some(1)));
+    assert_eq!(short["shortfall"][0]["item"], json!("GEAR"));
+    assert_eq!(dec(&short["shortfall"][0]["allocated"]), n("4"));
+
+    // Found where it was going: that is arrival, and the wave is over.
+    lose(on2[0]).await;
+    found(on2[0], "DOOR", 4).await;
+    assert!(open_of(wave).await.is_empty(), "it is there");
+    let arrived = t.get("WarehouseTask", on2[0]).await;
+    assert_eq!((arrived["status"].as_str(), dec(&arrived["done_qty"])), (Some("Done"), n("4")));
+    assert_eq!(t.get("PickWave", wave).await["status"], json!("Picked"));
+    assert_eq!(t.get("Shipment", shipment_of(wave).await).await["status"], json!("Picking"), "what arrived can still go");
+
+    // A pick given up on is written down too, and a shipment nothing reached is over.
+    let gone = wave_for(3).await;
+    let dropped = open_of(gone).await[0];
+    t.api_as(manager, "POST", &format!("/tasks/{dropped}/cancel"), json!({"reason": "Customer called"})).await.expect("cancelled");
+    let over = t.get("PickWave", gone).await;
+    assert_eq!((over["status"].as_str(), over["shortfall"].as_array().map(Vec::len)), (Some("Picked"), Some(1)));
+    assert_eq!(t.get("Shipment", shipment_of(gone).await).await["status"], json!("Cancelled"));
+    t.reconciled().await;
 }
 
 /// A gateway holding `north`, and a robot it can reach.

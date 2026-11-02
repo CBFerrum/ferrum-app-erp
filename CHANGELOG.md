@@ -17,6 +17,11 @@ Warehouse:
 - A refused scan stays on record. The audit was being written in the transaction that was then rolled
   back, here and at packing.
 - A scan used once cannot finish another task, where it used to mark it done with nothing moved.
+- What a lost mission was bringing is still owed. Found on the way, a pick or a line's supply goes on
+  from there as a new task, and found where it was going it has arrived. A pick ended with a wave
+  saying Picked and nothing to do, and a run's material found at the line was not counted. What
+  nobody found, or a person gave up on, is written on the wave's shortfall. A shipment nothing reached
+  closes.
 - Documents can be taken back in a managed warehouse. Cancelling a receipt looked for its stock at the
   line and could not succeed, and neither could cancelling an issue. A receipt now goes back out by the
   inbound bin, if it is still there, and an issue comes back in by it.
