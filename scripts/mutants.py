@@ -48,7 +48,7 @@ MUTANTS = [
     ("wms-held-stock-reaches-the-line", TASKS, '(t.kind == "Pick" || t.production_run.is_some()) && ferrum_quality', 't.kind == "Pick" && ferrum_quality', LINE),
     ("wms-line-stock-claimed-twice", WAVES, "let claim = wanted.min((there - claimed).max(Decimal::ZERO));", "let claim = wanted.min(there.max(Decimal::ZERO));", LINE),
     ("wms-ready-while-on-its-way", WAVES, "        if have < need {\n            missing = true;\n            continue;\n        }\n", "", LINE),
-    ("wms-hold-tells-no-run", "addons/wms/src/holds.rs", "    crate::waves::recheck_supply(tx, ctx, item).await\n", "    Ok(())\n", LINE),
+    ("wms-hold-tells-no-run", "addons/wms/src/holds.rs", "    crate::waves::recheck_supply(tx, ctx, item).await\n", "    Ok(())\n", WMS),
     ("wms-lifted-hold-tells-no-run", "addons/wms/src/holds.rs", "    if let Some(item) = held_item {\n", "    if let Some(item) = held_item.filter(|_| false) {\n", LINE),
     ("wms-finished-run-keeps-the-line", WAVES, "update wms_supply set closed_at = now() where tenant_id = $1 and run_id = $2 and closed_at is null", "update wms_supply set closed_at = null where tenant_id = $1 and run_id = $2 and closed_at is null", LINE),
     ("mes-machine-starts-on-release", RUNS, 'if s(&doc, "material_source") == Some("Preloaded") {\n        audit::record', 'if true {\n        audit::record', MES),
