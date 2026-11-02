@@ -8,7 +8,7 @@ import { api, docPath, formatDateTime, formatDecimal, newKey, refusal } from "@f
 import { Alert, Badge, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { get, post, type Run, rows } from "./data";
-import { remaining, runWords } from "./logic";
+import { materialThere, materialWords, remaining, runWords } from "./logic";
 
 interface EventRow {
   seq: number;
@@ -73,6 +73,9 @@ function Consume({ id, onClose }: { id: string; onClose: () => void }) {
       footer={
         <>
           <Button onClick={onClose}>Back</Button>
+          <Button disabled={!item || !qty} loading={step.isPending} onClick={() => step.mutate({ kind: "consume", item, lot, qty: `-${qty}` }, { onSuccess: onClose })}>
+            Take it back
+          </Button>
           <Button variant="primary" disabled={!item || !qty} loading={step.isPending} onClick={() => step.mutate({ kind: "consume", item, lot, qty }, { onSuccess: onClose })}>
             Record it
           </Button>
@@ -164,6 +167,41 @@ function Complete({ id, short, onClose }: { id: string; short: boolean; onClose:
   );
 }
 
+/** With no warehouse bringing it, a supervisor says it is there. That is on record as what they said,
+ *  and the machine is still started only if everything else holds. */
+function MaterialHere({ id, onClose }: { id: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const box = useId();
+  const [found, setFound] = useState("");
+  const send = useMutation({
+    mutationFn: () => post(`/runs/${id}/materials`, { found }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mes"] });
+      onClose();
+    },
+    onError: (e) => toast(refusal(e), "error"),
+  });
+  return (
+    <Dialog
+      open
+      title="Is the material at the station?"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Back</Button>
+          <Button variant="primary" disabled={!found.trim()} loading={send.isPending} onClick={() => send.mutate()}>
+            It is here
+          </Button>
+        </>
+      }
+    >
+      <Field label="What you checked" htmlFor={`${box}-f`} required>
+        <textarea id={`${box}-f`} className="textarea" rows={2} value={found} onChange={(e) => setFound(e.target.value)} />
+      </Field>
+    </Dialog>
+  );
+}
+
 const EVENT_WORDS: Record<string, string> = { Release: "Released", Start: "Started", Pause: "Stopped", Resume: "Resumed", Consume: "Material in", Report: "Reported", Complete: "Finished", Cancel: "Cancelled" };
 
 export function RunPage() {
@@ -172,11 +210,13 @@ export function RunPage() {
   const events = useQuery({ queryKey: ["mes", "events", id], queryFn: () => get<{ events: EventRow[] }>(`/runs/${id}/events`).then((r) => r.events), refetchInterval: 10_000 });
   const step = useStep(id);
   const [open, setOpen] = useState<"pause" | "consume" | "report" | "complete" | null>(null);
+  const [here, setHere] = useState(false);
   useShellTitle(q.data?._titles?.workstation ?? "Run");
   if (q.isPending) return <PageLoading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const r = q.data;
-  const word = runWords(r.status);
+  const word = runWords(r.status, r.material_status ?? null);
+  const material = r.status === "Released" ? materialWords(r.material_status) : null;
   const left = remaining(r.qty, r.good_qty, r.scrap_qty);
   const live = r.status === "Running" || r.status === "Paused";
   return (
@@ -189,6 +229,7 @@ export function RunPage() {
         <Badge tone={word.tone}>{word.label}</Badge> <span className="faint">{r.number} · {r._titles?.work_order ?? ""}</span>
       </header>
       {r.note ? <Alert tone="warning">{r.note}</Alert> : null}
+      {material ? <Alert tone="info">{material}</Alert> : null}
       <dl className="mes-counts">
         <div>
           <dt>Good</dt>
@@ -208,11 +249,12 @@ export function RunPage() {
         </div>
       </dl>
       <div className="mes-buttons">
-        {r.status === "Released" ? (
+        {r.status === "Released" && materialThere(r.material_status) ? (
           <Button variant="primary" loading={step.isPending} onClick={() => step.mutate({ kind: "start" })}>
             Start
           </Button>
         ) : null}
+        {r.status === "Released" && !materialThere(r.material_status) ? <Button onClick={() => setHere(true)}>The material is here</Button> : null}
         {r.status === "Running" ? <Button onClick={() => setOpen("pause")}>It stopped</Button> : null}
         {r.status === "Paused" ? (
           <Button variant="primary" loading={step.isPending} onClick={() => step.mutate({ kind: "resume" })}>
@@ -246,7 +288,7 @@ export function RunPage() {
           <ol className="mes-story">
             {[...events.data].reverse().map((e) => (
               <li key={e.seq}>
-                <strong>{EVENT_WORDS[e.kind] ?? e.kind}</strong> <span className="faint">{formatDateTime(e.at)}</span>
+                <strong>{Number(e.qty) < 0 ? "Material taken back" : (EVENT_WORDS[e.kind] ?? e.kind)}</strong> <span className="faint">{formatDateTime(e.at)}</span>
                 <div className="muted">{[e.detail?.reason, e.lot, e.qty ? `${formatDecimal(e.qty)}` : null, e.scrap && Number(e.scrap) ? `${formatDecimal(e.scrap)} scrap` : null, e.detail?.note].filter(Boolean).join(" · ")}</div>
               </li>
             ))}
@@ -257,6 +299,7 @@ export function RunPage() {
       {open === "consume" ? <Consume id={id} onClose={() => setOpen(null)} /> : null}
       {open === "report" ? <Report id={id} onClose={() => setOpen(null)} /> : null}
       {open === "complete" ? <Complete id={id} short={left > 0} onClose={() => setOpen(null)} /> : null}
+      {here ? <MaterialHere id={id} onClose={() => setHere(false)} /> : null}
     </div>
   );
 }

@@ -21,6 +21,7 @@ export interface Run {
   operator_email: string;
   qty: string;
   status: string;
+  material_status?: string | null;
   good_qty?: string | null;
   scrap_qty?: string | null;
   rework_qty?: string | null;

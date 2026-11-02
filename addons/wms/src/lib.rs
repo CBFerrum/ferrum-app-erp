@@ -100,6 +100,13 @@ impl EventSink for CommandEvents {
             tx.commit().await?;
             return Ok(());
         }
+        if ev.topic == "mes.run.closed" {
+            let Some(run) = ev.payload["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) else { return Ok(()) };
+            let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+            waves::close_supply(&mut tx, ev.tenant_id, run).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
         if !ev.topic.starts_with("ops.command.") {
             return Ok(());
         }
@@ -113,8 +120,17 @@ impl EventSink for CommandEvents {
         let schema = k.registry.schema(ev.tenant_id).await?;
         let ctx = Ctx::system(ev.tenant_id, schema);
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
-        tasks::on_command(k, &ctx, &mut tx, task, state, command, ev.payload.get("outcome").unwrap_or(&Value::Null)).await?;
-        tx.commit().await?;
+        match tasks::on_command(k, &ctx, &mut tx, task, state, command, ev.payload.get("outcome").unwrap_or(&Value::Null)).await {
+            Ok(()) => tx.commit().await?,
+            // What a task cannot take now it will not take on a retry: a person looks instead.
+            Err(e @ (Error::Invalid(_) | Error::Validation(_))) => {
+                drop(tx);
+                let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+                tasks::stuck(k, &ctx, &mut tx, task, &format!("The report could not be applied: {e}")).await?;
+                tx.commit().await?;
+            }
+            Err(e) => return Err(e),
+        }
         Ok(())
     }
 }

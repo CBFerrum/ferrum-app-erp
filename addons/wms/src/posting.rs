@@ -1,7 +1,8 @@
 //! The contract with ERP. Moves inside a warehouse are positions only. Anything that crosses its
 //! wall goes through an ERP document, whose stock moves this mirrors in the same transaction:
-//! what ERP receives lands at the inbound bin, and what ERP issues must be waiting at the outbound
-//! bin, or for a stock entry at the production bin. So a document posted from anywhere keeps the two in step, or is refused saying why. The
+//! what ERP receives lands at the inbound bin, what ERP issues must be waiting at the outbound bin,
+//! or for a stock entry at the production bin, and a receipt taken back must still be at the inbound
+//! bin. So a document posted from anywhere keeps the two in step, or is refused saying why. The
 //! database checks the sum at every commit, for anything that gets past this.
 
 use crate::position::{self, Cause, Key, Kind};
@@ -49,6 +50,7 @@ struct StockMove {
     qty: Decimal,
     batch_no: Option<String>,
     serial_no: Option<String>,
+    reversal_of: Option<Uuid>,
 }
 
 /// The status stock takes on arrival, by its item.
@@ -74,9 +76,10 @@ async fn expiry_of(tx: &mut Tx, tenant: Uuid, item: Uuid, lot: &str) -> Result<O
 /// Mirrors what ERP just posted for a document. Safe to repeat: each stock move lands once.
 pub async fn mirror(tx: &mut Tx, ctx: &Ctx, entity: &str, doc: Uuid) -> Result<()> {
     let moves: Vec<StockMove> = sqlx::query_as(
-        "select m.id, m.item_id, m.warehouse_id, m.qty, m.batch_no, m.serial_no from stock_move m \
+        "select m.id, m.item_id, m.warehouse_id, m.qty, m.batch_no, m.serial_no, m.reversal_of from stock_move m \
          join e_managed_warehouse w on w.tenant_id = m.tenant_id and w.warehouse = m.warehouse_id and w.status = 'Managed' \
-         where m.tenant_id = $1 and m.source_entity = $2 and m.source_id = $3 order by m.seq",
+         where m.tenant_id = $1 and m.source_entity = $2 and m.source_id = $3 \
+         and not exists (select 1 from wms_move w where w.tenant_id = m.tenant_id and w.operation = 'stock:' || m.id) order by m.seq",
     )
     .bind(ctx.tenant)
     .bind(entity)
@@ -94,52 +97,59 @@ pub async fn mirror(tx: &mut Tx, ctx: &Ctx, entity: &str, doc: Uuid) -> Result<(
             let expiry = expiry_of(tx, ctx.tenant, m.item_id, &lot).await?;
             let key = Key { bin, item: m.item_id, owner: None, lot, serial, unit: None, status };
             position::arrive(tx, ctx, m.warehouse_id, Kind::Receive, &key, m.qty, expiry, &cause).await?;
+        } else if m.reversal_of.is_some() {
+            // A receipt taken back. What came in by the door goes out by it, whatever its status, and
+            // if it has been put away the warehouse has to bring it back first.
+            let inbound = w.inbound_bin.ok_or_else(|| Error::invalid("this warehouse has no inbound bin"))?;
+            issue(tx, ctx, m.warehouse_id, &[inbound], "left at the inbound bin", true, m.item_id, &lot, &serial, -m.qty, &cause).await?;
         } else {
             let outbound = w.outbound_bin.ok_or_else(|| Error::invalid("this warehouse has no outbound bin"))?;
             // Production takes through stock entries, and what it takes waits at the line.
             let line = w.production_bin.filter(|_| entity == "StockEntry");
-            issue(tx, ctx, m.warehouse_id, line, outbound, m.item_id, &lot, &serial, -m.qty, &cause).await?;
+            let place = if line.is_some() { "brought to the line" } else { "picked to the outbound bin" };
+            let bins: Vec<Uuid> = line.into_iter().chain([outbound]).collect();
+            issue(tx, ctx, m.warehouse_id, &bins, place, false, m.item_id, &lot, &serial, -m.qty, &cause).await?;
         }
     }
     Ok(())
 }
 
-/// Issues from the line if there is one, then from the outbound bin, across units: what ERP issues
-/// is an item, and it may sit on several.
+/// Issues from `bins`, in order, across units: what ERP issues is an item, and it may sit on several.
+/// Only available stock goes, unless `any_status` says the status does not matter.
 #[allow(clippy::too_many_arguments)]
 async fn issue(
     tx: &mut Tx,
     ctx: &Ctx,
     warehouse: Uuid,
-    line: Option<Uuid>,
-    outbound: Uuid,
+    bins: &[Uuid],
+    place: &str,
+    any_status: bool,
     item: Uuid,
     lot: &str,
     serial: &str,
     qty: Decimal,
     cause: &Cause,
 ) -> Result<()> {
-    let bins: Vec<Uuid> = line.into_iter().chain([outbound]).collect();
     let rows: Vec<(Uuid, Option<Uuid>, String, Decimal)> = sqlx::query_as(
         "select bin_id, unit_id, status, qty from wms_position where tenant_id = $1 and bin_id = any($2) and item_id = $3 and owner_id is null and lot = $4 and serial = $5 and qty > 0 \
          order by array_position($2, bin_id), unit_id nulls first, status for update",
     )
     .bind(ctx.tenant)
-    .bind(&bins)
+    .bind(bins)
     .bind(item)
     .bind(lot)
     .bind(serial)
     .fetch_all(&mut **tx)
     .await?;
-    let waiting: Decimal = rows.iter().filter(|r| r.2 == "Available").map(|r| r.3).sum();
+    let usable = |status: &str| any_status || status == "Available";
+    let waiting: Decimal = rows.iter().filter(|r| usable(&r.2)).map(|r| r.3).sum();
     if waiting < qty {
         let code: Option<String> =
             sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(item).fetch_optional(&mut **tx).await?;
-        let place = if line.is_some() { "brought to the line" } else { "picked to the outbound bin" };
         return Err(Error::field("items", format!("{}: only {} of {} has been {place}", code.unwrap_or_default(), waiting.normalize(), qty.normalize())));
     }
     let mut left = qty;
-    for (n, (bin, unit, status, have)) in rows.into_iter().filter(|r| r.2 == "Available").enumerate() {
+    for (n, (bin, unit, status, have)) in rows.into_iter().filter(|r| usable(&r.2)).enumerate() {
         if left <= Decimal::ZERO {
             break;
         }

@@ -164,7 +164,20 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
     Ok(json!({"tasks": made, "shortfall": shortfall}))
 }
 
-/// A wave is picked when none of its tasks is still open.
+/// What a pick will not bring is written down with what could not be allocated. It stays on the
+/// order, for another wave.
+pub async fn fell_short(k: &Kernel, ctx: &Ctx, tx: &mut Tx, t: &tasks::Task, lost: Decimal) -> Result<()> {
+    let Some(wave) = t.wave.filter(|_| lost > Decimal::ZERO) else { return Ok(()) };
+    let doc = k.get_tx(&sys(ctx), tx, "PickWave", wave, true).await?;
+    let mut shortfall = doc.get("shortfall").and_then(Value::as_array).cloned().unwrap_or_default();
+    let code = crate::slotting::goods(tx, ctx.tenant, t.item).await?.item_code;
+    shortfall.push(json!({"order": t.sales_order, "item": code, "wanted": t.qty, "allocated": t.qty - lost}));
+    let mut v = Doc::new();
+    v.insert("shortfall".into(), json!(shortfall));
+    k.set_values_tx(&sys(ctx), tx, "PickWave", wave, v).await
+}
+
+/// A wave is picked when none of its tasks is still open. A shipment nothing reached is then over.
 pub async fn progress(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: Uuid) -> Result<()> {
     let open: i64 =
         sqlx::query_scalar("select count(*) from e_warehouse_task where tenant_id = $1 and wave = $2 and status not in ('Done', 'Short', 'Cancelled')")
@@ -176,6 +189,20 @@ pub async fn progress(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: Uuid) -> Result<
         let mut v = Doc::new();
         v.insert("status".into(), json!("Picked"));
         k.set_values_tx(&sys(ctx), tx, "PickWave", wave, v).await?;
+        let empty: Vec<Uuid> = sqlx::query_scalar(
+            "select s.id from e_shipment s where s.tenant_id = $1 and s.wave = $2 and s.status = 'Picking' and not exists ( \
+               select 1 from e_warehouse_task t where t.tenant_id = s.tenant_id and t.wave = s.wave and coalesce(t.done_qty, 0) > 0 and (t.sales_order is null or t.sales_order in ( \
+                 select l.sales_order from e_shipment__items l where l.tenant_id = s.tenant_id and l.parent_id = s.id)))",
+        )
+        .bind(ctx.tenant)
+        .bind(wave)
+        .fetch_all(&mut **tx)
+        .await?;
+        for shipment in empty {
+            let mut v = Doc::new();
+            v.insert("status".into(), json!("Cancelled"));
+            k.set_values_tx(&sys(ctx), tx, "Shipment", shipment, v).await?;
+        }
     }
     Ok(())
 }
@@ -248,9 +275,21 @@ pub async fn replenish(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<u32> {
     Ok(made)
 }
 
-/// Brings what a released run needs to the line, through the same allocation as any pick. What is
-/// already at the line counts. The run's id marks it done, because this arrives at least once. What
-/// cannot be brought goes back to the run: otherwise it would show only when the material ran out.
+/// What is at the line for anyone to use, today: not on hold, and not promised to a task.
+async fn at_line(tx: &mut Tx, tenant: Uuid, line: Uuid, item: Uuid) -> Result<Decimal> {
+    Ok(sqlx::query_scalar("select coalesce(sum(qty - allocated), 0) from wms_position where tenant_id = $1 and bin_id = $2 and item_id = $3 and owner_id is null and status = 'Available'")
+        .bind(tenant)
+        .bind(line)
+        .bind(item)
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
+/// Brings what a released run needs to the line, through the same allocation as any pick. What is at
+/// the line counts only if no other open run has claimed it, because stock standing there is not
+/// promised to anyone. The run's id marks it done, because this arrives at least once. The run hears
+/// how it stands: everything there, on its way, or what cannot be brought, which otherwise would show
+/// only when the material ran out. A material outside a managed line is left for a person to confirm.
 pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[Value]) -> Result<()> {
     if sqlx::query("insert into wms_scan (tenant_id, id) values ($1, $2) on conflict do nothing")
         .bind(ctx.tenant)
@@ -262,18 +301,38 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
     {
         return Ok(());
     }
-    let mut short = Vec::new();
+    let (mut short, mut ours, mut elsewhere) = (Vec::new(), false, false);
     for m in materials.iter().filter_map(Value::as_object) {
         let (Some(item), Some(warehouse)) = (id(m, "item"), id(m, "warehouse")) else { continue };
-        let Some(w) = posting::managed(tx, ctx.tenant, warehouse).await? else { continue };
-        let Some(line) = w.production_bin else { continue };
-        let there: Decimal = sqlx::query_scalar("select coalesce(sum(qty - allocated), 0) from wms_position where tenant_id = $1 and bin_id = $2 and item_id = $3 and owner_id is null and status = 'Available'")
+        let line = posting::managed(tx, ctx.tenant, warehouse).await?;
+        let Some((w, line)) = line.and_then(|w| w.production_bin.map(|bin| (w, bin))) else {
+            // On record with nothing at a line, so that the run is never told this much is there.
+            claim(tx, ctx, run, warehouse, item, d(m, "qty"), Decimal::ZERO).await?;
+            elsewhere = true;
+            continue;
+        };
+        ours = true;
+        // One run at a time at a warehouse's line, or two could each find the same stock free.
+        sqlx::query("select 1 from e_managed_warehouse where tenant_id = $1 and warehouse = $2 for update")
             .bind(ctx.tenant)
-            .bind(line)
-            .bind(item)
-            .fetch_one(&mut **tx)
+            .bind(warehouse)
+            .execute(&mut **tx)
             .await?;
-        let need = d(m, "qty") - there;
+        let there = at_line(tx, ctx.tenant, line, item).await?;
+        // ponytail: a claim shrinks only when its run closes, so while a run consumes, others see less
+        // free than there is and bring more. Leftovers at the line are the cost, not a false start.
+        let claimed: Decimal = sqlx::query_scalar(
+            "select coalesce(sum(at_line), 0) from wms_supply where tenant_id = $1 and warehouse_id = $2 and item_id = $3 and closed_at is null",
+        )
+        .bind(ctx.tenant)
+        .bind(warehouse)
+        .bind(item)
+        .fetch_one(&mut **tx)
+        .await?;
+        let wanted = d(m, "qty");
+        let free = wanted.min((there - claimed).max(Decimal::ZERO));
+        claim(tx, ctx, run, warehouse, item, wanted, free).await?;
+        let need = wanted - free;
         if need <= Decimal::ZERO {
             continue;
         }
@@ -292,6 +351,7 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
                 status: "Available".into(),
                 from_bin: take.bin,
                 to_bin: Some(line),
+                run: Some(run),
                 ..Default::default()
             };
             tasks::create(k, ctx, tx, task).await?;
@@ -302,9 +362,127 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         }
     }
     if !short.is_empty() {
-        ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "wms.supply.short", Some("ProductionRun"), Some(run), json!({"run": run, "short": short.join("; ")}))
-            .await?;
+        return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": short.join("; ")})).await;
     }
+    if !ours {
+        return Ok(());
+    }
+    if elsewhere {
+        return tell(tx, ctx, "wms.supply.reserved", run, json!({"run": run})).await;
+    }
+    supply_progress(tx, ctx, run).await
+}
+
+/// What a run wants of an item, and how much of what stands at the line is that run's.
+async fn claim(tx: &mut Tx, ctx: &Ctx, run: Uuid, warehouse: Uuid, item: Uuid, need: Decimal, at_line: Decimal) -> Result<()> {
+    sqlx::query(
+        "insert into wms_supply (tenant_id, run_id, warehouse_id, item_id, need, at_line) values ($1, $2, $3, $4, $5, $6) \
+         on conflict (tenant_id, run_id, warehouse_id, item_id) do update set need = wms_supply.need + excluded.need, at_line = wms_supply.at_line + excluded.at_line",
+    )
+    .bind(ctx.tenant)
+    .bind(run)
+    .bind(warehouse)
+    .bind(item)
+    .bind(need)
+    .bind(at_line)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn tell(tx: &mut Tx, ctx: &Ctx, topic: &str, run: Uuid, payload: Value) -> Result<()> {
+    ferrum_kernel::outbox::enqueue(tx, ctx.tenant, topic, Some("ProductionRun"), Some(run), payload).await
+}
+
+/// Stock of a run's reached the line.
+pub async fn arrived_at_line(tx: &mut Tx, ctx: &Ctx, run: Uuid, warehouse: Uuid, item: Uuid, qty: Decimal) -> Result<()> {
+    sqlx::query("update wms_supply set at_line = at_line + $5 where tenant_id = $1 and run_id = $2 and warehouse_id = $3 and item_id = $4")
+        .bind(ctx.tenant)
+        .bind(run)
+        .bind(warehouse)
+        .bind(item)
+        .bind(qty)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Tells a run how its material stands: all of it usable at the line, on its way, or something in the
+/// way. Said again whenever that may have changed, and hearing it twice changes nothing.
+pub async fn supply_progress(tx: &mut Tx, ctx: &Ctx, run: Uuid) -> Result<()> {
+    let rows: Vec<(Uuid, Uuid, Decimal, Decimal, Option<Uuid>)> = sqlx::query_as(
+        "select s.warehouse_id, s.item_id, s.need, s.at_line, m.production_bin from wms_supply s \
+         left join e_managed_warehouse m on m.tenant_id = s.tenant_id and m.warehouse = s.warehouse_id where s.tenant_id = $1 and s.run_id = $2 and s.closed_at is null",
+    )
+    .bind(ctx.tenant)
+    .bind(run)
+    .fetch_all(&mut **tx)
+    .await?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let tasks: Vec<(Option<String>, bool)> = sqlx::query_as(
+        "select t.status, exists (select 1 from e_quality_hold h where h.tenant_id = t.tenant_id and h.item = t.item and h.status = 'Active' \
+           and (coalesce(h.lot, '') = '' or h.lot = coalesce(t.lot, ''))) from e_warehouse_task t \
+         where t.tenant_id = $1 and t.production_run = $2 and t.status not in ('Done', 'Short', 'Cancelled')",
+    )
+    .bind(ctx.tenant)
+    .bind(run.to_string())
+    .fetch_all(&mut **tx)
+    .await?;
+    if tasks.iter().any(|(status, _)| status.as_deref() == Some("Exception")) {
+        return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": "stock on its way to the line went missing"})).await;
+    }
+    if tasks.iter().any(|(_, held)| *held) {
+        return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": "stock on its way to the line went on quality hold"})).await;
+    }
+    let (mut missing, mut by_hand, mut unusable) = (false, false, Vec::new());
+    for (_, item, need, have, line) in &rows {
+        // Nothing here brings that one, or can see it arrive: a person says when it is there.
+        let Some(line) = line else {
+            by_hand = true;
+            continue;
+        };
+        if have < need {
+            missing = true;
+            continue;
+        }
+        let usable = at_line(tx, ctx.tenant, *line, *item).await?;
+        if usable < *need {
+            let goods = crate::slotting::goods(tx, ctx.tenant, *item).await?;
+            unusable.push(format!("{}: {} of {} usable at the line", goods.item_code, usable.normalize(), need.normalize()));
+        }
+    }
+    if !unusable.is_empty() {
+        return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": unusable.join("; ")})).await;
+    }
+    match (missing, tasks.is_empty()) {
+        (true, true) => tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": "some of it was not brought to the line"})).await,
+        (false, _) if !by_hand => tell(tx, ctx, "wms.supply.ready", run, json!({"run": run})).await,
+        _ => tell(tx, ctx, "wms.supply.reserved", run, json!({"run": run})).await,
+    }
+}
+
+/// Runs waiting for this item at a line, which a hold or its release may have changed.
+pub async fn recheck_supply(tx: &mut Tx, ctx: &Ctx, item: Uuid) -> Result<()> {
+    let runs: Vec<Uuid> = sqlx::query_scalar("select distinct run_id from wms_supply where tenant_id = $1 and item_id = $2 and closed_at is null")
+        .bind(ctx.tenant)
+        .bind(item)
+        .fetch_all(&mut **tx)
+        .await?;
+    for run in runs {
+        supply_progress(tx, ctx, run).await?;
+    }
+    Ok(())
+}
+
+/// A run ended: what it claimed at the line is free again.
+pub async fn close_supply(tx: &mut Tx, tenant: Uuid, run: Uuid) -> Result<()> {
+    sqlx::query("update wms_supply set closed_at = now() where tenant_id = $1 and run_id = $2 and closed_at is null")
+        .bind(tenant)
+        .bind(run)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 

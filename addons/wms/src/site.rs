@@ -6,8 +6,8 @@
 //! | `GET /overview?warehouse=` | any role here | what needs doing, and what needs a person |
 //! | `GET /bins/{code}?warehouse=` | | what is in a bin |
 //! | `GET /tasks?warehouse=&status=` | | open tasks, most urgent first |
-//! | `POST /tasks/{id}/release` | Manager | `{robot?}` |
-//! | `POST /tasks/{id}/confirm` | Operator | a [`Confirm`] |
+//! | `POST /tasks/{id}/release` | Manager | `{robot?}`: saying it again repeats nothing |
+//! | `POST /tasks/{id}/confirm` | Operator | a [`Confirm`]; `manual` is a manager's |
 //! | `POST /tasks/{id}/cancel`, `/recover` | Manager | |
 //! | `POST /inbound/{id}/scan`, `/unknown`, `/close` | Operator, Manager to close | |
 //! | `POST /shipments/{id}/verify`, `/hand-over` | Operator | |
@@ -17,7 +17,7 @@
 //! | `GET /reconcile?warehouse=`, `GET /trace?item=&lot=` | Manager | |
 //! | `POST /billing` | Manager | `{customer, from, to}` |
 
-use crate::tasks::{self, Confirm, Executor};
+use crate::tasks::{self, Confirm, Executor, Refused};
 use crate::{billing, counts, inbound, position, reconcile, returns, shipping, slotting};
 use async_trait::async_trait;
 use ferrum_kernel::{Ctx, Error, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
@@ -104,7 +104,8 @@ async fn overview(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<Value> {
     }))
 }
 
-async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: &[&str]) -> Result<Value> {
+/// `refused` is a refusal to give after the transaction commits, because what it recorded has to stay.
+async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: &[&str], refused: &mut Option<Refused>) -> Result<Value> {
     match (req.method.as_str(), segments) {
         ("GET", ["overview"]) => {
             may(ctx, READ)?;
@@ -139,13 +140,13 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
         ("POST", ["tasks", id, "release"]) => {
             may(ctx, MANAGE)?;
             let r: Release = body(req)?;
-            tasks::release(k, ctx, tx, uuid(id)?, r.robot.map_or(Executor::Person, Executor::Robot)).await?;
-            Ok(json!({"released": true}))
+            let done = tasks::release(k, ctx, tx, uuid(id)?, r.robot.map_or(Executor::Person, Executor::Robot)).await?;
+            Ok(json!({"released": true, "command": done.command, "repeated": done.repeated}))
         }
         ("POST", ["tasks", id, "confirm"]) => {
             may(ctx, WORK)?;
             let c: Confirm = body(req)?;
-            tasks::confirm(k, ctx, tx, uuid(id)?, &c).await?;
+            *refused = tasks::confirm(k, ctx, tx, uuid(id)?, &c).await?;
             Ok(json!({"done": true}))
         }
         ("POST", ["tasks", id, "cancel"]) => {
@@ -180,7 +181,12 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
         }
         ("POST", ["shipments", id, "verify"]) => {
             may(ctx, WORK)?;
-            shipping::verify(k, ctx, tx, uuid(id)?, &body(req)?).await
+            shipping::verify(k, ctx, tx, uuid(id)?, &body(req)?).await.map(|said| {
+                said.unwrap_or_else(|no| {
+                    *refused = Some(no);
+                    Value::Null
+                })
+            })
         }
         ("POST", ["shipments", id, "hand-over"]) => {
             may(ctx, WORK)?;
@@ -244,8 +250,12 @@ impl Site for WmsSite {
         let path = req.path.trim_matches('/').to_string();
         let segments: Vec<&str> = path.split('/').collect();
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        let answer = route(k, &ctx, &mut tx, &req, &segments).await?;
+        let mut refused = None;
+        let answer = route(k, &ctx, &mut tx, &req, &segments, &mut refused).await?;
         tx.commit().await?;
-        Ok(SiteResponse::json(200, &answer))
+        match refused {
+            Some(no) => Err(no.into()),
+            None => Ok(SiteResponse::json(200, &answer)),
+        }
     }
 }

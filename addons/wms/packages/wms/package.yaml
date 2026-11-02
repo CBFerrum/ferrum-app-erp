@@ -1,5 +1,5 @@
 package: wms
-version: 0.1.0
+version: 0.2.0
 label: Warehouse Management
 description: Bins, handling units, positions by lot and owner, and warehouse execution on ERP's stock
 depends: [inventory, buying, selling, stock_ops, ops, quality]
