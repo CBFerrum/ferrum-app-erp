@@ -1,6 +1,9 @@
 //! A production run. Release is a gate: wrong revision, missing material, equipment out of service
-//! or an unqualified operator each stop it, saying which. After that, what happened is events, and
-//! only reported good quantities post to ERP, through the work order's own manufacture.
+//! or an unqualified operator each stop it, saying which, and it sets the material aside. A machine
+//! is started by a second gate, when the material is at the station, because stock somewhere in a
+//! warehouse is not stock in the machine. A preloaded run says so on its record instead, and whoever
+//! releases it answers for that. After that, what happened is events, and only reported good
+//! quantities post to ERP, through the work order's own manufacture.
 
 use chrono::{DateTime, Utc};
 use ferrum_domain::util::{d, elevated, id, money, rows, s, sys};
@@ -41,8 +44,10 @@ async fn equipment(tx: &mut Tx, tenant: Uuid, workstation: Uuid) -> Result<Optio
     Ok(Some((device, Lifecycle::parse(&lifecycle).unwrap_or(Lifecycle::Quarantined), code)))
 }
 
-/// What is usable of `item` in `warehouse`: the books, less what is on quality hold.
-async fn usable(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid) -> Result<Decimal> {
+/// What is usable of `item` in `warehouse`: the books, less what is on quality hold, less what other
+/// open runs have set aside and not yet used. The balance stays locked to the end of the transaction,
+/// so two releases cannot both take the last of it.
+async fn usable(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid, run: Uuid) -> Result<Decimal> {
     let held_all: i64 =
         sqlx::query_scalar("select count(*) from e_quality_hold where tenant_id = $1 and item = $2 and status = 'Active' and coalesce(lot, '') = ''")
             .bind(tenant)
@@ -52,7 +57,7 @@ async fn usable(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid) -> Resul
     if held_all > 0 {
         return Ok(Decimal::ZERO);
     }
-    let have: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3")
+    let have: Option<Decimal> = sqlx::query_scalar("select qty from stock_balance where tenant_id = $1 and item_id = $2 and warehouse_id = $3 for update")
         .bind(tenant)
         .bind(item)
         .bind(warehouse)
@@ -67,22 +72,55 @@ async fn usable(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid) -> Resul
     .bind(warehouse)
     .fetch_one(&mut **tx)
     .await?;
-    Ok(have.unwrap_or_default() - held)
+    let others: Decimal = sqlx::query_scalar(
+        "select coalesce(sum(greatest(r.qty - coalesce((select sum(g.input_qty) from mes_genealogy g \
+           where g.tenant_id = r.tenant_id and g.run_id = r.run_id and g.input_item = r.item_id), 0), 0)), 0) \
+         from mes_reservation r where r.tenant_id = $1 and r.item_id = $2 and r.warehouse_id = $3 and r.run_id <> $4",
+    )
+    .bind(tenant)
+    .bind(item)
+    .bind(warehouse)
+    .bind(run)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(have.unwrap_or_default() - held - others)
 }
 
-/// The gate. Everything it refuses, it refuses by name, and nothing partly releases.
-pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid) -> Result<Value> {
-    let sctx = sys(ctx);
-    let doc = k.get_tx(&sctx, tx, "ProductionRun", run, true).await?;
-    if status(&doc) != "Planned" {
-        return Err(Error::invalid(format!("this run is {}", status(&doc))));
+/// What is short of what a run needs, by item, in one order, so that two runs lock alike.
+async fn short_of(tx: &mut Tx, tenant: Uuid, run: Uuid, needs: &BTreeMap<(Uuid, Uuid), Decimal>) -> Result<Vec<String>> {
+    let mut missing = Vec::new();
+    for ((item, warehouse), need) in needs {
+        let there = usable(tx, tenant, *item, *warehouse, run).await?;
+        if there < *need {
+            let code: Option<String> =
+                sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2").bind(tenant).bind(item).fetch_optional(&mut **tx).await?;
+            missing.push(format!("{}: {} of {}", code.unwrap_or_default(), there.normalize(), need.normalize()));
+        }
     }
-    let wo_id = id(&doc, "work_order").ok_or_else(|| Error::field("work_order", "is required"))?;
+    Ok(missing)
+}
+
+/// What a run has set aside.
+async fn reserved(tx: &mut Tx, tenant: Uuid, run: Uuid) -> Result<BTreeMap<(Uuid, Uuid), Decimal>> {
+    let rows: Vec<(Uuid, Uuid, Decimal)> = sqlx::query_as("select item_id, warehouse_id, qty from mes_reservation where tenant_id = $1 and run_id = $2")
+        .bind(tenant)
+        .bind(run)
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(rows.into_iter().map(|(item, warehouse, qty)| ((item, warehouse), qty)).collect())
+}
+
+/// What must hold both when a run is released and when its machine is started: all of it may have
+/// changed while the material was on its way, and a start cannot be taken back. Answers the machine,
+/// if the run has one that takes jobs.
+async fn gate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Option<(Uuid, Value)>> {
+    let sctx = sys(ctx);
+    let wo_id = id(doc, "work_order").ok_or_else(|| Error::field("work_order", "is required"))?;
     let wo = k.get_tx(&sctx, tx, "WorkOrder", wo_id, false).await?;
     if d(&wo, "docstatus") != Decimal::ONE || s(&wo, "status") == Some("Stopped") {
         return Err(Error::invalid("the work order is not open"));
     }
-    let rev_id = id(&doc, "revision").ok_or_else(|| Error::field("revision", "is required"))?;
+    let rev_id = id(doc, "revision").ok_or_else(|| Error::field("revision", "is required"))?;
     let rev = k.get_tx(&sctx, tx, "ProductionRevision", rev_id, false).await?;
     if s(&rev, "status") != Some("Approved") {
         return Err(Error::invalid(format!("revision {} is not approved", s(&rev, "revision").unwrap_or_default())));
@@ -90,75 +128,205 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid)
     if id(&rev, "item") != id(&wo, "item") || id(&rev, "bom") != id(&wo, "bom") {
         return Err(Error::invalid("that revision is not how this work order is being made"));
     }
-    let today = ctx.today();
     let qualified: Option<i32> = sqlx::query_scalar(
         "select 1 from e_operator_qualification where tenant_id = $1 and lower(user_email) = lower($2) and operation = $3 and valid_until >= $4",
     )
     .bind(ctx.tenant)
-    .bind(s(&doc, "operator_email"))
-    .bind(id(&doc, "operation"))
-    .bind(today)
+    .bind(s(doc, "operator_email"))
+    .bind(id(doc, "operation"))
+    .bind(ctx.today())
     .fetch_optional(&mut **tx)
     .await?;
     if qualified.is_none() {
-        return Err(Error::invalid(format!("{} is not qualified for this operation", s(&doc, "operator_email").unwrap_or_default())));
+        return Err(Error::invalid(format!("{} is not qualified for this operation", s(doc, "operator_email").unwrap_or_default())));
     }
-    let workstation = id(&doc, "workstation").ok_or_else(|| Error::field("workstation", "is required"))?;
-    let device = equipment(tx, ctx.tenant, workstation).await?;
-    if let Some((_, lifecycle, code)) = &device
-        && !lifecycle.takes_commands()
-    {
+    let workstation = id(doc, "workstation").ok_or_else(|| Error::field("workstation", "is required"))?;
+    let Some((device, lifecycle, code)) = equipment(tx, ctx.tenant, workstation).await? else { return Ok(None) };
+    if !lifecycle.takes_commands() {
         return Err(Error::invalid(format!("{code} is {}: it cannot run", lifecycle.as_str())));
     }
+    let Some(allowed) = ferrum_ops::devices::operation(tx, ctx.tenant, device, JOB_OPERATION).await? else { return Ok(None) };
+    // A start that can be asked for around this gate is not behind it.
+    if !allowed.engine_only {
+        return Err(Error::invalid(format!("{JOB_OPERATION} on {code} can be asked for by others: tick Through Its App Only on the device first")));
+    }
+    let Some(job) = rev.get("job_number").and_then(Value::as_i64) else { return Ok(None) };
+    Ok(Some((device, json!({"job": job, "revision": s(&rev, "revision"), "qty": d(doc, "qty")}))))
+}
+
+/// The gate. Everything it refuses, it refuses by name, and nothing partly releases. What it passes
+/// has its material set aside. A machine starts now only on a run that says it is preloaded: anything
+/// else waits for the material to reach the station.
+pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, event: Uuid) -> Result<Value> {
+    let sctx = sys(ctx);
+    let doc = k.get_tx(&sctx, tx, "ProductionRun", run, true).await?;
+    if status(&doc) != "Planned" {
+        return Err(Error::invalid(format!("this run is {}", status(&doc))));
+    }
+    gate(k, ctx, tx, &doc).await?;
+    let wo = k.get_tx(&sctx, tx, "WorkOrder", id(&doc, "work_order").ok_or_else(|| Error::internal("no order"))?, false).await?;
+    let rev_id = id(&doc, "revision").ok_or_else(|| Error::internal("no revision"))?;
     let bom = k.get_tx(&sctx, tx, "Bom", id(&wo, "bom").ok_or_else(|| Error::internal("no bom"))?, false).await?;
     let per = if d(&bom, "quantity").is_zero() { Decimal::ONE } else { d(&bom, "quantity") };
     let source = id(&wo, "source_warehouse").ok_or_else(|| Error::internal("no source warehouse"))?;
-    let mut missing = Vec::new();
-    let mut materials = Vec::new();
+    let mut needs: BTreeMap<(Uuid, Uuid), Decimal> = BTreeMap::new();
     for line in rows(&bom, "items") {
         let item = id(&line, "item").ok_or_else(|| Error::internal("a line without an item"))?;
-        let need = (d(&line, "qty") / per * d(&doc, "qty")).round_dp(9);
-        let warehouse = id(&line, "source_warehouse").unwrap_or(source);
-        materials.push(json!({"item": item, "warehouse": warehouse, "qty": need}));
-        let there = usable(tx, ctx.tenant, item, warehouse).await?;
-        if there < need {
-            let code: Option<String> = sqlx::query_scalar("select item_code from e_item where tenant_id = $1 and id = $2")
-                .bind(ctx.tenant)
-                .bind(item)
-                .fetch_optional(&mut **tx)
-                .await?;
-            missing.push(format!("{}: {} of {}", code.unwrap_or_default(), there.normalize(), need.normalize()));
-        }
+        *needs.entry((item, id(&line, "source_warehouse").unwrap_or(source))).or_default() += (d(&line, "qty") / per * d(&doc, "qty")).round_dp(9);
     }
+    let missing = short_of(tx, ctx.tenant, run, &needs).await?;
     if !missing.is_empty() {
         return Err(Error::invalid(format!("material is short: {}", missing.join("; "))));
     }
     if !append(tx, ctx, run, event, "Release", Utc::now(), &Line::default(), json!({"revision": rev_id})).await? {
         return Ok(json!({"repeated": true}));
     }
-    // For whoever runs the warehouse: a managed one brings this to the line.
+    for ((item, warehouse), qty) in &needs {
+        sqlx::query("insert into mes_reservation (tenant_id, run_id, item_id, warehouse_id, qty) values ($1, $2, $3, $4, $5)")
+            .bind(ctx.tenant)
+            .bind(run)
+            .bind(item)
+            .bind(warehouse)
+            .bind(qty)
+            .execute(&mut **tx)
+            .await?;
+    }
+    if s(&doc, "material_source") == Some("Preloaded") {
+        audit::record(tx, ctx, "ProductionRun", run, "mes.preloaded", None, json!({"by": ctx.email})).await?;
+        set(k, ctx, tx, run, json!({"status": "Released", "material_status": "Preloaded"})).await?;
+        let command = authorize(k, ctx, tx, run).await?;
+        return Ok(json!({"status": "Released", "material_status": "Preloaded", "command": command}));
+    }
+    // For whoever runs the warehouse: a managed one brings this to the line, and says how it went.
+    let materials: Vec<Value> = needs.iter().map(|((item, warehouse), qty)| json!({"item": item, "warehouse": warehouse, "qty": qty})).collect();
     ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "mes.run.released", Some("ProductionRun"), Some(run), json!({"run": run, "materials": materials})).await?;
-    let mut command = None;
-    if let Some((device, ..)) = device {
-        let takes_jobs = ferrum_ops::devices::operation(tx, ctx.tenant, device, JOB_OPERATION).await?.is_some();
-        if let (true, Some(job)) = (takes_jobs, rev.get("job_number").and_then(Value::as_i64)) {
-            let payload = json!({"job": job, "revision": s(&rev, "revision"), "qty": d(&doc, "qty")});
-            let cmd = NewCommand {
-                target: device,
-                operation: JOB_OPERATION.into(),
-                schema_version: 1,
-                payload,
-                expires_in_secs: 8 * 3600,
-                dedupe_key: Some(format!("{WORKFLOW}{run}:start")),
-                workflow_id: Some(format!("{WORKFLOW}{run}")),
-                issuer: Issuer::Engine,
-                ..Default::default()
-            };
-            command = Some(commands::issue(tx, ctx, cmd).await?.id);
+    set(k, ctx, tx, run, json!({"status": "Released", "material_status": "Waiting"})).await?;
+    Ok(json!({"status": "Released", "material_status": "Waiting", "command": null}))
+}
+
+/// Starts the machine, past the second gate. Every prerequisite is asked again here, with the run
+/// locked, and a start that is still alive is that start: nothing is sent twice.
+async fn authorize(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid) -> Result<Option<Uuid>> {
+    let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;
+    let machine = gate(k, ctx, tx, &doc).await?;
+    let needs = reserved(tx, ctx.tenant, run).await?;
+    let missing = short_of(tx, ctx.tenant, run, &needs).await?;
+    if !missing.is_empty() {
+        return Err(Error::invalid(format!("material is short: {}", missing.join("; "))));
+    }
+    let Some((device, payload)) = machine else { return Ok(None) };
+    let workflow = format!("{WORKFLOW}{run}");
+    let attempt: i64 = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2")
+        .bind(ctx.tenant)
+        .bind(&workflow)
+        .fetch_one(&mut **tx)
+        .await?;
+    let cmd = NewCommand {
+        target: device,
+        operation: JOB_OPERATION.into(),
+        schema_version: 1,
+        payload,
+        expires_in_secs: 8 * 3600,
+        dedupe_key: Some(format!("{workflow}:start:{attempt}")),
+        workflow_id: Some(workflow.clone()),
+        issuer: Issuer::Engine,
+        ..Default::default()
+    };
+    let command = commands::issue_exclusive(tx, ctx, cmd, &workflow).await?.id;
+    set(k, ctx, tx, run, json!({"command": command.to_string()})).await?;
+    Ok(Some(command))
+}
+
+/// The material is at the station. A warehouse says so by delivering it, and with no warehouse a
+/// supervisor does, by [`confirm_materials`].
+pub async fn materials_arrived(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid) -> Result<Option<Uuid>> {
+    let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;
+    if status(&doc) != "Released" || s(&doc, "material_status") == Some("Preloaded") {
+        return Ok(None);
+    }
+    set(k, ctx, tx, run, json!({"material_status": "At Station", "note": Value::Null})).await?;
+    // A start that went already, whatever became of it, is not sent again.
+    match s(&doc, "command").and_then(|c| c.parse().ok()) {
+        Some(command) => Ok(Some(command)),
+        None => authorize(k, ctx, tx, run).await,
+    }
+}
+
+/// A supervisor says the material is at the station. It is on record as what they said, and every
+/// other prerequisite is still asked.
+pub async fn confirm_materials(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, found: &str) -> Result<Value> {
+    if found.trim().is_empty() {
+        return Err(Error::field("found", "say what you checked"));
+    }
+    let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;
+    if status(&doc) != "Released" {
+        return Err(Error::invalid(format!("this run is {}", status(&doc))));
+    }
+    audit::record(tx, ctx, "ProductionRun", run, "mes.materials_confirmed", None, json!({"found": found, "by": ctx.email})).await?;
+    let command = materials_arrived(k, ctx, tx, run).await?;
+    Ok(json!({"material_status": "At Station", "command": command}))
+}
+
+/// A warehouse has it in hand.
+pub async fn materials_reserved(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid) -> Result<()> {
+    let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;
+    if status(&doc) == "Released" && matches!(s(&doc, "material_status"), Some("Waiting" | "Short")) {
+        set(k, ctx, tx, run, json!({"material_status": "Reserved", "note": Value::Null})).await?;
+    }
+    Ok(())
+}
+
+/// The material is not there or cannot be used. A start that has not reached the machine stops here,
+/// and one that has is asked to stop. A run already running keeps going, and is told.
+pub async fn materials_lost(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, why: &str) -> Result<()> {
+    let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;
+    let note = format!("The material is not all there: {why}");
+    if status(&doc) != "Released" || s(&doc, "material_status") == Some("Preloaded") {
+        if matches!(status(&doc), "Released" | "Running" | "Paused") {
+            set(k, ctx, tx, run, json!({"note": note})).await?;
+        }
+        return Ok(());
+    }
+    if let Some(command) = s(&doc, "command").and_then(|c| c.parse::<Uuid>().ok()) {
+        let ended: Option<bool> = sqlx::query_scalar(
+            "select state in ('Refused', 'Expired', 'Rejected', 'Completed', 'Failed', 'Aborted') from op_command where tenant_id = $1 and id = $2",
+        )
+        .bind(ctx.tenant)
+        .bind(command)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if ended == Some(false) {
+            commands::cancel(tx, ctx, command, &note).await?;
         }
     }
-    set(k, ctx, tx, run, json!({"status": "Released", "command": command.map(|c| c.to_string())})).await?;
-    Ok(json!({"status": "Released", "command": command}))
+    set(k, ctx, tx, run, json!({"material_status": "Short", "command": Value::Null, "note": note})).await
+}
+
+/// A hold was placed on `item`. Runs that have not started and can no longer have what they set aside
+/// stop here, whoever runs the warehouse.
+pub async fn hold_placed(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: Uuid) -> Result<()> {
+    let runs: Vec<Uuid> = sqlx::query_scalar(
+        "select distinct r.run_id from mes_reservation r join e_production_run p on p.tenant_id = r.tenant_id and p.id = r.run_id \
+         where r.tenant_id = $1 and r.item_id = $2 and p.status = 'Released'",
+    )
+    .bind(ctx.tenant)
+    .bind(item)
+    .fetch_all(&mut **tx)
+    .await?;
+    for run in runs {
+        let needs = reserved(tx, ctx.tenant, run).await?;
+        let missing = short_of(tx, ctx.tenant, run, &needs).await?;
+        if !missing.is_empty() {
+            materials_lost(k, ctx, tx, run, &format!("a quality hold took {}", missing.join("; "))).await?;
+        }
+    }
+    Ok(())
+}
+
+/// What a run set aside is free again, and a warehouse can stop keeping it at the line.
+async fn close(tx: &mut Tx, ctx: &Ctx, run: Uuid) -> Result<()> {
+    sqlx::query("delete from mes_reservation where tenant_id = $1 and run_id = $2").bind(ctx.tenant).bind(run).execute(&mut **tx).await?;
+    ferrum_kernel::outbox::enqueue(tx, ctx.tenant, "mes.run.closed", Some("ProductionRun"), Some(run), json!({"run": run})).await
 }
 
 #[derive(Debug, Default, Clone)]
@@ -276,6 +444,9 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             if state != "Released" {
                 return Err(wrong("start"));
             }
+            if !matches!(s(&doc, "material_status"), Some("At Station" | "Preloaded")) {
+                return Err(Error::invalid("its material is not at the station yet"));
+            }
             append(tx, ctx, run, e.event_id, "Start", at, &Line::default(), Value::Null).await?;
             set(k, ctx, tx, run, json!({"status": "Running", "started_at": at.to_rfc3339()})).await?;
             equipment_state(tx, ctx.tenant, workstation, at, "Running", None, e.event_id).await?;
@@ -308,7 +479,17 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             if !matches!(state.as_str(), "Running" | "Paused") {
                 return Err(wrong("consume"));
             }
-            consume_check(k, ctx, tx, &doc, *item, lot, *qty).await?;
+            if *qty < Decimal::ZERO {
+                // A wrong lot can only be put right this way: every report goes on trying to post
+                // what was said to go in. What has been posted stays posted.
+                let open = open_consumption(tx, ctx.tenant, run).await?.remove(item).unwrap_or_default();
+                let left: Decimal = open.iter().filter(|o| o.0 == *lot && o.1 == *serial).map(|o| o.2).sum();
+                if -*qty > left {
+                    return Err(Error::field("qty", format!("{} of that has not been used", left.normalize())));
+                }
+            } else {
+                consume_check(k, ctx, tx, &doc, *item, lot, *qty).await?;
+            }
             let line = Line { item: Some(*item), lot: lot.clone(), serial: serial.clone(), qty: Some(*qty), ..Default::default() };
             append(tx, ctx, run, e.event_id, "Consume", at, &line, Value::Null).await?;
         }
@@ -347,6 +528,7 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             append(tx, ctx, run, e.event_id, "Complete", at, &Line::default(), json!({"note": note})).await?;
             set(k, ctx, tx, run, json!({"status": "Completed", "finished_at": at.to_rfc3339(), "note": note})).await?;
             equipment_state(tx, ctx.tenant, workstation, at, "Idle", None, e.event_id).await?;
+            close(tx, ctx, run).await?;
         }
         Step::Cancel { reason } => {
             if !matches!(state.as_str(), "Planned" | "Released") {
@@ -357,6 +539,7 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
                 commands::cancel(tx, ctx, c, reason).await?;
             }
             set(k, ctx, tx, run, json!({"status": "Cancelled", "note": reason})).await?;
+            close(tx, ctx, run).await?;
         }
     }
     Ok(json!({"done": true}))
@@ -576,6 +759,7 @@ pub async fn on_command(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, state: St
         State::Failed => "The controller reports the job failed",
         State::OutcomeUnknown => "Nobody can say what the controller did with this job: look at the machine",
         State::Expired => "The job was not picked up in time",
+        State::Aborted => "The job was stopped before it finished",
         _ => return Ok(()),
     };
     let doc = k.get_tx(&sys(ctx), tx, "ProductionRun", run, true).await?;

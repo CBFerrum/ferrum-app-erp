@@ -34,6 +34,7 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
 /// Registers this app's document hooks and endpoints.
 pub fn register(h: &mut HookRegistry) {
     h.register("ProductionRevision", Arc::new(RevisionHook));
+    h.register("QualityHold", Arc::new(HoldHook));
     h.add_event_sink(Arc::new(Events));
     h.add_site("mes", Arc::new(MesSite));
 }
@@ -68,6 +69,24 @@ impl DocHook for RevisionHook {
             return Err(Error::invalid("an approved revision stays: it says how things were made"));
         }
         Ok(())
+    }
+}
+
+/// A hold can take what a released run set aside, whoever runs the warehouse.
+struct HoldHook;
+
+#[async_trait]
+impl DocHook for HoldHook {
+    fn name(&self) -> &'static str {
+        "mes.hold"
+    }
+
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
+        if old.is_some() {
+            return Ok(());
+        }
+        let item = ferrum_domain::util::id(doc, "item").ok_or_else(|| Error::internal("a hold without an item"))?;
+        runs::hold_placed(hc.kernel, &ferrum_domain::util::sys(hc.ctx), hc.tx, item).await
     }
 }
 
@@ -110,17 +129,30 @@ impl EventSink for Events {
             }
             return Ok(());
         }
-        if ev.topic == "wms.supply.short" {
+        if let Some(what) = ev.topic.strip_prefix("wms.supply.") {
             let Some(run) = ev.payload["run"].as_str().and_then(|r| r.parse::<Uuid>().ok()) else { return Ok(()) };
             let ctx = Ctx::system(ev.tenant_id, schema().await?);
             let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
-            let mut note = Doc::new();
-            note.insert(
-                "note".into(),
-                json!(format!("The warehouse cannot bring all of this to the line: {}", ev.payload["short"].as_str().unwrap_or_default())),
-            );
-            k.set_values_tx(&ctx, &mut tx, "ProductionRun", run, note).await?;
-            tx.commit().await?;
+            let done = match what {
+                "ready" => runs::materials_arrived(k, &ctx, &mut tx, run).await.map(drop),
+                "reserved" => runs::materials_reserved(k, &ctx, &mut tx, run).await,
+                "short" => runs::materials_lost(k, &ctx, &mut tx, run, ev.payload["short"].as_str().unwrap_or_default()).await,
+                _ => Ok(()),
+            };
+            match done {
+                Ok(()) => tx.commit().await?,
+                // The material came and something else stands in the way. The machine stays off, the
+                // run says why, and a retry would change nothing.
+                Err(e @ (Error::Invalid(_) | Error::Validation(_))) => {
+                    drop(tx);
+                    let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+                    let mut note = Doc::new();
+                    note.insert("note".into(), json!(format!("The machine was not started: {e}")));
+                    k.set_values_tx(&ctx, &mut tx, "ProductionRun", run, note).await?;
+                    tx.commit().await?;
+                }
+                Err(e) => return Err(e),
+            }
             return Ok(());
         }
         if !ev.topic.starts_with("ops.command.") {
@@ -158,6 +190,11 @@ async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, req: &SiteRequest, segments: 
             let event =
                 serde_json::from_slice::<Value>(&req.body).ok().and_then(|v| v["event_id"].as_str().and_then(|e| e.parse().ok())).unwrap_or_else(Uuid::now_v7);
             runs::release(k, ctx, tx, uuid(run)?, event).await
+        }
+        ("POST", ["runs", run, "materials"]) => {
+            may(ctx, SUPERVISE)?;
+            let found = serde_json::from_slice::<Value>(&req.body).ok().and_then(|v| v["found"].as_str().map(str::to_string)).unwrap_or_default();
+            runs::confirm_materials(k, ctx, tx, uuid(run)?, &found).await
         }
         ("POST", ["runs", run, "events"]) => {
             may(ctx, READ)?;

@@ -53,6 +53,28 @@ export function byUrgency(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => rank(a) - rank(b));
 }
 
+export interface LoadScan {
+  key: "unit_scan" | "item_scan" | "lot_scan" | "serial_scan";
+  label: string;
+}
+
+/** What has to be scanned on the load, in order. A location says nothing about which tote reached it,
+ *  so the server asks for these too. A unit's label says it all; loose stock says what it is. */
+export function loadScans(load: { unit?: string | null; item?: string | null; lot?: string | null; serial?: string | null }): LoadScan[] {
+  if (load.unit) return [{ key: "unit_scan", label: `Scan the label on ${load.unit}` }];
+  const scans: LoadScan[] = [{ key: "item_scan", label: `Scan the item: ${load.item ?? ""}` }];
+  if (load.lot) scans.push({ key: "lot_scan", label: `Scan the lot: ${load.lot}` });
+  if (load.serial) scans.push({ key: "serial_scan", label: `Scan the serial number: ${load.serial}` });
+  return scans;
+}
+
+/** How a finished task was established, when that is worth saying. */
+export function evidenceWords(source: string | null | undefined): string | null {
+  if (source === "Manual") return "A manager said so: the load was not scanned.";
+  if (source === "Recovery") return "Someone found it and said where. It was not scanned on arrival.";
+  return null;
+}
+
 /** Any scanner may add spaces or a newline, and bins are labelled in capitals. */
 export const cleanScan = (raw: string) => raw.trim();
 

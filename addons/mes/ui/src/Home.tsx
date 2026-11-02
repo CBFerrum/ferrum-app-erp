@@ -24,7 +24,7 @@ const ORDER = ["Paused", "Running", "Released", "Planned"];
 
 function Row({ r }: { r: Run }) {
   const qc = useQueryClient();
-  const word = runWords(r.status);
+  const word = runWords(r.status, r.material_status ?? null);
   const release = useMutation({
     mutationFn: () => post(`/runs/${r.id}/release`),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["mes"] }),

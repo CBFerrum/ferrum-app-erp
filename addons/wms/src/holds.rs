@@ -1,6 +1,7 @@
 //! A quality hold, on the floor. Stock under a hold takes the status `Hold` where it stands, which
 //! allocation will not touch, and what a task had already been promised stays promised but cannot
-//! finish a pick. Releasing puts back exactly what the hold took.
+//! finish a pick or reach the line. Releasing puts back exactly what the hold took. Either one can
+//! change whether a run has its material, so each tells the runs waiting for it.
 
 use crate::position::{self, Cause, Key, Kind};
 use async_trait::async_trait;
@@ -39,7 +40,7 @@ async fn apply(tx: &mut Tx, ctx: &Ctx, hold: Uuid, item: Uuid, lot: &str) -> Res
         let cause = Cause { source: Some(("QualityHold".into(), hold)), reason: Some("Quality hold".into()), ..Default::default() };
         position::transfer(tx, ctx, r.warehouse_id, Kind::Status, &from, &to, r.free, Decimal::ZERO, &cause).await?;
     }
-    Ok(())
+    crate::waves::recheck_supply(tx, ctx, item).await
 }
 
 #[async_trait]
@@ -64,6 +65,8 @@ pub async fn released(k: &Kernel, ev: &Event) -> Result<()> {
     let Some(hold) = ev.record_id else { return Ok(()) };
     let ctx = Ctx::system(ev.tenant_id, k.registry.schema(ev.tenant_id).await?);
     let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
+    let held_item: Option<Uuid> =
+        sqlx::query_scalar("select item from e_quality_hold where tenant_id = $1 and id = $2").bind(ev.tenant_id).bind(hold).fetch_optional(&mut *tx).await?;
     let moves: Vec<(i64, Uuid, Uuid, Uuid, Option<Uuid>, String, String, Option<Uuid>, Decimal)> = sqlx::query_as(
         "select seq, warehouse_id, to_bin, item_id, owner_id, lot, serial, to_unit, qty from wms_move \
          where tenant_id = $1 and source_entity = 'QualityHold' and source_id = $2 and to_status = 'Hold' order by seq",
@@ -99,6 +102,9 @@ pub async fn released(k: &Kernel, ev: &Event) -> Result<()> {
         if qty > Decimal::ZERO {
             position::transfer(&mut tx, &ctx, warehouse, Kind::Status, &from, &to, qty, Decimal::ZERO, &cause).await?;
         }
+    }
+    if let Some(item) = held_item {
+        crate::waves::recheck_supply(&mut tx, &ctx, item).await?;
     }
     tx.commit().await?;
     Ok(())
