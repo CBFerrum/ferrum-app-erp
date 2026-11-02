@@ -62,10 +62,12 @@ pub struct Task {
     pub custody: Option<String>,
     pub after_task: Option<Uuid>,
     pub wave: Option<Uuid>,
+    pub sales_order: Option<Uuid>,
+    pub so_line: Option<String>,
     pub production_run: Option<String>,
 }
 
-const TASK: &str = "select id, warehouse, kind, status, item, qty, done_qty, lot, serial, owner, stock_status, from_bin, to_bin, handling_unit, robot, command, custody, after_task, wave, production_run \
+const TASK: &str = "select id, warehouse, kind, status, item, qty, done_qty, lot, serial, owner, stock_status, from_bin, to_bin, handling_unit, robot, command, custody, after_task, wave, sales_order, so_line, production_run \
     from e_warehouse_task where tenant_id = $1 and id = $2";
 
 impl Task {
@@ -462,6 +464,7 @@ pub async fn confirm(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, c: &Confirm) 
     let lost = qty < t.qty && t.robot.is_some();
     if qty < t.qty && !lost {
         position::release(tx, ctx.tenant, &source, t.qty - qty).await?;
+        crate::waves::fell_short(k, ctx, tx, &t, t.qty - qty).await?;
     }
     let (status, custody) = match (qty < t.qty, lost) {
         (_, true) => ("Exception", "Uncertain"),
@@ -531,6 +534,7 @@ pub async fn cancel(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, reason: &str) 
         "Open" | "Released" if t.command.is_none() => {
             position::release(tx, ctx.tenant, &t.source()?, t.qty).await?;
             set(k, ctx, tx, id, json!({"status": "Cancelled", "reason": reason})).await?;
+            crate::waves::fell_short(k, ctx, tx, &t, t.qty).await?;
             finished(k, ctx, tx, &t).await?;
             Ok("Cancelled".into())
         }
@@ -540,6 +544,7 @@ pub async fn cancel(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, reason: &str) 
             if state == State::Aborted {
                 position::release(tx, ctx.tenant, &t.source()?, t.qty).await?;
                 set(k, ctx, tx, id, json!({"status": "Cancelled", "reason": reason})).await?;
+                crate::waves::fell_short(k, ctx, tx, &t, t.qty).await?;
                 finished(k, ctx, tx, &t).await?;
                 return Ok("Cancelled".into());
             }
@@ -551,7 +556,9 @@ pub async fn cancel(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, reason: &str) 
 
 /// A person found the stock. Where it was found is now where it is; the task ends, and what
 /// nobody could say about its command is settled by the same finding. What already arrived is not
-/// part of what was lost.
+/// part of what was lost. A pick or a line's supply is still owed until it gets where it was going,
+/// so what was found on the way goes on from there, as a new task. Anything else ends where it was
+/// found.
 pub async fn recover(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, found_bin: &str, qty: Decimal, note: &str) -> Result<()> {
     if note.trim().is_empty() {
         return Err(Error::field("note", "say what you found"));
@@ -579,6 +586,9 @@ pub async fn recover(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, found_bin: &s
         }
     }
     let moved = bin.id != source.bin && !qty.is_zero();
+    let run = run_of(&t);
+    let owed = t.wave.is_some() || run.is_some();
+    let arrived = moved && (!owed || t.to_bin == Some(bin.id));
     if let Some(command) = t.command.as_deref().and_then(|c| c.parse().ok()) {
         let unknown: Option<bool> = sqlx::query_scalar("select state = 'OutcomeUnknown' from op_command where tenant_id = $1 and id = $2")
             .bind(ctx.tenant)
@@ -592,7 +602,7 @@ pub async fn recover(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, found_bin: &s
     if let Some(unit) = t.handling_unit {
         place_unit(tx, ctx.tenant, unit, Some(bin.id), "In Place", None).await?;
     }
-    let total = done + if moved { qty } else { Decimal::ZERO };
+    let total = done + if arrived { qty } else { Decimal::ZERO };
     let status = if total == t.qty {
         "Done"
     } else if total > Decimal::ZERO {
@@ -609,6 +619,31 @@ pub async fn recover(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, found_bin: &s
         json!({"status": status, "done_qty": total, "custody": "In Place", "reason": note, "evidence": evidence, "evidence_source": "Recovery"}),
     )
     .await?;
+    if let (Some(run), true) = (run, arrived) {
+        crate::waves::arrived_at_line(tx, ctx, run, t.warehouse, t.item, qty).await?;
+    }
+    if owed && !arrived && !qty.is_zero() {
+        let next = NewTask {
+            warehouse: t.warehouse,
+            kind: if t.kind == "Pick" { "Pick" } else { "Move" },
+            item: t.item,
+            qty,
+            lot: source.lot.clone(),
+            serial: source.serial.clone(),
+            owner: t.owner,
+            unit: t.handling_unit,
+            status: source.status.clone(),
+            from_bin: bin.id,
+            to_bin: t.to_bin,
+            wave: t.wave,
+            sales_order: t.sales_order,
+            so_line: t.so_line.clone(),
+            run,
+            ..Default::default()
+        };
+        create(k, ctx, tx, next).await?;
+    }
+    crate::waves::fell_short(k, ctx, tx, &t, left - qty).await?;
     finished(k, ctx, tx, &t).await
 }
 

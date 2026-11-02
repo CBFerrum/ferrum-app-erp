@@ -164,7 +164,20 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
     Ok(json!({"tasks": made, "shortfall": shortfall}))
 }
 
-/// A wave is picked when none of its tasks is still open.
+/// What a pick will not bring is written down with what could not be allocated. It stays on the
+/// order, for another wave.
+pub async fn fell_short(k: &Kernel, ctx: &Ctx, tx: &mut Tx, t: &tasks::Task, lost: Decimal) -> Result<()> {
+    let Some(wave) = t.wave.filter(|_| lost > Decimal::ZERO) else { return Ok(()) };
+    let doc = k.get_tx(&sys(ctx), tx, "PickWave", wave, true).await?;
+    let mut shortfall = doc.get("shortfall").and_then(Value::as_array).cloned().unwrap_or_default();
+    let code = crate::slotting::goods(tx, ctx.tenant, t.item).await?.item_code;
+    shortfall.push(json!({"order": t.sales_order, "item": code, "wanted": t.qty, "allocated": t.qty - lost}));
+    let mut v = Doc::new();
+    v.insert("shortfall".into(), json!(shortfall));
+    k.set_values_tx(&sys(ctx), tx, "PickWave", wave, v).await
+}
+
+/// A wave is picked when none of its tasks is still open. A shipment nothing reached is then over.
 pub async fn progress(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: Uuid) -> Result<()> {
     let open: i64 =
         sqlx::query_scalar("select count(*) from e_warehouse_task where tenant_id = $1 and wave = $2 and status not in ('Done', 'Short', 'Cancelled')")
@@ -176,6 +189,20 @@ pub async fn progress(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: Uuid) -> Result<
         let mut v = Doc::new();
         v.insert("status".into(), json!("Picked"));
         k.set_values_tx(&sys(ctx), tx, "PickWave", wave, v).await?;
+        let empty: Vec<Uuid> = sqlx::query_scalar(
+            "select s.id from e_shipment s where s.tenant_id = $1 and s.wave = $2 and s.status = 'Picking' and not exists ( \
+               select 1 from e_warehouse_task t where t.tenant_id = s.tenant_id and t.wave = s.wave and coalesce(t.done_qty, 0) > 0 and (t.sales_order is null or t.sales_order in ( \
+                 select l.sales_order from e_shipment__items l where l.tenant_id = s.tenant_id and l.parent_id = s.id)))",
+        )
+        .bind(ctx.tenant)
+        .bind(wave)
+        .fetch_all(&mut **tx)
+        .await?;
+        for shipment in empty {
+            let mut v = Doc::new();
+            v.insert("status".into(), json!("Cancelled"));
+            k.set_values_tx(&sys(ctx), tx, "Shipment", shipment, v).await?;
+        }
     }
     Ok(())
 }

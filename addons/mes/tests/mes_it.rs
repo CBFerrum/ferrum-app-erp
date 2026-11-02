@@ -537,7 +537,7 @@ async fn scenario() {
     let open_station =
         uid(&t.insert("Workstation", json!({"workstation_name": "Press 2", "company": company, "production_capacity": 1, "mes_device": open_press})).await);
     let exposed = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&wo), "revision": rev_b, "operation": operation, "workstation": open_station, "operator_email": "op@plant.test", "qty": 1})).await);
-    assert!(t.release(&supervisor, exposed).await.is_err_and(|e| text(&e).contains("keep it to its app")));
+    assert!(t.release(&supervisor, exposed).await.is_err_and(|e| text(&e).contains("Through Its App Only")));
 
     // ───── a finished run lets go of what it set aside ─────
     t.event(&operator, r3, json!({"kind": "cancel", "reason": "Not needed"})).await.ok();

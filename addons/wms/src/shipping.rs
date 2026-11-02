@@ -24,7 +24,8 @@ pub async fn prepare(k: &Kernel, ctx: &Ctx, tx: &mut Tx, wave: &Doc, order: Uuid
     let number: Option<String> =
         sqlx::query_scalar("select number from e_sales_order where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(order).fetch_one(&mut **tx).await?;
     let reference = format!("{} / {}", s(wave, "number").unwrap_or_default(), number.unwrap_or_default());
-    let doc = json!({"reference": reference, "company": wave.get("company"), "warehouse": warehouse, "customer": customer, "items": items});
+    let doc =
+        json!({"reference": reference, "wave": wave.get("id"), "company": wave.get("company"), "warehouse": warehouse, "customer": customer, "items": items});
     let made = k.insert_tx(&elevated(ctx), tx, "Shipment", doc.as_object().cloned().unwrap_or_default()).await?;
     id(&made, "id").ok_or_else(|| Error::internal("a shipment without an id"))
 }

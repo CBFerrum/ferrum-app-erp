@@ -438,4 +438,44 @@ async fn scenario() {
     let unreleasable = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&more), "revision": revision, "operation": operation, "workstation": station, "operator_email": "op@line.test", "qty": 7})).await);
     assert!(release(unreleasable).await.is_err_and(|e| text(&e).contains("material is short")), "everything is set aside or gone");
     let _ = (fg, widget);
+
+    // ───── a mission lost on its way to the line: the run stops, and gets what is found ─────
+    let lose = async |id: &str| {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        ferrum_wms::tasks::stuck(&k, &storeman, &mut tx, id.parse().unwrap(), "Nobody can say what happened to this mission").await.unwrap();
+        tx.commit().await.unwrap();
+        t.deliver().await;
+    };
+    let found = async |id: &str, bin: &str, qty: Decimal| {
+        t.wms(&storeman, &format!("/tasks/{id}/recover"), json!({"found_bin": bin, "qty": qty, "note": "Walked the aisle"})).await.expect("found");
+        t.deliver().await;
+    };
+    let tasks = t.line_tasks(third).await;
+    let wanted: Decimal = tasks.iter().map(|m| dec(&m["qty"])).sum();
+    let first_id = tasks[0]["id"].as_str().unwrap().to_string();
+    lose(&first_id).await;
+    assert_eq!(t.run(third).await["material_status"], json!("Short"), "nothing starts on stock nobody can find");
+    found(&first_id, tasks[0]["from_bin"].as_str().unwrap(), dec(&tasks[0]["qty"])).await;
+    assert_eq!(t.run(third).await["material_status"], json!("Reserved"), "it never left, and someone will still bring it");
+    let again = t.line_tasks(third).await;
+    assert_eq!(again.iter().map(|m| dec(&m["qty"])).sum::<Decimal>(), wanted, "all of it is on a task again");
+    assert!(again.iter().all(|m| m["id"] != json!(first_id)));
+    assert_eq!(t.commands_of(third).await, 0);
+    // Found at the line itself: that is arrival, and the last of it there starts the machine.
+    let (last, others) = again.split_last().unwrap();
+    for m in others {
+        let id = m["id"].as_str().unwrap();
+        t.wms(&storeman, &format!("/tasks/{id}/release"), json!({})).await.expect("released");
+        t.wms(&storeman, &format!("/tasks/{id}/confirm"), json!({"from_scan": m["from_bin"], "to_scan": "LINE", "item_scan": m["item"], "lot_scan": m["lot"]}))
+            .await
+            .expect("brought");
+    }
+    t.deliver().await;
+    assert_eq!(t.commands_of(third).await, 0, "not all of it yet");
+    lose(last["id"].as_str().unwrap()).await;
+    found(last["id"].as_str().unwrap(), "LINE", dec(&last["qty"])).await;
+    assert_eq!(t.run(third).await["material_status"], json!("At Station"), "found where it was going");
+    assert_eq!(t.commands_of(third).await, 1);
+    assert!(t.line_tasks(third).await.is_empty());
+    t.reconciled().await;
 }
