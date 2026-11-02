@@ -17,6 +17,9 @@ Warehouse:
 - A refused scan stays on record. The audit was being written in the transaction that was then rolled
   back, here and at packing.
 - A scan used once cannot finish another task, where it used to mark it done with nothing moved.
+- Documents can be taken back in a managed warehouse. Cancelling a receipt looked for its stock at the
+  line and could not succeed, and neither could cancelling an issue. A receipt now goes back out by the
+  inbound bin, if it is still there, and an issue comes back in by it.
 - A robot's short load is not a short pick: what did not arrive stays out of reach until someone finds
   it. A mission turned down after it was taken ends in someone looking, not on its way for ever. A
   report a task cannot take no longer retries for ever. A task at a site's station is finished there.

@@ -372,6 +372,13 @@ async fn scenario() {
     tx.commit().await.unwrap();
     assert_eq!(t.commands_of(first).await, 1, "the machine ran this already");
 
+    // A run released before material was tracked has a start and no status: it can still be confirmed.
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    sqlx::query("update e_production_run set material_status = null where id = $1").bind(first).execute(&mut *tx).await.unwrap();
+    ferrum_mes::runs::materials_arrived(&k, &t.admin, &mut tx, first).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(t.run(first).await["material_status"], json!("At Station"));
+
     // ───── what is at the line for one run is not at the line for the next ─────
     t.deliver().await;
     let rest = t.line_tasks(second).await;

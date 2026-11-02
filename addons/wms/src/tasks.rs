@@ -262,24 +262,19 @@ pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, id: Uuid, executor: Exe
         .bind(&workflow)
         .fetch_one(&mut **tx)
         .await?;
-    let issued = commands::issue(
-        tx,
-        ctx,
-        NewCommand {
-            target,
-            operation: operation.into(),
-            schema_version: 1,
-            payload,
-            expires_in_secs: MISSION_SECS,
-            dedupe_key: Some(format!("{workflow}:{attempt}")),
-            exclusive_key: Some(workflow.clone()),
-            workflow_id: Some(workflow),
-            step_id: Some(t.kind.clone()),
-            issuer: Issuer::Engine,
-            ..Default::default()
-        },
-    )
-    .await?;
+    let mission = NewCommand {
+        target,
+        operation: operation.into(),
+        schema_version: 1,
+        payload,
+        expires_in_secs: MISSION_SECS,
+        dedupe_key: Some(format!("{workflow}:{attempt}")),
+        workflow_id: Some(workflow.clone()),
+        step_id: Some(t.kind.clone()),
+        issuer: Issuer::Engine,
+        ..Default::default()
+    };
+    let issued = commands::issue_exclusive(tx, ctx, mission, &workflow).await?;
     if issued.repeated {
         return Err(Error::Conflict("a mission for this task is still alive: settle it before sending another".into()));
     }
