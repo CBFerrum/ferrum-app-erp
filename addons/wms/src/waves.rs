@@ -279,6 +279,8 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         let (Some(item), Some(warehouse)) = (id(m, "item"), id(m, "warehouse")) else { continue };
         let line = posting::managed(tx, ctx.tenant, warehouse).await?;
         let Some((w, line)) = line.and_then(|w| w.production_bin.map(|bin| (w, bin))) else {
+            // On record with nothing at a line, so that the run is never told this much is there.
+            claim(tx, ctx, run, warehouse, item, d(m, "qty"), Decimal::ZERO).await?;
             elsewhere = true;
             continue;
         };
@@ -301,20 +303,9 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         .fetch_one(&mut **tx)
         .await?;
         let wanted = d(m, "qty");
-        let claim = wanted.min((there - claimed).max(Decimal::ZERO));
-        sqlx::query(
-            "insert into wms_supply (tenant_id, run_id, warehouse_id, item_id, need, at_line) values ($1, $2, $3, $4, $5, $6) \
-             on conflict (tenant_id, run_id, warehouse_id, item_id) do update set need = wms_supply.need + excluded.need, at_line = wms_supply.at_line + excluded.at_line",
-        )
-        .bind(ctx.tenant)
-        .bind(run)
-        .bind(warehouse)
-        .bind(item)
-        .bind(wanted)
-        .bind(claim)
-        .execute(&mut **tx)
-        .await?;
-        let need = wanted - claim;
+        let free = wanted.min((there - claimed).max(Decimal::ZERO));
+        claim(tx, ctx, run, warehouse, item, wanted, free).await?;
+        let need = wanted - free;
         if need <= Decimal::ZERO {
             continue;
         }
@@ -353,6 +344,23 @@ pub async fn supply(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, materials: &[
         return tell(tx, ctx, "wms.supply.reserved", run, json!({"run": run})).await;
     }
     supply_progress(tx, ctx, run).await
+}
+
+/// What a run wants of an item, and how much of what stands at the line is that run's.
+async fn claim(tx: &mut Tx, ctx: &Ctx, run: Uuid, warehouse: Uuid, item: Uuid, need: Decimal, at_line: Decimal) -> Result<()> {
+    sqlx::query(
+        "insert into wms_supply (tenant_id, run_id, warehouse_id, item_id, need, at_line) values ($1, $2, $3, $4, $5, $6) \
+         on conflict (tenant_id, run_id, warehouse_id, item_id) do update set need = wms_supply.need + excluded.need, at_line = wms_supply.at_line + excluded.at_line",
+    )
+    .bind(ctx.tenant)
+    .bind(run)
+    .bind(warehouse)
+    .bind(item)
+    .bind(need)
+    .bind(at_line)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 async fn tell(tx: &mut Tx, ctx: &Ctx, topic: &str, run: Uuid, payload: Value) -> Result<()> {
@@ -401,9 +409,13 @@ pub async fn supply_progress(tx: &mut Tx, ctx: &Ctx, run: Uuid) -> Result<()> {
     if tasks.iter().any(|(_, held)| *held) {
         return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": "stock on its way to the line went on quality hold"})).await;
     }
-    let (mut missing, mut unusable) = (false, Vec::new());
+    let (mut missing, mut by_hand, mut unusable) = (false, false, Vec::new());
     for (_, item, need, have, line) in &rows {
-        let Some(line) = line else { continue };
+        // Nothing here brings that one, or can see it arrive: a person says when it is there.
+        let Some(line) = line else {
+            by_hand = true;
+            continue;
+        };
         if have < need {
             missing = true;
             continue;
@@ -418,9 +430,9 @@ pub async fn supply_progress(tx: &mut Tx, ctx: &Ctx, run: Uuid) -> Result<()> {
         return tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": unusable.join("; ")})).await;
     }
     match (missing, tasks.is_empty()) {
-        (false, _) => tell(tx, ctx, "wms.supply.ready", run, json!({"run": run})).await,
-        (true, false) => tell(tx, ctx, "wms.supply.reserved", run, json!({"run": run})).await,
         (true, true) => tell(tx, ctx, "wms.supply.short", run, json!({"run": run, "short": "some of it was not brought to the line"})).await,
+        (false, _) if !by_hand => tell(tx, ctx, "wms.supply.ready", run, json!({"run": run})).await,
+        _ => tell(tx, ctx, "wms.supply.reserved", run, json!({"run": run})).await,
     }
 }
 

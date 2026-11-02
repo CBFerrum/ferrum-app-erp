@@ -825,6 +825,65 @@ async fn scenario() {
     while k.dispatch_outbox_once().await.unwrap() > 0 {}
     assert_eq!(told("wms.supply.ready", next_run).await, 2, "and hears again when it is lifted");
 
+    // Part of what a run needs sits where no line reaches: a warehouse cannot say all of it is there.
+    let elsewhere = uid(&t.find("Warehouse", json!({"warehouse_name": "Finished Goods", "company": company.to_string()})).await);
+    let mixed = Uuid::now_v7();
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let materials = [json!({"item": part, "warehouse": wh, "qty": 1}), json!({"item": part, "warehouse": elsewhere, "qty": 1})];
+    ferrum_wms::waves::supply(&k, &t.admin, &mut tx, mixed, &materials).await.expect("supplied");
+    ferrum_wms::waves::supply_progress(&mut tx, &t.admin, mixed).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(told("wms.supply.ready", mixed).await, 0, "what it brings is there, and nothing here can see the rest");
+    assert!(told("wms.supply.reserved", mixed).await >= 1, "so that part is a person's to confirm");
+
+    // ───── a document taken back: the books and the bins go back together, or not at all ─────
+    let mistake = t
+        .insert(
+            "StockEntry",
+            json!({"company": company, "purpose": "Material Receipt", "items": [{"item": nut, "qty": 5, "basic_rate": 2, "target_warehouse": wh}]}),
+        )
+        .await;
+    k.submit(&t.admin, "StockEntry", uid(&mistake), None).await.expect("received by mistake");
+    let (books, at_dock) = (t.on_books(nut).await, t.qty_in("DOCK", "NUT").await);
+    let shelved = t
+        .api_as(
+            &manager,
+            "POST",
+            "/positions/move",
+            json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "C-01", "qty": at_dock, "reason": "put away"}),
+        )
+        .await;
+    shelved.expect("moved on");
+    let e = k.cancel(&t.admin, "StockEntry", uid(&mistake), None).await.expect_err("it has been put away: taking it back would leave the bins wrong");
+    assert!(text(&e).contains("left at the inbound bin"), "and it says what to do: {e:?}");
+    assert_eq!(t.on_books(nut).await, books, "and nothing was taken back");
+    t.reconciled().await;
+    t.api_as(
+        &manager,
+        "POST",
+        "/positions/move",
+        json!({"warehouse": wh, "item": nut, "from_bin": "C-01", "to_bin": "DOCK", "qty": at_dock, "reason": "walked it back"}),
+    )
+    .await
+    .expect("moved back");
+    k.cancel(&t.admin, "StockEntry", uid(&mistake), None).await.expect("still at the door, so it can go back");
+    assert_eq!(t.on_books(nut).await, books - n("5"));
+    assert_eq!(t.qty_in("DOCK", "NUT").await, at_dock - n("5"));
+    t.reconciled().await;
+
+    // An issue taken back: what left comes back in by the door, and the books follow.
+    t.api_as(&manager, "POST", "/positions/move", json!({"warehouse": wh, "item": nut, "from_bin": "DOCK", "to_bin": "DOOR", "qty": 2, "reason": "picked"}))
+        .await
+        .expect("picked");
+    let issued =
+        t.insert("StockEntry", json!({"company": company, "purpose": "Material Issue", "items": [{"item": nut, "qty": 2, "source_warehouse": wh}]})).await;
+    k.submit(&t.admin, "StockEntry", uid(&issued), None).await.expect("issued");
+    let (books, at_dock) = (t.on_books(nut).await, t.qty_in("DOCK", "NUT").await);
+    k.cancel(&t.admin, "StockEntry", uid(&issued), None).await.expect("nothing is left to issue, and this is not an issue");
+    assert_eq!(t.on_books(nut).await, books + n("2"));
+    assert_eq!(t.qty_in("DOCK", "NUT").await, at_dock + n("2"), "it comes back in by the door");
+    t.reconciled().await;
+
     // ───── a lot can be followed, for a recall ─────
     let q = obj(json!({"item": milk, "lot": "M-1"}));
     let moves = t.call(&t.admin, "GET", "/trace", q, Value::Null).await.unwrap()["moves"].as_array().unwrap().len();

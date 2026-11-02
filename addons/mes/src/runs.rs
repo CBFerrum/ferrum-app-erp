@@ -228,12 +228,11 @@ async fn authorize(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid) -> Result<Opti
         payload,
         expires_in_secs: 8 * 3600,
         dedupe_key: Some(format!("{workflow}:start:{attempt}")),
-        exclusive_key: Some(workflow.clone()),
-        workflow_id: Some(workflow),
+        workflow_id: Some(workflow.clone()),
         issuer: Issuer::Engine,
         ..Default::default()
     };
-    let command = commands::issue(tx, ctx, cmd).await?.id;
+    let command = commands::issue_exclusive(tx, ctx, cmd, &workflow).await?.id;
     set(k, ctx, tx, run, json!({"command": command.to_string()})).await?;
     Ok(Some(command))
 }
@@ -245,11 +244,12 @@ pub async fn materials_arrived(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid) ->
     if status(&doc) != "Released" || s(&doc, "material_status") == Some("Preloaded") {
         return Ok(None);
     }
-    if let Some(command) = s(&doc, "command").and_then(|c| c.parse().ok()) {
-        return Ok(Some(command));
-    }
     set(k, ctx, tx, run, json!({"material_status": "At Station", "note": Value::Null})).await?;
-    authorize(k, ctx, tx, run).await
+    // A start that went already, whatever became of it, is not sent again.
+    match s(&doc, "command").and_then(|c| c.parse().ok()) {
+        Some(command) => Ok(Some(command)),
+        None => authorize(k, ctx, tx, run).await,
+    }
 }
 
 /// A supervisor says the material is at the station. It is on record as what they said, and every
