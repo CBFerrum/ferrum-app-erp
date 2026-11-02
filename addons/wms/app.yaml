@@ -1,6 +1,6 @@
 id: wms
 name: Warehouse Management
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: Bins, handling units and positions by lot and owner, receiving to returns, with people and robots on one task list
 description: README.md
@@ -8,7 +8,7 @@ categories: [inventory]
 license: AGPL-3.0-only
 runtime: native
 platform: ">=0.3.2, <0.4"
-requires: {erp: ">=0.1", stock-ops: ">=0.1", ops: ">=0.1", quality: ">=0.1"}
+requires: {erp: ">=0.1", stock-ops: ">=0.1", ops: ">=0.2", quality: ">=0.1"}
 parent: erp
 packages: [wms]
 uninstall: ask

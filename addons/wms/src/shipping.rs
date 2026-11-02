@@ -4,6 +4,7 @@
 //! out of the bin. A carrier's failure repeats nothing, because the shipment records what went.
 
 use crate::position::{self, Cause, Key, Kind};
+use crate::tasks::Refused;
 use crate::{posting, slotting};
 use ferrum_domain::util::{d, elevated, id, rows, s, sys};
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx, audit};
@@ -37,8 +38,9 @@ pub struct Verify {
     pub qty: Decimal,
 }
 
-/// A scan at packing. The wrong item is refused, and so is more than was picked for this shipment.
-pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Verify) -> Result<Value> {
+/// A scan at packing. The wrong item is refused, with the attempt kept, and so is more than was
+/// picked for this shipment.
+pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Verify) -> Result<std::result::Result<Value, Refused>> {
     let doc = k.get_tx(&sys(ctx), tx, "Shipment", shipment, true).await?;
     let item = slotting::item_by_scan(tx, ctx.tenant, &v.code).await?;
     let lines = rows(&doc, "items");
@@ -50,7 +52,7 @@ pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Veri
     });
     let Some(line) = line else {
         audit::record(tx, ctx, "Shipment", shipment, "wms.wrong_scan", None, json!({"scanned": v.code, "lot": v.lot})).await?;
-        return Err(Error::invalid(format!("{} is not waiting on this shipment", v.code)));
+        return Ok(Err(Refused(format!("{} is not waiting on this shipment", v.code))));
     };
     let verified = d(line, "verified_qty") + v.qty;
     if v.qty <= Decimal::ZERO || verified > d(line, "qty") {
@@ -76,7 +78,7 @@ pub async fn verify(k: &Kernel, ctx: &Ctx, tx: &mut Tx, shipment: Uuid, v: &Veri
     }
     done.insert("expected_weight_kg".into(), json!(weight.unwrap_or_default()));
     k.set_values_tx(&sys(ctx), tx, "Shipment", shipment, done).await?;
-    Ok(json!({"verified": verified, "complete": all}))
+    Ok(Ok(json!({"verified": verified, "complete": all})))
 }
 
 #[derive(Debug, Deserialize)]

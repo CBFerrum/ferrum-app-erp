@@ -2,11 +2,28 @@
 
 import type { Tone } from "@ferrum/kit";
 
-export function runWords(status: string): { label: string; tone: Tone } {
+/** Whether a released run has what it needs at the station. Only then does the machine get its job. */
+export const materialThere = (status: string | null | undefined) => status === "At Station" || status === "Preloaded";
+
+export function materialWords(status: string | null | undefined): string | null {
+  switch (status) {
+    case "Waiting":
+      return "Waiting for the warehouse to take this on. The machine stays off until the material is at the station.";
+    case "Reserved":
+      return "The warehouse is bringing the material. The machine stays off until it is at the station.";
+    case "Short":
+      return "Not all of the material can be used. The machine stays off until it can.";
+    default:
+      return null;
+  }
+}
+
+export function runWords(status: string, material?: string | null): { label: string; tone: Tone } {
   switch (status) {
     case "Planned":
       return { label: "Planned", tone: "neutral" };
     case "Released":
+      if (material !== undefined && !materialThere(material)) return { label: material === "Short" ? "Material short" : "Waiting for material", tone: "amber" };
       return { label: "Ready to start", tone: "blue" };
     case "Running":
       return { label: "Running", tone: "green" };

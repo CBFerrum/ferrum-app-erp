@@ -30,6 +30,9 @@
     - {name: sales_order, type: link, to: SalesOrder}
     - {name: so_line, type: data}
     - {name: reason, type: text, read_only: true, no_copy: true}
+    - {name: production_run, type: data, read_only: true, no_copy: true, label: For Production Run, description: "Stock on its way to the line for this run"}
+    - {name: evidence_source, type: select, options: [Scan, Station, Manual, Recovery], read_only: true, no_copy: true, in_filter: true, label: Confirmed By, description: "Manual means a manager said so with no scan of the load"}
+    - {name: evidence, type: json, read_only: true, no_copy: true, description: "What established that the right thing reached the right place"}
   list: {columns: [summary, kind, status, from_bin, to_bin, qty], sort: priority desc}
 
 - name: PickWaveOrder

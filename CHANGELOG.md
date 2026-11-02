@@ -1,5 +1,40 @@
 # Changelog
 
+## Warehouse 0.2.0 and Shop Floor 0.2.0: what holds when things repeat, arrive late or go wrong
+
+From a review of the connected system, against a release, of what happens under retries, crashes and
+physical exceptions. **Nothing has touched physical equipment, and none of this is a safety claim.**
+
+Warehouse:
+
+- Releasing a task twice is one mission. A lost answer gets the first mission back, two requests at
+  once write one, and the ledger's own index refuses a second live command for a task. A new attempt
+  comes only from a mission that never started. Handing a task on its way to someone else is refused.
+- A move proves what moved. Confirming takes a scan of the load as well as the place: a handling unit's
+  label, or the item with its lot and serial. **Anything confirming a task now has to send these**
+  (`unit_scan`, or `item_scan`, `lot_scan`, `serial_scan`). A manager can finish one that cannot be
+  scanned, with a reason; it stays on record as `Manual`, and every task says what established it.
+- A refused scan stays on record. The audit was being written in the transaction that was then rolled
+  back, here and at packing.
+- A scan used once cannot finish another task, where it used to mark it done with nothing moved.
+- A robot's short load is not a short pick: what did not arrive stays out of reach until someone finds
+  it. A mission turned down after it was taken ends in someone looking, not on its way for ever. A
+  report a task cannot take no longer retries for ever. A task at a site's station is finished there.
+- Held stock cannot reach the line, and a task or run that finishes by recovery or cancellation now
+  moves its wave and its run on.
+
+Shop Floor:
+
+- A machine starts only once its material is at the station. Releasing a run sets its material aside,
+  so a second run cannot be released on the same stock, and the warehouse's progress moves the run from
+  Waiting through Reserved to At Station. With no warehouse, a supervisor says so, on the record.
+- Every prerequisite is asked again at that moment. A hold stops a start that has not reached the
+  machine, and one that has is asked to stop.
+- A machine already loaded says so on the run (`material_source: Preloaded`), and whoever releases it
+  answers for that.
+- **`machine.start_job` must be marked as kept to its app on the device**, or a run on it is refused:
+  a start that can be asked for around these gates is not behind them.
+
 ## Warehouse 0.1.0, Shop Floor 0.1.0 and Quality 0.1.0: from the dock to the machine
 
 Three add-ons that run on ERP's stock and work orders, and on Operations from the platform. They have

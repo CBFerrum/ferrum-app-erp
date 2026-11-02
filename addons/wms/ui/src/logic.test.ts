@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byUrgency, cleanScan, custodyWords, lineProgress, shortOf, type Task, taskWords, unverified } from "./logic";
+import { byUrgency, cleanScan, custodyWords, evidenceWords, lineProgress, loadScans, shortOf, type Task, taskWords, unverified } from "./logic";
 
 const task = (status: string, id = status): Task => ({ id, summary: "", kind: "Move", status, custody: null, qty: "1", reason: null, item: "X", lot: null, from_bin: null, to_bin: null, robot: null });
 
@@ -17,6 +17,22 @@ describe("what a task is, in words", () => {
 
   it("puts what is stuck first", () => {
     expect(byUrgency([task("Moving"), task("Open"), task("Exception"), task("Arrived")]).map((t) => t.status)).toEqual(["Exception", "Arrived", "Open", "Moving"]);
+  });
+});
+
+describe("what proves a move", () => {
+  it("asks for a unit's label and nothing else", () => {
+    expect(loadScans({ unit: "T-100", item: "BOLT", lot: "L-1" }).map((s) => s.key)).toEqual(["unit_scan"]);
+  });
+
+  it("asks loose stock what it is, and its lot and serial where it has them", () => {
+    expect(loadScans({ item: "BOLT" }).map((s) => s.key)).toEqual(["item_scan"]);
+    expect(loadScans({ item: "BOLT", lot: "L-1", serial: "S-9" }).map((s) => s.key)).toEqual(["item_scan", "lot_scan", "serial_scan"]);
+  });
+
+  it("never lets a manager's word read as a scan", () => {
+    expect(evidenceWords("Manual")).toMatch(/not scanned/);
+    expect(evidenceWords("Scan")).toBeNull();
   });
 });
 

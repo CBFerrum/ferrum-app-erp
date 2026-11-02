@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WMS = ("-p", "ferrum-wms", "--test", "wms_it")
 MES = ("-p", "ferrum-mes", "--test", "mes_it")
+LINE = ("-p", "ferrum-wms", "--test", "line_it")
 QUALITY = ("-p", "ferrum-quality", "--test", "quality_it")
 TASKS = "addons/wms/src/tasks.rs"
 WAVES = "addons/wms/src/waves.rs"
@@ -29,6 +30,35 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    ("wms-release-sends-again", TASKS, 'if matches!(t.state(), "Released" | "Moving" | "Arrived") {\n        let same', 'if false {\n        let same', WMS),
+    ("wms-changes-hands-quietly", TASKS, "            if !same {\n", "            if false {\n", WMS),
+    ("wms-wrong-tote-accepted", TASKS, "        if scanned(&c.unit_scan) != label {\n", "        if false {\n", WMS),
+    ("wms-wrong-item-accepted", TASKS, "if slotting::item_by_scan(tx, ctx.tenant, scanned(&c.item_scan)).await? != Some(t.item) {", "if false {", WMS),
+    ("wms-wrong-lot-accepted", TASKS, "        if scanned(got) != expected {\n", "        if false {\n", WMS),
+    ("wms-location-alone-proves-it", TASKS, '    if scanned(&c.item_scan).is_empty() {\n        return Err(Error::field("item_scan"', '    if false {\n        return Err(Error::field("item_scan"', WMS),
+    ("wms-rejection-rolled-back", "addons/wms/src/site.rs", "        tx.commit().await?;\n        match refused {", "        if let Some(no) = refused.take() {\n            return Err(no.into());\n        }\n        tx.commit().await?;\n        match refused {", WMS),
+    ("wms-used-scan-finishes-a-task", TASKS, "if !position::transfer(tx, ctx, t.warehouse, kind, &source, &dest, qty, qty, &cause).await? {", "if !position::transfer(tx, ctx, t.warehouse, kind, &source, &dest, qty, qty, &cause).await? && false {", WMS),
+    ("wms-any-scan-repeats", TASKS, "where tenant_id = $1 and task_id = $2 and operation = $3", "where tenant_id = $1 and task_id = $2 and (operation = $3 or true)", WMS),
+    ("wms-manual-by-anyone", TASKS, 'if !ctx.is_admin && !ctx.has_role("Warehouse Manager") {', "if false {", WMS),
+    ("wms-manual-looks-scanned", TASKS, '(json!({"manual": why, "by": ctx.email}), "Manual")', '(json!({"manual": why, "by": ctx.email}), "Scan")', WMS),
+    ("wms-robots-short-load-released", TASKS, "let lost = qty < t.qty && t.robot.is_some();", "let lost = false;", WMS),
+    ("wms-lost-counts-what-arrived", TASKS, "    let left = t.qty - done;\n", "    let left = t.qty;\n", WMS),
+    ("wms-rejected-after-taken-sticks", TASKS, '(State::Failed | State::Aborted | State::OutcomeUnknown | State::Rejected, "Released" | "Moving" | "Arrived")', '(State::Failed | State::Aborted | State::OutcomeUnknown, "Released" | "Moving" | "Arrived")', WMS),
+    ("wms-platform-finishes-a-stations-task", TASKS, "    if t.command.is_some() && !arrived {", "    if t.robot.is_some() && !arrived {", WMS),
+    ("wms-held-stock-reaches-the-line", TASKS, '(t.kind == "Pick" || t.production_run.is_some()) && ferrum_quality', 't.kind == "Pick" && ferrum_quality', LINE),
+    ("wms-line-stock-claimed-twice", WAVES, "let claim = wanted.min((there - claimed).max(Decimal::ZERO));", "let claim = wanted.min(there.max(Decimal::ZERO));", LINE),
+    ("wms-ready-while-on-its-way", WAVES, "        if have < need {\n            missing = true;\n            continue;\n        }\n", "", LINE),
+    ("wms-hold-tells-no-run", "addons/wms/src/holds.rs", "    crate::waves::recheck_supply(tx, ctx, item).await\n", "    Ok(())\n", LINE),
+    ("wms-lifted-hold-tells-no-run", "addons/wms/src/holds.rs", "    if let Some(item) = held_item {\n", "    if let Some(item) = held_item.filter(|_| false) {\n", LINE),
+    ("wms-finished-run-keeps-the-line", WAVES, "update wms_supply set closed_at = now() where tenant_id = $1 and run_id = $2 and closed_at is null", "update wms_supply set closed_at = null where tenant_id = $1 and run_id = $2 and closed_at is null", LINE),
+    ("mes-machine-starts-on-release", RUNS, 'if s(&doc, "material_source") == Some("Preloaded") {\n        audit::record', 'if true {\n        audit::record', MES),
+    ("mes-started-by-hand-without-material", RUNS, 'if !matches!(s(&doc, "material_status"), Some("At Station" | "Preloaded")) {', "if false {", MES),
+    ("mes-reservation-ignored", RUNS, "Ok(have.unwrap_or_default() - held - others)", "Ok(have.unwrap_or_default() - held - others * Decimal::ZERO)", MES),
+    ("mes-exposed-start-allowed", RUNS, "    if !allowed.engine_only {\n", "    if false {\n", MES),
+    ("mes-start-does-not-ask-again", RUNS, "    let machine = gate(k, ctx, tx, &doc).await?;\n    let needs = reserved(tx, ctx.tenant, run).await?;\n", "    let machine = gate(k, ctx, tx, &doc).await.unwrap_or(None).or(Some((Uuid::nil(), Value::Null))).filter(|_| false);\n    let needs = reserved(tx, ctx.tenant, run).await?;\n", MES),
+    ("mes-hold-leaves-the-start", "addons/mes/src/lib.rs", '    h.register("QualityHold", Arc::new(HoldHook));\n', "", MES),
+    ("mes-preloaded-unrecorded", RUNS, 'audit::record(tx, ctx, "ProductionRun", run, "mes.preloaded", None, json!({"by": ctx.email})).await?;\n', "", MES),
+    ("mes-finished-start-sent-again", RUNS, '    if let Some(command) = s(&doc, "command").and_then(|c| c.parse().ok()) {\n        return Ok(Some(command));\n    }\n    set(k, ctx, tx, run, json!({"material_status": "At Station", "note": Value::Null})).await?;', '    set(k, ctx, tx, run, json!({"material_status": "At Station", "note": Value::Null})).await?;', LINE),
     ("wms-two-balances", "addons/wms/packages/wms/sql/001_wms.sql", "  if on_books <> in_place then", "  if false then", WMS),
     ("wms-issues-what-nobody-picked", "addons/wms/src/posting.rs", "    if waiting < qty {", "    if false {", WMS),
     ("wms-arriving-is-delivering", TASKS, 'json!({"status": "Arrived", "custody": "In Transit", "reason": "Arrived: confirm the unit at its destination"})', 'json!({"status": "Done", "custody": "In Place"})', WMS),

@@ -74,6 +74,23 @@ impl T {
         self.api(ctx, "POST", &format!("/runs/{run}/release"), Value::Null, json!({})).await
     }
 
+    /// A supervisor says the material is at the station.
+    async fn materials(&self, ctx: &Ctx, run: Uuid) -> Result<Value, Error> {
+        self.api(ctx, "POST", &format!("/runs/{run}/materials"), Value::Null, json!({"found": "Checked the rack beside it"})).await
+    }
+
+    async fn commands_of(&self, run: Uuid) -> i64 {
+        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
+        let n = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2")
+            .bind(self.tenant)
+            .bind(format!("mes-run:{run}"))
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        n
+    }
+
     async fn event(&self, ctx: &Ctx, run: Uuid, mut body: Value) -> Result<Value, Error> {
         if body.get("event_id").is_none() {
             body["event_id"] = json!(Uuid::now_v7());
@@ -208,7 +225,7 @@ async fn scenario() {
         id
     };
     device("GW", "Gateway", json!([])).await;
-    let press = device("PRESS-1", "Machine", json!([{"operation": "machine.start_job"}])).await;
+    let press = device("PRESS-1", "Machine", json!([{"operation": "machine.start_job", "engine_only": true}])).await;
     let station =
         uid(&t.insert("Workstation", json!({"workstation_name": "Press 1", "company": company, "production_capacity": 1, "mes_device": press})).await);
     let operation = uid(&t.insert("Operation", json!({"operation_name": "Pressing", "workstation": station})).await);
@@ -255,8 +272,8 @@ async fn scenario() {
     t.insert("OperatorQualification", json!({"user_email": "op@plant.test", "operation": operation, "valid_until": (today - Duration::days(1)).to_string()}))
         .await;
     assert!(t.release(&supervisor, main).await.is_err_and(|e| text(&e).contains("not qualified")), "a lapsed qualification is none");
-    let q = t.find("OperatorQualification", json!({"user_email": "op@plant.test"})).await;
-    k.update(&t.admin, "OperatorQualification", uid(&q), obj(json!({"valid_until": (today + Duration::days(30)).to_string()})), None).await.unwrap();
+    let qualification = uid(&t.find("OperatorQualification", json!({"user_email": "op@plant.test"})).await);
+    k.update(&t.admin, "OperatorQualification", qualification, obj(json!({"valid_until": (today + Duration::days(30)).to_string()})), None).await.unwrap();
     devices::set_lifecycle(&k, &t.admin, press, Lifecycle::Maintenance, "bearing").await.unwrap();
     assert!(t.release(&supervisor, main).await.is_err_and(|e| text(&e).contains("Maintenance")), "equipment under maintenance cannot run");
     devices::set_lifecycle(&k, &t.admin, press, Lifecycle::Active, "repaired").await.unwrap();
@@ -266,10 +283,38 @@ async fn scenario() {
     let held = run(rev_b, "op@plant.test", 20).await;
     assert!(t.release(&supervisor, held).await.is_err_and(|e| text(&e).contains("STEEL")), "held steel does not count as there");
 
-    // ───── released: the machine gets a reference, never a program ─────
+    // ───── released: material is set aside, and the machine waits for it ─────
     let released = t.release(&supervisor, main).await.expect("released");
-    assert_eq!(released["status"], json!("Released"));
+    assert_eq!((&released["status"], &released["material_status"]), (&json!("Released"), &json!("Waiting")));
+    assert_eq!(released["command"], Value::Null, "stock somewhere in a warehouse is not stock in the machine");
+    assert_eq!(t.commands_of(main).await, 0, "and nothing reached the ledger");
+    assert!(t.event(&operator, main, json!({"kind": "start"})).await.is_err_and(|e| text(&e).contains("not at the station")), "nor can it be started by hand");
+    let rival = run(rev_b, "op@plant.test", 6).await;
+    assert!(
+        t.release(&supervisor, rival).await.is_err_and(|e| text(&e).contains("STEEL: 10 of 12")),
+        "what one run set aside is not there for the next: 30 usable, 20 of it taken"
+    );
+    assert!(
+        t.api(&supervisor, "POST", &format!("/runs/{main}/materials"), Value::Null, json!({"found": " "})).await.is_err(),
+        "saying so takes saying what was checked"
+    );
+    assert!(t.materials(&operator, main).await.is_err_and(|e| matches!(e, Error::Forbidden(_))), "and it is a supervisor's to say");
+
+    // ───── the material is there: the machine gets a reference, never a program ─────
+    let released = t.materials(&supervisor, main).await.expect("confirmed");
+    assert_eq!(t.get("ProductionRun", main).await["material_status"], json!("At Station"));
     let cmd: Uuid = released["command"].as_str().unwrap().parse().unwrap();
+    assert_eq!(t.materials(&supervisor, main).await.unwrap()["command"], released["command"], "saying it again starts nothing new");
+    assert_eq!(t.commands_of(main).await, 1);
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let audited: i64 =
+        sqlx::query_scalar("select count(*) from audit_event where entity = 'ProductionRun' and record_id = $1 and action = 'mes.materials_confirmed'")
+            .bind(main)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    tx.commit().await.unwrap();
+    assert!(audited >= 1, "who said so stays on record");
     let in_ledger = ferrum_ops::commands::describe(&k, &t.admin, cmd).await.unwrap();
     assert_eq!(in_ledger["payload"]["job"], json!(412));
     assert_eq!(in_ledger["operation"], json!("machine.start_job"));
@@ -367,6 +412,7 @@ async fn scenario() {
     // ───── a report from a terminal that was offline, arriving late as a fact ─────
     let r2 = run(rev_b, "op@plant.test", 2).await;
     t.release(&supervisor, r2).await.expect("released");
+    t.materials(&supervisor, r2).await.expect("at the station");
     t.event(&operator, r2, json!({"kind": "start"})).await.unwrap();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
     outbox::enqueue(
@@ -428,6 +474,77 @@ async fn scenario() {
     ferrum_mes::runs::on_command(&k, &t.admin, &mut tx, r2, State::OutcomeUnknown).await.unwrap();
     tx.commit().await.unwrap();
     assert!(t.get("ProductionRun", r2).await["note"].as_str().unwrap().contains("Nobody can say"));
+
+    // ───── a hold after release: the start stops, and comes back only when it is lifted ─────
+    let r3 = run(rev_b, "op@plant.test", 1).await;
+    t.release(&supervisor, r3).await.expect("released");
+    let first_start: Uuid = t.materials(&supervisor, r3).await.unwrap()["command"].as_str().unwrap().parse().unwrap();
+    let late_hold = uid(&t.insert("QualityHold", json!({"item": oil, "reason": "Wrong viscosity"})).await);
+    let stopped = t.get("ProductionRun", r3).await;
+    assert_eq!(stopped["material_status"], json!("Short"), "{stopped:?}");
+    assert_eq!(stopped["command"], Value::Null);
+    assert!(stopped["note"].as_str().unwrap().contains("hold"), "{stopped:?}");
+    assert_eq!(ferrum_ops::commands::describe(&k, &t.admin, first_start).await.unwrap()["state"], json!("Aborted"), "what had not left stops here");
+    assert!(t.event(&operator, r3, json!({"kind": "start"})).await.is_err(), "nobody starts it by hand");
+    assert!(
+        t.materials(&supervisor, r3).await.is_err_and(|e| text(&e).contains("material is short")),
+        "and saying the material is here does not make it usable"
+    );
+    assert!(t.materials(&supervisor, r3).await.is_err() && t.get("ProductionRun", r3).await["command"] == Value::Null, "nothing was started by trying");
+    let req = SiteRequest {
+        tenant,
+        user: Some(quality.clone()),
+        method: "POST".into(),
+        path: format!("/holds/{late_hold}/release"),
+        query: Map::new(),
+        headers: Map::new(),
+        body: json!({"note": "Retested"}).to_string().into_bytes(),
+        client_ip: "::1".into(),
+    };
+    site_ep.handle(&k, req).await.expect("released");
+    let second_start = t.materials(&supervisor, r3).await.expect("lifted")["command"].clone();
+    assert_ne!(second_start, json!(first_start.to_string()), "a new attempt, since the first ended");
+
+    // ───── the start asks again: what held at release may not hold now ─────
+    let lapsing = run(rev_b, "op@plant.test", 1).await;
+    t.release(&supervisor, lapsing).await.expect("released");
+    k.update(&t.admin, "OperatorQualification", qualification, obj(json!({"valid_until": (today - Duration::days(1)).to_string()})), None).await.unwrap();
+    assert!(t.materials(&supervisor, lapsing).await.is_err_and(|e| text(&e).contains("not qualified")), "a qualification that lapsed since");
+    assert_eq!(t.commands_of(lapsing).await, 0);
+    k.update(&t.admin, "OperatorQualification", qualification, obj(json!({"valid_until": (today + Duration::days(30)).to_string()})), None).await.unwrap();
+    devices::set_lifecycle(&k, &t.admin, press, Lifecycle::Maintenance, "bearing").await.unwrap();
+    assert!(t.materials(&supervisor, lapsing).await.is_err_and(|e| text(&e).contains("Maintenance")), "a machine that went down since");
+    devices::set_lifecycle(&k, &t.admin, press, Lifecycle::Active, "repaired").await.unwrap();
+    t.event(&supervisor, lapsing, json!({"kind": "cancel", "reason": "Not needed"})).await.expect("cancelled");
+
+    // ───── a machine already loaded says so, on the record ─────
+    let loaded = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&wo), "revision": rev_b, "operation": operation, "workstation": station, "operator_email": "op@plant.test", "qty": 1, "material_source": "Preloaded"})).await);
+    let released = t.release(&supervisor, loaded).await.expect("released");
+    assert_eq!(released["material_status"], json!("Preloaded"));
+    assert!(released["command"].is_string(), "its start waits for no delivery: {released}");
+    t.event(&operator, loaded, json!({"kind": "start"})).await.expect("started");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let said: i64 = sqlx::query_scalar("select count(*) from audit_event where entity = 'ProductionRun' and record_id = $1 and action = 'mes.preloaded'")
+        .bind(loaded)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(said, 1, "whoever released it answers for that");
+
+    // ───── a machine whose start can be asked for around this gate is not behind it ─────
+    let open_press = device("PRESS-2", "Machine", json!([{"operation": "machine.start_job"}])).await;
+    let open_station =
+        uid(&t.insert("Workstation", json!({"workstation_name": "Press 2", "company": company, "production_capacity": 1, "mes_device": open_press})).await);
+    let exposed = uid(&t.insert("ProductionRun", json!({"company": company, "work_order": uid(&wo), "revision": rev_b, "operation": operation, "workstation": open_station, "operator_email": "op@plant.test", "qty": 1})).await);
+    assert!(t.release(&supervisor, exposed).await.is_err_and(|e| text(&e).contains("keep it to its app")));
+
+    // ───── a finished run lets go of what it set aside ─────
+    t.event(&operator, r3, json!({"kind": "cancel", "reason": "Not needed"})).await.ok();
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let kept: i64 = sqlx::query_scalar("select count(*) from mes_reservation where run_id = $1").bind(main).fetch_one(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(kept, 0);
     let _ = (other, DateTime::<Utc>::MIN_UTC);
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coverageNote, cycleWarning, percent, remaining, runWords } from "./logic";
+import { coverageNote, cycleWarning, materialThere, materialWords, percent, remaining, runWords } from "./logic";
 
 describe("what a figure can be called", () => {
   it("calls nothing to divide by unknown, not zero", () => {
@@ -23,6 +23,17 @@ describe("what a figure can be called", () => {
 });
 
 describe("a run", () => {
+  it("is never ready to start with its material elsewhere", () => {
+    expect(runWords("Released", "Waiting").label).toBe("Waiting for material");
+    expect(runWords("Released", "Reserved").tone).toBe("amber");
+    expect(runWords("Released", "Short").label).toBe("Material short");
+    expect(runWords("Released", "At Station").label).toBe("Ready to start");
+    expect(runWords("Released", "Preloaded").label).toBe("Ready to start");
+    expect(materialThere("Reserved")).toBe(false);
+    expect(materialWords("Reserved")).toMatch(/machine stays off/);
+    expect(materialWords("At Station")).toBeNull();
+  });
+
   it("counts down to nothing and no further", () => {
     expect(remaining("10", "4", "1")).toBe(5);
     expect(remaining("10", "12", null)).toBe(0);

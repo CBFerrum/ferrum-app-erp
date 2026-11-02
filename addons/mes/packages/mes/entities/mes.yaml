@@ -70,7 +70,9 @@
     - {name: workstation, type: link, to: Workstation, required: true, in_list: true, in_filter: true}
     - {name: operator_email, type: email, required: true, in_list: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: material_source, type: select, options: [Delivered to Line, Preloaded], default: Delivered to Line, label: Material, description: "Preloaded says the machine already holds what this run needs, so its start waits for no delivery. Whoever releases the run answers for that"}
     - {name: status, type: select, options: [Planned, Released, Running, Paused, Completed, Cancelled], default: Planned, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: material_status, type: select, options: [Waiting, Reserved, At Station, Short, Preloaded], read_only: true, no_copy: true, in_list: true, in_filter: true, description: "Where this run's material stands. A machine is started only once it is at the station"}
     - {name: good_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: scrap_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: rework_qty, type: decimal, read_only: true, no_copy: true}

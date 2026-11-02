@@ -1,5 +1,5 @@
 package: mes
-version: 0.1.0
+version: 0.2.0
 label: Manufacturing Execution
 description: Approved revisions, release gates, execution events, lot genealogy and OEE
 depends: [manufacturing, mfg_ops, quality, ops]
