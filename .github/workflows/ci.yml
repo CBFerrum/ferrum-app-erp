@@ -54,6 +54,7 @@ jobs:
           create database ferrum_eu_members_test owner ferrum;
           create database ferrum_quality_test owner ferrum;
           create database ferrum_wms_test owner ferrum;
+          create database ferrum_line_test owner ferrum;
           create database ferrum_mes_test owner ferrum;
           SQL
       - run: cargo fmt --all -- --check
