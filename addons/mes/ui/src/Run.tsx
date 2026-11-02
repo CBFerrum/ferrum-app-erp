@@ -73,6 +73,9 @@ function Consume({ id, onClose }: { id: string; onClose: () => void }) {
       footer={
         <>
           <Button onClick={onClose}>Back</Button>
+          <Button disabled={!item || !qty} loading={step.isPending} onClick={() => step.mutate({ kind: "consume", item, lot, qty: `-${qty}` }, { onSuccess: onClose })}>
+            Take it back
+          </Button>
           <Button variant="primary" disabled={!item || !qty} loading={step.isPending} onClick={() => step.mutate({ kind: "consume", item, lot, qty }, { onSuccess: onClose })}>
             Record it
           </Button>
@@ -285,7 +288,7 @@ export function RunPage() {
           <ol className="mes-story">
             {[...events.data].reverse().map((e) => (
               <li key={e.seq}>
-                <strong>{EVENT_WORDS[e.kind] ?? e.kind}</strong> <span className="faint">{formatDateTime(e.at)}</span>
+                <strong>{Number(e.qty) < 0 ? "Material taken back" : (EVENT_WORDS[e.kind] ?? e.kind)}</strong> <span className="faint">{formatDateTime(e.at)}</span>
                 <div className="muted">{[e.detail?.reason, e.lot, e.qty ? `${formatDecimal(e.qty)}` : null, e.scrap && Number(e.scrap) ? `${formatDecimal(e.scrap)} scrap` : null, e.detail?.note].filter(Boolean).join(" · ")}</div>
               </li>
             ))}

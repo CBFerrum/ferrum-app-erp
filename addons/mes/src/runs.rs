@@ -479,7 +479,17 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, run: Uuid, e: &Event) ->
             if !matches!(state.as_str(), "Running" | "Paused") {
                 return Err(wrong("consume"));
             }
-            consume_check(k, ctx, tx, &doc, *item, lot, *qty).await?;
+            if *qty < Decimal::ZERO {
+                // A wrong lot can only be put right this way: every report goes on trying to post
+                // what was said to go in. What has been posted stays posted.
+                let open = open_consumption(tx, ctx.tenant, run).await?.remove(item).unwrap_or_default();
+                let left: Decimal = open.iter().filter(|o| o.0 == *lot && o.1 == *serial).map(|o| o.2).sum();
+                if -*qty > left {
+                    return Err(Error::field("qty", format!("{} of that has not been used", left.normalize())));
+                }
+            } else {
+                consume_check(k, ctx, tx, &doc, *item, lot, *qty).await?;
+            }
             let line = Line { item: Some(*item), lot: lot.clone(), serial: serial.clone(), qty: Some(*qty), ..Default::default() };
             append(tx, ctx, run, e.event_id, "Consume", at, &line, Value::Null).await?;
         }

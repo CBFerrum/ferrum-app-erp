@@ -345,6 +345,14 @@ async fn scenario() {
         client_ip: "::1".into(),
     };
     site_ep.handle(&k, req).await.expect("released");
+    // A lot nobody has stops every report after it, so what was said to go in can be taken back.
+    t.event(&operator, main, json!({"kind": "consume", "item": steel, "lot": "S-9", "qty": 3})).await.expect("a terminal says what it read");
+    assert!(t.event(&operator, main, json!({"kind": "report", "good": 1, "lot": "W-1"})).await.is_err(), "there is no such lot to post");
+    let too_much = t.event(&operator, main, json!({"kind": "consume", "item": steel, "lot": "S-9", "qty": -4})).await;
+    assert!(too_much.is_err_and(|e| text(&e).contains("has not been used")), "only what is still open");
+    let another = t.event(&operator, main, json!({"kind": "consume", "item": steel, "lot": "S-1", "qty": -1})).await;
+    assert!(another.is_err_and(|e| text(&e).contains("has not been used")), "only that lot's");
+    t.event(&operator, main, json!({"kind": "consume", "item": steel, "lot": "S-9", "qty": -3})).await.expect("taken back");
     let lot_scan = Uuid::now_v7();
     let scan = json!({"kind": "consume", "item": steel, "lot": "S-1", "qty": 6, "event_id": lot_scan});
     t.event(&operator, main, scan.clone()).await.expect("consumed");

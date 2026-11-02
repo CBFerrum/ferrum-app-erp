@@ -40,6 +40,8 @@ Shop Floor:
   machine, and one that has is asked to stop.
 - A machine already loaded says so on the run (`material_source: Preloaded`), and whoever releases it
   answers for that.
+- Material said to have gone in can be taken back. A wrong lot stopped every report after it, with no
+  way out. What has been posted stays posted, and both events stay on the run.
 - **`machine.start_job` must be marked as kept to its app on the device**, or a run on it is refused:
   a start that can be asked for around these gates is not behind them.
 
