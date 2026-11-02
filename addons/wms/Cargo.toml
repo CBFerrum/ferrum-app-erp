@@ -24,6 +24,8 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast"] }
+ferrum-mes = { path = "../mes" }
+ferrum-mfg-ops = { path = "../mfg-ops" }
 ferrum-stock-ops = { path = "../stock-ops" }
 tokio = { workspace = true }
 

@@ -13,6 +13,7 @@ use ferrum_ops::commands;
 use ferrum_ops::contract::command::Report;
 use ferrum_ops::contract::{Lifecycle, State};
 use ferrum_ops::devices;
+use ferrum_wms::position;
 use rust_decimal::Decimal;
 use serde_json::{Map, Value, json};
 use std::str::FromStr;
@@ -137,6 +138,34 @@ impl T {
             .await
             .expect("user");
         self.k.load_ctx(self.tenant, id, None, "it".into()).await.unwrap()
+    }
+
+    /// How many times something was recorded, read apart from whatever request wrote it.
+    async fn audited(&self, entity: &str, record: Uuid, action: &str) -> i64 {
+        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
+        let n = sqlx::query_scalar("select count(*) from audit_event where tenant_id = $1 and entity = $2 and record_id = $3 and action = $4")
+            .bind(self.tenant)
+            .bind(entity)
+            .bind(record)
+            .bind(action)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        n
+    }
+
+    /// Commands written for a task, whatever became of them.
+    async fn missions(&self, task: Uuid) -> i64 {
+        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
+        let n = sqlx::query_scalar("select count(*) from op_command where tenant_id = $1 and workflow_id = $2")
+            .bind(self.tenant)
+            .bind(format!("wms-task:{task}"))
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        n
     }
 
     /// What a site does for a robot: says what it established, in the ledger, and lets it travel.
@@ -359,21 +388,38 @@ async fn scenario() {
     let small = t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "A-02"})).await;
     assert!(small.is_err_and(|e| text(&e).contains("no room")), "A-02 holds ten");
     k.update(&t.admin, "StorageBin", a1, obj(json!({"status": "Blocked", "blocked_reason": "racking damaged"})), None).await.unwrap();
+    let put_scan = Uuid::now_v7();
     assert!(
-        t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "P-01"})).await.is_ok(),
+        t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "DOCK", "to_scan": "P-01", "item_scan": "BOLT", "scan_id": put_scan}))
+            .await
+            .is_ok(),
         "an operator may choose another that fits"
     );
     k.update(&t.admin, "StorageBin", a1, obj(json!({"status": "Open"})), None).await.unwrap();
     assert_eq!(t.qty_in("P-01", "BOLT").await, n("96"));
     assert!(t.qty_in("DOCK", "BOLT").await.is_zero());
-    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "P-01", "scan_id": Uuid::now_v7()}))
+    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "P-01", "scan_id": put_scan}))
         .await
-        .expect("a repeat of a finished task with a scan id does nothing");
+        .expect("the same scan again, after a lost answer, does nothing");
+    assert!(
+        t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "P-01", "scan_id": Uuid::now_v7()}))
+            .await
+            .is_err_and(|e| text(&e).contains("is Done")),
+        "another scan of a finished task is someone who thinks it is open"
+    );
+    assert_eq!(t.qty_in("P-01", "BOLT").await, n("96"));
     t.reconciled().await;
     for (lot, expect) in [("M-1", "A-01"), ("M-2", "A-01")] {
         let task = t.tasks().await.into_iter().find(|x| x["kind"] == json!("Putaway") && x["lot"] == json!(lot)).unwrap();
         assert_eq!(task["to_bin"], json!(expect));
-        t.api_as(&operator, "POST", &format!("/tasks/{}/confirm", task["id"].as_str().unwrap()), json!({"to_scan": expect})).await.expect("put away");
+        t.api_as(
+            &operator,
+            "POST",
+            &format!("/tasks/{}/confirm", task["id"].as_str().unwrap()),
+            json!({"to_scan": expect, "item_scan": "MILK", "lot_scan": lot}),
+        )
+        .await
+        .expect("put away");
     }
 
     // Hazard rules are not hints.
@@ -428,13 +474,19 @@ async fn scenario() {
         let is_short = p["item"] == json!("BOLT") && dec(&p["qty"]) == n("90");
         let wrong_door = t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "A-02"})).await;
         assert!(wrong_door.is_err(), "picked stock goes where packing expects it");
-        let body = if is_short { json!({"to_scan": "DOOR", "qty": 88}) } else { json!({"to_scan": "DOOR"}) };
+        let load = json!({"item_scan": p["item"], "lot_scan": p["lot"]});
+        let picked = |extra: Value| {
+            let mut body = json!({"to_scan": "DOOR", "item_scan": load["item_scan"], "lot_scan": load["lot_scan"]});
+            for (k, v) in extra.as_object().unwrap() {
+                body[k] = v.clone();
+            }
+            body
+        };
+        let body = if is_short { picked(json!({"qty": 88})) } else { picked(json!({})) };
         let done = t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), body.clone()).await;
         if is_short {
             assert!(done.is_err(), "less than asked says why");
-            t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"to_scan": "DOOR", "qty": 88, "reason": "Two were bent"}))
-                .await
-                .expect("short");
+            t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), picked(json!({"qty": 88, "reason": "Two were bent"}))).await.expect("short");
         } else {
             done.expect("picked");
         }
@@ -455,6 +507,7 @@ async fn scenario() {
     }
     let wrong_item = t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "NUT", "qty": 1})).await;
     assert!(wrong_item.is_err(), "not on this shipment");
+    assert_eq!(t.audited("Shipment", ship, "wms.wrong_scan").await, 1, "and what was refused stays on record");
     let hand = |tracking: &str, label: &str| json!({"carrier": "DHL", "tracking": tracking, "label": label});
     assert!(t.api_as(&operator, "POST", &format!("/shipments/{ship}/hand-over"), hand("T1", "T1")).await.is_err(), "nothing verified, nothing leaves");
     t.api_as(&operator, "POST", &format!("/shipments/{ship}/verify"), json!({"code": "BOLT", "qty": 88})).await.expect("verified");
@@ -499,7 +552,9 @@ async fn scenario() {
         t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "A-02"})).await.is_err_and(|e| text(&e).contains("goes to")),
         "wrong station"
     );
-    t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "P-01"})).await.expect("confirmed at the station");
+    t.api_as(&operator, "POST", &format!("/tasks/{job}/confirm"), json!({"to_scan": "P-01", "item_scan": "MILK", "lot_scan": "M-1"}))
+        .await
+        .expect("confirmed at the station");
     assert_eq!(t.qty_in("P-01", "MILK").await, n("5"));
     t.reconciled().await;
     // The same event again, as an at-least-once outbox may send it, changes nothing.
@@ -729,7 +784,7 @@ async fn scenario() {
     assert!(text(&e).contains("brought to the line"), "{e:?}");
     let id = moves[0]["id"].as_str().unwrap();
     t.api_as(&manager, "POST", &format!("/tasks/{id}/release"), json!({})).await.expect("released");
-    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "P-01", "to_scan": "LINE"})).await.expect("brought");
+    t.api_as(&operator, "POST", &format!("/tasks/{id}/confirm"), json!({"from_scan": "P-01", "to_scan": "LINE", "item_scan": "PART"})).await.expect("brought");
     k.submit(&t.admin, "StockEntry", uid(&early), None).await.expect("taken from the line");
     assert_eq!(t.qty_in("LINE", "PART").await, n("6"));
     assert_eq!(t.on_books(part).await, n("6"));
@@ -739,6 +794,8 @@ async fn scenario() {
     let q = obj(json!({"item": milk, "lot": "M-1"}));
     let moves = t.call(&t.admin, "GET", "/trace", q, Value::Null).await.unwrap()["moves"].as_array().unwrap().len();
     assert!(moves >= 3, "{moves}");
+
+    what_a_move_has_to_prove(&t, company, &operator, &manager, amr).await;
 
     // ───── another workspace sees none of it ─────
     let other = k
@@ -757,6 +814,258 @@ async fn scenario() {
     let seen: i64 = sqlx::query_scalar("select count(*) from wms_position").fetch_one(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(seen, 0);
+}
+
+/// What a release and a confirmation have to hold to, with stock of their own.
+async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager: &Ctx, amr: Uuid) {
+    let (k, wh, tenant) = (&t.k, t.wh, t.tenant);
+    let group = t.find("ItemGroup", json!({"group_name": "Products"})).await;
+    let nos = t.find("Uom", json!({"uom_name": "Nos"})).await;
+    let gear = uid(&t.insert("Item", json!({"item_code": "GEAR", "item_name": "gear", "item_group": group["id"], "stock_uom": nos["id"], "is_stock_item": true, "has_batch_no": true, "barcode": "4006381333931"})).await);
+    for lot in ["G-1", "G-2"] {
+        t.insert("Batch", json!({"batch_id": lot, "item": gear})).await;
+    }
+    let bin = async |code: &str| {
+        let zone = t.find("StorageZone", json!({"zone_code": "STO"})).await;
+        uid(&t.insert("StorageBin", json!({"warehouse": wh, "zone": zone["id"], "bin_code": code})).await)
+    };
+    let (shelf, bench) = (bin("S-01").await, bin("S-02").await);
+    let stock = t
+        .insert(
+            "StockEntry",
+            json!({"company": company, "purpose": "Material Receipt", "items": [
+        {"item": gear, "qty": 30, "basic_rate": 2, "target_warehouse": wh, "batch_no": "G-1"},
+        {"item": gear, "qty": 30, "basic_rate": 2, "target_warehouse": wh, "batch_no": "G-2"}]}),
+        )
+        .await;
+    k.submit(&t.admin, "StockEntry", uid(&stock), None).await.expect("stock");
+    for lot in ["G-1", "G-2"] {
+        t.api_as(
+            manager,
+            "POST",
+            "/positions/move",
+            json!({"warehouse": wh, "item": gear, "lot": lot, "from_bin": "DOCK", "to_bin": "S-01", "qty": 30, "reason": "shelved"}),
+        )
+        .await
+        .expect("shelved");
+    }
+    let task =
+        async |lot: &str, qty: &str| new_move(t, json!({"warehouse": wh, "item": gear, "lot": lot, "from_bin": "S-01", "to_bin": "S-02", "qty": qty})).await;
+    let release = async |who: Option<Uuid>, id: Uuid| t.api_as(manager, "POST", &format!("/tasks/{id}/release"), json!({"robot": who})).await;
+    let command = async |id: Uuid| -> Uuid { t.get("WarehouseTask", id).await["command"].as_str().unwrap().parse().unwrap() };
+    let confirm = async |who: &Ctx, id: Uuid, body: Value| t.api_as(who, "POST", &format!("/tasks/{id}/confirm"), body).await;
+
+    // ───── a release said twice is one mission ─────
+    let job = task("G-1", "2").await;
+    let first = release(Some(amr), job).await.expect("released");
+    assert_eq!(first["repeated"], json!(false));
+    let again = release(Some(amr), job).await.expect("the answer was lost, and the client asks again");
+    assert_eq!((&again["command"], &again["repeated"]), (&first["command"], &json!(true)), "the same mission, and it says so");
+    assert_eq!(t.missions(job).await, 1, "nothing new was written");
+    assert!(release(None, job).await.is_err_and(|e| text(&e).contains("already on its way")), "nor can it quietly change hands");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    assert_eq!(commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap().len(), 1, "one mission reaches the site");
+    tx.commit().await.unwrap();
+
+    // Two at once: the task's lock puts them in a line.
+    let racing = task("G-1", "1").await;
+    let (a, b) = tokio::join!(release(Some(amr), racing), release(Some(amr), racing));
+    let (a, b) = (a.expect("one"), b.expect("the other"));
+    assert_eq!(a["command"], b["command"]);
+    assert_eq!(t.missions(racing).await, 1, "two requests at once are one mission");
+
+    // A mission that never started leaves the task open, and only then is there a new attempt. A
+    // report about the old one, arriving late, says nothing about the new one.
+    let old = command(racing).await;
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    tx.commit().await.unwrap();
+    t.robot_reports(old, State::Rejected, None).await;
+    assert_eq!(t.get("WarehouseTask", racing).await["status"], json!("Open"));
+    let next = release(Some(amr), racing).await.expect("a second attempt");
+    assert_ne!(next["command"], json!(old.to_string()));
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ferrum_wms::tasks::on_command(k, &t.admin, &mut tx, racing, State::Accepted, old, &Value::Null).await.expect("late");
+    tx.commit().await.unwrap();
+    assert_eq!(t.get("WarehouseTask", racing).await["status"], json!("Released"), "the old mission's late word moves nothing");
+
+    // ───── turned down after it was taken: it may have been moving ─────
+    let taken = command(racing).await;
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    tx.commit().await.unwrap();
+    t.robot_reports(taken, State::Accepted, None).await;
+    t.robot_reports(taken, State::Rejected, None).await;
+    let doubt = t.get("WarehouseTask", racing).await;
+    assert_eq!((doubt["status"].as_str(), doubt["custody"].as_str()), (Some("Exception"), Some("Uncertain")), "not left on its way for ever");
+    t.api_as(manager, "POST", &format!("/tasks/{racing}/recover"), json!({"found_bin": "S-01", "qty": 1, "note": "It never left the shelf"}))
+        .await
+        .expect("found");
+    assert_eq!(t.get("WarehouseTask", racing).await["status"], json!("Cancelled"));
+
+    // ───── arriving with the wrong thing proves nothing ─────
+    let cmd = command(job).await;
+    t.robot_reports(cmd, State::Accepted, None).await;
+    t.robot_reports(cmd, State::Completed, Some(json!({"lastNodeId": "S-02"}))).await;
+    let right = json!({"to_scan": "S-02", "item_scan": "GEAR", "lot_scan": "G-1"});
+    let with = |key: &str, value: Value| {
+        let mut body = right.clone();
+        body[key] = value;
+        body
+    };
+    let before = t.qty_in("S-02", "GEAR").await;
+    let wrong_lot = confirm(operator, job, with("lot_scan", json!("G-2"))).await;
+    assert!(wrong_lot.is_err_and(|e| text(&e).contains("this task moves G-1")), "the right item, the wrong lot");
+    assert_eq!(t.audited("WarehouseTask", job, "wms.wrong_scan").await, 1, "the refused scan stays on record");
+    assert!(confirm(operator, job, with("item_scan", json!("BOLT"))).await.is_err_and(|e| text(&e).contains("this task moves GEAR")), "the wrong item");
+    assert!(
+        confirm(operator, job, with("to_scan", json!("A-02"))).await.is_err_and(|e| text(&e).contains("this goes to")),
+        "the right load in the wrong place"
+    );
+    assert_eq!(t.audited("WarehouseTask", job, "wms.wrong_scan").await, 3, "each one of them");
+    let nothing = json!({"to_scan": "S-02"});
+    assert!(confirm(operator, job, nothing).await.is_err_and(|e| text(&e).contains("scan GEAR")), "a location alone says nothing about the load");
+    assert_eq!(t.qty_in("S-02", "GEAR").await, before, "and through all of that no stock moved");
+    assert_eq!(t.get("WarehouseTask", job).await["status"], json!("Arrived"));
+    assert!(
+        confirm(operator, job, with("manual", json!("Label torn off"))).await.is_err_and(|e| matches!(e, Error::Forbidden(_))),
+        "not an operator's to wave through"
+    );
+    let by_barcode = with("item_scan", json!("4006381333931"));
+    let scan = Uuid::now_v7();
+    let mut scanned = by_barcode.clone();
+    scanned["scan_id"] = json!(scan);
+    confirm(operator, job, scanned.clone()).await.expect("the right one, by its barcode");
+    let done = t.get("WarehouseTask", job).await;
+    assert_eq!((done["status"].as_str(), done["evidence_source"].as_str()), (Some("Done"), Some("Scan")));
+    assert_eq!(done["evidence"]["load"]["lot"], json!("G-1"), "what proved it is kept: {done:?}");
+    confirm(operator, job, scanned).await.expect("a lost answer repeats nothing");
+    assert_eq!(t.qty_in("S-02", "GEAR").await, before + n("2"), "it moved once");
+
+    // ───── a scan is used once: on another task it cannot finish anything ─────
+    let other = task("G-1", "1").await;
+    let mut reused = right.clone();
+    reused["scan_id"] = json!(scan);
+    assert!(confirm(operator, other, reused).await.is_err_and(|e| text(&e).contains("already used")), "that scan moved stock for another task");
+    assert_eq!(t.get("WarehouseTask", other).await["status"], json!("Open"), "and this one is not finished by it");
+
+    // ───── a manager can say so, and it never looks like a scan ─────
+    let mut waved = right.clone();
+    waved.as_object_mut().unwrap().retain(|k, _| k == "to_scan");
+    waved["manual"] = json!("Label torn off. Counted by hand with Pia");
+    confirm(manager, other, waved).await.expect("said by a manager");
+    let said = t.get("WarehouseTask", other).await;
+    assert_eq!((said["status"].as_str(), said["evidence_source"].as_str()), (Some("Done"), Some("Manual")));
+    assert_eq!(t.audited("WarehouseTask", other, "wms.manual_confirm").await, 1);
+
+    // ───── a unit is known by its label: the wrong tote at the right place proves nothing ─────
+    let tote = uid(&t.insert("HandlingUnit", json!({"unit_code": "T-100", "warehouse": wh})).await);
+    let twin = t.k.insert(&t.admin, "HandlingUnit", obj(json!({"unit_code": "T-100", "warehouse": wh}))).await;
+    assert!(twin.is_err(), "two units cannot carry one label");
+    t.insert("HandlingUnit", json!({"unit_code": "T-200", "warehouse": wh})).await;
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let loose = position::Key { bin: shelf, item: gear, owner: None, lot: "G-2".into(), serial: String::new(), unit: None, status: "Available".into() };
+    let boxed = position::Key { unit: Some(tote), ..loose.clone() };
+    position::transfer(&mut tx, &t.admin, wh, position::Kind::Move, &loose, &boxed, n("6"), Decimal::ZERO, &position::Cause::why("packed into a tote"))
+        .await
+        .unwrap();
+    let tasked = ferrum_wms::tasks::create(
+        k,
+        &t.admin,
+        &mut tx,
+        ferrum_wms::tasks::NewTask {
+            warehouse: wh,
+            kind: "Move",
+            item: gear,
+            qty: n("6"),
+            lot: "G-2".into(),
+            unit: Some(tote),
+            from_bin: shelf,
+            to_bin: Some(bench),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    release(Some(amr), tasked).await.expect("sent");
+    let c = command(tasked).await;
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    tx.commit().await.unwrap();
+    t.robot_reports(c, State::Completed, Some(json!({"lastNodeId": "S-02"}))).await;
+    assert!(
+        confirm(operator, tasked, json!({"to_scan": "S-02", "unit_scan": "T-200"})).await.is_err_and(|e| text(&e).contains("this task moves T-100")),
+        "the right place, the wrong tote"
+    );
+    assert_eq!(t.audited("WarehouseTask", tasked, "wms.wrong_scan").await, 1);
+
+    // Only part of it came. What did not could be anywhere, so it stays out of reach.
+    let partial = json!({"to_scan": "S-02", "unit_scan": "T-100", "qty": 4, "reason": "The tote is light"});
+    confirm(operator, tasked, partial).await.expect("what came is confirmed");
+    let light = t.get("WarehouseTask", tasked).await;
+    assert_eq!((light["status"].as_str(), light["custody"].as_str()), (Some("Exception"), Some("Uncertain")), "a robot's short load is not a short pick");
+    assert_eq!(dec(&light["done_qty"]), n("4"));
+    let promised: Decimal = t.bin("S-01", "GEAR").await.iter().map(|p| p.2).sum();
+    assert_eq!(promised, n("2"), "the rest is not free to promise until someone finds it");
+    assert!(
+        t.api_as(manager, "POST", &format!("/tasks/{tasked}/recover"), json!({"found_bin": "S-02", "qty": 3, "note": "x"}))
+            .await
+            .is_err_and(|e| text(&e).contains("between nothing and 2")),
+        "what already arrived is not part of what was lost"
+    );
+    t.api_as(manager, "POST", &format!("/tasks/{tasked}/recover"), json!({"found_bin": "S-02", "qty": 1, "note": "One was on the robot's deck, one is gone"}))
+        .await
+        .expect("found");
+    let settled = t.get("WarehouseTask", tasked).await;
+    assert_eq!((settled["status"].as_str(), settled["evidence_source"].as_str()), (Some("Short"), Some("Recovery")));
+    assert_eq!(dec(&settled["done_qty"]), n("5"));
+    let left: Decimal = t.bin("S-01", "GEAR").await.iter().map(|p| p.2).sum();
+    assert_eq!(left, Decimal::ZERO, "and nothing is promised any more");
+    t.reconciled().await;
+
+    // ───── a person's task through the site's station ─────
+    let station = {
+        let d = t.insert("Device", json!({"device_name": "Bench", "device_code": "STN-1", "kind": "Station", "site": t.find("Site", json!({"site_code": "north"})).await["id"], "operations": [{"operation": "warehouse.pick"}]})).await;
+        let id = uid(&d);
+        devices::set_lifecycle(k, &t.admin, id, Lifecycle::Claimed, "ours").await.unwrap();
+        let (code, _) = ferrum_ops::identity::new_enrollment(k, &t.admin, id).await.unwrap();
+        ferrum_ops::identity::enroll(k, tenant, &ferrum_ops::contract::sign::Enroll { code, public_key: hex(id) }).await.unwrap();
+        devices::set_lifecycle(k, &t.admin, id, Lifecycle::Commissioned, "checked").await.unwrap();
+        devices::set_lifecycle(k, &t.admin, id, Lifecycle::Active, "in service").await.unwrap();
+        id
+    };
+    let managed = t.find("ManagedWarehouse", json!({"warehouse": wh.to_string()})).await;
+    k.update(&t.admin, "ManagedWarehouse", uid(&managed), obj(json!({"person_station": station})), None).await.expect("a station");
+    let at_bench = task("G-1", "1").await;
+    release(None, at_bench).await.expect("to the station");
+    let c = command(at_bench).await;
+    let sent = commands::describe(k, &t.admin, c).await.unwrap();
+    assert_eq!(sent["payload"]["load"], json!({"item": ["4006381333931", "GEAR"], "lot": "G-1"}), "the station is told what to scan: {sent}");
+    assert!(confirm(operator, at_bench, right.clone()).await.is_err_and(|e| text(&e).contains("at the station")), "it is being done there");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    tx.commit().await.unwrap();
+    let from_station = |load: Value| json!({"by": "Pia", "found": {"scan": "S-02", "load": load}});
+    t.robot_reports(c, State::Accepted, None).await;
+    t.robot_reports(c, State::Completed, Some(from_station(json!({"item": "BOLT", "lot": "G-1"})))).await;
+    let stuck = t.get("WarehouseTask", at_bench).await;
+    assert_eq!(stuck["status"], json!("Exception"), "a station's word that does not add up finishes nothing, and does not retry for ever");
+    assert!(stuck["reason"].as_str().unwrap().contains("does not match"), "{stuck:?}");
+    assert_eq!(t.audited("WarehouseTask", at_bench, "wms.wrong_scan").await, 1);
+    t.api_as(manager, "POST", &format!("/tasks/{at_bench}/recover"), json!({"found_bin": "S-01", "qty": 0, "note": "Never left"})).await.expect("found");
+    let good = task("G-1", "1").await;
+    release(None, good).await.expect("to the station");
+    let c = command(good).await;
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    tx.commit().await.unwrap();
+    t.robot_reports(c, State::Accepted, None).await;
+    t.robot_reports(c, State::Completed, Some(from_station(json!({"item": "4006381333931", "lot": "G-1"})))).await;
+    let finished = t.get("WarehouseTask", good).await;
+    assert_eq!((finished["status"].as_str(), finished["evidence_source"].as_str()), (Some("Done"), Some("Station")));
+    k.update(&t.admin, "ManagedWarehouse", uid(&managed), obj(json!({"person_station": Value::Null})), None).await.expect("no station");
+    t.reconciled().await;
 }
 
 /// A gateway holding `north`, and a robot it can reach.

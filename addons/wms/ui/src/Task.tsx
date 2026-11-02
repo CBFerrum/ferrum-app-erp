@@ -9,7 +9,7 @@ import { api, docPath, formatDecimal, newKey, refusal } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { post } from "./data";
-import { custodyWords, shortOf, taskWords } from "./logic";
+import { custodyWords, evidenceWords, loadScans, shortOf, taskWords } from "./logic";
 import { ScanBox } from "./Scan";
 
 interface TaskDoc {
@@ -20,6 +20,9 @@ interface TaskDoc {
   qty: string;
   done_qty?: string | null;
   lot?: string | null;
+  serial?: string | null;
+  handling_unit?: string | null;
+  evidence_source?: string | null;
   custody?: string | null;
   robot?: string | null;
   reason?: string | null;
@@ -101,23 +104,41 @@ function Confirm({ t }: { t: TaskDoc }) {
   const qc = useQueryClient();
   const robot = !!t.robot;
   const [from, setFrom] = useState<string | null>(null);
+  const [load, setLoad] = useState<Record<string, string>>({});
+  const [unreadable, setUnreadable] = useState(false);
+  const [manual, setManual] = useState("");
   const [qty, setQty] = useState(t.qty);
   const [reason, setReason] = useState("");
   const id = useId();
   const short = shortOf(t.qty, qty);
+  const scans = loadScans({ unit: t.handling_unit ? (t._titles?.handling_unit ?? t.handling_unit) : null, item: t._titles?.item, lot: t.lot, serial: t.serial });
+  const next = unreadable ? undefined : scans.find((s) => !load[s.key]);
   const send = useMutation({
-    mutationFn: (to: string) => post(`/tasks/${t.id}/confirm`, { from_scan: from, to_scan: to, qty, reason: short ? reason : null, scan_id: newKey() }),
+    mutationFn: (to: string) =>
+      post(`/tasks/${t.id}/confirm`, { from_scan: from, to_scan: to, ...(unreadable ? { manual } : load), qty, reason: short ? reason : null, scan_id: newKey() }),
     onSuccess: () => {
       toast("Done");
       void qc.invalidateQueries({ queryKey: ["wms"] });
     },
-    onError: (e) => toast(refusal(e), "error"),
+    onError: (e) => {
+      toast(refusal(e), "error");
+      setLoad({});
+    },
   });
   const needFrom = !robot && from === null;
   return (
     <section className="card card-pad stack">
       {needFrom ? (
         <ScanBox label={`Scan where it is: ${t._titles?.from_bin ?? ""}`} onScan={setFrom} />
+      ) : next ? (
+        <>
+          <ScanBox label={next.label} onScan={(code) => setLoad((l) => ({ ...l, [next.key]: code }))} />
+          <div>
+            <button type="button" className="link" onClick={() => setUnreadable(true)}>
+              It cannot be scanned
+            </button>
+          </div>
+        </>
       ) : (
         <>
           {!robot ? (
@@ -127,6 +148,11 @@ function Confirm({ t }: { t: TaskDoc }) {
                 Not right?
               </button>
             </p>
+          ) : null}
+          {unreadable ? (
+            <Field label="Why it cannot be scanned" htmlFor={`${id}-manual`} required hint="A manager's word, and it stays on record as that.">
+              <input id={`${id}-manual`} className="input" value={manual} onChange={(e) => setManual(e.target.value)} />
+            </Field>
           ) : null}
           <Field label="How much" htmlFor={`${id}-qty`}>
             <input id={`${id}-qty`} className="input" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} />
@@ -180,6 +206,7 @@ export function TaskPage() {
       </header>
       {custody ? <Alert tone={t.custody === "Uncertain" ? "error" : "info"}>{custody}</Alert> : null}
       {t.reason ? <p className="muted">{t.reason}</p> : null}
+      {evidenceWords(t.evidence_source) ? <p className="muted">{evidenceWords(t.evidence_source)}</p> : null}
       {t.status === "Open" && t.to_bin ? <Release t={t} /> : null}
       {t.status === "Open" && !t.to_bin ? <Alert tone="warning">No bin fits this. A manager has to choose one.</Alert> : null}
       {(t.status === "Open" && t.to_bin && !t.robot) || (t.status === "Released" && !t.command) || t.status === "Arrived" ? <Confirm t={t} /> : null}
