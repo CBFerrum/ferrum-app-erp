@@ -1,5 +1,26 @@
 # Changelog
 
+## ERP 0.7.0: a group's books
+
+A company can have a parent; a parent and every company under it are a group, and its books add up
+(FERRUM-ERP-005).
+
+- A Consolidated Trial Balance, and a Consolidated choice on the profit and loss and the balance
+  sheet: the group's companies in the parent's currency, each at its latest exchange rate on or
+  before the end date, on the parent's chart (an account by its number, else its name; in the
+  statements an account the parent lacks shows on the nearest one above it that it has).
+- The group's business with itself is taken out: what a customer or supplier that represents one of
+  its companies owes or is owed, and lines on accounts marked Eliminate in Consolidation (intercompany
+  sales and costs, investments in a subsidiary and its capital) unless their entry is with someone
+  outside the group. A parent's own equity stays.
+- What does not cancel shows: an entry taken out only in part leaves an intercompany difference, and
+  what two companies say they owe each other is set side by side, with how far they disagree.
+- Adding up a group takes being allowed to see each of its companies.
+
+Not yet: income and expense at each day's rate with a translation reserve (IAS 21: everything is at
+the closing rate, as ERPNext does), ownership percentages and minority interest, consolidating the
+cash flow, and an intercompany invoice mirrored into the other company.
+
 ## ERP 0.6.0 and Finance 0.3.0: finance books
 
 Books kept side by side, as ERPNext's finance books keep them: IFRS beside local rules, a tax book
