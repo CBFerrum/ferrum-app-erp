@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.6.0 and Finance 0.3.0: finance books
+
+Books kept side by side, as ERPNext's finance books keep them: IFRS beside local rules, a tax book
+beside both.
+
+- A journal entry with no finance book is in every book; one with a book adjusts that book alone. A
+  book is the common ledger and its own entries, and balances: the database checks that all of an
+  entry's lines are in its book.
+- A book's entries adjust its valuations. They may not touch receivables or payables: what customers
+  and suppliers owe is the same in every book.
+- Trial balance, general ledger, profit and loss, balance sheet and cash flow take a Finance Book and
+  say which they show. With none they show the common books, as before: nothing changes for a
+  company without books.
+- Cancelling a book's entry reverses it in that book. The year-end closing closes every book, each
+  into an entry of its own, so each book's retained earnings carry its own result.
+- Budgets, exchange revaluation and the finance overview read the common books.
+
+Not yet: assets depreciating differently per book (Assets), and consolidation across companies.
+
 ## Warehouse 0.2.0 and Shop Floor 0.2.0: what holds when things repeat, arrive late or go wrong
 
 From a review of the connected system, against a release, of what happens under retries, crashes and
