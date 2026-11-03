@@ -1,8 +1,8 @@
 //! The accountant's screens, against a real PostgreSQL (`FERRUM_FINANCE_BOOKS_TEST_DATABASE_URL`,
 //! default `postgres://ferrum:ferrum@localhost:5432/ferrum_finance_books_test`; the database is
 //! reset first): what the bank reconciliation workbench shows and does, applying payments to open
-//! invoices, comparative statements and the cash flow, foreign exchange revaluation and the
-//! finance overview.
+//! invoices, comparative statements and the cash flow, foreign exchange revaluation, the
+//! finance overview, finance books, and a group's books added up.
 //!
 //! Each section opens a company of its own with a handful of postings small enough to add up by
 //! hand; the expected figures in the assertions are those sums, worked out on paper (the working is
@@ -227,6 +227,7 @@ async fn scenario() {
     revaluation(&mut t).await;
     overview(&mut t).await;
     finance_books(&mut t).await;
+    consolidation(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
@@ -1110,5 +1111,228 @@ async fn finance_books(t: &mut T) {
         let open = bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!("Profit/loss not yet closed to equity")).unwrap();
         assert_eq!(dec(&open["amount"]), n("0"), "{book:?}: nothing left to close");
     }
+    t.books_balance().await;
+}
+
+// ───────────────────────────── a group's books added up ─────────────────────────────
+
+/// A company of the group, in `currency` and under `parent`, with the standard chart and the fiscal year 2026.
+async fn group_company(t: &T, name: &str, abbr: &str, currency: Uuid, parent: Uuid) -> Uuid {
+    let c = uid(&t
+        .insert(
+            &t.admin,
+            "Company",
+            json!({"company_name": name, "abbr": abbr, "default_currency": currency.to_string(), "parent_company": parent.to_string()}),
+        )
+        .await);
+    t.insert(
+        &t.admin,
+        "FiscalYear",
+        json!({"year_name": format!("{abbr} 2026"), "company": c.to_string(), "start_date": "2026-01-01", "end_date": "2026-12-31"}),
+    )
+    .await;
+    c
+}
+
+async fn account_of(t: &T, company: Uuid, name: &str) -> Uuid {
+    uid(&t.find_one("Account", json!({"account_name": name, "company": company.to_string()})).await)
+}
+
+/// A new account marked Eliminate in Consolidation, under the group account `parent`.
+async fn eliminated(t: &T, company: Uuid, name: &str, number: &str, parent: &str, root: &str) -> Uuid {
+    let parent = account_of(t, company, parent).await;
+    let v = json!({"account_name": name, "account_number": number, "company": company.to_string(), "parent_account": parent.to_string(), "root_type": root, "eliminate_in_consolidation": true});
+    uid(&t.insert(&t.admin, "Account", v).await)
+}
+
+/// A line with a customer or a supplier on it.
+fn party(account: Uuid, kind: &str, who: Uuid, side: &str, amount: &str) -> Value {
+    let mut v = json!({"account": account.to_string(), "party_type": kind});
+    v[kind.to_lowercase()] = json!(who.to_string());
+    v[side] = json!(amount);
+    v
+}
+
+fn entry(company: Uuid, date: &str, lines: Value) -> Value {
+    json!({"company": company.to_string(), "posting_date": date, "accounts": lines})
+}
+
+/// A trial balance's accounts, and for each its debits, credits and closing balance (debit, credit).
+fn tb_lines(tb: &Value) -> Vec<(String, [Decimal; 4])> {
+    tb["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["account"].as_str().unwrap().to_string(), [dec(&r["debit"]), dec(&r["credit"]), dec(&r["closing_debit"]), dec(&r["closing_credit"])]))
+        .collect()
+}
+
+async fn consolidation(t: &mut T) {
+    let (a, am) = (t.admin.clone(), t.am.clone());
+    let group: Uuid = t.open_company("Group Co", "GP").await.parse().unwrap();
+    // Group Co (rupees) owns Group India (rupees), which owns Group Europe (euros, 100 rupees
+    // from December).
+    let india = group_company(t, "Group India", "GI", t.inr, group).await;
+    let europe = group_company(t, "Group Europe", "GE", t.eur, india).await;
+    t.insert(&a, "ExchangeRate", json!({"from_currency": t.eur.to_string(), "to_currency": t.inr.to_string(), "rate": "100", "valid_from": "2026-12-01"}))
+        .await;
+    let e = t.k.update(&a, "Company", group, obj(json!({"parent_company": europe.to_string()})), None).await.unwrap_err();
+    assert!(invalid(&e, "cycle"), "the platform keeps a hierarchy a tree: {e:?}");
+
+    let ic_sales = eliminated(t, group, "Intercompany Sales", "4130", "Direct Income", "Income").await;
+    let investment = eliminated(t, group, "Investment in Group India", "1240", "Fixed Assets", "Asset").await;
+    let india_buys = eliminated(t, india, "Intercompany Purchases", "5290", "Indirect Expenses", "Expense").await;
+    let europe_buys = eliminated(t, europe, "Intercompany Purchases", "5290", "Indirect Expenses", "Expense").await;
+    let india_capital = account_of(t, india, "Capital Stock").await;
+    t.k.update(&a, "Account", india_capital, obj(json!({"eliminate_in_consolidation": true})), None).await.expect("India's capital is the group's investment");
+    // Europe's grants account has no number: Group Co's has the same name, India has none.
+    let indirect = account_of(t, europe, "Indirect Income").await;
+    let grants = uid(&t
+        .insert(
+            &a,
+            "Account",
+            json!({"account_name": "Grants Received", "company": europe.to_string(), "parent_account": indirect.to_string(), "root_type": "Income"}),
+        )
+        .await);
+    let indirect = account_of(t, group, "Indirect Income").await;
+    t.insert(&a, "Account", json!({"account_name": "Grants Received", "account_number": "4220", "company": group.to_string(), "parent_account": indirect.to_string(), "root_type": "Income"})).await;
+    let to_india = uid(&t.insert(&a, "Customer", json!({"customer_name": "Group India Ltd", "represents_company": india.to_string()})).await);
+    let to_europe = uid(&t.insert(&a, "Customer", json!({"customer_name": "Group Europe GmbH", "represents_company": europe.to_string()})).await);
+    let outsider = uid(&t.insert(&a, "Customer", json!({"customer_name": "Outside Buyer"})).await);
+    let from_group = uid(&t.insert(&a, "Supplier", json!({"supplier_name": "Group Co Ltd", "represents_company": group.to_string()})).await);
+    let (cash, debtors, sales) = (account_of(t, group, "Cash").await, account_of(t, group, "Debtors").await, account_of(t, group, "Sales").await);
+    let (india_cash, india_creditors, india_rent) =
+        (account_of(t, india, "Cash").await, account_of(t, india, "Creditors").await, account_of(t, india, "Rent").await);
+    let (europe_cash, europe_creditors, europe_sales) =
+        (account_of(t, europe, "Cash").await, account_of(t, europe, "Creditors").await, account_of(t, europe, "Sales").await);
+    for je in [
+        // Group Co puts 5,000 into Group India.
+        entry(group, "2026-01-15", json!([dr(investment, "5000"), cr(cash, "5000")])),
+        entry(india, "2026-01-15", json!([dr(india_cash, "5000"), cr(india_capital, "5000")])),
+        entry(group, "2026-02-01", json!([dr(cash, "3000"), cr(sales, "3000")])),
+        // Group Co sells India 1,000 and both book it.
+        entry(group, "2026-03-01", json!([party(debtors, "Customer", to_india, "debit", "1000"), cr(ic_sales, "1000")])),
+        entry(india, "2026-03-01", json!([dr(india_buys, "1000"), party(india_creditors, "Supplier", from_group, "credit", "1000")])),
+        // Group Co sells Europe 900; Europe books 9.50 euros (950).
+        entry(group, "2026-04-01", json!([party(debtors, "Customer", to_europe, "debit", "900"), cr(ic_sales, "900")])),
+        entry(europe, "2026-04-01", json!([dr(europe_buys, "9.5"), party(europe_creditors, "Supplier", from_group, "credit", "9.5")])),
+        entry(india, "2026-05-01", json!([dr(india_rent, "500"), cr(india_cash, "500")])),
+        // Group Co sells India 200 more, to plain Sales; India never books it.
+        entry(group, "2026-06-01", json!([party(debtors, "Customer", to_india, "debit", "200"), cr(sales, "200")])),
+        entry(europe, "2026-07-01", json!([dr(europe_cash, "20"), cr(europe_sales, "20")])),
+        entry(europe, "2026-08-01", json!([dr(europe_cash, "5"), cr(grants, "5")])),
+        // A sale to someone outside the group on the intercompany account stays in.
+        entry(group, "2026-09-01", json!([party(debtors, "Customer", outsider, "debit", "70"), cr(ic_sales, "70")])),
+    ] {
+        t.make(&am, "JournalEntry", je).await;
+    }
+    let year = |c: Uuid| vec![("company", c.to_string()), ("from_date", "2026-01-01".to_string()), ("to_date", "2026-12-31".to_string())];
+    let figures = |d: &str, c: &str, cd: &str, cc: &str| [n(d), n(c), n(cd), n(cc)];
+
+    // The whole group. Left after eliminating, per account (debits, credits):
+    //   Cash: Group Co 3,000 - 5,000, India 5,000 - 500, Europe 25 euros = 2,500: 10,500 - 5,500.
+    //   Sales: 3,000 + 200 + Europe's 2,000. Rent: India's 500. Debtors and Intercompany Sales: the
+    //   outside buyer's 70. Grants: Europe's 500, on Group Co's account of that name.
+    //   The 200 sale's debtor went (India is in the group) but its sale stayed: a difference of 200.
+    //   The investment, India's capital and the rest cancel.
+    let tb = t.report(&am, "consolidated_trial_balance", &year(group)).await;
+    assert_eq!(
+        tb_lines(&tb),
+        vec![
+            ("1111 - Debtors".to_string(), figures("70", "0", "70", "0")),
+            ("1131 - Cash".to_string(), figures("10500", "5500", "5000", "0")),
+            ("4110 - Sales".to_string(), figures("0", "5200", "0", "5200")),
+            ("4130 - Intercompany Sales".to_string(), figures("0", "70", "0", "70")),
+            ("4220 - Grants Received".to_string(), figures("0", "500", "0", "500")),
+            ("5230 - Rent".to_string(), figures("500", "0", "500", "0")),
+            ("Intercompany difference (entries eliminated in part)".to_string(), figures("200", "0", "200", "0")),
+        ]
+    );
+    let totals = &tb["totals"];
+    assert_eq!((dec(&totals["debit"]), dec(&totals["credit"]), dec(&totals["closing_debit"])), (n("11270"), n("11270"), n("5770")));
+    let meta = &tb["meta"];
+    assert_eq!((meta["balanced"].clone(), meta["company"].clone(), meta["currency"].clone()), (json!(true), json!("Group Co"), json!("INR")));
+    assert_eq!(dec(&meta["intercompany_difference"]), n("200"));
+    // Eliminated, per company (debits, credits): Group Co the debtors 1,000 + 900 + 200 and the
+    // investment 5,000, against sales of 1,000 + 900; India 1,000 against 1,000 and its capital; Europe 950 each side.
+    let companies: Vec<(String, Decimal, Decimal, Decimal)> = meta["companies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["company"].as_str().unwrap().to_string(), dec(&c["rate"]), dec(&c["eliminated_debit"]), dec(&c["eliminated_credit"])))
+        .collect();
+    assert_eq!(
+        companies,
+        vec![
+            ("Group Co".to_string(), n("1"), n("7100"), n("1900")),
+            ("Group Europe".to_string(), n("100"), n("950"), n("950")),
+            ("Group India".to_string(), n("1"), n("1000"), n("6000")),
+        ]
+    );
+    // What they say they owe each other: Europe 950 against Group Co's 900; India 1,000 against 1,200.
+    let pairs: Vec<(String, Decimal, Decimal, Decimal)> = meta["intercompany_balances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["counterparty"].as_str().unwrap().to_string(), dec(&p["company_says"]), dec(&p["counterparty_says"]), dec(&p["difference"])))
+        .collect();
+    assert_eq!(pairs, vec![("Group Europe".to_string(), n("900"), n("950"), n("-50")), ("Group India".to_string(), n("1200"), n("1000"), n("200"))]);
+    assert_eq!(dec(&meta["intercompany_balances_disagree_by"]), n("250"));
+    // The group's statements say the same: income 5,200 + 70 + 500, expenses 500; assets the
+    // debtor's 70 and 5,000 cash, held by the year's profit less the difference of 200.
+    let mut consolidated = year(group);
+    consolidated.push(("consolidated", "1".into()));
+    let pl = t.report(&am, "profit_and_loss", &consolidated).await;
+    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("5770"), n("500"), n("5270")));
+    assert_eq!(pl["meta"]["companies"], json!("Group Co, Group Europe, Group India"));
+    let as_of = |c: Uuid| vec![("company", c.to_string()), ("as_of", "2026-12-31".to_string()), ("consolidated", "1".to_string())];
+    let bs = t.report(&am, "balance_sheet", &as_of(group)).await;
+    assert_eq!((dec(&bs["totals"]["assets"]), dec(&bs["totals"]["liabilities"]), dec(&bs["totals"]["equity"])), (n("5070"), n("0"), n("5070")));
+    assert_eq!(bs["meta"]["balanced"], json!(true), "{}", bs["rows"]);
+    let difference =
+        bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!("Intercompany difference (entries eliminated in part)")).expect("the difference");
+    assert_eq!(dec(&difference["amount"]), n("-200"));
+
+    // India's own group: Group Co is outside it now, so business with it stays, intercompany
+    // accounts included, and India's capital is the group's own.
+    let tb = t.report(&am, "consolidated_trial_balance", &year(india)).await;
+    assert_eq!(
+        tb_lines(&tb),
+        vec![
+            ("1131 - Cash".to_string(), figures("7500", "500", "7000", "0")),
+            ("2111 - Creditors".to_string(), figures("0", "1950", "0", "1950")),
+            ("3100 - Capital Stock".to_string(), figures("0", "5000", "0", "5000")),
+            ("4110 - Sales".to_string(), figures("0", "2000", "0", "2000")),
+            ("5230 - Rent".to_string(), figures("500", "0", "500", "0")),
+            ("5290 - Intercompany Purchases".to_string(), figures("1950", "0", "1950", "0")),
+            ("Grants Received (Group Europe)".to_string(), figures("0", "500", "0", "500")),
+        ]
+    );
+    assert_eq!((tb["meta"]["balanced"].clone(), tb["meta"]["intercompany_balances"].clone()), (json!(true), json!([])));
+    // In its statements Europe's grants, which India's chart lacks, show on the account above them,
+    // Indirect Income: income 2,000 + 500, expenses 500 + 1,950.
+    let mut consolidated = year(india);
+    consolidated.push(("consolidated", "1".into()));
+    let pl = t.report(&am, "profit_and_loss", &consolidated).await;
+    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("2500"), n("2450"), n("50")));
+    assert_eq!(dec(&line(&pl, "4200 - Indirect Income")["amount"]), n("500"));
+    let bs = t.report(&am, "balance_sheet", &as_of(india)).await;
+    assert_eq!((dec(&bs["totals"]["assets"]), dec(&bs["totals"]["liabilities"]), dec(&bs["totals"]["equity"])), (n("7000"), n("1950"), n("5050")));
+    assert_eq!(bs["meta"]["balanced"], json!(true), "{}", bs["rows"]);
+
+    // Someone who may see only two of the three companies cannot add up all three.
+    let scoped = t.user("group@books.test", "Accounts Manager").await;
+    t.k.set_user_scopes(&a, scoped.user, "Company", &[group, india], None).await.expect("scope");
+    let scoped = t.k.load_ctx(t.tenant, scoped.user, None, "it".into()).await.expect("ctx");
+    let p: HashMap<String, String> = year(group).into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let e = ferrum_domain::reports::run(&t.k, &scoped, "consolidated_trial_balance", &p).await.unwrap_err();
+    assert!(matches!(&e, Error::Forbidden(m) if m.contains("Group Europe")), "{e:?}");
+    // Before the first euro rate (January 2026) Europe cannot be translated.
+    let p: HashMap<String, String> = [("company", group.to_string()), ("from_date", "2025-01-01".into()), ("to_date", "2025-12-31".into())]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    let e = ferrum_domain::reports::run(&t.k, &am, "consolidated_trial_balance", &p).await.unwrap_err();
+    assert!(invalid(&e, "no exchange rate from EUR to INR"), "{e:?}");
     t.books_balance().await;
 }
