@@ -1,5 +1,5 @@
 package: accounting
-version: 0.1.0
+version: 0.2.0
 label: Accounting
 description: Universal journal (append-only, balanced in the database), payments with open-item allocation, period close, financial reports.
 depends: [core, parties, products, project_records]
