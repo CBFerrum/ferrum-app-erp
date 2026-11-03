@@ -234,7 +234,7 @@ pub(crate) async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Re
         .unwrap_or(2);
     let base = code == co.currency;
     let book: Decimal = sqlx::query_scalar(
-        "select coalesce(sum(case when $5 then debit - credit else debit_txn - credit_txn end), 0) from journal_line \
+        "select coalesce(sum(case when $5 then debit - credit else debit_txn - credit_txn end), 0) from journal_line_in_book \
          where tenant_id = $1 and company_id = $2 and account_id = $3 and posting_date <= $4 and ($5 or trim(currency) = $6)",
     )
     .bind(ctx.tenant)
@@ -356,7 +356,7 @@ async fn cash_flow(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &P
     }
     let weekly = p.str("group_by") == Some("Week");
     let opening: Decimal = sqlx::query_scalar(
-        "select coalesce(sum(l.debit - l.credit), 0) from journal_line l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
+        "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date < $3 and a.account_type in ('Bank', 'Cash')",
     )
     .bind(ctx.tenant)
@@ -780,7 +780,7 @@ async fn overview(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>) ->
         "detail": years.iter().map(|(id, name, end)| json!({"id": id, "name": name, "end": end})).collect::<Vec<_>>()}));
     let cash: Vec<(Uuid, String, Decimal)> = sqlx::query_as(
         "select a.id, coalesce(a.account_number || ' - ', '') || a.account_name, coalesce(sum(l.debit - l.credit), 0) from e_account a \
-         left join journal_line l on l.tenant_id = a.tenant_id and l.account_id = a.id and l.posting_date <= $3 \
+         left join journal_line_in_book l on l.tenant_id = a.tenant_id and l.account_id = a.id and l.posting_date <= $3 \
          where a.tenant_id = $1 and a.company = $2 and a.account_type in ('Bank', 'Cash') and not coalesce(a.is_group, false) group by a.id, 2 order by 2",
     )
     .bind(ctx.tenant)

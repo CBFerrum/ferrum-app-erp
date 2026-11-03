@@ -34,6 +34,13 @@ impl DocHook for JournalEntryHook {
                 errors.push(FieldError::new("account", "belongs to another company").in_row("accounts", i));
             }
             let typ = s(&a, "account_type").unwrap_or_default();
+            // What customers and suppliers owe is the same in every book.
+            if id(doc, "finance_book").is_some() && (s(l, "party_type").is_some() || matches!(typ, "Receivable" | "Payable")) {
+                errors.push(
+                    FieldError::new("account", "a finance book's entries adjust its valuations, not what customers and suppliers owe").in_row("accounts", i),
+                );
+                continue;
+            }
             match (s(l, "party_type"), typ) {
                 (Some("Customer"), t) if t != "Receivable" => {
                     errors.push(FieldError::new("account", "a customer line must use a Receivable account").in_row("accounts", i))
@@ -54,6 +61,7 @@ impl DocHook for JournalEntryHook {
         let on = date(doc, "posting_date")?;
         let mut entry = Entry::new(co.id, on, "JournalEntry", jid, s(doc, "number").map(str::to_string));
         entry.memo = s(doc, "remark").map(str::to_string);
+        entry.finance_book = id(doc, "finance_book");
         for l in rows(doc, "accounts") {
             let amount = d(&l, "debit") - d(&l, "credit");
             let line_id = id(&l, "id").ok_or_else(|| Error::internal("line without id"))?;

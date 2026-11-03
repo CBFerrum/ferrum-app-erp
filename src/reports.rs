@@ -24,28 +24,40 @@ struct Def {
 }
 
 const DEFS: &[Def] = &[
-    Def { name: "trial_balance", label: "Trial Balance", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
+    Def {
+        name: "trial_balance",
+        label: "Trial Balance",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "from_date", "to_date", "finance_book"],
+    },
     Def {
         name: "general_ledger",
         label: "General Ledger",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "account", "customer", "supplier", "cost_center", "project", "exclude_closing"],
+        params: &["company", "from_date", "to_date", "account", "customer", "supplier", "cost_center", "project", "exclude_closing", "finance_book"],
     },
     Def {
         name: "profit_and_loss",
         label: "Profit and Loss",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project", "finance_book"],
     },
-    Def { name: "balance_sheet", label: "Balance Sheet", module: "accounting", entity: "JournalEntry", params: &["company", "as_of", "compare", "periods"] },
+    Def {
+        name: "balance_sheet",
+        label: "Balance Sheet",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "as_of", "compare", "periods", "finance_book"],
+    },
     Def {
         name: "cash_flow",
         label: "Cash Flow",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "finance_book"],
     },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
@@ -81,6 +93,9 @@ fn param(name: &str) -> Value {
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
+        "finance_book" => {
+            json!({"name": name, "label": "Finance Book", "type": "link", "to": "FinanceBook", "description": "Empty: the common books. A book: the common entries and that book's own"})
+        }
         other => param_def(other),
     }
 }
@@ -105,6 +120,18 @@ impl ReportSource for ErpReports {
         let p = Params { raw };
         let mut tx = read_tx(k, ctx).await?;
         let co = resolve_company(&mut tx, ctx, &p).await?;
+        let book = p.uuid("finance_book")?;
+        crate::ledger::read_book(&mut tx, book).await?;
+        let book_name: Option<String> = match book {
+            Some(b) => {
+                sqlx::query_scalar("select finance_book_name from e_finance_book where tenant_id = $1 and id = $2")
+                    .bind(ctx.tenant)
+                    .bind(b)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
+            None => None,
+        };
         let mut out = match name {
             "trial_balance" => trial_balance(&mut tx, ctx, &co, &p).await?,
             "general_ledger" => general_ledger(&mut tx, ctx, &co, &p).await?,
@@ -127,6 +154,9 @@ impl ReportSource for ErpReports {
             if let Value::Object(meta) = meta {
                 meta.insert("company".into(), json!(co.name));
                 meta.insert("currency".into(), json!(co.currency));
+                if let Some(b) = &book_name {
+                    meta.insert("finance_book".into(), json!(b));
+                }
             }
         }
         Ok(out)
@@ -217,7 +247,7 @@ async fn balances_where(
     dims: &Dims,
 ) -> Result<HashMap<Uuid, Decimal>> {
     Ok(sqlx::query_as::<_, (Uuid, Decimal)>(
-        "select l.account_id, sum(l.debit - l.credit) from journal_line l where l.tenant_id = $1 and l.company_id = $2 \
+        "select l.account_id, sum(l.debit - l.credit) from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 \
          and ($3::date is null or l.posting_date >= $3) and l.posting_date <= $4 \
          and (cardinality($5::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($5))) \
          and ($6::uuid[] is null or l.cost_center_id = any($6)) and ($7::uuid is null or l.project_id = $7) \
@@ -376,7 +406,7 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     // Income and expense restart every fiscal year; earlier years show as one equity line.
     let pl_this_year = balances(tx, ctx, co, Some(year_start), from.pred_opt().unwrap_or(from)).await?;
     let movement: HashMap<Uuid, (Decimal, Decimal)> = sqlx::query_as::<_, (Uuid, Decimal, Decimal)>(
-        "select account_id, sum(debit), sum(credit) from journal_line where tenant_id = $1 and company_id = $2 and posting_date between $3 and $4 group by account_id",
+        "select account_id, sum(debit), sum(credit) from journal_line_in_book where tenant_id = $1 and company_id = $2 and posting_date between $3 and $4 group by account_id",
     )
     .bind(ctx.tenant)
     .bind(co.id)
@@ -465,7 +495,7 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     let skip: Vec<String> =
         if p.str("exclude_closing").is_some_and(|v| v == "true" || v == "1") { CLOSING_SOURCES.iter().map(|s| s.to_string()).collect() } else { vec![] };
     let opening: Decimal = sqlx::query_scalar(
-        "select coalesce(sum(l.debit - l.credit), 0) from journal_line l where l.tenant_id = $1 and l.company_id = $2 and l.posting_date < $3 \
+        "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 and l.posting_date < $3 \
          and ($4::uuid[] is null or l.account_id = any($4)) and ($5::uuid[] is null or l.customer_id = any($5)) and ($6::uuid[] is null or l.supplier_id = any($6)) \
          and ($7::uuid[] is null or l.cost_center_id = any($7)) and ($8::uuid is null or l.project_id = $8) \
          and (cardinality($9::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($9)))",
@@ -485,7 +515,7 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     let lines: Vec<(NaiveDate, String, String, Option<String>, Uuid, Option<String>, Decimal, Decimal, Option<String>)> = sqlx::query_as(
         "select l.posting_date, coalesce(a.account_number || ' - ', '') || a.account_name, e.source_entity, e.source_number, e.source_id, \
          coalesce(c.customer_name, s.supplier_name), l.debit, l.credit, l.remarks \
-         from journal_line l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
+         from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
          join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
          left join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
          left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id \
@@ -659,7 +689,7 @@ async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
         let opening = cash_at(balances(tx, ctx, co, None, f.pred_opt().unwrap_or(*f)).await?);
         let closing = cash_at(balances(tx, ctx, co, None, *t).await?);
         let exchange: Decimal = sqlx::query_scalar(
-            "select coalesce(sum(l.debit - l.credit), 0) from journal_line l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
+            "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
              join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id where l.tenant_id = $1 and l.company_id = $2 \
              and l.posting_date between $3 and $4 and e.source_entity = 'ExchangeRevaluation' and a.root_type = 'Asset' and a.account_type in ('Bank', 'Cash')",
         )

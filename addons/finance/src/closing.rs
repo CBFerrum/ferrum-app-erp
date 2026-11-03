@@ -189,11 +189,13 @@ impl DocHook for ClosingHook {
         if let Some((start, _, true)) = last {
             set_period(hc, fy.id, start, false).await?;
         }
-        let balances: Vec<(Uuid, Option<Uuid>, Decimal)> = sqlx::query_as(
-            "select l.account_id, l.cost_center_id, sum(l.debit - l.credit) from journal_line l \
+        // Each book closes its own entries: the common ledger's into one entry every book has, each
+        // book's adjustments into one of that book's, so every book's year ends at zero.
+        let balances: Vec<(Option<Uuid>, Uuid, Option<Uuid>, Decimal)> = sqlx::query_as(
+            "select l.finance_book_id, l.account_id, l.cost_center_id, sum(l.debit - l.credit) from journal_line l \
              join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
              where l.tenant_id = $1 and l.company_id = $2 and l.posting_date between $3 and $4 and a.root_type in ('Income', 'Expense') \
-             group by 1, 2 having sum(l.debit - l.credit) <> 0",
+             group by 1, 2, 3 having sum(l.debit - l.credit) <> 0",
         )
         .bind(hc.ctx.tenant)
         .bind(co.id)
@@ -201,18 +203,29 @@ impl DocHook for ClosingHook {
         .bind(fy.end)
         .fetch_all(&mut **hc.tx)
         .await?;
-        let mut entry = Entry::new(co.id, fy.end, ENTITY, pid, s(doc, "number").map(str::to_string));
-        entry.memo = Some(format!("Closing of fiscal year {}", fy.name));
-        let mut per_cost_center: BTreeMap<Option<Uuid>, Decimal> = BTreeMap::new();
-        for (account, cc, balance) in balances {
-            entry.lines.push(Line::new(account, -balance, &co.currency_code).cost_center(cc).remarks("Period closing"));
-            *per_cost_center.entry(cc).or_default() += balance;
+        let mut books: BTreeMap<Option<Uuid>, Vec<(Uuid, Option<Uuid>, Decimal)>> = BTreeMap::new();
+        for (book, account, cc, balance) in balances {
+            books.entry(book).or_default().push((account, cc, balance));
         }
-        let net_loss: Decimal = per_cost_center.values().copied().sum();
-        for (cc, total) in per_cost_center {
-            entry.lines.push(Line::new(closing, total, &co.currency_code).cost_center(cc).remarks("Period closing"));
+        let mut net_loss = Decimal::ZERO;
+        for (book, balances) in books {
+            let mut entry = Entry::new(co.id, fy.end, ENTITY, pid, s(doc, "number").map(str::to_string));
+            entry.memo = Some(format!("Closing of fiscal year {}", fy.name));
+            entry.finance_book = book;
+            let mut per_cost_center: BTreeMap<Option<Uuid>, Decimal> = BTreeMap::new();
+            for (account, cc, balance) in balances {
+                entry.lines.push(Line::new(account, -balance, &co.currency_code).cost_center(cc).remarks("Period closing"));
+                *per_cost_center.entry(cc).or_default() += balance;
+            }
+            // The profit it records is the common books'.
+            if book.is_none() {
+                net_loss = per_cost_center.values().copied().sum();
+            }
+            for (cc, total) in per_cost_center {
+                entry.lines.push(Line::new(closing, total, &co.currency_code).cost_center(cc).remarks("Period closing"));
+            }
+            ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         }
-        ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         // Lock the year: every month that was open is closed now (and reopened on cancel).
         let mut closed = Vec::new();
         for (start, _, was_closed) in months {
