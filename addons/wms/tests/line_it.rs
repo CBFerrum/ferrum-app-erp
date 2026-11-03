@@ -18,6 +18,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// The one gateway the site's commands go through: its domains are not pooled.
+const GATEWAY: Uuid = Uuid::from_u128(0x6a7e);
+
 fn obj(v: Value) -> Doc {
     v.as_object().cloned().unwrap()
 }
@@ -354,7 +357,7 @@ async fn scenario() {
 
     // Nor does it once the job has ended: a start that finished is not a start to send again.
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "plant", 1, 10).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "plant", 1, 10, GATEWAY, false).await.unwrap();
     let ended = Report {
         report_id: Uuid::now_v7(),
         command_id: command,
@@ -364,7 +367,7 @@ async fn scenario() {
         detail: Value::Null,
         evidence: Some(json!({"cycle": "done"})),
     };
-    commands::apply(&mut tx, tenant, &ended, 1).await.unwrap();
+    commands::apply(&mut tx, tenant, &ended, 1, GATEWAY).await.unwrap();
     tx.commit().await.unwrap();
     t.deliver().await;
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();

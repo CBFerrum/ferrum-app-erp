@@ -20,6 +20,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// The one gateway the site's commands go through: its domains are not pooled.
+const GATEWAY: Uuid = Uuid::from_u128(0x6a7e);
+
 fn obj(v: Value) -> Doc {
     v.as_object().cloned().unwrap()
 }
@@ -172,7 +175,7 @@ impl T {
     async fn robot_reports(&self, command: Uuid, state: State, evidence: Option<Value>) {
         let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
         let r = Report { report_id: Uuid::now_v7(), command_id: command, state, at_source: Utc::now(), epoch: 1, detail: Value::Null, evidence };
-        commands::apply(&mut tx, self.tenant, &r, 1).await.unwrap();
+        commands::apply(&mut tx, self.tenant, &r, 1, GATEWAY).await.unwrap();
         tx.commit().await.unwrap();
         while self.k.dispatch_outbox_once().await.unwrap() > 0 {}
     }
@@ -536,7 +539,7 @@ async fn scenario() {
     released.expect("sent to the robot");
     let cmd: Uuid = t.get("WarehouseTask", job).await["command"].as_str().unwrap().parse().unwrap();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    assert_eq!(commands::take_for_site(&mut tx, tenant, "north", 1, 10).await.unwrap().len(), 1, "the ledger holds the mission");
+    assert_eq!(commands::take_for_site(&mut tx, tenant, "north", 1, 10, GATEWAY, false).await.unwrap().len(), 1, "the ledger holds the mission");
     tx.commit().await.unwrap();
     t.robot_reports(cmd, State::Accepted, None).await;
     t.robot_reports(cmd, State::Executing, None).await;
@@ -569,7 +572,7 @@ async fn scenario() {
     t.api_as(&manager, "POST", &format!("/tasks/{lost}/release"), json!({"robot": amr})).await.expect("sent");
     let c2: Uuid = t.get("WarehouseTask", lost).await["command"].as_str().unwrap().parse().unwrap();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 10).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 10, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     t.robot_reports(c2, State::Executing, None).await;
     t.robot_reports(c2, State::OutcomeUnknown, None).await;
@@ -962,7 +965,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     assert_eq!(t.missions(job).await, 1, "nothing new was written");
     assert!(release(None, job).await.is_err_and(|e| text(&e).contains("already on its way")), "nor can it quietly change hands");
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    assert_eq!(commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap().len(), 1, "one mission reaches the site");
+    assert_eq!(commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap().len(), 1, "one mission reaches the site");
     tx.commit().await.unwrap();
 
     // Two at once: the task's lock puts them in a line.
@@ -976,7 +979,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     // report about the old one, arriving late, says nothing about the new one.
     let old = command(racing).await;
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     t.robot_reports(old, State::Rejected, None).await;
     assert_eq!(t.get("WarehouseTask", racing).await["status"], json!("Open"));
@@ -990,7 +993,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     // ───── turned down after it was taken: it may have been moving ─────
     let taken = command(racing).await;
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     t.robot_reports(taken, State::Accepted, None).await;
     t.robot_reports(taken, State::Rejected, None).await;
@@ -1089,7 +1092,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     release(Some(amr), tasked).await.expect("sent");
     let c = command(tasked).await;
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     t.robot_reports(c, State::Completed, Some(json!({"lastNodeId": "S-02"}))).await;
     assert!(
@@ -1142,7 +1145,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     assert_eq!(sent["payload"]["load"], json!({"item": ["4006381333931", "GEAR"], "lot": "G-1"}), "the station is told what to scan: {sent}");
     assert!(confirm(operator, at_bench, right.clone()).await.is_err_and(|e| text(&e).contains("at the station")), "it is being done there");
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     let from_station = |load: Value| json!({"by": "Pia", "found": {"scan": "S-02", "load": load}});
     t.robot_reports(c, State::Accepted, None).await;
@@ -1156,7 +1159,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
     release(None, good).await.expect("to the station");
     let c = command(good).await;
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+    commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
     tx.commit().await.unwrap();
     t.robot_reports(c, State::Accepted, None).await;
     t.robot_reports(c, State::Completed, Some(from_station(json!({"item": "4006381333931", "lot": "G-1"})))).await;
@@ -1191,7 +1194,7 @@ async fn what_a_move_has_to_prove(t: &T, company: Uuid, operator: &Ctx, manager:
         release(Some(amr), id).await.expect("sent");
         let c = command(id).await;
         let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-        commands::take_for_site(&mut tx, tenant, "north", 1, 50).await.unwrap();
+        commands::take_for_site(&mut tx, tenant, "north", 1, 50, GATEWAY, false).await.unwrap();
         tx.commit().await.unwrap();
         t.robot_reports(c, State::Accepted, None).await;
         t.robot_reports(c, State::OutcomeUnknown, None).await;
