@@ -124,7 +124,7 @@ impl ReportSource for ErpReports {
         crate::ledger::read_book(&mut tx, book).await?;
         let book_name: Option<String> = match book {
             Some(b) => {
-                sqlx::query_scalar("select book_name from e_finance_book where tenant_id = $1 and id = $2")
+                sqlx::query_scalar("select finance_book_name from e_finance_book where tenant_id = $1 and id = $2")
                     .bind(ctx.tenant)
                     .bind(b)
                     .fetch_optional(&mut *tx)

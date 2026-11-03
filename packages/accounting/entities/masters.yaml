@@ -23,12 +23,12 @@
   label: Finance Book
   kind: master
   module: accounting
-  title_field: book_name
-  description: "Another set of books beside the common one, such as IFRS beside local rules: its own entries adjust it alone, and it has every entry with no book besides."
+  title_field: finance_book_name
+  description: "Another set of books beside the common one, such as IFRS beside local rules or a tax book: its own entries adjust it alone, and it has every entry with no book besides. Assets keep a book's own values in it."
   fields:
-    - {name: book_name, type: data, required: true, unique: true, in_list: true}
+    - {name: finance_book_name, type: data, required: true, unique: true, in_list: true}
     - {name: description, type: text}
-  list: {columns: [book_name], sort: book_name asc}
+  list: {columns: [finance_book_name], sort: finance_book_name asc}
 
 - name: CostCenter
   label: Cost Center

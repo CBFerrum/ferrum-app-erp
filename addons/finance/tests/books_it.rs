@@ -1044,8 +1044,8 @@ async fn finance_books(t: &mut T) {
     let cid = t.open_company("Books Co", "BK").await;
     let (rent, cash, admin_exp, computers) =
         (t.account("Rent").await, t.account("Cash").await, t.account("Administrative Expenses").await, t.account("Computers").await);
-    let ifrs = uid(&t.insert(&am, "FinanceBook", json!({"book_name": "IFRS"})).await);
-    let tax = uid(&t.insert(&am, "FinanceBook", json!({"book_name": "Tax"})).await);
+    let ifrs = uid(&t.insert(&am, "FinanceBook", json!({"finance_book_name": "IFRS"})).await);
+    let tax = uid(&t.insert(&am, "FinanceBook", json!({"finance_book_name": "Tax"})).await);
     // Every book: rent of 1000 paid in cash. IFRS writes the computers down by 200 more, the tax
     // books by 500. So expenses are 1000 in the common books, 1200 in IFRS's and 1500 in the tax books'.
     t.make(&am, "JournalEntry", t.journal("2026-05-10", json!([dr(rent, "1000"), cr(cash, "1000")]))).await;
