@@ -1,5 +1,12 @@
 # Changelog
 
+## ERP 0.7.1: what the assistant knows in ERP's pages
+
+- A `shell.assistant` contribution (FERRUM-AI-006): asked from one of ERP's pages, the assistant
+  knows what a submitted, draft or cancelled document means, where what customers and suppliers owe
+  comes from, that the reports hold the books' figures (and which), and what finance books and
+  groups are; it suggests five questions to start with. Needs a Ferrum that knows the point (#49).
+
 ## ERP 0.7.0: a group's books
 
 A company can have a parent; a parent and every company under it are a group, and its books add up

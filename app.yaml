@@ -5,7 +5,7 @@
 # Recorded as installed in every workspace that has accounting; India is its add-on (addons/india).
 id: erp
 name: ERP
-version: 0.7.0
+version: 0.7.1
 publisher: cbferrum
 summary: Accounting, selling, buying, stock and manufacturing
 categories: [finance, inventory, manufacturing]
@@ -43,6 +43,24 @@ contributes:
     - {id: mfg_ops, package: mfg_ops, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: quality, package: quality, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: project_records, package: project_records, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
+  # What the assistant should know in ERP's pages, and what it suggests asking there.
+  shell.assistant:
+    - id: books
+      title: ERP
+      instructions: >-
+        Amounts are in the company's currency unless a document names another. A submitted document counts; a draft does
+        not yet, and a cancelled one was reversed. What customers owe is the outstanding amount of submitted sales
+        invoices, what the company owes that of purchase invoices. For figures from the books, run the reports
+        (trial_balance, profit_and_loss, balance_sheet, cash_flow, general_ledger, receivables, payables, stock_balance)
+        rather than adding records up yourself, and say which company and period they are for. An empty finance book means
+        the common books. A company with a parent belongs to a group, whose books consolidated_trial_balance and the
+        Consolidated choice of the statements add up.
+      suggestions:
+        - Which customers owe us the most, oldest first?
+        - What do we owe suppliers this week?
+        - How do this month's sales compare with last month's?
+        - Show the trial balance for this fiscal year
+        - Which items are running low in stock?
   # The workspace's portal: a customer's own invoices at /portal/invoices/ (the selling package's
   # endpoints), where /open of an invoice takes portal people.
   shell.portal:
