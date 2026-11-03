@@ -226,6 +226,7 @@ async fn scenario() {
     statements(&mut t).await;
     revaluation(&mut t).await;
     overview(&mut t).await;
+    finance_books(&mut t).await;
 }
 
 // ───────────────────────────── the bank reconciliation workbench ─────────────────────────────
@@ -1024,4 +1025,90 @@ async fn overview(t: &mut T) {
     let mine = t.report(&au, "finance_overview", &[("company", cid.clone()), ("as_of", "2026-11-01".into())]).await;
     let drafts = mine["rows"].as_array().unwrap().iter().find(|r| r["key"] == json!("drafts")).unwrap().clone();
     assert_eq!((drafts["count"].clone(), drafts["detail"][0]["entity"].clone()), (json!(1), json!("JournalEntry")));
+}
+
+// ───────────────────────────── finance books ─────────────────────────────
+
+/// Income and expense, and their total, as the profit and loss shows them for the year in `book`.
+async fn year_in(t: &T, cid: &str, book: Option<Uuid>) -> (Decimal, Decimal) {
+    let mut p = vec![("company", cid.to_string()), ("from_date", "2026-01-01".to_string()), ("to_date", "2026-12-31".to_string())];
+    if let Some(b) = book {
+        p.push(("finance_book", b.to_string()));
+    }
+    let pl = t.report(&t.am, "profit_and_loss", &p).await;
+    (dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"]))
+}
+
+async fn finance_books(t: &mut T) {
+    let am = t.am.clone();
+    let cid = t.open_company("Books Co", "BK").await;
+    let (rent, cash, admin_exp, computers) =
+        (t.account("Rent").await, t.account("Cash").await, t.account("Administrative Expenses").await, t.account("Computers").await);
+    let ifrs = uid(&t.insert(&am, "FinanceBook", json!({"finance_book_name": "IFRS"})).await);
+    let tax = uid(&t.insert(&am, "FinanceBook", json!({"finance_book_name": "Tax"})).await);
+    // Every book: rent of 1000 paid in cash. IFRS writes the computers down by 200 more, the tax
+    // books by 500. So expenses are 1000 in the common books, 1200 in IFRS's and 1500 in the tax books'.
+    t.make(&am, "JournalEntry", t.journal("2026-05-10", json!([dr(rent, "1000"), cr(cash, "1000")]))).await;
+    let mut ifrs_je = t.journal("2026-06-30", json!([dr(admin_exp, "200"), cr(computers, "200")]));
+    ifrs_je["finance_book"] = json!(ifrs.to_string());
+    let ifrs_je = t.make(&am, "JournalEntry", ifrs_je).await;
+    let mut tax_je = t.journal("2026-06-30", json!([dr(admin_exp, "500"), cr(computers, "500")]));
+    tax_je["finance_book"] = json!(tax.to_string());
+    t.make(&am, "JournalEntry", tax_je).await;
+    assert_eq!(year_in(t, &cid, None).await, (n("1000"), n("-1000")), "the common books have no book's adjustments");
+    assert_eq!(year_in(t, &cid, Some(ifrs)).await, (n("1200"), n("-1200")), "IFRS: the common entries and its own");
+    assert_eq!(year_in(t, &cid, Some(tax)).await, (n("1500"), n("-1500")));
+    // Each book balances, and names itself.
+    for book in [None, Some(ifrs), Some(tax)] {
+        let mut p = vec![("company", cid.clone()), ("from_date", "2026-01-01".to_string()), ("to_date", "2026-12-31".to_string())];
+        if let Some(b) = book {
+            p.push(("finance_book", b.to_string()));
+        }
+        let tb = t.report(&am, "trial_balance", &p).await;
+        assert_eq!(tb["meta"]["balanced"], json!(true), "{book:?}: {}", tb["totals"]);
+        assert_eq!(tb["meta"]["finance_book"], book.map(|b| json!(if b == ifrs { "IFRS" } else { "Tax" })).unwrap_or(Value::Null));
+    }
+    // What customers and suppliers owe is the same in every book.
+    let debtors = t.account("Debtors").await;
+    let customer = uid(&t.insert(&am, "Customer", json!({"customer_name": "Book Reader"})).await);
+    let mut owed = t.journal(
+        "2026-07-01",
+        json!([{"account": debtors.to_string(), "party_type": "Customer", "customer": customer.to_string(), "debit": "10"}, cr(cash, "10")]),
+    );
+    owed["finance_book"] = json!(ifrs.to_string());
+    let e = t.k.insert(&am, "JournalEntry", obj(owed)).await.unwrap_err();
+    assert!(invalid(&e, "not what customers and suppliers owe"), "{e:?}");
+    // A book's entry cancelled is reversed in that book.
+    t.k.cancel(&am, "JournalEntry", uid(&ifrs_je), None).await.unwrap();
+    assert_eq!(year_in(t, &cid, Some(ifrs)).await, (n("1000"), n("-1000")));
+    assert_eq!(year_in(t, &cid, Some(tax)).await, (n("1500"), n("-1500")), "the other book is as it was");
+    let reversals_in_ifrs = t
+        .count(
+            &format!("select count(*) from journal_entry where tenant_id = $1 and company_id = '{}' and finance_book_id = '{ifrs}' and reversal_of is not null and $2::uuid is null", t.company),
+            None,
+        )
+        .await;
+    assert_eq!(reversals_in_ifrs, 1);
+    // The year closes in every book: income and expense at zero in each, retained earnings each book's own result.
+    let fy = uid(&t.find_one("FiscalYear", json!({"company": cid.clone()})).await);
+    let pcv = t.make(&am, "PeriodClosingVoucher", json!({"company": cid.clone(), "fiscal_year": fy.to_string()})).await;
+    assert_eq!(dec(&pcv["net_profit"]), n("-1000"), "the profit it records is the common books'");
+    for (book, result) in [(None, "-1000"), (Some(tax), "-1500"), (Some(ifrs), "-1000")] {
+        let mut p = vec![("company", cid.clone()), ("as_of", "2026-12-31".to_string())];
+        if let Some(b) = book {
+            p.push(("finance_book", b.to_string()));
+        }
+        let bs = t.report(&am, "balance_sheet", &p).await;
+        assert_eq!(bs["meta"]["balanced"], json!(true), "{book:?}: {}", bs["totals"]);
+        let retained = bs["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["account"].as_str().is_some_and(|a| a.ends_with("Retained Earnings")))
+            .unwrap_or_else(|| panic!("{}", bs["rows"]));
+        assert_eq!(dec(&retained["amount"]), n(result), "{book:?}: the year went into retained earnings");
+        let open = bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!("Profit/loss not yet closed to equity")).unwrap();
+        assert_eq!(dec(&open["amount"]), n("0"), "{book:?}: nothing left to close");
+    }
+    t.books_balance().await;
 }

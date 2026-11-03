@@ -1,5 +1,5 @@
 package: accounting
-version: 0.1.0
+version: 0.2.0
 label: Accounting
 description: Universal journal (append-only, balanced in the database), payments with open-item allocation, period close, financial reports.
 depends: [core, parties, products, project_records]
@@ -49,7 +49,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, Account, CostCenter, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:general_ledger,
+    items: [JournalEntry, PaymentEntry, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:general_ledger,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables]
   - name: setup
     label: Setup
@@ -72,6 +72,7 @@ roles:
       - {entity: FiscalYear, read: true, write: true, create: true, delete: true}
       - {entity: Account, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: CostCenter, read: true, write: true, create: true, delete: true}
+      - {entity: FinanceBook, read: true, write: true, create: true, delete: true}
       - {entity: Project, read: true, write: true, create: true, delete: true}
       - {entity: Currency, read: true, write: true, create: true}
       - {entity: ExchangeRate, read: true, write: true, create: true, delete: true, import: true}
@@ -97,6 +98,7 @@ roles:
       - {entity: Customer, read: true}
       - {entity: Supplier, read: true}
       - {entity: CostCenter, read: true}
+      - {entity: FinanceBook, read: true}
       - {entity: Project, read: true}
       - {entity: Currency, read: true}
 export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation]

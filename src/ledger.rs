@@ -78,11 +78,23 @@ pub struct Entry {
     pub lines: Vec<Line>,
     /// Set when this entry reverses another one.
     pub reversal_of: Option<Uuid>,
+    /// The finance book it adjusts alone; `None`, every book has it.
+    pub finance_book: Option<Uuid>,
 }
 
 impl Entry {
     pub fn new(company: Uuid, posting_date: NaiveDate, source_entity: &str, source_id: Uuid, source_number: Option<String>) -> Entry {
-        Entry { company, posting_date, source_entity: source_entity.to_string(), source_id, source_number, memo: None, lines: vec![], reversal_of: None }
+        Entry {
+            company,
+            posting_date,
+            source_entity: source_entity.to_string(),
+            source_id,
+            source_number,
+            memo: None,
+            lines: vec![],
+            reversal_of: None,
+            finance_book: None,
+        }
     }
 }
 
@@ -137,7 +149,7 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Resul
                 "debit_txn": drt.to_string(), "credit_txn": crt.to_string(), "exchange_rate": l.exchange_rate.to_string(),
                 "cost_center_id": l.cost_center, "project_id": l.project, "dims": {},
                 "against_entity": l.against.as_ref().map(|a| a.0.clone()), "against_id": l.against.as_ref().map(|a| a.1),
-                "remarks": l.remarks,
+                "remarks": l.remarks, "finance_book_id": entry.finance_book,
             })
         })
         .collect();
@@ -152,7 +164,7 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Resul
     })));
     sqlx::query(
         "insert into journal_entry (tenant_id, id, company_id, posting_date, source_entity, source_id, source_number, memo, \
-         total_debit, total_credit, entry_hash, created_by, reversal_of) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12)",
+         total_debit, total_credit, entry_hash, created_by, reversal_of, finance_book_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12, $13)",
     )
     .bind(ctx.tenant)
     .bind(entry_id)
@@ -166,6 +178,7 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Resul
     .bind(h.finalize().to_vec())
     .bind((!ctx.user.is_nil()).then_some(ctx.user))
     .bind(entry.reversal_of)
+    .bind(entry.finance_book)
     .execute(&mut **tx)
     .await?;
     sqlx::query("insert into journal_line select * from jsonb_populate_recordset(null::journal_line, $1::jsonb)")
@@ -173,6 +186,15 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Resul
         .execute(&mut **tx)
         .await?;
     Ok(Some(entry_id))
+}
+
+/// Has a reading transaction see, through `journal_line_in_book`, the common ledger and `book`'s own
+/// entries; without a book, the common ledger alone.
+pub async fn read_book(tx: &mut Tx, book: Option<Uuid>) -> Result<()> {
+    if let Some(book) = book {
+        sqlx::query("select set_config('ferrum.finance_book', $1, true)").bind(book.to_string()).execute(&mut **tx).await?;
+    }
+    Ok(())
 }
 
 pub async fn period_open(tx: &mut Tx, tenant: Uuid, company: Uuid, on: NaiveDate) -> Result<bool> {
@@ -238,8 +260,8 @@ async fn reversed(
     when: std::result::Result<NaiveDate, NaiveDate>,
     precision: u32,
 ) -> Result<usize> {
-    let entries: Vec<(Uuid, Uuid, NaiveDate, Option<String>)> = sqlx::query_as(
-        "select e.id, e.company_id, e.posting_date, e.source_number from journal_entry e \
+    let entries: Vec<(Uuid, Uuid, NaiveDate, Option<String>, Option<Uuid>)> = sqlx::query_as(
+        "select e.id, e.company_id, e.posting_date, e.source_number, e.finance_book_id from journal_entry e \
          where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 and e.reversal_of is null \
          and not exists (select 1 from journal_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id) order by e.created_at",
     )
@@ -248,7 +270,7 @@ async fn reversed(
     .bind(source_id)
     .fetch_all(&mut **tx)
     .await?;
-    for (entry_id, company, date, number) in &entries {
+    for (entry_id, company, date, number, book) in &entries {
         let lines: Vec<LineRow> = sqlx::query_as(
             "select account_id, debit, credit, currency, debit_txn, credit_txn, exchange_rate, customer_id, supplier_id, cost_center_id, \
              project_id, against_entity, against_id from journal_line where tenant_id = $1 and entry_id = $2 and posting_date = $3 order by line_no",
@@ -296,6 +318,8 @@ async fn reversed(
                 memo: Some(format!("Reversal of {entry_id}")),
                 lines: reversed,
                 reversal_of: Some(*entry_id),
+                // A book's entry is reversed in that book.
+                finance_book: *book,
             },
             precision,
         )
