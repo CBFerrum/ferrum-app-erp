@@ -273,7 +273,7 @@ impl Consumed {
 /// Expense booked on `account` within `scope` over `[from, to]`, the year-end closing excluded.
 pub async fn actual(tx: &mut Tx, tenant: Uuid, company: Uuid, account: Uuid, scope: &Scope, from: NaiveDate, to: NaiveDate) -> Result<Decimal> {
     Ok(sqlx::query_scalar(
-        "select coalesce(sum(l.debit - l.credit), 0) from journal_line l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
+        "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.account_id = $3 and l.posting_date between $4 and $5 \
          and e.source_entity <> 'PeriodClosingVoucher' \
          and (($6::uuid[] is not null and l.cost_center_id = any($6)) or ($7::uuid is not null and l.project_id = $7))",
@@ -587,7 +587,7 @@ impl DocHook for ActualExpenseCheck {
         let effects: Vec<Effect> = sqlx::query_as(
             "select l.account_id as account, l.cost_center_id as cost_center, l.project_id as project, l.posting_date as day, \
              sum(l.debit - l.credit) as amount from journal_entry e \
-             join journal_line l on l.tenant_id = e.tenant_id and l.entry_id = e.id and l.posting_date = e.posting_date \
+             join journal_line_in_book l on l.tenant_id = e.tenant_id and l.entry_id = e.id and l.posting_date = e.posting_date \
              join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
              where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 and e.reversal_of is null and a.root_type = 'Expense' \
              group by 1, 2, 3, 4 having sum(l.debit - l.credit) > 0",

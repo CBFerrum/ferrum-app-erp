@@ -27,6 +27,7 @@
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: entry_type, type: select, options: [Journal Entry, Opening Entry, Adjustment, Depreciation, Exchange Revaluation], default: Journal Entry, in_filter: true}
     - {name: currency, type: link, to: Currency, fetch_from: company.default_currency, read_only: true}
+    - {name: finance_book, type: link, to: FinanceBook, in_filter: true, description: "Empty, the entry is in every book; with a book, it adjusts that book alone"}
     - {name: accounts, type: table, of: JournalEntryAccount, required: true}
     - {name: total_debit, type: currency, currency: currency, read_only: true, in_list: true}
     - {name: total_credit, type: currency, currency: currency, read_only: true}
