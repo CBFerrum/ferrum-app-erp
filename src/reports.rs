@@ -32,6 +32,13 @@ const DEFS: &[Def] = &[
         params: &["company", "from_date", "to_date", "finance_book"],
     },
     Def {
+        name: "consolidated_trial_balance",
+        label: "Consolidated Trial Balance",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "from_date", "to_date", "finance_book"],
+    },
+    Def {
         name: "general_ledger",
         label: "General Ledger",
         module: "accounting",
@@ -43,14 +50,14 @@ const DEFS: &[Def] = &[
         label: "Profit and Loss",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project", "finance_book"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project", "finance_book", "consolidated"],
     },
     Def {
         name: "balance_sheet",
         label: "Balance Sheet",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "as_of", "compare", "periods", "finance_book"],
+        params: &["company", "as_of", "compare", "periods", "finance_book", "consolidated"],
     },
     Def {
         name: "cash_flow",
@@ -93,6 +100,8 @@ fn param(name: &str) -> Value {
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
+        "consolidated" => json!({"name": name, "label": "Consolidated", "type": "check",
+            "description": "The company and every company under it, in its currency, with their business with each other taken out"}),
         "finance_book" => {
             json!({"name": name, "label": "Finance Book", "type": "link", "to": "FinanceBook", "description": "Empty: the common books. A book: the common entries and that book's own"})
         }
@@ -134,9 +143,10 @@ impl ReportSource for ErpReports {
         };
         let mut out = match name {
             "trial_balance" => trial_balance(&mut tx, ctx, &co, &p).await?,
+            "consolidated_trial_balance" => consolidated_trial_balance(k, &mut tx, ctx, &co, &p).await?,
             "general_ledger" => general_ledger(&mut tx, ctx, &co, &p).await?,
-            "profit_and_loss" => profit_and_loss(&mut tx, ctx, &co, &p).await?,
-            "balance_sheet" => balance_sheet(&mut tx, ctx, &co, &p).await?,
+            "profit_and_loss" => profit_and_loss(k, &mut tx, ctx, &co, &p).await?,
+            "balance_sheet" => balance_sheet(k, &mut tx, ctx, &co, &p).await?,
             "cash_flow" => cash_flow(&mut tx, ctx, &co, &p).await?,
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
@@ -182,9 +192,13 @@ fn natural(root: &str, debit_minus_credit: Decimal) -> Decimal {
 }
 
 fn label(a: &Acc) -> String {
-    match &a.account_number {
-        Some(n) if !n.is_empty() => format!("{n} - {}", a.account_name),
-        _ => a.account_name.clone(),
+    label_of(a.account_number.as_deref(), &a.account_name)
+}
+
+fn label_of(number: Option<&str>, name: &str) -> String {
+    match number {
+        Some(n) if !n.is_empty() => format!("{n} - {name}"),
+        _ => name.to_string(),
     }
 }
 
@@ -418,22 +432,8 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     .map(|(a, dr, cr)| (a, (dr, cr)))
     .collect();
     let has_before = from > NaiveDate::MIN;
-    let mut rows = Vec::new();
-    let mut totals = [Decimal::ZERO; 6];
+    let mut tb = Tb::default();
     let mut prior_pl = Decimal::ZERO;
-    let mut push = |rows: &mut Vec<Value>, name: String, root: &str, opening: Decimal, dr: Decimal, cr: Decimal| {
-        let closing = opening + dr - cr;
-        let cells = [opening.max(Decimal::ZERO), (-opening).max(Decimal::ZERO), dr, cr, closing.max(Decimal::ZERO), (-closing).max(Decimal::ZERO)];
-        for (t, c) in totals.iter_mut().zip(cells) {
-            *t += c;
-        }
-        rows.push(json!({
-            "account": name, "root_type": root,
-            "opening_debit": money(cells[0]), "opening_credit": money(cells[1]),
-            "debit": money(cells[2]), "credit": money(cells[3]),
-            "closing_debit": money(cells[4]), "closing_credit": money(cells[5]),
-        }));
-    };
     for a in accs.iter().filter(|a| !a.is_group.unwrap_or(false)) {
         let pl = matches!(a.root_type.as_str(), "Income" | "Expense");
         let opening = if pl {
@@ -448,22 +448,378 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
         if opening.is_zero() && dr.is_zero() && cr.is_zero() {
             continue;
         }
-        push(&mut rows, label(a), &a.root_type, opening, dr, cr);
+        tb.push(label(a), &a.root_type, opening, dr, cr);
     }
     if has_before && !prior_pl.is_zero() {
-        push(&mut rows, "Profit/loss of earlier fiscal years (not yet closed)".into(), "Equity", prior_pl, Decimal::ZERO, Decimal::ZERO);
+        tb.push(EARLIER_YEARS.into(), "Equity", prior_pl, Decimal::ZERO, Decimal::ZERO);
     }
-    let names = ["opening_debit", "opening_credit", "debit", "credit", "closing_debit", "closing_credit"];
-    let total_obj: serde_json::Map<String, Value> = names.iter().zip(totals).map(|(n, t)| (n.to_string(), money(t))).collect();
-    Ok(json!({
-        "columns": [col("account", "Account", "data"), col("root_type", "Type", "data"), col("opening_debit", "Opening (Dr)", "currency"),
-            col("opening_credit", "Opening (Cr)", "currency"), col("debit", "Debit", "currency"), col("credit", "Credit", "currency"),
-            col("closing_debit", "Closing (Dr)", "currency"), col("closing_credit", "Closing (Cr)", "currency")],
-        "rows": rows,
-        "totals": total_obj,
-        "meta": {"from_date": from, "to_date": to, "balanced": totals[0] == totals[1] && totals[2] == totals[3] && totals[4] == totals[5]},
-    }))
+    Ok(tb.report(json!({"from_date": from, "to_date": to})))
 }
+
+const EARLIER_YEARS: &str = "Profit/loss of earlier fiscal years (not yet closed)";
+
+/// A trial balance being written: its rows and the totals of its six amount columns.
+#[derive(Default)]
+struct Tb {
+    rows: Vec<Value>,
+    totals: [Decimal; 6],
+}
+
+impl Tb {
+    /// Adds an account's opening (debit minus credit) and its debits and credits in the period,
+    /// the opening and the closing they make each shown as a debit or a credit.
+    fn push(&mut self, name: String, root: &str, opening: Decimal, dr: Decimal, cr: Decimal) {
+        let closing = opening + dr - cr;
+        let cells = [opening.max(Decimal::ZERO), (-opening).max(Decimal::ZERO), dr, cr, closing.max(Decimal::ZERO), (-closing).max(Decimal::ZERO)];
+        for (t, c) in self.totals.iter_mut().zip(cells) {
+            *t += c;
+        }
+        self.rows.push(json!({
+            "account": name, "root_type": root,
+            "opening_debit": money(cells[0]), "opening_credit": money(cells[1]),
+            "debit": money(cells[2]), "credit": money(cells[3]),
+            "closing_debit": money(cells[4]), "closing_credit": money(cells[5]),
+        }));
+    }
+
+    fn report(self, mut meta: Value) -> Value {
+        let t = self.totals;
+        meta["balanced"] = json!(t[0] == t[1] && t[2] == t[3] && t[4] == t[5]);
+        let names = ["opening_debit", "opening_credit", "debit", "credit", "closing_debit", "closing_credit"];
+        let total_obj: serde_json::Map<String, Value> = names.iter().zip(t).map(|(n, t)| (n.to_string(), money(t))).collect();
+        json!({
+            "columns": [col("account", "Account", "data"), col("root_type", "Type", "data"), col("opening_debit", "Opening (Dr)", "currency"),
+                col("opening_credit", "Opening (Cr)", "currency"), col("debit", "Debit", "currency"), col("credit", "Credit", "currency"),
+                col("closing_debit", "Closing (Dr)", "currency"), col("closing_credit", "Closing (Cr)", "currency")],
+            "rows": self.rows,
+            "totals": total_obj,
+            "meta": meta,
+        })
+    }
+}
+
+// ───────────────────────────── groups of companies ─────────────────────────────
+
+/// A company and every company under it, the parent first (a company is counted once however the
+/// tree is drawn). Adding up a group's books takes being allowed to see each of its companies.
+struct Group {
+    /// (id, name, currency, currency code).
+    members: Vec<(Uuid, String, Uuid, String)>,
+    ids: Vec<Uuid>,
+}
+
+impl Group {
+    async fn of(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany) -> Result<Group> {
+        let rows: Vec<(Uuid, String, Option<Uuid>, Option<String>)> = sqlx::query_as(
+            "with recursive g(id) as (select $2::uuid union select c.id from e_company c join g on c.parent_company = g.id where c.tenant_id = $1) \
+             select c.id, c.company_name, c.default_currency, trim(cur.code) from g join e_company c on c.tenant_id = $1 and c.id = g.id \
+             left join e_currency cur on cur.tenant_id = c.tenant_id and cur.id = c.default_currency order by c.id <> $2, c.company_name",
+        )
+        .bind(ctx.tenant)
+        .bind(co.id)
+        .fetch_all(&mut **tx)
+        .await?;
+        if !ctx.is_admin
+            && !ctx.is_system
+            && let Some(allowed) = ctx.scopes.get("Company")
+            && let Some((_, name, ..)) = rows.iter().find(|m| !allowed.contains(&m.0))
+        {
+            return Err(Error::Forbidden(format!("you do not have access to {name}, a company of this group")));
+        }
+        let members = rows
+            .into_iter()
+            .map(|(id, name, currency, code)| match currency {
+                Some(c) => Ok((id, name, c, code.unwrap_or_default())),
+                None => Err(Error::invalid(format!("{name} has no default currency"))),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let ids = members.iter().map(|m| m.0).collect();
+        Ok(Group { members, ids })
+    }
+
+    /// Each company's rate into the parent's currency: its latest on or before `on`.
+    async fn rates(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, on: NaiveDate, field: &str) -> Result<HashMap<Uuid, Decimal>> {
+        let mut rates = HashMap::new();
+        for (id, name, currency, code) in &self.members {
+            let rate = match crate::util::exchange_rate(k, ctx, tx, *currency, self.members[0].2, on).await {
+                Err(Error::Validation(_)) => {
+                    return Err(Error::field(
+                        field,
+                        format!("{name}: no exchange rate from {code} to {} on or before {on}; add one under Exchange Rate", co.currency),
+                    ));
+                }
+                other => other?,
+            };
+            rates.insert(*id, rate);
+        }
+        Ok(rates)
+    }
+
+    fn position(&self, company: Uuid) -> usize {
+        self.members.iter().position(|m| m.0 == company).unwrap_or(usize::MAX)
+    }
+
+    fn names(&self) -> String {
+        self.members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(", ")
+    }
+
+    /// The group, when the report is asked for one (`consolidated`).
+    async fn asked(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Option<Group>> {
+        if !p.str("consolidated").is_some_and(|v| v == "true" || v == "1") {
+            return Ok(None);
+        }
+        if p.str("cost_center").is_some() || p.str("project").is_some() {
+            return Err(Error::field("consolidated", "a cost center or a project is one company's; leave them empty to add up the group"));
+        }
+        Ok(Some(Group::of(tx, ctx, co).await?))
+    }
+}
+
+// The SQL every group figure shares: the lines of the group's companies with their account and
+// party ($1 the tenant, $2 the group's companies, $3 its parent).
+macro_rules! group_lines {
+    () => {
+        "journal_line_in_book l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
+         left join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
+         left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id"
+    };
+}
+
+/// The group company a line's customer or supplier represents.
+macro_rules! party_company {
+    () => {
+        "case when coalesce(c.represents_company, s.represents_company) = any($2) then coalesce(c.represents_company, s.represents_company) end"
+    };
+}
+
+/// Whether a line on an account marked Eliminate in Consolidation is business within the group:
+/// its entry is with no customer or supplier outside it, and it is not the parent's own equity.
+macro_rules! cancels {
+    () => {
+        "case when a.eliminate_in_consolidation and not (l.company_id = $3 and a.root_type = 'Equity') then not exists ( \
+           select 1 from journal_line o left join e_customer oc on oc.tenant_id = o.tenant_id and oc.id = o.customer_id \
+           left join e_supplier os on os.tenant_id = o.tenant_id and os.id = o.supplier_id \
+           where o.tenant_id = l.tenant_id and o.posting_date = l.posting_date and o.entry_id = l.entry_id \
+           and num_nonnulls(o.customer_id, o.supplier_id) = 1 and not coalesce(coalesce(oc.represents_company, os.represents_company) = any($2), false)) \
+         else false end"
+    };
+}
+
+/// The accounts of a group's companies: (id, company, name, number, root type, parent account), in chart order.
+type GroupAcc = (Uuid, Uuid, String, Option<String>, String, Option<Uuid>);
+
+async fn group_accounts(tx: &mut Tx, ctx: &Ctx, g: &Group) -> Result<Vec<GroupAcc>> {
+    Ok(sqlx::query_as(
+        "select id, company, account_name, account_number, root_type, parent_account from e_account where tenant_id = $1 and company = any($2) \
+         order by account_number nulls last, account_name",
+    )
+    .bind(ctx.tenant)
+    .bind(&g.ids)
+    .fetch_all(&mut **tx)
+    .await?)
+}
+
+/// The parent's account that the `i`th of `accs` is: the parent's own are themselves, another
+/// company's the parent's with the same number, else the same name.
+fn same_account(accs: &[GroupAcc], top: Uuid) -> impl Fn(usize) -> Option<usize> + '_ {
+    let parents = || accs.iter().enumerate().filter(move |(_, a)| a.1 == top);
+    let by_number: HashMap<&str, usize> = parents().filter_map(|(i, a)| a.3.as_deref().filter(|n| !n.is_empty()).map(|n| (n, i))).collect();
+    let by_name: HashMap<&str, usize> = parents().map(|(i, a)| (a.2.as_str(), i)).collect();
+    move |i| {
+        let a = &accs[i];
+        if a.1 == top {
+            return Some(i);
+        }
+        a.3.as_deref().filter(|n| !n.is_empty()).and_then(|n| by_number.get(n)).or_else(|| by_name.get(a.2.as_str())).copied()
+    }
+}
+
+/// Debit minus credit per account of the parent's chart over `[from, to]`, the group added up: each
+/// company translated at its rate, business between them eliminated, entries from the `skip`
+/// sources left out, and each account shown on the parent's that it is ([`same_account`]) or else on
+/// the nearest one above it that is, at the least the parent's top account of its type.
+async fn group_balances(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    g: &Group,
+    rates: &HashMap<Uuid, Decimal>,
+    from: Option<NaiveDate>,
+    to: NaiveDate,
+    skip: &[&str],
+) -> Result<HashMap<Uuid, Decimal>> {
+    let accs = group_accounts(tx, ctx, g).await?;
+    let index: HashMap<Uuid, usize> = accs.iter().enumerate().map(|(i, a)| (a.0, i)).collect();
+    let same = same_account(&accs, co.id);
+    let top = |root: &str| accs.iter().find(|a| a.1 == co.id && a.4 == root && a.5.is_none()).map(|a| a.0);
+    let shown_on = |i: usize| -> Result<Uuid> {
+        let mut j = i;
+        for _ in 0..64 {
+            if let Some(t) = same(j) {
+                return Ok(accs[t].0);
+            }
+            match accs[j].5.and_then(|p| index.get(&p)) {
+                Some(&up) => j = up,
+                None => break,
+            }
+        }
+        let a = &accs[i];
+        top(&a.4).ok_or_else(|| Error::invalid(format!("{} has no {} account to show {} under", co.name, a.4, label_of(a.3.as_deref(), &a.2))))
+    };
+    let lines: Vec<(Uuid, Uuid, Decimal)> = sqlx::query_as(concat!(
+        "select l.company_id, l.account_id, sum(l.debit - l.credit) from ",
+        group_lines!(),
+        " where l.tenant_id = $1 and l.company_id = any($2) and ($4::date is null or l.posting_date >= $4) and l.posting_date <= $5 \
+          and (",
+        party_company!(),
+        ") is null and not ",
+        cancels!(),
+        " and (cardinality($6::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($6))) \
+          group by 1, 2"
+    ))
+    .bind(ctx.tenant)
+    .bind(&g.ids)
+    .bind(co.id)
+    .bind(from)
+    .bind(to)
+    .bind(skip.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut out: HashMap<Uuid, Decimal> = HashMap::new();
+    for (company, account, net) in lines {
+        let (Some(rate), Some(&i)) = (rates.get(&company), index.get(&account)) else { continue };
+        *out.entry(shown_on(i)?).or_default() += net * rate;
+    }
+    Ok(out.into_iter().map(|(a, v)| (a, v.round_dp(co.precision))).collect())
+}
+
+/// The trial balance of a group: the company asked for and every company under it, each one
+/// translated into the parent's currency at its latest rate on or before the end date and shown on
+/// the parent's chart (by account number, else by name; an account the parent does not have shows
+/// on its own, with its company's name). Business between the group's companies cancels out:
+/// lines whose customer or supplier represents one of the group's companies, and lines on accounts
+/// marked Eliminate in Consolidation unless their entry is with someone outside the group (a
+/// customer or supplier that is not one of its companies). The parent's own equity stays: it is
+/// the group's. An entry eliminated only in part (an intercompany sale booked to an account that is
+/// not eliminated, say) leaves the intercompany difference; what two companies say they owe each
+/// other is set side by side in `meta.intercompany_balances`.
+// ponytail: one closing rate per company for every account (as ERPNext does); IAS 21 rates of the
+// day for income and expense, historical rates for equity and a translation reserve come when a
+// group needs them.
+async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let year_start = fy_start(from, co.fy_month);
+    let g = Group::of(tx, ctx, co).await?;
+    let rates = g.rates(k, tx, ctx, co, to, "to_date").await?;
+    let accs = group_accounts(tx, ctx, &g).await?;
+    let index: HashMap<Uuid, usize> = accs.iter().enumerate().map(|(i, a)| (a.0, i)).collect();
+    let same = same_account(&accs, co.id);
+    // (company, account, the group company the line's party represents, whether it is on an
+    // eliminated account in business within the group, the balance before the period, the part of
+    // it from this fiscal year, the period's debits and credits, and every debit and credit up to
+    // the end).
+    let lines: Vec<(Uuid, Uuid, Option<Uuid>, bool, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(concat!(
+        "select l.company_id, l.account_id, ",
+        party_company!(),
+        ", ",
+        cancels!(),
+        ", coalesce(sum(l.debit - l.credit) filter (where l.posting_date < $4), 0), \
+           coalesce(sum(l.debit - l.credit) filter (where l.posting_date >= $5 and l.posting_date < $4), 0), \
+           coalesce(sum(l.debit) filter (where l.posting_date >= $4), 0), coalesce(sum(l.credit) filter (where l.posting_date >= $4), 0), \
+           sum(l.debit), sum(l.credit) from ",
+        group_lines!(),
+        " where l.tenant_id = $1 and l.company_id = any($2) and l.posting_date <= $6 group by 1, 2, 3, 4"
+    ))
+    .bind(ctx.tenant)
+    .bind(&g.ids)
+    .bind(co.id)
+    .bind(from)
+    .bind(year_start)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut sums: HashMap<usize, [Decimal; 3]> = HashMap::new();
+    let mut eliminated: HashMap<Uuid, (Decimal, Decimal)> = HashMap::new();
+    // What a group company's books say another owes it (a negative amount: what it owes the other).
+    let mut owed: HashMap<(Uuid, Uuid), Decimal> = HashMap::new();
+    let mut prior_pl = Decimal::ZERO;
+    for (company, account, with, cancels, before, this_year, dr, cr, all_dr, all_cr) in lines {
+        let (Some(&rate), Some(&i)) = (rates.get(&company), index.get(&account)) else { continue };
+        if let Some(with) = with {
+            *owed.entry((company, with)).or_default() += (all_dr - all_cr) * rate;
+        }
+        if cancels || with.is_some() {
+            let e = eliminated.entry(company).or_default();
+            e.0 += all_dr * rate;
+            e.1 += all_cr * rate;
+            continue;
+        }
+        // Income and expense restart every fiscal year, as in a company's trial balance.
+        let opening = if matches!(accs[i].4.as_str(), "Income" | "Expense") {
+            prior_pl += (before - this_year) * rate;
+            this_year
+        } else {
+            before
+        };
+        let s = sums.entry(same(i).unwrap_or(i)).or_default();
+        s[0] += opening * rate;
+        s[1] += dr * rate;
+        s[2] += cr * rate;
+    }
+    let mut shown: Vec<usize> = sums.keys().copied().collect();
+    shown.sort_by_key(|&i| (g.position(accs[i].1), i));
+    let r = |v: Decimal| v.round_dp(co.precision);
+    let mut tb = Tb::default();
+    for i in shown {
+        let [opening, dr, cr] = sums[&i].map(r);
+        if opening.is_zero() && dr.is_zero() && cr.is_zero() {
+            continue;
+        }
+        let (_, company, name, number, root, _) = &accs[i];
+        let account = label_of(number.as_deref(), name);
+        let account = if *company == co.id { account } else { format!("{account} ({})", g.members[g.position(*company)].1) };
+        tb.push(account, root, opening, dr, cr);
+    }
+    if !r(prior_pl).is_zero() {
+        tb.push(EARLIER_YEARS.into(), "Equity", r(prior_pl), Decimal::ZERO, Decimal::ZERO);
+    }
+    // What is left once the group's business with itself is taken out balances only if whole
+    // entries were; the rest (and rounding the translated amounts) shows here.
+    let t = tb.totals;
+    let (opening, movement) = (t[0] - t[1], t[2] - t[3]);
+    if !opening.is_zero() || !movement.is_zero() {
+        tb.push(INTERCOMPANY_DIFFERENCE.into(), "Equity", -opening, (-movement).max(Decimal::ZERO), movement.max(Decimal::ZERO));
+    }
+    // Each pair once: what the first says the second owes it, and what the second says it owes.
+    let mut balances = Vec::new();
+    let mut disagree = Decimal::ZERO;
+    for (x, (xid, xname, ..)) in g.members.iter().enumerate() {
+        for (yid, yname, ..) in &g.members[x + 1..] {
+            let says = r(owed.get(&(*xid, *yid)).copied().unwrap_or_default());
+            let other = r(-owed.get(&(*yid, *xid)).copied().unwrap_or_default());
+            if says.is_zero() && other.is_zero() {
+                continue;
+            }
+            disagree += (says - other).abs();
+            balances.push(json!({"company": xname, "counterparty": yname, "company_says": money(says), "counterparty_says": money(other), "difference": money(says - other)}));
+        }
+    }
+    let companies: Vec<Value> = g
+        .members
+        .iter()
+        .map(|(id, name, _, currency)| {
+            let (dr, cr) = eliminated.get(id).copied().unwrap_or_default();
+            json!({"company": name, "currency": currency, "rate": money(rates[id]), "eliminated_debit": money(r(dr)), "eliminated_credit": money(r(cr))})
+        })
+        .collect();
+    Ok(tb.report(json!({
+        "from_date": from, "to_date": to, "rates_on": to, "companies": companies,
+        "intercompany_difference": money(-(opening + movement)),
+        "intercompany_balances": balances, "intercompany_balances_disagree_by": money(disagree),
+    })))
+}
+
+const INTERCOMPANY_DIFFERENCE: &str = "Intercompany difference (entries eliminated in part)";
 
 async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
@@ -576,14 +932,21 @@ fn periods_meta(spans: &[(NaiveDate, NaiveDate)], labels: &[String], figures: &[
         .collect()
 }
 
-async fn profit_and_loss(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
     let spans = spans(p, from, to)?;
+    let group = Group::asked(tx, ctx, co, p).await?;
     let dims = dims(tx, ctx, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let mut bals = Vec::new();
     for (f, t) in &spans {
-        bals.push(balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?);
+        bals.push(match &group {
+            Some(g) => {
+                let rates = g.rates(k, tx, ctx, co, *t, "to_date").await?;
+                group_balances(tx, ctx, co, g, &rates, Some(*f), *t, CLOSING_SOURCES).await?
+            }
+            None => balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?,
+        });
     }
     let (inc_nodes, income) = tree(&accs, &bals, "Income", co.precision);
     let (exp_nodes, expense) = tree(&accs, &bals, "Expense", co.precision);
@@ -596,21 +959,32 @@ async fn profit_and_loss(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<
     rows.push(total_row("Total Expenses", &expense));
     rows.push(total_row(if net[0] >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, &net));
     let labels: Vec<String> = spans.iter().map(|(f, t)| periods::label(*f, *t)).collect();
+    let mut meta = json!({"from_date": from, "to_date": to, "periods": periods_meta(&spans, &labels, &[("income", &income), ("expense", &expense), ("net_profit", &net)])});
+    if let Some(g) = &group {
+        meta["companies"] = json!(g.names());
+    }
     Ok(json!({
         "columns": statement_columns(&labels),
         "rows": rows,
         "totals": {"income": money(income[0]), "expense": money(expense[0]), "net_profit": money(net[0])},
-        "meta": {"from_date": from, "to_date": to, "periods": periods_meta(&spans, &labels, &[("income", &income), ("expense", &expense), ("net_profit", &net)])},
+        "meta": meta,
     }))
 }
 
-async fn balance_sheet(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let as_of = p.date("as_of")?.unwrap_or_else(today);
     let on = days(p, as_of)?;
+    let group = Group::asked(tx, ctx, co, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let mut bals = Vec::new();
     for day in &on {
-        bals.push(balances(tx, ctx, co, None, *day).await?);
+        bals.push(match &group {
+            Some(g) => {
+                let rates = g.rates(k, tx, ctx, co, *day, "as_of").await?;
+                group_balances(tx, ctx, co, g, &rates, None, *day, &[]).await?
+            }
+            None => balances(tx, ctx, co, None, *day).await?,
+        });
     }
     let (asset_nodes, assets) = tree(&accs, &bals, "Asset", co.precision);
     let (liab_nodes, liabilities) = tree(&accs, &bals, "Liability", co.precision);
@@ -618,7 +992,16 @@ async fn balance_sheet(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     let (_, income) = tree(&accs, &bals, "Income", co.precision);
     let (_, expense) = tree(&accs, &bals, "Expense", co.precision);
     let unclosed: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
-    let all_equity: Vec<Decimal> = equity.iter().zip(&unclosed).map(|(e, u)| *e + *u).collect();
+    let mut all_equity: Vec<Decimal> = equity.iter().zip(&unclosed).map(|(e, u)| *e + *u).collect();
+    // A group's books are short by what was eliminated only in part (see the consolidated trial balance).
+    let residue: Vec<Decimal> = match group {
+        Some(_) => assets.iter().zip(&liabilities).zip(&all_equity).map(|((a, l), e)| *a - *l - *e).collect(),
+        None => vec![],
+    };
+    let residue = residue.iter().any(|r| !r.is_zero()).then_some(residue);
+    for (e, r) in all_equity.iter_mut().zip(residue.iter().flatten()) {
+        *e += *r;
+    }
     let total: Vec<Decimal> = liabilities.iter().zip(&all_equity).map(|(l, e)| *l + *e).collect();
     let mut rows = vec![json!({"account": "Assets", "_bold": true})];
     rows.extend(node_rows(&asset_nodes, 1));
@@ -631,16 +1014,25 @@ async fn balance_sheet(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     let mut open = json!({"account": "Profit/loss not yet closed to equity", "_indent": 1});
     amounts(&mut open, &unclosed);
     rows.push(open);
+    if let Some(residue) = &residue {
+        let mut row = json!({"account": INTERCOMPANY_DIFFERENCE, "_indent": 1});
+        amounts(&mut row, residue);
+        rows.push(row);
+    }
     rows.push(total_row("Total Equity", &all_equity));
     rows.push(total_row("Total Liabilities and Equity", &total));
     let labels: Vec<String> = on.iter().map(|d| d.format("%d %b %Y").to_string()).collect();
     let spans: Vec<(NaiveDate, NaiveDate)> = on.iter().map(|d| (*d, *d)).collect();
+    let mut meta = json!({"as_of": as_of, "balanced": assets[0] == total[0], "difference": money(assets[0] - total[0]),
+                          "periods": periods_meta(&spans, &labels, &[("assets", &assets), ("liabilities", &liabilities), ("equity", &all_equity)])});
+    if let Some(g) = &group {
+        meta["companies"] = json!(g.names());
+    }
     Ok(json!({
         "columns": statement_columns(&labels),
         "rows": rows,
         "totals": {"assets": money(assets[0]), "liabilities": money(liabilities[0]), "equity": money(all_equity[0])},
-        "meta": {"as_of": as_of, "balanced": assets[0] == total[0], "difference": money(assets[0] - total[0]),
-                 "periods": periods_meta(&spans, &labels, &[("assets", &assets), ("liabilities", &liabilities), ("equity", &all_equity)])},
+        "meta": meta,
     }))
 }
 

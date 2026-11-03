@@ -66,6 +66,7 @@
     - {name: account_currency, type: link, to: Currency, description: Leave empty for company currency}
     - {name: cash_flow_section, type: select, options: [Operating, Investing, Financing], label: Cash Flow Section, description: "Where a change in this account shows in the cash flow statement. Empty: fixed assets are investing, equity is financing, everything else operating"}
     - {name: frozen, type: check, description: Frozen accounts refuse new postings}
+    - {name: eliminate_in_consolidation, type: check, label: Eliminate in Consolidation, description: "Business between the group's companies (intercompany sales and costs, loans): its balance cancels out when the group's books are added up"}
     - {name: disabled, type: check}
   unique: [[company, account_name], [company, account_number]]
   rules:
