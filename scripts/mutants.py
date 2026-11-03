@@ -21,6 +21,7 @@ WMS = ("-p", "ferrum-wms", "--test", "wms_it")
 MES = ("-p", "ferrum-mes", "--test", "mes_it")
 LINE = ("-p", "ferrum-wms", "--test", "line_it")
 QUALITY = ("-p", "ferrum-quality", "--test", "quality_it")
+BOOKS = ("-p", "ferrum-finance", "--test", "books_it")
 TASKS = "addons/wms/src/tasks.rs"
 WAVES = "addons/wms/src/waves.rs"
 RUNS = "addons/mes/src/runs.rs"
@@ -30,6 +31,11 @@ TIMEOUT = 600
 
 # name, file, text to replace, what breaks it, test
 MUTANTS = [
+    # Finance books: each book is the common ledger and its own entries, and stays so.
+    ("books-reversal-leaves-its-book", "src/ledger.rs", "                finance_book: *book,\n", "                finance_book: None,\n", BOOKS),
+    ("books-reports-see-every-book", "packages/accounting/sql/003_finance_books.sql", "  where finance_book_id is null or finance_book_id = nullif(current_setting('ferrum.finance_book', true), '')::uuid;", "  where true;", BOOKS),
+    ("books-close-as-one", "addons/finance/src/closing.rs", "            books.entry(book).or_default().push((account, cc, balance));", "            books.entry(None).or_default().push((account, cc, balance));", BOOKS),
+    ("books-change-what-parties-owe", "src/accounting.rs", 'if id(doc, "finance_book").is_some() && (s(l, "party_type").is_some() || matches!(typ, "Receivable" | "Payable")) {', "if false {", BOOKS),
     ("wms-release-sends-again", TASKS, 'if matches!(t.state(), "Released" | "Moving" | "Arrived") {\n        let same', 'if false {\n        let same', WMS),
     ("wms-changes-hands-quietly", TASKS, "            if !same {\n", "            if false {\n", WMS),
     ("wms-wrong-tote-accepted", TASKS, "        if scanned(&c.unit_scan) != label {\n", "        if false {\n", WMS),

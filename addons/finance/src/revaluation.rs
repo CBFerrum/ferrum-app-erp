@@ -49,7 +49,7 @@ impl Balance {
 async fn balances(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDate) -> Result<Vec<Balance>> {
     let found: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String, Decimal, Decimal)> = sqlx::query_as(
         "select l.account_id, l.customer_id, l.supplier_id, trim(l.currency), sum(l.debit_txn - l.credit_txn), sum(l.debit - l.credit) \
-         from journal_line l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
+         from journal_line_in_book l join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date <= $3 and trim(l.currency) <> $4 \
          and (a.account_type in ('Bank', 'Cash', 'Receivable', 'Payable') or (a.account_currency is not null and a.account_currency <> $5)) \
          group by l.account_id, l.customer_id, l.supplier_id, trim(l.currency), a.account_number \
