@@ -1,8 +1,27 @@
 # Changelog
 
-## Unreleased: the engine's contract with other apps
+## ERP 0.14.2, Procurement 0.1.3, Finance 0.3.2: record pages' actions ask for what they need
 
-- `docs/contracts.md` publishes what apps that post through the engine may rely on: the ledger's,
+Found walking procure to pay in a browser: a material request's Create Purchase Order was refused
+("no usable approved supplier for Coffee grinder: choose a supplier for them") with nowhere to choose
+one. Seven actions read parameters their metadata did not declare, so a record page could never send
+them; two of them could not work from a page at all.
+
+- A request for quotation's Create Supplier Quotation asks which invited supplier quoted (required;
+  it was refused every time from a page).
+- A bank line's Create Payment Entry asks for the customer who paid, or the supplier who was paid
+  (`customer` and `supplier`; `party` still works); it was refused every time from its record page.
+  Create Journal Entry asks for the account and a remark.
+- A material request's Create Purchase Order asks for a supplier for the lines whose item has none
+  approved; Create Stock Entry for where the stock comes from; Create Work Orders for where the
+  materials come from.
+- Import Bank Statement (CSV) is no longer a button on the bank account's page, which could not send
+  a statement: the Import screen does that.
+- A purchase invoice made from an order or a receipt holds its draft's place with
+  `PENDING-<number>` as the supplier's invoice number; submitting it with that is refused ("Enter
+  the supplier's own invoice number"). In the walk a typed number was appended to it and the bill
+  went in as `PENDING-PR-2026-00001GC-2026-501`.
+- Also in this release: `docs/contracts.md` publishes what apps that post through the engine may rely on: the ledger's,
   open items', stock's, pricing's and the countries' operations, each in the caller's transaction,
   with what it refuses and whether calling it twice does it twice. `tests/contract_it.rs` holds
   each guarantee: a posting balances or writes nothing, a reversal reverses once, an invoice's item

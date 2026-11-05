@@ -215,6 +215,9 @@
     - {name: remarks, type: text}
   rules:
     - {name: due_after_posting, check: "doc.due_date == null || doc.due_date >= doc.posting_date", message: "Due date cannot be before the posting date"}
+    # An invoice made from an order or a receipt holds a draft's place with PENDING-<its number>.
+    - {name: suppliers_own_number, check: "!doc.bill_no.startsWith('PENDING-')", on: submit,
+       message: "Enter the supplier's own invoice number in Supplier Invoice No; the one filled in only held the draft's place"}
   actions:
     - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
   list: {columns: [number, supplier_name, bill_no, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}

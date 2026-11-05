@@ -685,7 +685,14 @@ async fn scenario() {
     assert_eq!(locked.status, 409, "a submitted quotation is the buyer's");
     assert_refused(t.k.cancel(&buyer, "RequestForQuotation", rfq_id, None).await, "cancel the supplier quotations");
 
-    // Answers taken by phone: a draft quotation from one invited supplier.
+    // Answers taken by phone: a draft quotation from one invited supplier, which the record page
+    // asks for (its action declares the supplier, required).
+    let asks = |entity: &str, action: &str| -> Vec<(String, bool)> {
+        let def = buyer.schema.entity(entity).and_then(|e| e.def.actions.iter().find(|a| a.name == action)).expect("the action");
+        def.params.iter().map(|p| (p.name.clone(), p.required)).collect()
+    };
+    assert_eq!(asks("RequestForQuotation", "make_supplier_quotation"), vec![("supplier".to_string(), true)]);
+    assert_eq!(asks("MaterialRequest", "make_purchase_order"), vec![("supplier".to_string(), false)]);
     assert_refused(t.k.run_action(&buyer, "RequestForQuotation", rfq_id, "make_supplier_quotation", json!({})).await, "choose which supplier quoted");
     assert_refused(
         t.k.run_action(&buyer, "RequestForQuotation", rfq_id, "make_supplier_quotation", json!({"supplier": backup.to_string()})).await,
