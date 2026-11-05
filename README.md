@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1, Shop Floor 0.2.1** | Your orders on the workspace's portal: the requests for quotation waiting for a supplier's answer, their purchase orders with what was received and billed, printed or in PDF, and the bills ERP holds from them with what is still owed. Interfaces rebuilt with Ferrum-Frontend d4efeca. |
 | **India 0.2.2** | E-invoices checked against the IRP's published value rules for every kind ERP builds; CGST and SGST on a supply to another state or an SEZ unit refused before the IRP refuses it, and IGST within the state marked as such. |
 | **ERP 0.7.1** | The assistant knows how ERP's records work in its pages (documents' states, what is owed, which reports hold the books' figures, finance books and groups) and suggests five questions to start with. |
 | **ERP 0.7.0** | A group's books: a company's parent makes a group, and a consolidated trial balance, profit and loss and balance sheet add up the parent and every company under it in the parent's currency, on the parent's chart. Business within the group is taken out (customers and suppliers that represent its companies, accounts marked Eliminate in Consolidation), and what does not cancel shows as an intercompany difference beside what each pair of companies says they owe each other. One closing rate per company; no minority interest yet. |

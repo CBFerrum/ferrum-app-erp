@@ -1,5 +1,21 @@
 # Changelog
 
+## ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1 and Shop Floor 0.2.1: a supplier's orders on the portal
+
+- **Your orders**, a page of the workspace's portal for suppliers (FERRUM-ERP-011): someone whose
+  address is a supplier's, or one of its contacts', sees the purchase orders sent to that supplier
+  (their dates, when they are required, how much was received and billed, and the order as the
+  workspace prints it, in PDF too) and the bills ERP holds from them with what is still owed and
+  when it is due. Drafts and cancelled orders are not theirs to see; another supplier's are not
+  found. It is the buying package's site, `/api/app/buying/portal/orders` and `…/bills`, beside
+  the selling package's "Your invoices", in the same interface release.
+- With Procurement, the page also lists the requests for quotation waiting for the supplier's
+  answer before their deadline, each with the link the supplier was e-mailed (signed alike, so
+  the same page); answered, a request leaves the list (`/api/app/procurement/portal/rfqs`).
+- ERP's interface and the Warehouse and Shop Floor interfaces are rebuilt with Ferrum-Frontend
+  d4efeca: a field's label names its control for assistive technology, and a record whose title
+  is a link shows that record's title, not its id.
+
 ## India 0.2.2: e-invoices checked against the IRP's own rules
 
 - The e-invoice tests apply the IRP's published value checks (its developer portal's Generate IRN

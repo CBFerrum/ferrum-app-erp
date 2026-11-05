@@ -780,12 +780,16 @@ async fn answer(k: &Kernel, tx: &mut Tx, inv: &Invite, a: &Answer) -> Result<std
 }
 
 /// The public endpoints: `GET /rfq/{token}` shows the request (a page, or JSON with
-/// `?format=json`), `POST /rfq/{token}` takes the answer (form fields or JSON).
+/// `?format=json`), `POST /rfq/{token}` takes the answer (form fields or JSON). Signed in on the
+/// workspace's portal, `GET /portal/rfqs` lists what waits for the caller's suppliers.
 pub struct SupplierPortal;
 
 #[async_trait]
 impl Site for SupplierPortal {
     async fn handle(&self, k: &Kernel, req: SiteRequest) -> Result<SiteResponse> {
+        if let (Some(user), "GET", "/portal/rfqs") = (req.user.as_ref(), req.method.as_str(), req.path.as_str()) {
+            return portal_rfqs(k, user).await;
+        }
         let json = wants_json(&req);
         let token = req.path.strip_prefix("/rfq/").filter(|t| !t.is_empty() && t.len() <= 200 && !t.contains('/'));
         let (Some(token), None) = (token, req.user.as_ref()) else {
@@ -851,6 +855,56 @@ impl Site for SupplierPortal {
     fn max_body(&self) -> usize {
         64 * 1024
     }
+}
+
+/// `GET /portal/rfqs`, signed in on the workspace's portal: the requests for quotation sent to the
+/// suppliers the caller's address belongs to that still wait for their answer, before their
+/// deadline, each with the link the supplier was e-mailed (signed alike, so the same page).
+async fn portal_rfqs(k: &Kernel, user: &Ctx) -> Result<SiteResponse> {
+    let ctx = Ctx::system(user.tenant, k.registry.schema(user.tenant).await?);
+    let mut out = Vec::new();
+    if installed(&ctx) {
+        let mut tx = k.db.tenant_tx(user.tenant).await?;
+        let mine = ferrum_app_erp::portal::suppliers_of(k, user, &mut tx, &user.email).await?;
+        if !mine.is_empty() {
+            let key = signing_key(k, &ctx, &mut tx, false).await?;
+            let base = settings(&mut tx, ctx.tenant).await?.public_url;
+            let slug = tenant_slug(&mut tx, ctx.tenant).await?;
+            let (today, now) = (ctx.today(), Utc::now().timestamp());
+            for found in k.find_tx(&ctx, &mut tx, "RequestForQuotation", &[Filter::eq("docstatus", 1)], Some("transaction_date desc"), 100).await? {
+                let Some(rfq) = id(&found, "id") else { continue };
+                let doc = k.get_tx(&ctx, &mut tx, "RequestForQuotation", rfq, true).await?;
+                if s(&doc, "response_deadline").and_then(|v| parse_date(v).ok()).is_some_and(|due| due < today) {
+                    continue;
+                }
+                for invite in rows(&doc, "suppliers") {
+                    let (Some(sup), Some(row)) = (id(&invite, "supplier"), id(&invite, "id")) else { continue };
+                    if !mine.contains(&sup) || s(&invite, "quote_status") != Some("Pending") {
+                        continue;
+                    }
+                    let expires = s(&invite, "link_expires_at").and_then(|x| parse_datetime(x).ok()).map(|t| t.timestamp()).filter(|e| *e > now);
+                    let answer = match (&key, &base, expires) {
+                        (Some(key), Some(base), Some(expires)) => Some(link(base, &slug, &sign_link(key, ctx.tenant, rfq, row, expires))),
+                        _ => None,
+                    };
+                    let items: Vec<Value> = rows(&doc, "items")
+                        .iter()
+                        .map(|i| json!({"item": s(i, "item_name").or(title_of(i, "item")), "qty": d(i, "qty").normalize().to_string(), "unit": title_of(i, "uom"), "required_by": s(i, "schedule_date")}))
+                        .collect();
+                    out.push(json!({"id": rfq, "number": s(&doc, "number"), "date": s(&doc, "transaction_date"), "due_by": s(&doc, "response_deadline"),
+                                    "supplier": s(&invite, "supplier_name"), "company": title_of(&doc, "company"), "items": items, "answer": answer}));
+                }
+            }
+        }
+        tx.commit().await?;
+    }
+    let mut r = json_response(200, &json!({"rfqs": out}));
+    r.headers.push(("cache-control".into(), "no-store".into()));
+    Ok(r)
+}
+
+fn title_of<'a>(doc: &'a Doc, field: &str) -> Option<&'a str> {
+    doc.get("_titles").and_then(|t| t.get(field)).and_then(Value::as_str)
 }
 
 #[cfg(test)]
