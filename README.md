@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.11.0** | A group's books translated as IAS 21 says: assets and liabilities at the closing rate, income, expenses and equity at the rate of their day where the books have one; what that leaves is the foreign currency translation reserve, in equity. |
 | **ERP 0.10.2, Finance 0.3.1** | A reversal day left empty is the day after the entry's own, worked out when it is submitted, not while it was a draft. Actions say what they did. |
 | **ERP 0.10.1** | Create Standard Chart of Accounts brings an existing company's chart up to the standard one: the accounts it lacks under their standard parents, and the empty default links set. |
 | **ERP 0.10.0** | Accruals that reverse themselves: a journal entry marked Reverse It is taken out again on its reversal day (the day after, unless another is chosen), once, by the daily upkeep or at once when the day has come. Deferred Revenue and Expense, a report of every deferred line with what was recognised, what still waits and what recognising through a day would move. Accrued Income (1180) and Accrued Expenses (2160) in the standard chart. |

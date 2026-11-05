@@ -1,5 +1,18 @@
 # Changelog
 
+## ERP 0.11.0: a group's books translated as IAS 21 says
+
+- A group's consolidated trial balance, profit and loss and balance sheet translate a company in
+  another currency as IAS 21 does (FERRUM-ERP-005): its assets and liabilities at the closing rate,
+  its income, expenses and equity at the rate of their own day where the books have one (the latest
+  on or before it, as a document takes its rate), else at the closing rate. A group that keeps only
+  closing rates sees the same figures as before.
+- What translating at different rates leaves is the **Foreign currency translation reserve**, an
+  equity line of its own on the consolidated trial balance and balance sheet (credit when the
+  closing rate made the company's net assets worth more than the rates its income and equity were
+  taken at). It is not profit: the consolidated profit and loss leaves it out. The intercompany
+  difference is again only what was eliminated in part.
+
 ## ERP 0.10.2 and Finance 0.3.1: a reversal day worked out when it is submitted
 
 - A journal entry that reverses itself, and an exchange revaluation, take "the day after" as their

@@ -1230,9 +1230,12 @@ async fn consolidation(t: &mut T) {
     let figures = |d: &str, c: &str, cd: &str, cc: &str| [n(d), n(c), n(cd), n(cc)];
 
     // The whole group. Left after eliminating, per account (debits, credits):
-    //   Cash: Group Co 3,000 - 5,000, India 5,000 - 500, Europe 25 euros = 2,500: 10,500 - 5,500.
-    //   Sales: 3,000 + 200 + Europe's 2,000. Rent: India's 500. Debtors and Intercompany Sales: the
-    //   outside buyer's 70. Grants: Europe's 500, on Group Co's account of that name.
+    //   Cash: Group Co 3,000 - 5,000, India 5,000 - 500, Europe 25 euros at the closing 100 =
+    //   2,500: 10,500 - 5,500. Europe's income at the rate of its day (IAS 21), 89 from May: its July
+    //   sale of 20 euros 1,780, its August grant of 5 euros 445.
+    //   Sales: 3,000 + 200 + 1,780. Rent: India's 500. Debtors and Intercompany Sales: the outside
+    //   buyer's 70. Grants: Europe's 445, on Group Co's account of that name.
+    //   The translation reserve: Europe's 25 euros of income are 2,225, its cash 2,500: 275.
     //   The 200 sale's debtor went (India is in the group) but its sale stayed: a difference of 200.
     //   The investment, India's capital and the rest cancel.
     let tb = t.report(&am, "consolidated_trial_balance", &year(group)).await;
@@ -1241,10 +1244,11 @@ async fn consolidation(t: &mut T) {
         vec![
             ("1111 - Debtors".to_string(), figures("70", "0", "70", "0")),
             ("1131 - Cash".to_string(), figures("10500", "5500", "5000", "0")),
-            ("4110 - Sales".to_string(), figures("0", "5200", "0", "5200")),
+            ("4110 - Sales".to_string(), figures("0", "4980", "0", "4980")),
             ("4130 - Intercompany Sales".to_string(), figures("0", "70", "0", "70")),
-            ("4220 - Grants Received".to_string(), figures("0", "500", "0", "500")),
+            ("4220 - Grants Received".to_string(), figures("0", "445", "0", "445")),
             ("5230 - Rent".to_string(), figures("500", "0", "500", "0")),
+            ("Foreign currency translation reserve".to_string(), figures("0", "275", "0", "275")),
             ("Intercompany difference (entries eliminated in part)".to_string(), figures("200", "0", "200", "0")),
         ]
     );
@@ -1254,7 +1258,8 @@ async fn consolidation(t: &mut T) {
     assert_eq!((meta["balanced"].clone(), meta["company"].clone(), meta["currency"].clone()), (json!(true), json!("Group Co"), json!("INR")));
     assert_eq!(dec(&meta["intercompany_difference"]), n("200"));
     // Eliminated, per company (debits, credits): Group Co the debtors 1,000 + 900 + 200 and the
-    // investment 5,000, against sales of 1,000 + 900; India 1,000 against 1,000 and its capital; Europe 950 each side.
+    // investment 5,000, against sales of 1,000 + 900; India 1,000 against 1,000 and its capital;
+    // Europe its purchase at April's 92 (874) against its creditor at the closing 100 (950).
     let companies: Vec<(String, Decimal, Decimal, Decimal)> = meta["companies"]
         .as_array()
         .unwrap()
@@ -1265,7 +1270,7 @@ async fn consolidation(t: &mut T) {
         companies,
         vec![
             ("Group Co".to_string(), n("1"), n("7100"), n("1900")),
-            ("Group Europe".to_string(), n("100"), n("950"), n("950")),
+            ("Group Europe".to_string(), n("100"), n("874"), n("950")),
             ("Group India".to_string(), n("1"), n("1000"), n("6000")),
         ]
     );
@@ -1278,12 +1283,13 @@ async fn consolidation(t: &mut T) {
         .collect();
     assert_eq!(pairs, vec![("Group Europe".to_string(), n("900"), n("950"), n("-50")), ("Group India".to_string(), n("1200"), n("1000"), n("200"))]);
     assert_eq!(dec(&meta["intercompany_balances_disagree_by"]), n("250"));
-    // The group's statements say the same: income 5,200 + 70 + 500, expenses 500; assets the
-    // debtor's 70 and 5,000 cash, held by the year's profit less the difference of 200.
+    // The group's statements say the same: income 4,980 + 70 + 445, expenses 500; assets the
+    // debtor's 70 and 5,000 cash, held by the year's profit and the reserve of 275 less the
+    // difference of 200.
     let mut consolidated = year(group);
     consolidated.push(("consolidated", "1".into()));
     let pl = t.report(&am, "profit_and_loss", &consolidated).await;
-    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("5770"), n("500"), n("5270")));
+    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("5495"), n("500"), n("4995")));
     assert_eq!(pl["meta"]["companies"], json!("Group Co, Group Europe, Group India"));
     let as_of = |c: Uuid| vec![("company", c.to_string()), ("as_of", "2026-12-31".to_string()), ("consolidated", "1".to_string())];
     let bs = t.report(&am, "balance_sheet", &as_of(group)).await;
@@ -1294,7 +1300,9 @@ async fn consolidation(t: &mut T) {
     assert_eq!(dec(&difference["amount"]), n("-200"));
 
     // India's own group: Group Co is outside it now, so business with it stays, intercompany
-    // accounts included, and India's capital is the group's own.
+    // accounts included, and India's capital is the group's own. Europe's April purchase of 9.50
+    // euros is at April's 92 (874), its creditor at the closing 100 (950): the reserve is 220 on
+    // the sale, 55 on the grant, less 76 on the purchase, 199.
     let tb = t.report(&am, "consolidated_trial_balance", &year(india)).await;
     assert_eq!(
         tb_lines(&tb),
@@ -1302,20 +1310,22 @@ async fn consolidation(t: &mut T) {
             ("1131 - Cash".to_string(), figures("7500", "500", "7000", "0")),
             ("2111 - Creditors".to_string(), figures("0", "1950", "0", "1950")),
             ("3100 - Capital Stock".to_string(), figures("0", "5000", "0", "5000")),
-            ("4110 - Sales".to_string(), figures("0", "2000", "0", "2000")),
+            ("4110 - Sales".to_string(), figures("0", "1780", "0", "1780")),
             ("5230 - Rent".to_string(), figures("500", "0", "500", "0")),
-            ("5290 - Intercompany Purchases".to_string(), figures("1950", "0", "1950", "0")),
-            ("Grants Received (Group Europe)".to_string(), figures("0", "500", "0", "500")),
+            ("5290 - Intercompany Purchases".to_string(), figures("1874", "0", "1874", "0")),
+            ("Grants Received (Group Europe)".to_string(), figures("0", "445", "0", "445")),
+            ("Foreign currency translation reserve".to_string(), figures("0", "199", "0", "199")),
         ]
     );
     assert_eq!((tb["meta"]["balanced"].clone(), tb["meta"]["intercompany_balances"].clone()), (json!(true), json!([])));
     // In its statements Europe's grants, which India's chart lacks, show on the account above them,
-    // Indirect Income: income 2,000 + 500, expenses 500 + 1,950.
+    // Indirect Income: income 1,780 + 445, expenses 500 + 1,874; equity the capital, the loss of
+    // 149 and the reserve of 199.
     let mut consolidated = year(india);
     consolidated.push(("consolidated", "1".into()));
     let pl = t.report(&am, "profit_and_loss", &consolidated).await;
-    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("2500"), n("2450"), n("50")));
-    assert_eq!(dec(&line(&pl, "4200 - Indirect Income")["amount"]), n("500"));
+    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["expense"]), dec(&pl["totals"]["net_profit"])), (n("2225"), n("2374"), n("-149")));
+    assert_eq!(dec(&line(&pl, "4200 - Indirect Income")["amount"]), n("445"));
     let bs = t.report(&am, "balance_sheet", &as_of(india)).await;
     assert_eq!((dec(&bs["totals"]["assets"]), dec(&bs["totals"]["liabilities"]), dec(&bs["totals"]["equity"])), (n("7000"), n("1950"), n("5050")));
     assert_eq!(bs["meta"]["balanced"], json!(true), "{}", bs["rows"]);
@@ -1334,5 +1344,28 @@ async fn consolidation(t: &mut T) {
         .collect();
     let e = ferrum_domain::reports::run(&t.k, &am, "consolidated_trial_balance", &p).await.unwrap_err();
     assert!(invalid(&e, "no exchange rate from EUR to INR"), "{e:?}");
+
+    // With a rate of 90 from July as well, Europe's July sale (20 euros) and August grant (5) take
+    // it, 1,800 and 450, while its 25 euros of cash stay at the closing 100, 2,500. The 250 between
+    // them is the translation reserve, and the intercompany difference is still only what was
+    // eliminated in part. April's purchase is business within the group: eliminated, no part of it.
+    t.insert(&a, "ExchangeRate", json!({"from_currency": t.eur.to_string(), "to_currency": t.inr.to_string(), "rate": "90", "valid_from": "2026-07-01"})).await;
+    let tb = t.report(&am, "consolidated_trial_balance", &year(group)).await;
+    let lines = tb_lines(&tb);
+    let of = |name: &str| lines.iter().find(|(a, _)| a == name).map(|(_, f)| *f).unwrap_or_else(|| panic!("{name} in {lines:?}"));
+    assert_eq!(of("4110 - Sales"), figures("0", "5000", "0", "5000"), "Europe's 20 euros at 90");
+    assert_eq!(of("4220 - Grants Received"), figures("0", "450", "0", "450"));
+    assert_eq!(of("1131 - Cash"), figures("10500", "5500", "5000", "0"), "at the closing rate");
+    assert_eq!(of("Foreign currency translation reserve"), figures("0", "250", "0", "250"));
+    assert_eq!(of("Intercompany difference (entries eliminated in part)"), figures("200", "0", "200", "0"));
+    assert_eq!((tb["meta"]["balanced"].clone(), dec(&tb["meta"]["translation_reserve"])), (json!(true), n("250")));
+    let mut grouped = year(group);
+    grouped.push(("consolidated", "1".into()));
+    let pl = t.report(&am, "profit_and_loss", &grouped).await;
+    assert_eq!((dec(&pl["totals"]["income"]), dec(&pl["totals"]["net_profit"])), (n("5520"), n("5020")), "the reserve is no profit");
+    let bs = t.report(&am, "balance_sheet", &as_of(group)).await;
+    assert_eq!((dec(&bs["totals"]["assets"]), dec(&bs["totals"]["equity"]), bs["meta"]["balanced"].clone()), (n("5070"), n("5070"), json!(true)));
+    let row = |name: &str| dec(&bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!(name)).unwrap_or_else(|| panic!("{name}"))["amount"]);
+    assert_eq!((row("Foreign currency translation reserve"), row("Intercompany difference (entries eliminated in part)")), (n("250"), n("-200")));
     t.books_balance().await;
 }
