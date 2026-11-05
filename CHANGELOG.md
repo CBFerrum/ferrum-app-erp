@@ -1,6 +1,6 @@
 # Changelog
 
-## ERP 0.8.0, Warehouse 0.2.1 and Shop Floor 0.2.1: a supplier's orders on the portal
+## ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1 and Shop Floor 0.2.1: a supplier's orders on the portal
 
 - **Your orders**, a page of the workspace's portal for suppliers (FERRUM-ERP-011): someone whose
   address is a supplier's, or one of its contacts', sees the purchase orders sent to that supplier
@@ -9,6 +9,9 @@
   when it is due. Drafts and cancelled orders are not theirs to see; another supplier's are not
   found. It is the buying package's site, `/api/app/buying/portal/orders` and `…/bills`, beside
   the selling package's "Your invoices", in the same interface release.
+- With Procurement, the page also lists the requests for quotation waiting for the supplier's
+  answer before their deadline, each with the link the supplier was e-mailed (signed alike, so
+  the same page); answered, a request leaves the list (`/api/app/procurement/portal/rfqs`).
 - ERP's interface and the Warehouse and Shop Floor interfaces are rebuilt with Ferrum-Frontend
   d4efeca: a field's label names its control for assistive technology, and a record whose title
   is a link shows that record's title, not its id.

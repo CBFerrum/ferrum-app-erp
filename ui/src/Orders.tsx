@@ -1,7 +1,9 @@
 // ERP's page of the workspace's portal for suppliers (docs/plan/apps-ui.md §9.1) at /portal/orders/:
-// what was ordered from them, how much of each order was received and billed, the order as the
-// workspace prints it, and the bills ERP holds from them with what is still owed. Everything comes
-// from /api/app/buying/portal/…, which answers by the address the person signed in with.
+// the requests for quotation waiting for their answer (where Procurement is installed), what was
+// ordered from them, how much of each order was received and billed, the order as the workspace
+// prints it, and the bills ERP holds from them with what is still owed. Everything comes from
+// /api/app/buying/portal/… and /api/app/procurement/portal/rfqs, which answer by the address the
+// person signed in with.
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -11,6 +13,22 @@ import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, 
 import { amount } from "./Invoices";
 
 const BASE = "/api/app/buying/portal";
+const RFQS = "/api/app/procurement/portal/rfqs";
+
+export interface PortalRfq {
+  id: string;
+  number?: string | null;
+  due_by?: string | null;
+  company?: string | null;
+  items: { item?: string | null; qty: string; unit?: string | null }[];
+  /** The page where the supplier answers, as it was e-mailed to them. */
+  answer?: string | null;
+}
+
+/** What a request asks for, in a line. */
+export function asked(r: Pick<PortalRfq, "items">): string {
+  return r.items.map((i) => `${formatDecimal(i.qty)}${i.unit ? ` ${i.unit}` : ""} ${i.item ?? ""}`.trim()).join(", ");
+}
 
 export interface PortalOrder {
   id: string;
@@ -91,6 +109,9 @@ export function PortalOrders() {
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor || undefined,
   });
+  // Only where Procurement is installed; elsewhere there is nothing to ask for.
+  const rfqs = useQuery({ queryKey: ["erp", "portal", "rfqs"], queryFn: ({ signal }) => api.get<{ rfqs: PortalRfq[] }>(RFQS, {}, signal) });
+  const waiting = rfqs.data?.rfqs ?? [];
   const orderRows = orders.data?.pages.flatMap((p) => p.orders) ?? [];
   const billRows = bills.data?.pages.flatMap((p) => p.bills) ?? [];
   return (
@@ -101,6 +122,22 @@ export function PortalOrders() {
           <p className="page-sub">What was ordered from you, how much of it was received, and what you are still owed.</p>
         </div>
       </div>
+      {waiting.length > 0 && (
+        <section className="stack" aria-label="Requests for quotation">
+          <h2 className="section-title">Waiting for your quotation</h2>
+          <ul className="stack">
+            {waiting.map((r) => (
+              <li key={`${r.id}-${r.answer ?? ""}`} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                <span>
+                  <strong>{r.number}</strong> · {asked(r)}
+                  {r.due_by && <span className="faint"> · due by {formatDate(r.due_by)}</span>}
+                </span>
+                {r.answer ? <a href={r.answer}>Answer it</a> : <span className="faint">Ask {r.company ?? "them"} for a new link</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {orders.error ? (
         <ErrorState error={orders.error} onRetry={() => void orders.refetch()} />
       ) : !orders.data ? (
