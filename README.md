@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.14.1** | Rebuilt with Ferrum-Frontend 00dea07: a workflow state's kept fields are read-only, its needed ones required. |
 | **ERP 0.14.0** | A subscription's revenue is earned over the days it pays for, refunds over the days they give back; MRR reads plans as they stood, with expansion, contraction and net revenue retention. |
 | **ERP 0.13.0** | A sale to one of the group's companies makes that company's purchase invoice, from the supplier that represents the seller, numbered as the sale, once. |
 | **ERP 0.12.0** | Non-controlling interests: a company says how much of it its parent holds, and the consolidated balance sheet and profit and loss split equity and profit between the owners of the parent and the non-controlling interests. A group's cash flow, every flow at the rate of its day, with the effect of exchange rates on cash. |
