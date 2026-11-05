@@ -1,5 +1,14 @@
 # Changelog
 
+## ERP 0.10.1: the standard chart reaches companies made before it grew
+
+- **Create Standard Chart of Accounts** on a company that already has accounts now adds the
+  standard accounts it lacks, under their standard parents where the company has them (without
+  the standard number when another account holds it), and sets the default links still empty.
+  Nothing the company has is changed. A company made before 0.9.0 had no Deferred Revenue or
+  Prepaid Expenses, so a deferred line was refused; walking deferred revenue in a browser found
+  it, and the refusal points at this action.
+
 ## ERP 0.10.0: accruals that reverse themselves, and what remains deferred
 
 - A journal entry may reverse itself, as an accrual or a prepayment does (FERRUM-ERP-006): marked
