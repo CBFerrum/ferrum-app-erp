@@ -11,6 +11,7 @@
 //! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
 
 pub mod accounting;
+pub mod deferred;
 pub mod flow;
 pub mod ledger;
 pub mod localization;
@@ -31,6 +32,7 @@ use chrono::Datelike;
 use ferrum_kernel::{HookRegistry, Kernel, Result};
 use pricing::Side;
 use std::sync::Arc;
+use uuid::Uuid;
 
 include!(concat!(env!("OUT_DIR"), "/ui.rs"));
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
@@ -97,6 +99,25 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
     }
     tx.commit().await?;
+    // What deferred lines earned or used through the end of last month, in every workspace with
+    // the books (a company's accountant may recognise later days themselves).
+    let mut tx = k.db.system_tx().await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    let today = chrono::Utc::now().date_naive();
+    let month_end = today.with_day(1).and_then(|first| first.pred_opt()).unwrap_or(today);
+    for tenant in tenants {
+        let schema = k.registry.schema(tenant).await?;
+        if !schema.packages.iter().any(|p| p == "accounting") {
+            continue;
+        }
+        let ctx = ferrum_kernel::Ctx::system(tenant, schema);
+        let mut tx = k.db.tenant_tx(tenant).await?;
+        match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
+            Ok(_) => tx.commit().await?,
+            Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
+        }
+    }
     Ok(())
 }
 
