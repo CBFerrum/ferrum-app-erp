@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { owedLabel, progress } from "./Orders";
+import { asked, owedLabel, progress } from "./Orders";
 
 describe("a supplier's orders", () => {
   it("say how far an order has come", () => {
@@ -16,5 +16,9 @@ describe("a supplier's orders", () => {
     expect(owedLabel({ owed: "10", overdue: true, due_date: "2026-10-01", is_return: false })).toMatch(/^Overdue since /);
     expect(owedLabel({ owed: "10", overdue: false, due_date: "2026-11-30", is_return: false })).toMatch(/^Due /);
     expect(owedLabel({ owed: "-10", overdue: false, due_date: null, is_return: true })).toBe("Debit note");
+  });
+
+  it("say what a request for quotation asks for", () => {
+    expect(asked({ items: [{ item: "Bolt", qty: "200", unit: "Nos" }, { item: "Washer", qty: "5" }] })).toBe("200 Nos Bolt, 5 Washer");
   });
 });
