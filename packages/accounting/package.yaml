@@ -14,6 +14,8 @@ overlays:
       - {op: add_field, column: true, after: default_receivable_account, field: {name: default_payable_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: default_payable_account, field: {name: default_income_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: default_income_account, field: {name: default_expense_account, type: link, to: Account, link_filters: {is_group: false}}}
+      - {op: add_field, column: true, after: default_expense_account, field: {name: default_deferred_revenue_account, type: link, to: Account, link_filters: {is_group: false}, description: "Where income earned over a service period waits until it is earned"}}
+      - {op: add_field, column: true, after: default_deferred_revenue_account, field: {name: default_deferred_expense_account, type: link, to: Account, link_filters: {is_group: false}, description: "Where an expense for a service period waits until it is incurred"}}
       - {op: add_field, column: true, after: default_expense_account, field: {name: default_cash_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: default_cash_account, field: {name: default_bank_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: default_bank_account, field: {name: default_inventory_account, type: link, to: Account, link_filters: {is_group: false}}}
@@ -30,6 +32,7 @@ overlays:
       - {op: add_field, column: true, after: overhead_absorbed_account, field: {name: parent_company, type: link, to: Company, label: Parent Company,
           description: "The group it reports to: a group's books are added up from the parent and every company under it"}}
       - {op: add_action, action: {name: setup_chart_of_accounts, label: Create Standard Chart of Accounts, permission: write, confirm: 'Create the standard chart of accounts for this company?'}}
+      - {op: add_action, action: {name: recognise_deferred, label: Recognise Deferred Revenue and Expense, permission: write, params: [{name: through, type: date, label: Through, description: "The last day to recognise; yesterday when empty"}]}}
   - entity: Customer
     ops:
       - {op: add_field, column: true, after: default_price_list, field: {name: receivable_account, type: link, to: Account, link_filters: {account_type: Receivable, is_group: false}, description: Overrides the company default}}
@@ -48,6 +51,8 @@ overlays:
     ops:
       - {op: add_field, column: true, after: standard_rate, field: {name: income_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: income_account, field: {name: expense_account, type: link, to: Account, link_filters: {is_group: false}}}
+      - {op: add_field, column: true, after: expense_account, field: {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Sold for a service period: its income is recognised day by day over it"}}
+      - {op: add_field, column: true, after: enable_deferred_revenue, field: {name: enable_deferred_expense, type: check, label: Deferred Expense, description: "Bought for a service period: its expense is recognised day by day over it"}}
       - {op: add_field, column: true, after: uoms, field: {name: tax_rates, type: table, of: ItemTaxRate, label: Item Tax Rates}}
 
 modules:

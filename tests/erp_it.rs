@@ -1476,6 +1476,70 @@ async fn scenario() {
     assert!(si["tax_template"].is_null() && si["taxes"].as_array().is_none_or(|t| t.is_empty()), "no GST on its sales: {si:?}");
     assert_eq!(dec(&t.submit("SalesInvoice", uid(&si)).await["grand_total"]), n("100"), "submitted without HSN/SAC codes");
 
+    // ───────────── revenue and expense over a service period (FERRUM-ERP-006) ─────────────
+    // A year of support sold for 12,000 waits as deferred revenue and is earned by the day.
+    let year = |m: u32, d: u32| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap().to_string();
+    let support = |deferred: bool, start: Option<&str>| {
+        let mut line = json!({"item": advice.to_string(), "qty": "120", "enable_deferred_revenue": deferred, "service_end_date": year(12, 31)});
+        if let Some(start) = start {
+            line["service_start_date"] = json!(start);
+        }
+        json!({"company": gmbh.to_string(), "customer": globex.to_string(), "items": [line]})
+    };
+    let undated = uid(&t.insert("SalesInvoice", support(true, None)).await);
+    let refused = t.k.submit(&t.ctx, "SalesInvoice", undated, None).await;
+    assert!(matches!(refused, Err(ref e) if format!("{e:?}").contains("the day its service starts")), "a deferred line needs its service period: {refused:?}");
+    let sold = uid(&t.insert("SalesInvoice", support(true, Some(&year(1, 1)))).await);
+    t.submit("SalesInvoice", sold).await;
+    assert_eq!(t.gl("Deferred Revenue").await, n("-12000"), "all of it waits");
+    let recognised = t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await;
+    assert_eq!(recognised["lines"], json!(1));
+    let line = |id: Uuid| {
+        let t = &t;
+        async move { t.get("SalesInvoice", id).await["items"][0].clone() }
+    };
+    let first = line(sold).await;
+    assert_eq!((dec(&first["deferred_booked"]), first["deferred_booked_till"].clone()), (n("2958.9"), json!(year(3, 31))), "90 days of 365");
+    assert_eq!(t.gl("Deferred Revenue").await, n("-9041.1"));
+    assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await["lines"], json!(0), "nothing twice");
+    t.action("Company", gmbh, "recognise_deferred", json!({"through": year(6, 30)})).await;
+    assert_eq!(dec(&line(sold).await["deferred_booked"]), n("5950.68"), "181 days of 365");
+    assert_eq!(t.gl("Deferred Revenue").await, n("-6049.32"));
+    let ahead = t.k.run_action(&t.ctx, "Company", gmbh, "recognise_deferred", json!({"through": "2099-01-01"})).await;
+    assert!(matches!(ahead, Err(ref e) if format!("{e:?}").contains("a day that has come")), "{ahead:?}");
+
+    // A year of insurance bought for 3,650 waits as a prepaid expense and is used by the day.
+    let insurance = t
+        .insert(
+            "PurchaseInvoice",
+            json!({"company": gmbh.to_string(), "supplier": acme.to_string(), "bill_no": "INS-2026",
+                   "items": [{"item": advice.to_string(), "qty": "1", "price_list_rate": "3650", "enable_deferred_expense": true,
+                              "service_start_date": year(1, 1), "service_end_date": year(12, 31)}]}),
+        )
+        .await;
+    let insurance = uid(&insurance);
+    t.submit("PurchaseInvoice", insurance).await;
+    assert_eq!(t.gl("Prepaid Expenses").await, n("3650"));
+    t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await;
+    assert_eq!(t.gl("Prepaid Expenses").await, n("2750"), "90 days at 10 a day used");
+    // A stock item is valued by its stock, not deferred.
+    let stocked = uid(&t
+        .insert(
+            "PurchaseInvoice",
+            json!({"company": gmbh.to_string(), "supplier": acme.to_string(), "bill_no": "INS-STOCK",
+                   "items": [{"item": raw.to_string(), "qty": "1", "price_list_rate": "10", "enable_deferred_expense": true,
+                              "service_start_date": year(1, 1), "service_end_date": year(12, 31)}]}),
+        )
+        .await);
+    assert!(matches!(t.k.submit(&t.ctx, "PurchaseInvoice", stocked, None).await, Err(ref e) if format!("{e:?}").contains("not deferred")));
+
+    // Cancelled, an invoice takes back what was recognised with the rest.
+    t.k.cancel(&t.ctx, "SalesInvoice", sold, None).await.expect("cancel the support");
+    assert_eq!(t.gl("Deferred Revenue").await, Decimal::ZERO, "the deferral and its recognitions reversed");
+    t.k.cancel(&t.ctx, "PurchaseInvoice", insurance, None).await.expect("cancel the insurance");
+    assert_eq!(t.gl("Prepaid Expenses").await, Decimal::ZERO);
+    assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(9, 30)})).await["lines"], json!(0), "nothing of a cancelled invoice");
+
     // ───────────── what every country builds on (Ferrum docs/plan/localization.md, L0) ─────────────
     assert_eq!(t.get("Company", gmbh).await["country_code"], json!("DE"), "the country's ISO code follows its name");
     let parent = |name: &'static str| {
