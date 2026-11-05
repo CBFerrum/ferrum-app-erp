@@ -1,5 +1,21 @@
 # Changelog
 
+## ERP 0.10.0: accruals that reverse themselves, and what remains deferred
+
+- A journal entry may reverse itself, as an accrual or a prepayment does (FERRUM-ERP-006): marked
+  **Reverse It**, it is taken out again on its reversal day, the day after unless another is
+  chosen, when the invoice or payment it stood in for is booked. The daily upkeep reverses it on
+  that day, once (locked, so two replicas at once reverse it once), and one whose day's period is
+  closed waits for the next round; one whose day has already come is reversed as it is
+  submitted. Cancelled after its reversal, nothing more moves. Such an entry books to accounts only: what a
+  customer or supplier owes comes with their invoices. The design is the exchange revaluation's,
+  which already reversed itself the day after.
+- **Deferred Revenue and Expense**, a report of every deferred line of a company's submitted
+  invoices (sales or purchase): its service period, its amount, what was recognised and through
+  when, what still waits on its deferred account (which is what the account holds once
+  recognition has run), and what recognising through a day would move.
+- The standard chart has Accrued Income (1180) and Accrued Expenses (2160).
+
 ## ERP 0.9.0: revenue and expense over a service period
 
 - Deferred revenue and expense (FERRUM-ERP-006), as ERPNext defers them: an invoice line marked

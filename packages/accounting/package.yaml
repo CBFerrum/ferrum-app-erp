@@ -60,7 +60,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger,
+    items: [JournalEntry, PaymentEntry, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables]
   - name: setup
     label: Setup

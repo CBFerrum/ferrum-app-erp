@@ -85,7 +85,8 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
     vec![Arc::new(reports::ErpReports)]
 }
 
-/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions.
+/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions, deferred
+/// lines recognised, and journal entries reversed on their reversal day.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let year = chrono::Utc::now().year();
     let mut tx = k.db.system_tx().await?;
@@ -116,6 +117,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
             Ok(_) => tx.commit().await?,
             Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
+        }
+        if let Err(e) = accounting::upkeep(k, &ctx).await {
+            tracing::warn!(%tenant, "journal entry reversals: {e}");
         }
     }
     Ok(())

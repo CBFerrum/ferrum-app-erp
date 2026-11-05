@@ -66,6 +66,13 @@ const DEFS: &[Def] = &[
         entity: "JournalEntry",
         params: &["company", "from_date", "to_date", "compare", "periods", "finance_book"],
     },
+    Def {
+        name: "deferred_revenue_and_expense",
+        label: "Deferred Revenue and Expense",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "deferred", "as_of"],
+    },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
     Def { name: "stock_balance", label: "Stock Balance", module: "inventory", entity: "StockEntry", params: &["company", "as_of", "warehouse", "item"] },
@@ -100,6 +107,7 @@ fn param(name: &str) -> Value {
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
+        "deferred" => json!({"name": name, "label": "Deferred", "type": "select", "options": ["Revenue", "Expense"], "default": "Revenue"}),
         "consolidated" => json!({"name": name, "label": "Consolidated", "type": "check",
             "description": "The company and every company under it, in its currency, with their business with each other taken out"}),
         "finance_book" => {
@@ -148,6 +156,7 @@ impl ReportSource for ErpReports {
             "profit_and_loss" => profit_and_loss(k, &mut tx, ctx, &co, &p).await?,
             "balance_sheet" => balance_sheet(k, &mut tx, ctx, &co, &p).await?,
             "cash_flow" => cash_flow(&mut tx, ctx, &co, &p).await?,
+            "deferred_revenue_and_expense" => deferred_lines(&mut tx, ctx, &co, &p).await?,
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
             "stock_balance" => stock_balance(&mut tx, ctx, &co, &p).await?,
@@ -1355,6 +1364,58 @@ async fn register(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, ki
         "rows": rows,
         "totals": {"base_grand_total": money(total_base), "count": count},
         "meta": {"from_date": from, "to_date": to, "truncated": truncated},
+    }))
+}
+
+// ───────────────────────────── deferred revenue and expense ─────────────────────────────
+
+/// Every deferred line of the company's submitted invoices: what it defers over which days, what
+/// was recognised and through when, what still waits on its deferred account, and what
+/// recognising through `as_of` would move. Once recognition has run, what still waits is what the
+/// deferred accounts hold.
+async fn deferred_lines(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let as_of = p.date("as_of")?.unwrap_or_else(today);
+    let expense = p.raw.get("deferred").map(String::as_str) == Some("Expense");
+    let (invoice, party, flag) =
+        if expense { ("PurchaseInvoice", "supplier_name", "enable_deferred_expense") } else { ("SalesInvoice", "customer_name", "enable_deferred_revenue") };
+    let ent = ctx.schema.entity(invoice).ok_or_else(|| Error::NotFound(invoice.into()))?;
+    let lines = ent.children.get("items").ok_or_else(|| Error::internal("an invoice without lines"))?;
+    #[allow(clippy::type_complexity)]
+    let data: Vec<(Uuid, Option<String>, Option<String>, Option<String>, NaiveDate, NaiveDate, Option<Decimal>, Option<Decimal>, Option<Decimal>, Option<NaiveDate>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "select i.id, i.number, i.{party}, l.item_name, l.service_start_date, l.service_end_date, l.base_net_amount, l.net_amount, l.deferred_booked,              l.deferred_booked_till from {invoices} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id              where i.tenant_id = $1 and i.company = $2 and i.docstatus = 1 and coalesce(i.is_return, false) = false and coalesce(l.{flag}, false)              and l.service_start_date is not null and l.service_end_date is not null order by l.service_start_date, i.number limit $3",
+            invoices = ferrum_kernel::ddl::q(&ent.table),
+            lines = ferrum_kernel::ddl::q(&lines.table),
+        )))
+        .bind(ctx.tenant)
+        .bind(co.id)
+        .bind(MAX_ROWS + 1)
+        .fetch_all(&mut **tx)
+        .await?;
+    let truncated = data.len() as i64 > MAX_ROWS;
+    let (mut waiting, mut due) = (Decimal::ZERO, Decimal::ZERO);
+    let rows: Vec<Value> = data
+        .into_iter()
+        .take(MAX_ROWS as usize)
+        .map(|(iid, number, name, item, start, end, base, net, booked, till)| {
+            let amount = base.or(net).unwrap_or_default();
+            let booked = booked.unwrap_or_default();
+            let next = (crate::deferred::earned(amount, start, end, as_of, co.precision) - booked).max(Decimal::ZERO);
+            waiting += amount - booked;
+            due += next;
+            json!({"voucher_id": iid, "voucher_no": number, "party": name, "item": item, "service_start_date": start, "service_end_date": end,
+                "amount": money(amount), "recognised": money(booked), "recognised_till": till, "deferred": money(amount - booked), "due": money(next)})
+        })
+        .collect();
+    let count = rows.len();
+    Ok(json!({
+        "columns": [col("voucher_no", "Invoice", "data"), col("party", if expense { "Supplier" } else { "Customer" }, "data"), col("item", "Item", "data"),
+            col("service_start_date", "Service From", "date"), col("service_end_date", "Service To", "date"), col("amount", "Amount", "currency"),
+            col("recognised", "Recognised", "currency"), col("recognised_till", "Recognised Through", "date"), col("deferred", "Still Deferred", "currency"),
+            col("due", "To Recognise Through The Day", "currency")],
+        "rows": rows,
+        "totals": {"deferred": money(waiting), "due": money(due), "count": count},
+        "meta": {"as_of": as_of, "deferred": if expense { "Expense" } else { "Revenue" }, "truncated": truncated},
     }))
 }
 
