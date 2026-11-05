@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.13.0** | A sale to one of the group's companies makes that company's purchase invoice, from the supplier that represents the seller, numbered as the sale, once. |
 | **ERP 0.12.0** | Non-controlling interests: a company says how much of it its parent holds, and the consolidated balance sheet and profit and loss split equity and profit between the owners of the parent and the non-controlling interests. A group's cash flow, every flow at the rate of its day, with the effect of exchange rates on cash. |
 | **ERP 0.11.0** | A group's books translated as IAS 21 says: assets and liabilities at the closing rate, income, expenses and equity at the rate of their day where the books have one; what that leaves is the foreign currency translation reserve, in equity. |
 | **ERP 0.10.2, Finance 0.3.1** | A reversal day left empty is the day after the entry's own, worked out when it is submitted, not while it was a draft. Actions say what they did. |
