@@ -32,6 +32,9 @@
     - {name: total_debit, type: currency, currency: currency, read_only: true, in_list: true}
     - {name: total_credit, type: currency, currency: currency, read_only: true}
     - {name: remark, type: text}
+    - {name: auto_reverse, type: check, label: Reverse It, description: "An accrual or a prepayment: taken out again on its reversal day, when the invoice or payment it stood in for is booked"}
+    - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", no_copy: true, description: "The day after, when empty"}
+    - {name: reversed_on, type: date, read_only: true, no_copy: true, visible_if: "doc.auto_reverse"}
   rules:
     - {name: balanced, check: "doc.total_debit == doc.total_credit", message: "Total debit must equal total credit", on: submit}
     - {name: not_empty, check: "doc.total_debit > 0.0", message: "The entry has no amounts", on: submit}
