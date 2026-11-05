@@ -1476,6 +1476,45 @@ async fn scenario() {
     assert!(si["tax_template"].is_null() && si["taxes"].as_array().is_none_or(|t| t.is_empty()), "no GST on its sales: {si:?}");
     assert_eq!(dec(&t.submit("SalesInvoice", uid(&si)).await["grand_total"]), n("100"), "submitted without HSN/SAC codes");
 
+    // ───────────── a company's chart from before an account was standard ─────────────
+    // Made before ERP 0.9.0, a company has no Deferred Revenue, Prepaid Expenses or accrual
+    // accounts: Create Standard Chart of Accounts adds what it lacks and links the empty defaults.
+    let older = uid(&t.insert("Company", json!({"company_name": "Older Books Ltd", "abbr": "OBL", "default_currency": inr["id"]})).await);
+    let older_account = |name: &'static str| {
+        let t = &t;
+        async move { t.find_one("Account", json!({"company": older.to_string(), "account_name": name})).await }
+    };
+    t.k.update(&t.ctx, "Company", older, obj(json!({"default_deferred_revenue_account": null, "default_deferred_expense_account": null})), None)
+        .await
+        .expect("unlink the deferred defaults");
+    for name in ["Deferred Revenue", "Prepaid Expenses", "Accrued Income", "Accrued Expenses"] {
+        t.k.delete(&t.ctx, "Account", uid(&older_account(name).await), None).await.unwrap_or_else(|e| panic!("delete {name}: {e:?}"));
+    }
+    // Its own account took the number the standard chart gives Deferred Revenue.
+    let liabilities = older_account("Current Liabilities").await;
+    t.insert(
+        "Account",
+        json!({"company": older.to_string(), "account_name": "Tenant Deposits", "account_number": "2150", "parent_account": liabilities["id"], "root_type": "Liability"}),
+    )
+    .await;
+    let completed = t.action("Company", older, "setup_chart_of_accounts", json!({})).await;
+    assert_eq!(completed["added"], json!(["Prepaid Expenses", "Accrued Income", "Deferred Revenue", "Accrued Expenses"]), "{completed}");
+    assert_eq!(
+        completed["message"],
+        json!("Added Prepaid Expenses, Accrued Income, Deferred Revenue, Accrued Expenses from the standard chart; 2 default accounts set")
+    );
+    let deferred = older_account("Deferred Revenue").await;
+    assert_eq!(
+        (deferred["parent_account"].clone(), deferred["account_number"].clone()),
+        (liabilities["id"].clone(), Value::Null),
+        "under its parent, without a number taken"
+    );
+    assert_eq!(t.get("Company", older).await["default_deferred_revenue_account"], deferred["id"]);
+    assert_eq!(
+        t.action("Company", older, "setup_chart_of_accounts", json!({})).await["message"],
+        json!("This company's chart already has every standard account")
+    );
+
     // ───────────── revenue and expense over a service period (FERRUM-ERP-006) ─────────────
     // A year of support sold for 12,000 waits as deferred revenue and is earned by the day.
     let year = |m: u32, d: u32| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap().to_string();
