@@ -1531,6 +1531,19 @@ async fn scenario() {
     assert_eq!(t.gl("Prepaid Expenses").await, n("3650"));
     t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await;
     assert_eq!(t.gl("Prepaid Expenses").await, n("2750"), "90 days at 10 a day used");
+    // What still waits, line by line, and what recognising through 30 September would move.
+    let waiting = |deferred: &'static str| vec![("company", gmbh.to_string()), ("deferred", deferred.to_string()), ("as_of", year(9, 30))];
+    let revenue = t.report("deferred_revenue_and_expense", &waiting("Revenue")).await;
+    assert_eq!(revenue["rows"].as_array().map(Vec::len), Some(1), "the undated draft is not there: {revenue}");
+    let r = &revenue["rows"][0];
+    assert_eq!(
+        (dec(&r["amount"]), dec(&r["recognised"]), r["recognised_till"].clone(), dec(&r["deferred"]), dec(&r["due"])),
+        (n("12000"), n("5950.68"), json!(year(6, 30)), n("6049.32"), n("3024.66")),
+        "273 days of 365 earned by 30 September"
+    );
+    assert_eq!(dec(&revenue["totals"]["deferred"]), -t.gl("Deferred Revenue").await, "what still waits is what the account holds");
+    let expense = t.report("deferred_revenue_and_expense", &waiting("Expense")).await;
+    assert_eq!((dec(&expense["totals"]["deferred"]), dec(&expense["totals"]["due"])), (t.gl("Prepaid Expenses").await, n("1830")));
     // A stock item is valued by its stock, not deferred.
     let stocked = uid(&t
         .insert(
@@ -1548,6 +1561,67 @@ async fn scenario() {
     t.k.cancel(&t.ctx, "PurchaseInvoice", insurance, None).await.expect("cancel the insurance");
     assert_eq!(t.gl("Prepaid Expenses").await, Decimal::ZERO);
     assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(9, 30)})).await["lines"], json!(0), "nothing of a cancelled invoice");
+
+    // ───────────── accruals that reverse themselves (FERRUM-ERP-006) ─────────────
+    // March's electricity, billed in April: accrued on 31 March and taken out again the day after,
+    // when the bill is booked. That day has come, so it is reversed as it is submitted.
+    let account = |name: &'static str| {
+        let of = &of_gmbh;
+        async move { of("Account", json!({"account_name": name})).await[0]["id"].clone() }
+    };
+    let (power, accrued, debtors) = (account("Utilities").await, account("Accrued Expenses").await, account("Debtors").await);
+    let accrual = |on: String, more: Value| {
+        let mut v = json!({"company": gmbh.to_string(), "posting_date": on, "auto_reverse": true,
+                           "accounts": [{"account": power.clone(), "debit": "400"}, {"account": accrued.clone(), "credit": "400"}]});
+        v.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap_or_default());
+        v
+    };
+    let entries_of = |jid: Uuid| {
+        let t = &t;
+        async move {
+            let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+            let days: Vec<chrono::NaiveDate> = sqlx::query_scalar(
+                "select posting_date from journal_entry where tenant_id = $1 and source_entity = 'JournalEntry' and source_id = $2 order by posting_date",
+            )
+            .bind(t.ctx.tenant)
+            .bind(jid)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+            days.iter().map(|d| d.to_string()).collect::<Vec<_>>()
+        }
+    };
+    let march = t.insert("JournalEntry", accrual(year(3, 31), json!({}))).await;
+    assert_eq!(march["reversal_date"], json!(year(4, 1)), "the day after, unless another is chosen");
+    let march = uid(&march);
+    t.submit("JournalEntry", march).await;
+    assert_eq!(t.get("JournalEntry", march).await["reversed_on"], json!(year(4, 1)));
+    assert_eq!(entries_of(march).await, vec![year(3, 31), year(4, 1)], "in March's books, out of April's");
+    assert_eq!(t.gl("Accrued Expenses").await, Decimal::ZERO);
+    let early = t.k.insert(&t.ctx, "JournalEntry", obj(accrual(year(3, 31), json!({"reversal_date": year(3, 1)})))).await;
+    assert!(matches!(early, Err(ref e) if format!("{e:?}").contains("must be after the day of the entry")), "{early:?}");
+    let mut owed = accrual(year(3, 31), json!({}));
+    owed["accounts"][1] = json!({"account": debtors, "party_type": "Customer", "customer": globex.to_string(), "credit": "400"});
+    let owed = t.k.insert(&t.ctx, "JournalEntry", obj(owed)).await;
+    assert!(matches!(owed, Err(ref e) if format!("{e:?}").contains("reverses itself books to accounts")), "{owed:?}");
+    // One whose day is far off waits for it; the daily upkeep reverses it then, once.
+    let later = uid(&t.insert("JournalEntry", accrual(year(4, 30), json!({"reversal_date": "2999-01-01"}))).await);
+    t.submit("JournalEntry", later).await;
+    assert_eq!(t.get("JournalEntry", later).await["reversed_on"], Value::Null);
+    assert_eq!(t.gl("Accrued Expenses").await, n("-400"), "it waits");
+    {
+        let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+        sqlx::query("update e_journal_entry set reversal_date = '2026-05-01' where id = $1").bind(later).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    ferrum_app_erp::maintenance(&t.k).await.expect("upkeep");
+    ferrum_app_erp::maintenance(&t.k).await.expect("upkeep again");
+    assert_eq!(t.get("JournalEntry", later).await["reversed_on"], json!(year(5, 1)));
+    assert_eq!(entries_of(later).await, vec![year(4, 30), year(5, 1)], "reversed once");
+    assert_eq!(t.gl("Accrued Expenses").await, Decimal::ZERO);
+    // Cancelled once reversed, nothing more moves: the two already net to nothing.
+    t.k.cancel(&t.ctx, "JournalEntry", later, None).await.expect("cancel the accrual");
+    assert_eq!(entries_of(later).await.len(), 2);
 
     // ───────────── what every country builds on (Ferrum docs/plan/localization.md, L0) ─────────────
     assert_eq!(t.get("Company", gmbh).await["country_code"], json!("DE"), "the country's ISO code follows its name");
