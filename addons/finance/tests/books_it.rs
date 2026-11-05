@@ -1299,6 +1299,59 @@ async fn consolidation(t: &mut T) {
         bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!("Intercompany difference (entries eliminated in part)")).expect("the difference");
     assert_eq!(dec(&difference["amount"]), n("-200"));
 
+    // India holds 80% of Europe: a fifth of what Europe holds and earned is non-controlling
+    // interests'. Europe's own net assets are its 25 euros of cash less the 9.50 it owes Group Co, at
+    // the closing 100: 1,550, of which 310; its own profit is the 2,225 it earned less its 874
+    // purchase from Group Co: 1,351, of which 270.20. The group's totals stay as they were.
+    t.k.update(&a, "Company", europe, obj(json!({"ownership_percent": "80"})), None).await.unwrap();
+    let pl = t.report(&am, "profit_and_loss", &consolidated).await;
+    let split = |r: &Value, a: &str, b: &str| (dec(&r["totals"][a]), dec(&r["totals"][b]));
+    assert_eq!(dec(&pl["totals"]["net_profit"]), n("4995"));
+    assert_eq!(split(&pl, "profit_attributable_to_owners", "profit_attributable_to_non_controlling_interests"), (n("4724.8"), n("270.2")));
+    let bs = t.report(&am, "balance_sheet", &as_of(group)).await;
+    assert_eq!(dec(&bs["totals"]["equity"]), n("5070"));
+    assert_eq!(split(&bs, "equity_attributable_to_owners", "non_controlling_interests"), (n("4760"), n("310")));
+    assert_eq!(bs["meta"]["balanced"], json!(true));
+    let part = &bs["meta"]["non_controlling_interests"][0];
+    assert_eq!((part["company"].clone(), dec(&part["held_outside_pct"]), dec(&part["net_assets"])), (json!("Group Europe"), n("20"), n("1550")));
+    // Group Co holding 90% of India as well: a tenth of India's own (its 4,500 of cash less the
+    // 1,000 it owes Group Co, 3,500, and its loss of 1,500), and 28% of Europe's.
+    t.k.update(&a, "Company", india, obj(json!({"ownership_percent": "90"})), None).await.unwrap();
+    let bs = t.report(&am, "balance_sheet", &as_of(group)).await;
+    assert_eq!(dec(&bs["totals"]["non_controlling_interests"]), n("784"), "350 + 434");
+    let pl = t.report(&am, "profit_and_loss", &consolidated).await;
+    assert_eq!(dec(&pl["totals"]["profit_attributable_to_non_controlling_interests"]), n("228.28"), "-150 + 378.28");
+    // Whole again for what follows: no split is shown.
+    for c in [india, europe] {
+        t.k.update(&a, "Company", c, obj(json!({"ownership_percent": "100"})), None).await.unwrap();
+    }
+    assert!(t.report(&am, "balance_sheet", &as_of(group)).await["totals"].get("non_controlling_interests").is_none());
+
+    // The group's cash flow: every flow at the rate of its day. The year's profit of 4,995 less the
+    // outside buyer's 70 still owed, less the 200 India never booked (eliminated only in part), is
+    // 4,725 in; Europe's 25 euros came in at 89 (2,225) and are held at the closing 100 (2,500): 275
+    // is the effect of exchange rates. The investment in India and India's capital are the group's
+    // business with itself: no investing, no financing. It ends where the group's cash does.
+    let flows = t.report(&am, "cash_flow", &consolidated).await;
+    let totals = &flows["totals"];
+    let total = |k: &str| dec(&totals[k]);
+    assert_eq!(
+        (total("operating"), total("investing"), total("financing"), total("net_change"), total("opening"), total("closing")),
+        (n("4725"), n("0"), n("0"), n("5000"), n("0"), n("5000")),
+        "{}",
+        flows["rows"]
+    );
+    assert_eq!((flows["meta"]["reconciled"].clone(), dec(&flows["meta"]["difference"])), (json!(true), n("0")));
+    let flow_line = |name: &str| flows["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!(name)).map(|r| dec(&r["amount"]));
+    assert_eq!(flow_line("Profit (loss) for the period"), Some(n("4995")));
+    assert_eq!(flow_line("1111 - Debtors"), Some(n("-70")));
+    assert_eq!(flow_line("Intercompany difference (entries eliminated in part)"), Some(n("-200")));
+    assert_eq!(flow_line("Effect of exchange rates on cash and bank"), Some(n("275")));
+    assert_eq!(flows["meta"]["companies"], json!("Group Co, Group Europe, Group India"));
+    // Group Co alone: its own cash, 3,000 in from its sale and 5,000 out into India.
+    let own = t.report(&am, "cash_flow", &year(group)).await;
+    assert_eq!((dec(&own["totals"]["closing"]), own["meta"]["reconciled"].clone()), (n("-2000"), json!(true)));
+
     // India's own group: Group Co is outside it now, so business with it stays, intercompany
     // accounts included, and India's capital is the group's own. Europe's April purchase of 9.50
     // euros is at April's 92 (874), its creditor at the closing 100 (950): the reserve is 220 on
