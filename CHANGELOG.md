@@ -1,5 +1,17 @@
 # Changelog
 
+## India 0.2.2: e-invoices checked against the IRP's own rules
+
+- The e-invoice tests apply the IRP's published value checks (its developer portal's Generate IRN
+  validations, read on 5 November 2026: item and invoice sums, CGST and SGST within the state,
+  IGST otherwise, cess, the round-off's range and the ±₹1 tolerance with the portal's three
+  examples) to every kind of e-invoice ERP builds: within the state, to another state, under
+  reverse charge, to an SEZ unit, exports with and without IGST, a credit note, and lines in
+  paise with a rounded total (FERRUM-VERIFY-002).
+- What they found: an invoice to another state or an SEZ unit carrying CGST and SGST was sent as
+  it was, and the IRP refuses it; it is now refused here, naming the IGST template. IGST charged
+  within the state is marked `IgstOnIntra`, as the IRP asks.
+
 ## ERP 0.7.1: what the assistant knows in ERP's pages
 
 - A `shell.assistant` contribution (FERRUM-AI-006): asked from one of ERP's pages, the assistant
