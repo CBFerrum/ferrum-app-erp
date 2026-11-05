@@ -223,6 +223,10 @@ Everything ERP adds is ordinary Ferrum metadata and Rust: its records get lists,
 permissions, an audit trail, exports and the REST and MCP APIs for free, so AI agents work with
 them under the same rules as people.
 
+Apps that post through the engine rely on [its contract](docs/contracts.md): each operation runs
+in the caller's transaction, appends rather than changes, says what it refuses, and whether
+calling it twice does it twice.
+
 ## This repository
 
 ```mermaid
