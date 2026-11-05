@@ -1,13 +1,13 @@
 // ERP's own interface at /erp/ (Ferrum docs/plan/apps-ui.md §13, erp-repo.md): ERP's records and
 // pages in the records frame under the platform's bar. The sidebar shows ERP's modules; other apps
 // are in the bar's launcher, and the shell's pages (apps, administration, the account) are page
-// loads away. The same release draws its page of the workspace's portal, "Your invoices" at
-// /portal/invoices/ (§9.1, U7).
+// loads away. The same release draws its pages of the workspace's portal, a customer's "Your
+// invoices" at /portal/invoices/ and a supplier's "Your orders" at /portal/orders/ (§9.1, U7).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
+import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError, type RouteObject } from "react-router";
 import { bootstrap, routeBase, shell } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { recordsRoutes, RequireAuth, setFrameMode } from "@ferrum/records/frame";
@@ -50,29 +50,43 @@ function Started() {
   return null;
 }
 
-/** The portal's page, when the platform serves this release there. */
-const PORTAL = "portal/invoices";
-const onPortal = bootstrap()?.app?.entry === PORTAL;
-
-if (!onPortal) setFrameMode("app", ERP_PACKAGES, { pages: true });
-
-const portalRoutes = [
-  {
-    path: "/",
-    element: (
-      <main className="portal-page">
-        <Started />
-        <Outlet />
-      </main>
-    ),
-    errorElement: <RouteError />,
-    children: [
+/** The portal's pages, when the platform serves this release there, by their entry. */
+const PORTALS: Record<string, { back: string; pages: RouteObject[] }> = {
+  "portal/invoices": {
+    back: "Go to your invoices",
+    pages: [
       { index: true, lazy: () => import("./Invoices").then((m) => ({ Component: m.PortalInvoices })) },
       { path: ":id", lazy: () => import("./Invoices").then((m) => ({ Component: m.PortalInvoice })) },
-      { path: "*", element: <NotFound back="Go to your invoices" /> },
     ],
   },
-];
+  "portal/orders": {
+    back: "Go to your orders",
+    pages: [
+      { index: true, lazy: () => import("./Orders").then((m) => ({ Component: m.PortalOrders })) },
+      { path: ":id", lazy: () => import("./Orders").then((m) => ({ Component: m.PortalOrderPage })) },
+    ],
+  },
+};
+const entry = bootstrap()?.app?.entry ?? "";
+const portal = Object.hasOwn(PORTALS, entry) ? PORTALS[entry] : undefined;
+
+if (!portal) setFrameMode("app", ERP_PACKAGES, { pages: true });
+
+const portalRoutes: RouteObject[] = portal
+  ? [
+      {
+        path: "/",
+        element: (
+          <main className="portal-page">
+            <Started />
+            <Outlet />
+          </main>
+        ),
+        errorElement: <RouteError />,
+        children: [...portal.pages, { path: "*", element: <NotFound back={portal.back} /> }],
+      },
+    ]
+  : [];
 
 const erpRoutes = [
   {
@@ -101,8 +115,8 @@ const erpRoutes = [
   },
 ];
 
-const router = onPortal
-  ? createBrowserRouter(portalRoutes, { basename: routeBase(PORTAL) })
+const router = portal
+  ? createBrowserRouter(portalRoutes, { basename: routeBase(entry) })
   : createBrowserRouter(erpRoutes, { basename: routeBase("erp") });
 
 createRoot(document.getElementById("root")!).render(
