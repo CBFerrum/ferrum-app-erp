@@ -1502,7 +1502,16 @@ async fn scenario() {
     assert_eq!((dec(&first["deferred_booked"]), first["deferred_booked_till"].clone()), (n("2958.9"), json!(year(3, 31))), "90 days of 365");
     assert_eq!(t.gl("Deferred Revenue").await, n("-9041.1"));
     assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await["lines"], json!(0), "nothing twice");
-    t.action("Company", gmbh, "recognise_deferred", json!({"through": year(6, 30)})).await;
+    // Two runs at once, as on two replicas, recognise the days once.
+    let run = || async {
+        let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+        let through = chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
+        let moved = ferrum_app_erp::deferred::recognise(&t.k, &t.ctx, &mut tx, Some(gmbh), through).await.unwrap();
+        tx.commit().await.unwrap();
+        moved
+    };
+    let (a, b) = tokio::join!(run(), run());
+    assert_eq!(a + b, 1, "one of them moved the line");
     assert_eq!(dec(&line(sold).await["deferred_booked"]), n("5950.68"), "181 days of 365");
     assert_eq!(t.gl("Deferred Revenue").await, n("-6049.32"));
     let ahead = t.k.run_action(&t.ctx, "Company", gmbh, "recognise_deferred", json!({"through": "2099-01-01"})).await;
