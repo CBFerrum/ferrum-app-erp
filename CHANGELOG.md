@@ -17,6 +17,10 @@ them; two of them could not work from a page at all.
   materials come from.
 - Import Bank Statement (CSV) is no longer a button on the bank account's page, which could not send
   a statement: the Import screen does that.
+- A purchase invoice made from an order or a receipt holds its draft's place with
+  `PENDING-<number>` as the supplier's invoice number; submitting it with that is refused ("Enter
+  the supplier's own invoice number"). In the walk a typed number was appended to it and the bill
+  went in as `PENDING-PR-2026-00001GC-2026-501`.
 - Also in this release: `docs/contracts.md` publishes what apps that post through the engine may rely on: the ledger's,
   open items', stock's, pricing's and the countries' operations, each in the caller's transaction,
   with what it refuses and whether calling it twice does it twice. `tests/contract_it.rs` holds
