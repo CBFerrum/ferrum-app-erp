@@ -53,8 +53,8 @@ overlays:
     ops:
       - {op: add_field, column: true, after: standard_rate, field: {name: income_account, type: link, to: Account, link_filters: {is_group: false}}}
       - {op: add_field, column: true, after: income_account, field: {name: expense_account, type: link, to: Account, link_filters: {is_group: false}}}
-      - {op: add_field, column: true, after: expense_account, field: {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Sold for a service period: its income is recognised day by day over it"}}
-      - {op: add_field, column: true, after: enable_deferred_revenue, field: {name: enable_deferred_expense, type: check, label: Deferred Expense, description: "Bought for a service period: its expense is recognised day by day over it"}}
+      - {op: add_field, column: true, after: expense_account, field: {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Sold for a service period: its income is recognised day by day over it, on lines that give the period"}}
+      - {op: add_field, column: true, after: enable_deferred_revenue, field: {name: enable_deferred_expense, type: check, label: Deferred Expense, description: "Bought for a service period: its expense is recognised day by day over it, on lines that give the period"}}
       - {op: add_field, column: true, after: uoms, field: {name: tax_rates, type: table, of: ItemTaxRate, label: Item Tax Rates}}
 
 modules:

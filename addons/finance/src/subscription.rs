@@ -141,6 +141,51 @@ pub async fn logged(tx: &mut Tx, tenant: Uuid, sub: Uuid) -> Result<Vec<(NaiveDa
     .await?)
 }
 
+/// Monthly recurring revenue of these plans, in their currency.
+pub fn monthly(plans: &[PlanLine]) -> Decimal {
+    plans.iter().map(|pl| Interval::monthly(pl.interval, pl.price * pl.qty, pl.count)).sum()
+}
+
+/// A subscription's plan changes, oldest first: the day each took effect, MRR before and after.
+pub async fn changes(tx: &mut Tx, tenant: Uuid, sub: Uuid) -> Result<Vec<(NaiveDate, Decimal, Decimal)>> {
+    Ok(sqlx::query_as(
+        "select effective, mrr_before, mrr_after from fin_subscription_change where tenant_id = $1 and subscription_id = $2 order by effective, created_at",
+    )
+    .bind(tenant)
+    .bind(sub)
+    .fetch_all(&mut **tx)
+    .await?)
+}
+
+/// MRR on a day: after the last change by then, before the first one if none had come, and
+/// `current` (its plans now) for a subscription that never changed.
+pub fn mrr_on(changes: &[(NaiveDate, Decimal, Decimal)], current: Decimal, on: NaiveDate) -> Decimal {
+    match changes.iter().rev().find(|c| c.0 <= on) {
+        Some(c) => c.2,
+        None => changes.first().map_or(current, |c| c.1),
+    }
+}
+
+/// Records a change of plans from `from`: what it replaces from that day on goes.
+async fn record_change(tx: &mut Tx, tenant: Uuid, sub: Uuid, from: NaiveDate, before: Decimal, after: Decimal) -> Result<()> {
+    let before = mrr_on(&changes(tx, tenant, sub).await?, before, from - Duration::days(1));
+    sqlx::query("delete from fin_subscription_change where tenant_id = $1 and subscription_id = $2 and effective >= $3")
+        .bind(tenant)
+        .bind(sub)
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("insert into fin_subscription_change (tenant_id, subscription_id, effective, mrr_before, mrr_after) values ($1, $2, $3, $4, $5)")
+        .bind(tenant)
+        .bind(sub)
+        .bind(from)
+        .bind(before)
+        .bind(after)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 /// The first day not billed yet.
 pub async fn next_start(tx: &mut Tx, tenant: Uuid, s: &Sub) -> Result<NaiveDate> {
     let last: Option<NaiveDate> = sqlx::query_scalar("select max(period_end) from fin_subscription_period where tenant_id = $1 and subscription_id = $2")
@@ -187,8 +232,13 @@ async fn invoice(
         .into_iter()
         .filter(|(_, qty, rate, _)| !qty.is_zero() && *rate > Decimal::ZERO)
         .map(|(p, qty, rate, note)| {
-            json!({"item": p.item.to_string(), "qty": money(qty), "price_list_rate": money(rate), "discount_percent": "0", "description": note,
-                   "cost_center": s.cost_center.map(|c| c.to_string())})
+            let mut line = json!({"item": p.item.to_string(), "qty": money(qty), "price_list_rate": money(rate), "discount_percent": "0", "description": note,
+                   "cost_center": s.cost_center.map(|c| c.to_string())});
+            // The days a line pays for, or a credit note gives back, are its service period: a
+            // deferred item's revenue is earned, or given back, over them.
+            line["service_start_date"] = json!(from.to_string());
+            line["service_end_date"] = json!(to.to_string());
+            line
         })
         .collect();
     if items.is_empty() {
@@ -519,6 +569,7 @@ impl DocHook for SubscriptionHook {
                     e.0 = p.clone();
                 }
                 let deltas: Vec<(PlanLine, Decimal)> = deltas.into_values().filter(|(_, q)| !q.is_zero()).collect();
+                record_change(hc.tx, hc.ctx.tenant, sid, from, monthly(&before.plans), monthly(&after.plans)).await?;
                 adjust(hc.kernel, hc.ctx, hc.tx, &after, from, &deltas).await?
             }
             _ => {

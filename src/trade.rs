@@ -608,9 +608,6 @@ impl DocHook for InvoiceHook {
             let mut amount = *base;
             // A line earned or used over a service period waits on its deferred account until then.
             let deferred = crate::deferred::account(r, &co, self.0 == Side::Selling, i)?;
-            if deferred.is_some() && b(doc, "is_return") {
-                return Err(Error::field(format!("items.{i}.service_start_date"), "a return is not deferred: it reverses its invoice's lines"));
-            }
             if self.0 == Side::Buying
                 && let Some(item) = id(r, "item")
             {

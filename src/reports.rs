@@ -1734,7 +1734,7 @@ async fn deferred_lines(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     #[allow(clippy::type_complexity)]
     let data: Vec<(Uuid, Option<String>, Option<String>, Option<String>, NaiveDate, NaiveDate, Option<Decimal>, Option<Decimal>, Option<Decimal>, Option<NaiveDate>)> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "select i.id, i.number, i.{party}, l.item_name, l.service_start_date, l.service_end_date, l.base_net_amount, l.net_amount, l.deferred_booked,              l.deferred_booked_till from {invoices} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id              where i.tenant_id = $1 and i.company = $2 and i.docstatus = 1 and coalesce(i.is_return, false) = false and coalesce(l.{flag}, false)              and l.service_start_date is not null and l.service_end_date is not null order by l.service_start_date, i.number limit $3",
+            "select i.id, i.number, i.{party}, l.item_name, l.service_start_date, l.service_end_date, l.base_net_amount, l.net_amount, l.deferred_booked,              l.deferred_booked_till from {invoices} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id              where i.tenant_id = $1 and i.company = $2 and i.docstatus = 1 and coalesce(l.{flag}, false)              and l.service_start_date is not null and l.service_end_date is not null order by l.service_start_date, i.number limit $3",
             invoices = ferrum_kernel::ddl::q(&ent.table),
             lines = ferrum_kernel::ddl::q(&lines.table),
         )))
@@ -1751,7 +1751,9 @@ async fn deferred_lines(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
         .map(|(iid, number, name, item, start, end, base, net, booked, till)| {
             let amount = base.or(net).unwrap_or_default();
             let booked = booked.unwrap_or_default();
-            let next = (crate::deferred::earned(amount, start, end, as_of, co.precision) - booked).max(Decimal::ZERO);
+            // A credit note's line is negative, and so is what recognising it moves.
+            let next = crate::deferred::earned(amount, start, end, as_of, co.precision) - booked;
+            let next = if amount.is_sign_negative() { next.min(Decimal::ZERO) } else { next.max(Decimal::ZERO) };
             waiting += amount - booked;
             due += next;
             json!({"voucher_id": iid, "voucher_no": number, "party": name, "item": item, "service_start_date": start, "service_end_date": end,

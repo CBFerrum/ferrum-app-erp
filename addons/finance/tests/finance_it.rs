@@ -291,6 +291,9 @@ async fn scenario() {
     let pro_item = uid(&t.insert(&a, "Item", item("SUB-PRO", None)).await);
     let seat_item = uid(&t.insert(&a, "Item", item("SUB-SEAT", None)).await);
     let year_item = uid(&t.insert(&a, "Item", item("SUB-YEAR", None)).await);
+    let mut support_item = item("SUB-SUPPORT", None);
+    support_item["enable_deferred_revenue"] = json!(true);
+    let support_item = uid(&t.insert(&a, "Item", support_item).await);
     let customer = |name: &str, extra: Value| {
         let mut v = json!({"customer_name": name});
         for (k, x) in extra.as_object().unwrap() {
@@ -947,6 +950,46 @@ async fn scenario() {
     assert_eq!((s2_doc["cancel_at_period_end"].clone(), s2_doc["status"].clone()), (json!(true), json!("Active")), "it runs to the end of the paid period");
     assert!(s2_doc["cancellation_date"].as_str().unwrap() >= today.to_string().as_str());
 
+    // A year of support billed through a subscription waits as deferred revenue over the year it
+    // pays for and is earned by the day; cancelled after three months, its credit note gives back
+    // the other nine over the same days, so what is earned is what was used, month by month.
+    let support = uid(&t.insert(&am, "SubscriptionPlan", plan("Support Year", support_item, "3650", "Year")).await);
+    let s4 = uid(&t
+        .insert(
+            &am,
+            "Subscription",
+            json!({"company": cid, "customer": cyberdyne.to_string(), "start_date": "2026-04-01", "plans": [{"plan": support.to_string(), "qty": "1"}]}),
+        )
+        .await);
+    let (deferred_before, sales_before) = (t.gl("Deferred Revenue").await, t.gl("Sales").await);
+    let r = t.action(&am, "Subscription", s4, "generate_invoices", json!({"as_of": "2026-04-01"})).await;
+    let year_of_support = t.get("SalesInvoice", r["invoices"][0].as_str().unwrap().parse().unwrap()).await;
+    let line = &year_of_support["items"][0];
+    assert_eq!(
+        (year_of_support["docstatus"].clone(), line["enable_deferred_revenue"].clone(), line["service_start_date"].clone(), line["service_end_date"].clone()),
+        (json!(1), json!(true), json!("2026-04-01"), json!("2027-03-31")),
+        "billed, and deferred over the year it pays for: {year_of_support:?}"
+    );
+    assert_eq!(t.gl("Deferred Revenue").await - deferred_before, n("-3650"), "all of it waits");
+    t.action(&a, "Company", t.company, "recognise_deferred", json!({"through": "2026-06-30"})).await;
+    assert_eq!(sales_before - t.gl("Sales").await, n("910"), "91 days at 10 a day, credited to sales");
+    let r = t.action(&am, "Subscription", s4, "cancel_subscription", json!({"date": "2026-06-30"})).await;
+    let credit = t.get("SalesInvoice", r["invoices"][0].as_str().unwrap().parse().unwrap()).await;
+    assert_eq!(
+        (
+            dec(&credit["grand_total"]),
+            credit["docstatus"].clone(),
+            credit["items"][0]["service_start_date"].clone(),
+            credit["items"][0]["enable_deferred_revenue"].clone()
+        ),
+        (n("-2740"), json!(1), json!("2026-07-01"), json!(true)),
+        "274 unused days given back over those days: {credit:?}"
+    );
+    assert_eq!(sales_before - t.gl("Sales").await, n("910"), "a refund takes nothing from what was earned before it");
+    t.action(&a, "Company", t.company, "recognise_deferred", json!({"through": "2026-09-30"})).await;
+    assert_eq!(sales_before - t.gl("Sales").await, n("910"), "nor earns anything for the days given back");
+    assert_eq!(t.gl("Deferred Revenue").await - deferred_before, Decimal::ZERO, "nothing waits for days nobody will use");
+
     // ───────────── upkeep: billing what is due, drafting dunnings ─────────────
     let s3 = uid(&t
         .insert(
@@ -1009,8 +1052,16 @@ async fn scenario() {
     assert_eq!((dec(&util_row["actual"]), dec(&util_row["committed"]), dec(&util_row["variance"])), (n("50"), n("400"), n("50")));
     let mrr = t.report(&am, "subscription_metrics", &[("company", cid.clone()), ("from_date", "2026-02-01".into()), ("to_date", "2026-03-31".into())]).await;
     let mt = &mrr["totals"];
-    assert_eq!((dec(&mt["mrr_start"]), dec(&mt["mrr_end"]), dec(&mt["churned_mrr"]), dec(&mt["arr_end"])), (n("472"), n("100"), n("372"), n("1200")), "{mrr}");
-    assert_eq!((dec(&mt["customer_churn_pct"]), dec(&mt["revenue_churn_pct"])), (n("50"), n("78.81")));
+    // On 1 February the first subscription was Pro alone (310); 5 seats came on 15 February and 3
+    // went on 22 February (372), and it was cancelled on 20 March with that. The yearly one is 100.
+    assert_eq!((dec(&mt["mrr_start"]), dec(&mt["mrr_end"]), dec(&mt["churned_mrr"]), dec(&mt["arr_end"])), (n("410"), n("100"), n("372"), n("1200")), "{mrr}");
+    assert_eq!((dec(&mt["new_mrr"]), dec(&mt["expansion_mrr"]), dec(&mt["contraction_mrr"])), (Decimal::ZERO, n("62"), Decimal::ZERO), "{mrr}");
+    assert_eq!(
+        dec(&mt["mrr_start"]) + dec(&mt["new_mrr"]) + dec(&mt["expansion_mrr"]) - dec(&mt["contraction_mrr"]) - dec(&mt["churned_mrr"]),
+        dec(&mt["mrr_end"]),
+        "the movements take the start to the end"
+    );
+    assert_eq!((dec(&mt["customer_churn_pct"]), dec(&mt["revenue_churn_pct"]), dec(&mt["net_revenue_retention_pct"])), (n("50"), n("90.73"), n("24.39")));
     let ds = t
         .report(
             &am,
