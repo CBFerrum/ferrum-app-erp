@@ -546,8 +546,29 @@ impl Group {
         Ok(Group { members, ids })
     }
 
+    /// How each company translates into the parent's currency up to `on` ([`Rates`]).
+    async fn rates(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, on: NaiveDate, field: &str) -> Result<Rates> {
+        let closing = self.closing_rates(k, tx, ctx, co, on, field).await?;
+        let mut days = HashMap::new();
+        for (id, _, currency, _) in self.members.iter().filter(|m| m.2 != self.members[0].2) {
+            let rows: Vec<(NaiveDate, Decimal, bool)> = sqlx::query_as(
+                "select valid_from, rate, from_currency = $2 from e_exchange_rate where tenant_id = $1 and valid_from <= $4 \
+                 and ((from_currency = $2 and to_currency = $3) or (from_currency = $3 and to_currency = $2)) order by valid_from, id",
+            )
+            .bind(ctx.tenant)
+            .bind(currency)
+            .bind(self.members[0].2)
+            .bind(on)
+            .fetch_all(&mut **tx)
+            .await?;
+            let (direct, inverse): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| r.2);
+            days.insert(*id, (direct.into_iter().map(|r| (r.0, r.1)).collect(), inverse.into_iter().map(|r| (r.0, r.1)).collect()));
+        }
+        Ok(Rates { closing, days })
+    }
+
     /// Each company's rate into the parent's currency: its latest on or before `on`.
-    async fn rates(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, on: NaiveDate, field: &str) -> Result<HashMap<Uuid, Decimal>> {
+    async fn closing_rates(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, on: NaiveDate, field: &str) -> Result<HashMap<Uuid, Decimal>> {
         let mut rates = HashMap::new();
         for (id, name, currency, code) in &self.members {
             let rate = match crate::util::exchange_rate(k, ctx, tx, *currency, self.members[0].2, on).await {
@@ -581,6 +602,39 @@ impl Group {
             return Err(Error::field("consolidated", "a cost center or a project is one company's; leave them empty to add up the group"));
         }
         Ok(Some(Group::of(tx, ctx, co).await?))
+    }
+}
+
+/// How a group's companies translate into the parent's currency (IAS 21): assets and liabilities
+/// at the closing rate; income, expense and equity at the rate of their own day where the books
+/// have one (the latest on or before it, direct else inverted, as a document takes its rate), else
+/// at the closing rate. What that leaves unbalanced in a company's books is its translation reserve.
+struct Rates {
+    closing: HashMap<Uuid, Decimal>,
+    /// A foreign company's rates by day, in order: direct, and to be inverted.
+    days: HashMap<Uuid, (Vec<(NaiveDate, Decimal)>, Vec<(NaiveDate, Decimal)>)>,
+}
+
+impl Rates {
+    /// The rate a company's line on an account of `root` takes on `day`.
+    fn of(&self, company: Uuid, root: &str, day: NaiveDate) -> Option<Decimal> {
+        let closing = *self.closing.get(&company)?;
+        let Some((direct, inverse)) = self.days.get(&company).filter(|_| matches!(root, "Income" | "Expense" | "Equity")) else { return Some(closing) };
+        let latest = |v: &Vec<(NaiveDate, Decimal)>| v.iter().take_while(|(d, _)| *d <= day).last().map(|(_, r)| *r);
+        let rate = match latest(direct) {
+            Some(r) => Some(r),
+            None => latest(inverse).filter(|r| !r.is_zero()).map(|r| (Decimal::ONE / r).round_dp(9)),
+        };
+        Some(rate.unwrap_or(closing))
+    }
+
+    /// What a line translated at the day's rate leaves over the closing rate: summed over a
+    /// company's lines that stay in the group, the reserve that balances its translated books.
+    fn reserve(&self, company: Uuid, root: &str, day: NaiveDate, net: Decimal) -> Decimal {
+        match (self.of(company, root, day), self.closing.get(&company)) {
+            (Some(rate), Some(closing)) => net * (rate - closing),
+            _ => Decimal::ZERO,
+        }
     }
 }
 
@@ -644,19 +698,21 @@ fn same_account(accs: &[GroupAcc], top: Uuid) -> impl Fn(usize) -> Option<usize>
 }
 
 /// Debit minus credit per account of the parent's chart over `[from, to]`, the group added up: each
-/// company translated at its rate, business between them eliminated, entries from the `skip`
+/// company translated ([`Rates`]), business between them eliminated, entries from the `skip`
 /// sources left out, and each account shown on the parent's that it is ([`same_account`]) or else on
-/// the nearest one above it that is, at the least the parent's top account of its type.
+/// the nearest one above it that is, at the least the parent's top account of its type. `.1` is the
+/// translation reserve over the same days, as equity (credit positive).
+#[allow(clippy::too_many_arguments)]
 async fn group_balances(
     tx: &mut Tx,
     ctx: &Ctx,
     co: &ReportCompany,
     g: &Group,
-    rates: &HashMap<Uuid, Decimal>,
+    rates: &Rates,
     from: Option<NaiveDate>,
     to: NaiveDate,
     skip: &[&str],
-) -> Result<HashMap<Uuid, Decimal>> {
+) -> Result<(HashMap<Uuid, Decimal>, Decimal)> {
     let accs = group_accounts(tx, ctx, g).await?;
     let index: HashMap<Uuid, usize> = accs.iter().enumerate().map(|(i, a)| (a.0, i)).collect();
     let same = same_account(&accs, co.id);
@@ -675,16 +731,18 @@ async fn group_balances(
         let a = &accs[i];
         top(&a.4).ok_or_else(|| Error::invalid(format!("{} has no {} account to show {} under", co.name, a.4, label_of(a.3.as_deref(), &a.2))))
     };
-    let lines: Vec<(Uuid, Uuid, Decimal)> = sqlx::query_as(concat!(
-        "select l.company_id, l.account_id, sum(l.debit - l.credit) from ",
+    // Per day, for the day's rate; the fourth marks business within the group, eliminated (and so
+    // no part of the reserve: it nets out in its own company's books).
+    let lines: Vec<(Uuid, Uuid, NaiveDate, bool, Decimal)> = sqlx::query_as(concat!(
+        "select l.company_id, l.account_id, l.posting_date, (",
+        party_company!(),
+        ") is not null or ",
+        cancels!(),
+        ", sum(l.debit - l.credit) from ",
         group_lines!(),
         " where l.tenant_id = $1 and l.company_id = any($2) and ($4::date is null or l.posting_date >= $4) and l.posting_date <= $5 \
-          and (",
-        party_company!(),
-        ") is null and not ",
-        cancels!(),
-        " and (cardinality($6::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($6))) \
-          group by 1, 2"
+          and (cardinality($6::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($6))) \
+          group by 1, 2, 3, 4"
     ))
     .bind(ctx.tenant)
     .bind(&g.ids)
@@ -695,11 +753,17 @@ async fn group_balances(
     .fetch_all(&mut **tx)
     .await?;
     let mut out: HashMap<Uuid, Decimal> = HashMap::new();
-    for (company, account, net) in lines {
-        let (Some(rate), Some(&i)) = (rates.get(&company), index.get(&account)) else { continue };
-        *out.entry(shown_on(i)?).or_default() += net * rate;
+    let mut reserve = Decimal::ZERO;
+    for (company, account, day, eliminated, net) in lines {
+        let Some(&i) = index.get(&account) else { continue };
+        let root = accs[i].4.as_str();
+        let Some(rate) = rates.of(company, root, day) else { continue };
+        if !eliminated {
+            reserve += rates.reserve(company, root, day, net);
+            *out.entry(shown_on(i)?).or_default() += net * rate;
+        }
     }
-    Ok(out.into_iter().map(|(a, v)| (a, v.round_dp(co.precision))).collect())
+    Ok((out.into_iter().map(|(a, v)| (a, v.round_dp(co.precision))).collect(), reserve.round_dp(co.precision)))
 }
 
 /// The trial balance of a group: the company asked for and every company under it, each one
@@ -711,10 +775,8 @@ async fn group_balances(
 /// customer or supplier that is not one of its companies). The parent's own equity stays: it is
 /// the group's. An entry eliminated only in part (an intercompany sale booked to an account that is
 /// not eliminated, say) leaves the intercompany difference; what two companies say they owe each
-/// other is set side by side in `meta.intercompany_balances`.
-// ponytail: one closing rate per company for every account (as ERPNext does); IAS 21 rates of the
-// day for income and expense, historical rates for equity and a translation reserve come when a
-// group needs them.
+/// other is set side by side in `meta.intercompany_balances`. Companies in another currency are
+/// translated as [`Rates`] says, and what that leaves is the foreign currency translation reserve.
 async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
     let year_start = fy_start(from, co.fy_month);
@@ -724,20 +786,21 @@ async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &Rep
     let index: HashMap<Uuid, usize> = accs.iter().enumerate().map(|(i, a)| (a.0, i)).collect();
     let same = same_account(&accs, co.id);
     // (company, account, the group company the line's party represents, whether it is on an
-    // eliminated account in business within the group, the balance before the period, the part of
-    // it from this fiscal year, the period's debits and credits, and every debit and credit up to
-    // the end).
-    let lines: Vec<(Uuid, Uuid, Option<Uuid>, bool, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(concat!(
+    // eliminated account in business within the group, the day, the balance before the period, the
+    // part of it from this fiscal year, the period's debits and credits, and every debit and credit
+    // up to the end): per day, for the day's rate.
+    #[allow(clippy::type_complexity)]
+    let lines: Vec<(Uuid, Uuid, Option<Uuid>, bool, NaiveDate, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(concat!(
         "select l.company_id, l.account_id, ",
         party_company!(),
         ", ",
         cancels!(),
-        ", coalesce(sum(l.debit - l.credit) filter (where l.posting_date < $4), 0), \
+        ", l.posting_date, coalesce(sum(l.debit - l.credit) filter (where l.posting_date < $4), 0), \
            coalesce(sum(l.debit - l.credit) filter (where l.posting_date >= $5 and l.posting_date < $4), 0), \
            coalesce(sum(l.debit) filter (where l.posting_date >= $4), 0), coalesce(sum(l.credit) filter (where l.posting_date >= $4), 0), \
            sum(l.debit), sum(l.credit) from ",
         group_lines!(),
-        " where l.tenant_id = $1 and l.company_id = any($2) and l.posting_date <= $6 group by 1, 2, 3, 4"
+        " where l.tenant_id = $1 and l.company_id = any($2) and l.posting_date <= $6 group by 1, 2, 3, 4, 5"
     ))
     .bind(ctx.tenant)
     .bind(&g.ids)
@@ -752,8 +815,19 @@ async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &Rep
     // What a group company's books say another owes it (a negative amount: what it owes the other).
     let mut owed: HashMap<(Uuid, Uuid), Decimal> = HashMap::new();
     let mut prior_pl = Decimal::ZERO;
-    for (company, account, with, cancels, before, this_year, dr, cr, all_dr, all_cr) in lines {
-        let (Some(&rate), Some(&i)) = (rates.get(&company), index.get(&account)) else { continue };
+    // The translation reserve: before the period, and over it.
+    let (mut reserve_before, mut reserve) = (Decimal::ZERO, Decimal::ZERO);
+    for (company, account, with, cancels, day, before, this_year, dr, cr, all_dr, all_cr) in lines {
+        let Some(&i) = index.get(&account) else { continue };
+        let Some(rate) = rates.of(company, &accs[i].4, day) else { continue };
+        // Business within the group nets out in its own company's books, and is no part of the reserve.
+        if !cancels && with.is_none() {
+            let left = rates.reserve(company, &accs[i].4, day, all_dr - all_cr);
+            reserve += left;
+            if day < from {
+                reserve_before += left;
+            }
+        }
         if let Some(with) = with {
             *owed.entry((company, with)).or_default() += (all_dr - all_cr) * rate;
         }
@@ -792,6 +866,12 @@ async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &Rep
     if !r(prior_pl).is_zero() {
         tb.push(EARLIER_YEARS.into(), "Equity", r(prior_pl), Decimal::ZERO, Decimal::ZERO);
     }
+    // What translation leaves, as the books' own figures would: credit when the closing rate made
+    // the company's net assets worth more than the rates its income and equity were taken at.
+    let (opening_reserve, moved) = (r(-reserve_before), r(-(reserve - reserve_before)));
+    if !opening_reserve.is_zero() || !moved.is_zero() {
+        tb.push(TRANSLATION_RESERVE.into(), "Equity", opening_reserve, moved.max(Decimal::ZERO), (-moved).max(Decimal::ZERO));
+    }
     // What is left once the group's business with itself is taken out balances only if whole
     // entries were; the rest (and rounding the translated amounts) shows here.
     let t = tb.totals;
@@ -818,17 +898,20 @@ async fn consolidated_trial_balance(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &Rep
         .iter()
         .map(|(id, name, _, currency)| {
             let (dr, cr) = eliminated.get(id).copied().unwrap_or_default();
-            json!({"company": name, "currency": currency, "rate": money(rates[id]), "eliminated_debit": money(r(dr)), "eliminated_credit": money(r(cr))})
+            json!({"company": name, "currency": currency, "rate": money(rates.closing[id]), "eliminated_debit": money(r(dr)), "eliminated_credit": money(r(cr))})
         })
         .collect();
     Ok(tb.report(json!({
         "from_date": from, "to_date": to, "rates_on": to, "companies": companies,
+        "translation": "assets and liabilities at the closing rate; income, expense and equity at the rate of their day where the books have one, else the closing rate",
+        "translation_reserve": money(r(reserve)),
         "intercompany_difference": money(-(opening + movement)),
         "intercompany_balances": balances, "intercompany_balances_disagree_by": money(disagree),
     })))
 }
 
 const INTERCOMPANY_DIFFERENCE: &str = "Intercompany difference (entries eliminated in part)";
+const TRANSLATION_RESERVE: &str = "Foreign currency translation reserve";
 
 async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
@@ -952,7 +1035,7 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
         bals.push(match &group {
             Some(g) => {
                 let rates = g.rates(k, tx, ctx, co, *t, "to_date").await?;
-                group_balances(tx, ctx, co, g, &rates, Some(*f), *t, CLOSING_SOURCES).await?
+                group_balances(tx, ctx, co, g, &rates, Some(*f), *t, CLOSING_SOURCES).await?.0
             }
             None => balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?,
         });
@@ -986,15 +1069,19 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
     let group = Group::asked(tx, ctx, co, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let mut bals = Vec::new();
+    let mut reserves = Vec::new();
     for day in &on {
         bals.push(match &group {
             Some(g) => {
                 let rates = g.rates(k, tx, ctx, co, *day, "as_of").await?;
-                group_balances(tx, ctx, co, g, &rates, None, *day, &[]).await?
+                let (b, reserve) = group_balances(tx, ctx, co, g, &rates, None, *day, &[]).await?;
+                reserves.push(reserve);
+                b
             }
             None => balances(tx, ctx, co, None, *day).await?,
         });
     }
+    let reserves = reserves.iter().any(|r| !r.is_zero()).then_some(reserves);
     let (asset_nodes, assets) = tree(&accs, &bals, "Asset", co.precision);
     let (liab_nodes, liabilities) = tree(&accs, &bals, "Liability", co.precision);
     let (eq_nodes, equity) = tree(&accs, &bals, "Equity", co.precision);
@@ -1002,6 +1089,9 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
     let (_, expense) = tree(&accs, &bals, "Expense", co.precision);
     let unclosed: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
     let mut all_equity: Vec<Decimal> = equity.iter().zip(&unclosed).map(|(e, u)| *e + *u).collect();
+    for (e, r) in all_equity.iter_mut().zip(reserves.iter().flatten()) {
+        *e += *r;
+    }
     // A group's books are short by what was eliminated only in part (see the consolidated trial balance).
     let residue: Vec<Decimal> = match group {
         Some(_) => assets.iter().zip(&liabilities).zip(&all_equity).map(|((a, l), e)| *a - *l - *e).collect(),
@@ -1023,6 +1113,11 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
     let mut open = json!({"account": "Profit/loss not yet closed to equity", "_indent": 1});
     amounts(&mut open, &unclosed);
     rows.push(open);
+    if let Some(reserves) = &reserves {
+        let mut row = json!({"account": TRANSLATION_RESERVE, "_indent": 1});
+        amounts(&mut row, reserves);
+        rows.push(row);
+    }
     if let Some(residue) = &residue {
         let mut row = json!({"account": INTERCOMPANY_DIFFERENCE, "_indent": 1});
         amounts(&mut row, residue);
