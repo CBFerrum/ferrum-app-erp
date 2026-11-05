@@ -869,7 +869,7 @@ async fn revaluation(t: &mut T) {
     assert_eq!(seen["reversal_date"], json!("2999-01-01"));
     let early = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2026-02-01"}))).await.expect("a preview");
     assert!(early["rows"].as_array().unwrap().is_empty(), "nothing in euros has been booked by February");
-    assert_eq!(early["reversal_date"], json!("2026-02-02"), "the day after, unless another is chosen");
+    assert!(early.get("reversal_date").is_none_or(Value::is_null), "the day after unless another is chosen, taken when it is submitted");
     // No rate, no revaluation.
     let rateless = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2025-12-31"}))).await.expect("nothing to value yet");
     assert!(rateless["rows"].as_array().unwrap().is_empty());

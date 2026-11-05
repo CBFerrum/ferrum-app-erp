@@ -17,12 +17,6 @@ pub struct JournalEntryHook;
 #[async_trait]
 impl DocHook for JournalEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        if b(doc, "auto_reverse")
-            && s(doc, "reversal_date").is_none()
-            && let Ok(on) = date(doc, "posting_date")
-        {
-            set(doc, "reversal_date", (on + Duration::days(1)).to_string());
-        }
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let lines = rows(doc, "accounts");
@@ -125,8 +119,8 @@ impl DocHook for JournalEntryHook {
             entry.lines.push(line);
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
-        if b(doc, "auto_reverse") && date(doc, "reversal_date").is_ok_and(|back| back <= hc.ctx.today()) {
-            reverse_posted(hc.kernel, hc.ctx, hc.tx, doc).await?;
+        if b(doc, "auto_reverse") {
+            reverse_from(hc, "JournalEntry", doc, on, co.precision).await?;
         }
         Ok(())
     }
@@ -146,6 +140,22 @@ impl DocHook for JournalEntryHook {
         ledger::reverse(hc.tx, hc.ctx, "JournalEntry", jid, hc.ctx.today(), co.precision).await?;
         Ok(())
     }
+}
+
+/// On submitting a document that reverses itself (a journal entry, an exchange revaluation): its
+/// reversal day is the one it names, else the day after its own, taken now rather than while it
+/// was a draft, so a draft whose day changed does not keep a day worked out from the old one. When
+/// that day has come, it is reversed at once.
+pub async fn reverse_from(hc: &mut HookCtx<'_>, entity: &str, doc: &Doc, on: chrono::NaiveDate, precision: u32) -> Result<()> {
+    let rid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let back = date(doc, "reversal_date").unwrap_or(on + Duration::days(1));
+    let mut v = Doc::new();
+    v.insert("reversal_date".into(), json!(back.to_string()));
+    if back <= hc.ctx.today() {
+        ledger::reverse_on(hc.tx, hc.ctx, entity, rid, back, precision).await?;
+        v.insert("reversed_on".into(), json!(back.to_string()));
+    }
+    hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, entity, rid, v).await
 }
 
 /// Takes an entry that reverses itself out again on its reversal day, once: the entry records the day.
