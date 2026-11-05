@@ -1,10 +1,13 @@
-//! Journal entries and payment entries.
+//! Journal entries and payment entries. A journal entry may reverse itself, as an accrual or a
+//! prepayment does: it is taken out again on its reversal day (the day after, unless another is
+//! chosen), once, when the invoice or payment it stood in for is booked.
 
 use crate::flow::sync_invoice_outstanding;
 use crate::ledger::{self, Entry, Line, OpenItem};
-use crate::util::{company, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
+use crate::util::{b, company, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
 use async_trait::async_trait;
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
+use chrono::Duration;
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -14,6 +17,12 @@ pub struct JournalEntryHook;
 #[async_trait]
 impl DocHook for JournalEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+        if b(doc, "auto_reverse")
+            && s(doc, "reversal_date").is_none()
+            && let Ok(on) = date(doc, "posting_date")
+        {
+            set(doc, "reversal_date", (on + Duration::days(1)).to_string());
+        }
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let lines = rows(doc, "accounts");
@@ -51,6 +60,21 @@ impl DocHook for JournalEntryHook {
                 (None, "Receivable" | "Payable") => errors.push(FieldError::new("party_type", "receivable/payable lines need a party").in_row("accounts", i)),
                 _ => {}
             }
+            if b(doc, "auto_reverse") && s(l, "party_type").is_some() {
+                errors.push(
+                    FieldError::new(
+                        "party_type",
+                        "an entry that reverses itself books to accounts: what a customer or supplier owes comes with their invoices",
+                    )
+                    .in_row("accounts", i),
+                );
+            }
+        }
+        if b(doc, "auto_reverse")
+            && let (Ok(on), Ok(back)) = (date(doc, "posting_date"), date(doc, "reversal_date"))
+            && back <= on
+        {
+            errors.push(FieldError::new("reversal_date", "must be after the day of the entry"));
         }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
@@ -101,6 +125,9 @@ impl DocHook for JournalEntryHook {
             entry.lines.push(line);
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        if b(doc, "auto_reverse") && date(doc, "reversal_date").is_ok_and(|back| back <= hc.ctx.today()) {
+            reverse_posted(hc.kernel, hc.ctx, hc.tx, doc).await?;
+        }
         Ok(())
     }
 
@@ -115,9 +142,55 @@ impl DocHook for JournalEntryHook {
                 ledger::cancel_open_item(hc.tx, hc.ctx, lid).await?;
             }
         }
+        // What was reversed on its day stays as it is: the two net to nothing.
         ledger::reverse(hc.tx, hc.ctx, "JournalEntry", jid, hc.ctx.today(), co.precision).await?;
         Ok(())
     }
+}
+
+/// Takes an entry that reverses itself out again on its reversal day, once: the entry records the day.
+async fn reverse_posted(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<()> {
+    let jid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let co = company(k, ctx, tx, id(doc, "company").unwrap_or_default()).await?;
+    let on = date(doc, "reversal_date")?;
+    ledger::reverse_on(tx, ctx, "JournalEntry", jid, on, co.precision).await?;
+    let mut v = Doc::new();
+    v.insert("reversed_on".into(), json!(on.to_string()));
+    k.set_values_tx(&sys(ctx), tx, "JournalEntry", jid, v).await
+}
+
+/// The entries whose reversal day has come: each in a transaction of its own, so one that cannot
+/// be reversed (its period closed) waits for the next round without holding up the others.
+pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let due: Vec<Uuid> = sqlx::query_scalar(
+        "select id from e_journal_entry where tenant_id = $1 and docstatus = 1 and auto_reverse and reversed_on is null and reversal_date <= $2 order by reversal_date, id",
+    )
+    .bind(ctx.tenant)
+    .bind(ctx.today())
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.rollback().await?;
+    for jid in due {
+        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        let done = async {
+            // Locked: run on two replicas at once, the second finds it reversed.
+            let doc = k.get_tx(&sys(ctx), &mut tx, "JournalEntry", jid, true).await?;
+            if s(&doc, "reversed_on").is_some() || doc.get("docstatus").and_then(Value::as_i64) != Some(1) {
+                return Ok(());
+            }
+            reverse_posted(k, ctx, &mut tx, &doc).await
+        }
+        .await;
+        match done {
+            Ok(()) => tx.commit().await?,
+            Err(e) => {
+                tx.rollback().await?;
+                tracing::warn!(tenant = %ctx.tenant, entry = %jid, "journal entry not reversed: {e}");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub struct PaymentEntryHook;

@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.10.0** | Accruals that reverse themselves: a journal entry marked Reverse It is taken out again on its reversal day (the day after, unless another is chosen), once, by the daily upkeep or at once when the day has come. Deferred Revenue and Expense, a report of every deferred line with what was recognised, what still waits and what recognising through a day would move. Accrued Income (1180) and Accrued Expenses (2160) in the standard chart. |
 | **ERP 0.9.0** | Deferred revenue and expense: an invoice line over a service period waits on a deferred account and is recognised by the day, every month and through a day an accountant chooses; cancelling the invoice reverses what was recognised. |
 | **ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1, Shop Floor 0.2.1** | Your orders on the workspace's portal: the requests for quotation waiting for a supplier's answer, their purchase orders with what was received and billed, printed or in PDF, and the bills ERP holds from them with what is still owed. Interfaces rebuilt with Ferrum-Frontend d4efeca. |
 | **India 0.2.2** | E-invoices checked against the IRP's published value rules for every kind ERP builds; CGST and SGST on a supply to another state or an SEZ unit refused before the IRP refuses it, and IGST within the state marked as such. |
