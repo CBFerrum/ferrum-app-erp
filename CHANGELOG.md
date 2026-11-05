@@ -1,5 +1,15 @@
 # Changelog
 
+## ERP 0.10.2 and Finance 0.3.1: a reversal day worked out when it is submitted
+
+- A journal entry that reverses itself, and an exchange revaluation, take "the day after" as their
+  reversal day when they are submitted, from their day then. It was worked out while the document
+  was a draft, so the form's preview filled it from the first date given and kept it when the date
+  changed: an accrual drafted on 5 November and moved to 31 October would have reversed on
+  6 November. Found walking an accrual in a browser. A reversal day someone chooses is kept as before.
+- Interface rebuilt with Ferrum-Frontend a110af4: an action says what it did ("1 deferred line
+  recognised through 2026-10-31") rather than "done".
+
 ## ERP 0.10.1: the standard chart reaches companies made before it grew
 
 - **Create Standard Chart of Accounts** on a company that already has accounts now adds the
