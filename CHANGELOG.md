@@ -1,5 +1,10 @@
 # Changelog
 
+## ERP 0.14.1: rebuilt with Ferrum-Frontend 00dea07
+
+- In a workflow state that names what may change, the other fields show read-only, and the fields
+  the state needs show required.
+
 ## ERP 0.14.0: a subscription's revenue over the days it pays for, and MRR as plans stood
 
 - A subscription invoice's lines carry the days they bill as their service period, so a plan whose
