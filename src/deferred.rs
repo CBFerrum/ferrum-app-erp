@@ -3,8 +3,10 @@
 //! deferred books to a deferred revenue account (a liability) or a deferred expense account (an
 //! asset) instead of its income or expense account. Recognition moves what each day of the
 //! service period earned or used to the line's own account, one entry per invoice and run, posted
-//! under the invoice: cancelling the invoice reverses what was recognised with the rest. Days are
-//! counted inclusive of both ends, and the last day takes what rounding left.
+//! under the invoice: cancelling the invoice reverses what was recognised with the rest. A credit
+//! note's deferred lines are recognised the same way, negative, over the days they credit: a refund
+//! takes from what is earned from then on, not from what was earned before. Days are counted
+//! inclusive of both ends, and the last day takes what rounding left.
 
 use crate::ledger::{self, Entry, Line};
 use crate::util::{Company, b, company, d, id, round, rows, s};
@@ -107,7 +109,7 @@ pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, t
         let invoice_table = ent.table.clone();
         let waiting: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "select distinct i.id from {invoice_table} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
-             where i.tenant_id = $1 and i.docstatus = 1 and coalesce(i.is_return, false) = false and ($2::uuid is null or i.company = $2) \
+             where i.tenant_id = $1 and i.docstatus = 1 and ($2::uuid is null or i.company = $2) \
              and coalesce(l.{flag}, false) and l.service_start_date <= $3 \
              and (l.deferred_booked_till is null or l.deferred_booked_till < l.service_end_date) and (l.deferred_booked_till is null or l.deferred_booked_till < $3) \
              order by i.id",
