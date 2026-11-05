@@ -15,6 +15,8 @@
   stock item are not deferred.
 - The standard chart has Deferred Revenue (2150) and Prepaid Expenses (1170), the company's
   default deferred accounts.
+- Your orders says "Billed, to deliver" of an order billed in full before it was received (it read
+  "To deliver"), found walking the supplier portal.
 
 ## ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1 and Shop Floor 0.2.1: a supplier's orders on the portal
 
