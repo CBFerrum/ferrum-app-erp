@@ -53,5 +53,6 @@
   actions:
     - {name: send, label: Send to Suppliers, docstatus: [1], permission: submit,
        confirm: "Email each supplier a link to submit their quotation?"}
-    - {name: make_supplier_quotation, label: Create Supplier Quotation, docstatus: [1], permission: read}
+    - {name: make_supplier_quotation, label: Create Supplier Quotation, docstatus: [1], permission: read,
+       params: [{name: supplier, label: Supplier, type: link, to: Supplier, required: true, description: "One of the suppliers this request invited"}]}
   list: {columns: [number, transaction_date, response_deadline, status], sort: transaction_date desc}

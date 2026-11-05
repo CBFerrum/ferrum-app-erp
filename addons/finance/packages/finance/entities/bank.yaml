@@ -23,7 +23,7 @@
     - {name: disabled, type: check, in_filter: true}
   unique: [[company, account_name]]
   actions:
-    - {name: import_transactions, label: Import Bank Statement (CSV), permission: write}
+    - {name: import_transactions, label: Import Bank Statement (CSV), permission: write, hidden: true}
     # The reconciliation screen's two calls. The first only reads; the second reconciles lines through
     # their own Reconcile action, so the caller needs the rights on the lines, not on the account.
     - {name: workbench, label: Reconciliation Workbench, permission: read, read_only: true, hidden: true}
@@ -71,6 +71,10 @@
     - {name: get_suggestions, label: Find Matching Vouchers, docstatus: [1], permission: read, condition: "doc.unallocated_amount > 0.0"}
     - {name: reconcile, label: Reconcile, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0"}
     - {name: unreconcile, label: Undo Reconciliation, docstatus: [1], permission: write, condition: "doc.allocated_amount > 0.0"}
-    - {name: make_payment_entry, label: Create Payment Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0"}
-    - {name: make_journal_entry, label: Create Journal Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0"}
+    - {name: make_payment_entry, label: Create Payment Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
+       params: [{name: customer, label: Customer, type: link, to: Customer, description: "Who paid, for money received"},
+                {name: supplier, label: Supplier, type: link, to: Supplier, description: "Who was paid, for money paid out"}]}
+    - {name: make_journal_entry, label: Create Journal Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
+       params: [{name: account, label: Account, type: link, to: Account, required: true, description: "The account to book against, not the bank's own"},
+                {name: remark, label: Remark, type: text}]}
   list: {columns: [date, bank_account, reference_number, deposit, withdrawal, unallocated_amount, status], sort: date desc}

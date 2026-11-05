@@ -489,6 +489,10 @@ async fn scenario() {
     assert_eq!(t.get("PurchaseOrder", po_id).await["status"], json!("To Bill"));
     let pi = t.action("PurchaseReceipt", pr_id, "make_purchase_invoice", json!({})).await;
     let pi_id = vid(&pi);
+    // The draft holds its place with a placeholder, which is not the supplier's number.
+    assert!(t.get("PurchaseInvoice", pi_id).await["bill_no"].as_str().is_some_and(|b| b.starts_with("PENDING-")));
+    let placeholder = t.k.submit(&t.ctx, "PurchaseInvoice", pi_id, None).await;
+    assert!(matches!(placeholder, Err(Error::Validation(ref e)) if e.iter().any(|f| f.message.contains("supplier's own invoice number"))), "{placeholder:?}");
     t.k.update(&t.ctx, "PurchaseInvoice", pi_id, obj(json!({"bill_no": "ACME/778"})), None).await.expect("bill no");
     let pi_doc = t.submit("PurchaseInvoice", pi_id).await;
     assert_eq!(dec(&pi_doc["grand_total"]), n("2832"));
