@@ -1420,5 +1420,31 @@ async fn consolidation(t: &mut T) {
     assert_eq!((dec(&bs["totals"]["assets"]), dec(&bs["totals"]["equity"]), bs["meta"]["balanced"].clone()), (n("5070"), n("5070"), json!(true)));
     let row = |name: &str| dec(&bs["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!(name)).unwrap_or_else(|| panic!("{name}"))["amount"]);
     assert_eq!((row("Foreign currency translation reserve"), row("Intercompany difference (entries eliminated in part)")), (n("250"), n("-200")));
+
+    // ───────────── a sale within the group, in the buyer's books too ─────────────
+    // Group Co bills Group India for 250 units; India's purchase invoice is made from it: from the
+    // supplier that is Group Co, numbered as Group Co's invoice, at its prices. Once; and the sale is
+    // not cancelled while India's invoice stands.
+    let unit = uid(&t.find_one("Item", json!({"item_code": "UNIT"})).await);
+    let sale = t
+        .make(&am, "SalesInvoice", json!({"company": group.to_string(), "customer": to_india.to_string(), "posting_date": "2026-12-15", "items": [{"item": unit.to_string(), "qty": "250"}]}))
+        .await;
+    assert_eq!(sale["customer_company"], json!(india.to_string()), "the customer is Group India");
+    let made = t.action(&am, "SalesInvoice", uid(&sale), "make_inter_company_invoice", json!({})).await;
+    let bought = t.get("PurchaseInvoice", vid(&made)).await;
+    assert_eq!(
+        (bought["company"].clone(), bought["supplier"].clone(), bought["bill_no"].clone(), bought["bill_date"].clone()),
+        (json!(india.to_string()), json!(from_group.to_string()), sale["number"].clone(), json!("2026-12-15"))
+    );
+    assert_eq!(dec(&bought["net_total"]), dec(&sale["net_total"]), "at the sale's prices");
+    let again = t.k.run_action(&am, "SalesInvoice", uid(&sale), "make_inter_company_invoice", json!({})).await.unwrap_err();
+    assert!(invalid(&again, "already"), "{again:?}");
+    t.submit(&am, "PurchaseInvoice", uid(&bought)).await;
+    let cancel = t.k.cancel(&am, "SalesInvoice", uid(&sale), None).await.unwrap_err();
+    assert!(invalid(&cancel, "cancel that purchase invoice first"), "{cancel:?}");
+    let outside = t.make(&am, "SalesInvoice", json!({"company": group.to_string(), "customer": outsider.to_string(), "posting_date": "2026-12-16", "items": [{"item": unit.to_string(), "qty": "1"}]})).await;
+    assert!(outside["customer_company"].is_null(), "a customer outside the group");
+    let e = t.k.run_action(&am, "SalesInvoice", uid(&outside), "make_inter_company_invoice", json!({})).await.unwrap_err();
+    assert!(matches!(e, Error::Invalid(_) | Error::Forbidden(_)), "{e:?}");
     t.books_balance().await;
 }
