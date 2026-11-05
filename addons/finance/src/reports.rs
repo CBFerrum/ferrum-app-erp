@@ -4,7 +4,7 @@
 
 use crate::budget::{actual, ordered, requested};
 use crate::common::{fiscal_year, fiscal_year_of};
-use crate::rules::{self, Interval, MONTHS};
+use crate::rules::{self, MONTHS};
 use crate::subscription::{self, Sub};
 use crate::terms::{open_installments, schedules};
 use async_trait::async_trait;
@@ -626,8 +626,10 @@ async fn dunning_summary(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<
 
 // ───────────────────────────── subscription metrics ─────────────────────────────
 
-/// Monthly recurring revenue per subscription at the start and end of the range (current plans,
-/// in company currency at the end date's rate), new and churned subscriptions, churn rates.
+/// Monthly recurring revenue per subscription at the start and end of the range, each as its plans
+/// stood that day (in company currency at the end date's rate), and how it moved between: new,
+/// expansion, contraction and churn, which take the start to the end, with churn rates and net
+/// revenue retention.
 async fn subscription_metrics(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
     let ids: Vec<Uuid> = sqlx::query_scalar("select id from e_subscription where tenant_id = $1 and company = $2 order by number")
@@ -639,48 +641,74 @@ async fn subscription_metrics(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &ReportCom
     let sysctx = ferrum_domain::util::sys(ctx);
     let active = |s: &Sub, on: NaiveDate| s.billing_start <= on && s.stop().is_none_or(|x| x >= on);
     let mut rows = Vec::new();
-    let (mut mrr_start, mut mrr_end, mut new_mrr, mut churned_mrr) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
+    let zero = Decimal::ZERO;
+    let (mut mrr_start, mut mrr_end, mut new_mrr, mut expansion, mut contraction, mut churned_mrr) = (zero, zero, zero, zero, zero, zero);
     let (mut subs_start, mut subs_churned, mut subs_new) = (0i64, 0i64, 0i64);
+    // Of what was there at the start: what churned, and what is still there at the end.
+    let (mut lost, mut kept) = (zero, zero);
     for sid in ids {
         let doc = k.get_tx(&sysctx, tx, "Subscription", sid, false).await?;
         let s = subscription::load(k, ctx, tx, &doc).await?;
-        let rate = exchange_rate(k, ctx, tx, s.currency, company_currency, to).await?;
-        let mrr: Decimal = s.plans.iter().map(|pl| Interval::monthly(pl.interval, pl.price * pl.qty, pl.count)).sum::<Decimal>() * rate;
-        let mrr = round(mrr, co.precision);
-        let (at_start, at_end) = (active(&s, from), active(&s, to));
-        let churned = at_start && !at_end;
-        let is_new = !at_start && at_end;
-        if !(at_start || at_end || (s.billing_start <= to && s.stop().is_none_or(|x| x >= from))) {
+        if !(s.billing_start <= to && s.stop().is_none_or(|x| x >= from)) {
             continue;
         }
+        let rate = exchange_rate(k, ctx, tx, s.currency, company_currency, to).await?;
+        let changes = subscription::changes(tx, ctx.tenant, s.id).await?;
+        let current = subscription::monthly(&s.plans);
+        let mrr = |on: NaiveDate| round(subscription::mrr_on(&changes, current, on) * rate, co.precision);
+        let (at_start, at_end) = (active(&s, from), active(&s, to));
+        // What it brought in when it began within the range, and what it held when it ended there.
+        let first = if at_start { mrr(from) } else { mrr(s.billing_start) };
+        let last = if at_end { mrr(to) } else { mrr(s.stop().unwrap_or(to)) };
+        let moved = last - first;
+        if moved > zero {
+            expansion += moved;
+        } else {
+            contraction -= moved;
+        }
         if at_start {
-            mrr_start += mrr;
+            mrr_start += first;
             subs_start += 1;
-        }
-        if at_end {
-            mrr_end += mrr;
-        }
-        if churned {
-            churned_mrr += mrr;
-            subs_churned += 1;
-        }
-        if is_new {
-            new_mrr += mrr;
+        } else {
+            new_mrr += first;
             subs_new += 1;
         }
+        if at_end {
+            mrr_end += last;
+            if at_start {
+                kept += last;
+            }
+        } else {
+            churned_mrr += last;
+            if at_start {
+                subs_churned += 1;
+                lost += last;
+            }
+        }
+        let movement = match (at_start, at_end) {
+            (true, false) => "Churned",
+            (false, true) => "New",
+            (false, false) => "Started and ended",
+            _ if moved > zero => "Expansion",
+            _ if moved < zero => "Contraction",
+            _ => "Retained",
+        };
         rows.push(json!({"subscription": s.number, "subscription_id": s.id, "customer": doc.get("customer_name"), "status": doc.get("status"),
-            "billing_start": s.billing_start, "stop": s.stop(), "mrr": money(mrr), "arr": money(mrr * Decimal::from(12)),
-            "movement": if churned { "Churned" } else if is_new { "New" } else if at_end { "Retained" } else { "Started and ended" }}));
+            "billing_start": s.billing_start, "stop": s.stop(), "mrr_start": money(if at_start { first } else { zero }), "mrr": money(if at_end { last } else { zero }),
+            "arr": money(if at_end { last } else { zero } * Decimal::from(12)), "movement": movement}));
     }
     Ok(json!({
         "columns": [col("subscription", "Subscription", "data"), col("customer", "Customer", "data"), col("status", "Status", "data"),
-            col("billing_start", "Billing Start", "date"), col("stop", "Ends", "date"), col("movement", "Movement", "data"), col("mrr", "MRR", "currency"),
-            col("arr", "ARR", "currency")],
+            col("billing_start", "Billing Start", "date"), col("stop", "Ends", "date"), col("movement", "Movement", "data"),
+            col("mrr_start", "MRR at Start", "currency"), col("mrr", "MRR", "currency"), col("arr", "ARR", "currency")],
         "rows": rows,
         "totals": {"mrr_start": money(mrr_start), "mrr_end": money(mrr_end), "arr_end": money(mrr_end * Decimal::from(12)), "new_mrr": money(new_mrr),
-            "churned_mrr": money(churned_mrr), "subscriptions_start": subs_start, "subscriptions_new": subs_new, "subscriptions_churned": subs_churned,
-            "customer_churn_pct": money(pct(Decimal::from(subs_churned), Decimal::from(subs_start))), "revenue_churn_pct": money(pct(churned_mrr, mrr_start))},
-        "meta": {"from_date": from, "to_date": to, "note": "MRR uses each subscription's current plans."},
+            "expansion_mrr": money(expansion), "contraction_mrr": money(contraction), "churned_mrr": money(churned_mrr),
+            "subscriptions_start": subs_start, "subscriptions_new": subs_new, "subscriptions_churned": subs_churned,
+            "customer_churn_pct": money(pct(Decimal::from(subs_churned), Decimal::from(subs_start))), "revenue_churn_pct": money(pct(lost, mrr_start)),
+            "net_revenue_retention_pct": money(pct(kept, mrr_start))},
+        "meta": {"from_date": from, "to_date": to,
+            "note": "MRR is each subscription's plans as they stood on the day; start + new + expansion - contraction - churned = end."},
     }))
 }
 
