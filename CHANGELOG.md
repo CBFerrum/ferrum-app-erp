@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased: the engine's contract with other apps
+
+- `docs/contracts.md` publishes what apps that post through the engine may rely on: the ledger's,
+  open items', stock's, pricing's and the countries' operations, each in the caller's transaction,
+  with what it refuses and whether calling it twice does it twice. `tests/contract_it.rs` holds
+  each guarantee: a posting balances or writes nothing, a reversal reverses once, an invoice's item
+  opens once and takes no more than it is owed, stock is not issued beyond what is there.
+
 ## ERP 0.14.1: rebuilt with Ferrum-Frontend 00dea07
 
 - In a workflow state that names what may change, the other fields show read-only, and the fields
