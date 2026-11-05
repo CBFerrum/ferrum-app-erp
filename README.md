@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **India 0.2.2** | E-invoices checked against the IRP's published value rules for every kind ERP builds; CGST and SGST on a supply to another state or an SEZ unit refused before the IRP refuses it, and IGST within the state marked as such. |
 | **ERP 0.7.1** | The assistant knows how ERP's records work in its pages (documents' states, what is owed, which reports hold the books' figures, finance books and groups) and suggests five questions to start with. |
 | **ERP 0.7.0** | A group's books: a company's parent makes a group, and a consolidated trial balance, profit and loss and balance sheet add up the parent and every company under it in the parent's currency, on the parent's chart. Business within the group is taken out (customers and suppliers that represent its companies, accounts marked Eliminate in Consolidation), and what does not cancel shows as an intercompany difference beside what each pair of companies says they owe each other. One closing rate per company; no minority interest yet. |
 | **ERP 0.6.0, Finance 0.3.0** | Finance books, as ERPNext keeps them: IFRS beside local rules, a tax book beside both. An entry with no book is in every book, one with a book adjusts that book alone, receivables and payables are the same in all of them, and every statement, the general ledger and the year-end closing take a book. |

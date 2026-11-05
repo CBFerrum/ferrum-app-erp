@@ -426,6 +426,12 @@ impl Sources {
         if v.reverse_charge && cat == "Overseas" {
             problems.push("reverse charge applies to supplies to registered businesses and SEZ units, not to exports".into());
         }
+        // The IRP takes IGST, not CGST and SGST, for a supply to another state, an SEZ unit or abroad.
+        let home: String = if seller_state.is_empty() { seller_gstin.chars().take(2).collect() } else { seller_state.clone() };
+        let inter_state = export || cat == "SEZ" || pos != home;
+        if inter_state && (v.cgst + v.sgst) > Decimal::ZERO {
+            problems.push("a supply to another state, an SEZ unit or abroad is taxed with IGST, not CGST and SGST: choose the invoice's IGST template".into());
+        }
         let day = s(inv, "posting_date").and_then(|t| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
         let credit_note = inv.get("is_return").and_then(Value::as_bool).unwrap_or(false);
         if credit_note && self.original.is_none() {
@@ -463,7 +469,9 @@ impl Sources {
         let mut out = json!({
             "Version": "1.1",
             // Under reverse charge the buyer pays the tax: shown, and the total may leave it out.
-            "TranDtls": {"TaxSch": "GST", "SupTyp": supply, "RegRev": if v.reverse_charge { "Y" } else { "N" }, "IgstOnIntra": "N"},
+            // IGST charged on a supply within the state says so, as the IRP asks.
+            "TranDtls": {"TaxSch": "GST", "SupTyp": supply, "RegRev": if v.reverse_charge { "Y" } else { "N" },
+                         "IgstOnIntra": if !inter_state && taxed { "Y" } else { "N" }},
             "DocDtls": {"Typ": if credit_note { "CRN" } else { "INV" }, "No": number, "Dt": day.map(dmy).unwrap_or_default()},
             "SellerDtls": seller,
             "BuyerDtls": buyer,
@@ -1178,5 +1186,214 @@ mod tests {
         assert_eq!(qr_claims(&jwt).unwrap()["DocNo"], json!("SI/1"));
         assert_eq!(answer_field(&json!({"response": "{\"data\": {\"Irn\": \"abc\"}}"}), "Irn"), Some("abc".into()));
         assert_eq!(answer_field(&json!({"result": {"AckNo": 112010036563310_u64}}), "AckNo"), Some("112010036563310".into()));
+    }
+
+    /// The IRP's own checks of an e-invoice's values, as its developer portal states them
+    /// (Generate IRN, "Validations": https://einv-apisandbox.nic.in/version1.03/generate-irn.html,
+    /// read 5 November 2026): a fixture prepared apart from this module and what it computes
+    /// (FERRUM-VERIFY-002). What the IRP checks against its masters (HSN codes, allowed rates,
+    /// GSTINs, PIN codes) is not here.
+    mod irp {
+        use serde_json::Value;
+
+        /// Within the IRP's tolerance: from the calculated value's rupees less one, to the next
+        /// rupee up plus one.
+        pub fn within(passed: f64, calculated: f64) -> bool {
+            passed >= calculated.floor() - 1.0 - 1e-9 && passed <= calculated.ceil() + 1.0 + 1e-9
+        }
+
+        fn n(v: &Value, k: &str) -> f64 {
+            v.get(k).and_then(Value::as_f64).unwrap_or(0.0)
+        }
+
+        fn check(out: &mut Vec<String>, what: &str, passed: f64, calculated: f64) {
+            if !within(passed, calculated) {
+                out.push(format!("{what}: {passed} passed, {calculated:.2} calculated"));
+            }
+        }
+
+        /// What the IRP would refuse in `inv`, the JSON as sent.
+        pub fn refusals(inv: &Value) -> Vec<String> {
+            let mut out = Vec::new();
+            let supply = inv["TranDtls"]["SupTyp"].as_str().unwrap_or_default();
+            let reverse = inv["TranDtls"]["RegRev"] == "Y";
+            let note = matches!(inv["DocDtls"]["Typ"].as_str(), Some("CRN" | "DBN"));
+            // SEZ and exports take IGST whatever the state; so does a supply marked IGST on intra.
+            let igst = supply != "B2B" || inv["SellerDtls"]["Stcd"] != inv["BuyerDtls"]["Pos"] || inv["TranDtls"]["IgstOnIntra"] == "Y";
+            let unpaid = supply.ends_with("WOP");
+            let items = inv["ItemList"].as_array().cloned().unwrap_or_default();
+            if !(1..=1000).contains(&items.len()) {
+                out.push(format!("{} items, not 1 to 1000", items.len()));
+            }
+            let (mut taxable, mut cgst, mut sgst, mut igst_sum, mut cess, mut state_cess, mut value) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            for it in &items {
+                let sl = it["SlNo"].as_str().unwrap_or("?");
+                let assessable = n(it, "AssAmt");
+                check(&mut out, &format!("item {sl}'s taxable value"), assessable, n(it, "TotAmt") - n(it, "Discount"));
+                if !note {
+                    let tax = if unpaid { 0.0 } else { assessable * n(it, "GstRt") / 100.0 };
+                    let (c, s, i) = if igst { (0.0, 0.0, tax) } else { (tax / 2.0, tax / 2.0, 0.0) };
+                    check(&mut out, &format!("item {sl}'s CGST"), n(it, "CgstAmt"), c);
+                    check(&mut out, &format!("item {sl}'s SGST"), n(it, "SgstAmt"), s);
+                    check(&mut out, &format!("item {sl}'s IGST"), n(it, "IgstAmt"), i);
+                    check(&mut out, &format!("item {sl}'s cess"), n(it, "CesAmt"), assessable * n(it, "CesRt") / 100.0);
+                    check(&mut out, &format!("item {sl}'s state cess"), n(it, "StateCesAmt"), assessable * n(it, "StateCesRt") / 100.0);
+                }
+                let taxes = n(it, "CgstAmt")
+                    + n(it, "SgstAmt")
+                    + n(it, "IgstAmt")
+                    + n(it, "CesAmt")
+                    + n(it, "StateCesAmt")
+                    + n(it, "CesNonAdvlAmt")
+                    + n(it, "StateCesNonAdvlAmt");
+                let with_taxes = assessable + taxes + n(it, "OthChrg");
+                let item_value = n(it, "TotItemVal");
+                // Under reverse charge and for exports with payment the total may leave the taxes out.
+                if !((reverse || supply == "EXPWP") && within(item_value, with_taxes - taxes)) {
+                    check(&mut out, &format!("item {sl}'s total value"), item_value, with_taxes);
+                }
+                taxable += assessable;
+                cgst += n(it, "CgstAmt");
+                sgst += n(it, "SgstAmt");
+                igst_sum += n(it, "IgstAmt");
+                cess += n(it, "CesAmt") + n(it, "CesNonAdvlAmt");
+                state_cess += n(it, "StateCesAmt") + n(it, "StateCesNonAdvlAmt");
+                value += item_value;
+            }
+            let v = &inv["ValDtls"];
+            check(&mut out, "the total taxable value", n(v, "AssVal"), taxable);
+            check(&mut out, "the total CGST", n(v, "CgstVal"), cgst);
+            check(&mut out, "the total SGST", n(v, "SgstVal"), sgst);
+            check(&mut out, "the total IGST", n(v, "IgstVal"), igst_sum);
+            check(&mut out, "the total cess", n(v, "CesVal"), cess);
+            check(&mut out, "the total state cess", n(v, "StCesVal"), state_cess);
+            let round = n(v, "RndOffAmt");
+            if !(-99.99..=99.99).contains(&round) {
+                out.push(format!("a round-off of {round}, not between -99.99 and 99.99"));
+            }
+            check(&mut out, "the total invoice value", n(v, "TotInvVal"), value - n(v, "Discount") + n(v, "OthChrg") + round);
+            out
+        }
+    }
+
+    #[test]
+    fn the_irp_s_tolerance_as_its_portal_gives_it() {
+        // The portal's three examples, and just outside each.
+        assert!(irp::within(2344.00, 2345.04) && irp::within(2347.00, 2345.04) && !irp::within(2343.99, 2345.04) && !irp::within(2347.01, 2345.04));
+        assert!(irp::within(10240.00, 10241.00) && irp::within(10242.00, 10241.00) && !irp::within(10239.99, 10241.00) && !irp::within(10242.01, 10241.00));
+        assert!(irp::within(10240.00, 10241.61) && irp::within(10243.00, 10241.61) && !irp::within(10239.99, 10241.61) && !irp::within(10243.01, 10241.61));
+    }
+
+    /// The invoice taxed with IGST at 18% instead of CGST and SGST.
+    fn with_igst(mut s: Sources) -> Sources {
+        s.taxes = vec![(
+            doc(
+                json!({"charge_type": "On Net Total", "account": "acc-i", "description": "IGST 18%", "rate": "18", "tax_amount": "306", "base_tax_amount": "306"}),
+            ),
+            Head::Igst,
+        )];
+        s
+    }
+
+    /// To a registered buyer in Karnataka.
+    fn to_karnataka(mut s: Sources) -> Sources {
+        let gstin = format!("29AAACL1234B1Z{}", crate::gst::gstin_check_char("29AAACL1234B1Z").unwrap());
+        s.customer.insert("in_gstin".into(), json!(gstin));
+        s.customer.insert("in_state_code".into(), json!("29"));
+        s.customer.insert("in_pincode".into(), json!("560001"));
+        s.invoice.insert("in_place_of_supply".into(), json!("29"));
+        s
+    }
+
+    /// Every kind of e-invoice this module builds passes the IRP's value checks, and what the IRP
+    /// would refuse for its taxes is refused here first.
+    #[test]
+    fn the_irp_takes_the_values_of_every_kind_of_e_invoice() {
+        let mut reverse = intra_state();
+        for (t, _) in &mut reverse.taxes {
+            t.insert("reverse_charge".into(), json!(true));
+        }
+        for f in ["base_grand_total", "base_rounded_total", "grand_total", "rounded_total"] {
+            reverse.invoice.insert(f.into(), json!("1700"));
+        }
+        let mut sez = with_igst(intra_state());
+        sez.customer.insert("in_gst_category".into(), json!("SEZ"));
+        let mut export = intra_state();
+        export.customer =
+            doc(json!({"customer_name": "Globex Inc", "in_gst_category": "Overseas", "billing_address": "1 Main St, Springfield", "in_city": "Springfield"}));
+        export.taxes.clear();
+        for f in ["base_grand_total", "grand_total"] {
+            export.invoice.insert(f.into(), json!("1700"));
+        }
+        for f in ["base_rounded_total", "rounded_total"] {
+            export.invoice.insert(f.into(), json!("0"));
+        }
+        let mut paid_export = with_igst(intra_state());
+        paid_export.customer = export.customer.clone();
+        let mut credit = intra_state();
+        credit.invoice.insert("is_return".into(), json!(true));
+        credit.original = Some(("SI/2026-27/00041".into(), NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()));
+        for l in &mut credit.lines {
+            for k in ["qty", "base_net_amount"] {
+                let v = d(&l.row, k);
+                l.row.insert(k.into(), json!((-v).to_string()));
+            }
+        }
+        // Paise in the lines, and a total rounded to the rupee.
+        let mut paise = intra_state();
+        paise.lines[0].row = doc(json!({"item_name": "Steel Bracket", "qty": "3", "price_list_rate": "33.33", "rate": "33.33", "base_net_amount": "99.99"}));
+        paise.lines[1].row = doc(json!({"item_name": "Installation", "qty": "7", "price_list_rate": "14.29", "rate": "14.29", "base_net_amount": "100.03"}));
+        for (t, _) in &mut paise.taxes {
+            t.insert("tax_amount".into(), json!("18"));
+            t.insert("base_tax_amount".into(), json!("18"));
+        }
+        for (f, v) in
+            [("base_net_total", "200.02"), ("base_grand_total", "236.02"), ("grand_total", "236.02"), ("base_rounded_total", "236"), ("rounded_total", "236")]
+        {
+            paise.invoice.insert(f.into(), json!(v));
+        }
+        let kinds = [
+            ("within the state", intra_state()),
+            ("to another state", with_igst(to_karnataka(intra_state()))),
+            ("under reverse charge", reverse),
+            ("to an SEZ unit", sez),
+            ("an export without tax", export),
+            ("an export with IGST", paid_export),
+            ("a credit note", credit),
+            ("with paise and a rounded total", paise),
+            ("IGST within the state", with_igst(intra_state())),
+        ];
+        for (kind, sources) in kinds {
+            let out = sources.e_invoice().unwrap_or_else(|e| panic!("{kind}: {e}"));
+            assert_eq!(irp::refusals(&out), Vec::<String>::new(), "{kind}: {out:#}");
+        }
+        assert_eq!(with_igst(intra_state()).e_invoice().unwrap()["TranDtls"]["IgstOnIntra"], json!("Y"), "IGST within the state says so");
+        assert_eq!(with_igst(to_karnataka(intra_state())).e_invoice().unwrap()["TranDtls"]["IgstOnIntra"], json!("N"));
+
+        // CGST and SGST where the IRP takes IGST: refused before it is sent.
+        for (kind, sources) in [
+            ("to another state", to_karnataka(intra_state())),
+            ("to an SEZ unit", {
+                let mut s = intra_state();
+                s.customer.insert("in_gst_category".into(), json!("SEZ"));
+                s
+            }),
+        ] {
+            let err = sources.e_invoice().unwrap_err().to_string();
+            assert!(err.contains("taxed with IGST, not CGST and SGST"), "{kind}: {err}");
+        }
+
+        // The checks are no rubber stamp: values a few rupees off are what the IRP refuses.
+        let good = intra_state().e_invoice().unwrap();
+        for (path, value, says) in [
+            ("/ItemList/0/CgstAmt", json!(85.0), "item 1's CGST"),
+            ("/ItemList/1/TotItemVal", json!(950.0), "item 2's total value"),
+            ("/ValDtls/AssVal", json!(1690.0), "the total taxable value"),
+            ("/ValDtls/RndOffAmt", json!(150.0), "round-off"),
+        ] {
+            let mut bad = good.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            assert!(irp::refusals(&bad).iter().any(|r| r.contains(says)), "{path}: {:?}", irp::refusals(&bad));
+        }
     }
 }
