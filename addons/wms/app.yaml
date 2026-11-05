@@ -1,6 +1,6 @@
 id: wms
 name: Warehouse Management
-version: 0.2.0
+version: 0.2.1
 publisher: cbferrum
 summary: Bins, handling units and positions by lot and owner, receiving to returns, with people and robots on one task list
 description: README.md

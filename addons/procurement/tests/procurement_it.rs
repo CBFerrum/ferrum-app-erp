@@ -161,6 +161,28 @@ impl T {
         };
         site.handle(&self.k, req).await.expect("site")
     }
+    /// A portal person signed in with this address.
+    async fn portal_person(&self, email: &str) -> Ctx {
+        let id = self.k.create_user(&self.admin, email, email, None, &[], false).await.expect("user");
+        self.k.set_user_kind(&self.admin, id, "portal").await.expect("portal");
+        self.k.load_ctx(self.tenant, id, None, "it".into()).await.expect("ctx")
+    }
+    /// `GET /portal/rfqs` as `who`: the requests waiting for their suppliers.
+    async fn portal_rfqs(&self, who: &Ctx) -> Value {
+        let who = who.clone();
+        let site = self.k.hooks.site("procurement").expect("procurement site").clone();
+        let req = SiteRequest {
+            tenant: self.tenant,
+            user: Some(who),
+            method: "GET".into(),
+            path: "/portal/rfqs".into(),
+            query: Map::new(),
+            headers: Map::new(),
+            body: vec![],
+            client_ip: "203.0.113.7".into(),
+        };
+        json_body(&site.handle(&self.k, req).await.expect("portal"))
+    }
     async fn deliver_mail(&self) {
         while self.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
     }
@@ -581,6 +603,15 @@ async fn scenario() {
     let rfq = t.get("RequestForQuotation", rfq_id).await;
     assert!(rows(&rfq, "suppliers").iter().all(|r| r["email_status"] == json!("Sent") && r["last_sent_at"].is_string()));
 
+    // On the workspace's portal, the supplier's own address finds the request with the link it was
+    // mailed; someone else's finds nothing.
+    let steel_desk = t.portal_person("Sales@Steel.test").await;
+    let waiting = t.portal_rfqs(&steel_desk).await;
+    let listed: Vec<(Value, Value)> = waiting["rfqs"].as_array().unwrap().iter().map(|r| (r["number"].clone(), r["answer"].clone())).collect();
+    assert_eq!(listed, vec![(rfq["number"].clone(), json!(steel_link))], "{waiting}");
+    assert_eq!(waiting["rfqs"][0]["items"][0]["qty"], json!("200"));
+    assert_eq!(t.portal_rfqs(&t.portal_person("someone@else.test").await).await["rfqs"], json!([]));
+
     // The supplier page.
     let page = t.site("GET", &steel_token, &[], "", "").await;
     assert_eq!(page.status, 200);
@@ -631,6 +662,7 @@ async fn scenario() {
     let rfq = t.get("RequestForQuotation", rfq_id).await;
     let statuses: Vec<Value> = rows(&rfq, "suppliers").iter().map(|r| r["quote_status"].clone()).collect();
     assert_eq!(statuses, vec![json!("Received"), json!("Received")]);
+    assert_eq!(t.portal_rfqs(&steel_desk).await["rfqs"], json!([]), "answered, it no longer waits");
     let sq_fast: Uuid = rows(&rfq, "suppliers")[1]["supplier_quotation"].as_str().unwrap().parse().unwrap();
     let answers_again = t.site("POST", &steel_token, &[], "application/json", &json!({"items": [{"line": line, "rate": "9.40"}]}).to_string()).await;
     assert_eq!(answers_again.status, 200, "a draft answer can be revised");

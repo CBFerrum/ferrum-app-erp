@@ -50,6 +50,8 @@ pub fn register(h: &mut HookRegistry) {
     let only = |p: &str| vec![p.to_string()];
     // A customer's invoices on the workspace's portal ("Your invoices").
     h.add_site("selling", Arc::new(portal::SellingPortal));
+    // A supplier's orders and bills on the workspace's portal ("Your orders").
+    h.add_site("buying", Arc::new(portal::BuyingPortal));
     h.scoped(&only("accounting"), |h| {
         h.register("Company", Arc::new(setup::CompanyHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
