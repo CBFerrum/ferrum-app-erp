@@ -1,5 +1,14 @@
 # Changelog
 
+## ERP 0.13.0: a sale within the group, in the buyer's books too
+
+- A sales invoice to a customer that represents one of the group's companies says so (**Group
+  Company**), and **Create Purchase Invoice in the Group Company** makes that company's purchase
+  invoice from it: from the supplier that represents the seller, with the sale's number and day as
+  the supplier's invoice number and date, at the sale's net prices; the buying company's own taxes
+  and accounts apply. It is made once, and the sale is not cancelled while the purchase invoice
+  stands (FERRUM-ERP-005).
+
 ## ERP 0.12.0: non-controlling interests and a group's cash flow
 
 - A company can say how much of it its parent holds (**Held by the Parent (%)**, 100 unless set).
