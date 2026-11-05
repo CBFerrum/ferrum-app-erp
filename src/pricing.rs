@@ -385,6 +385,8 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         let qty = d(row, "qty");
         // Units: quantities and prices are per the line's unit; stock moves count stock units.
         let item_changed = s(row, "price_basis").and_then(parse_basis).is_some_and(|(was, ..)| was != item_id);
+        // Not priced before, or priced for another item: what the item says still applies.
+        let fresh = item_changed || s(row, "price_basis").is_none();
         let (uom, factor) = if has_child("conversion_factor") { line_unit(row, &item, i, item_changed)? } else { (id(row, "uom"), Decimal::ONE) };
         if has_child("price_basis") {
             restate_price(row, item_id, uom, factor);
@@ -443,9 +445,11 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             }
             _ => {}
         }
-        // A line is deferred like its item unless it says otherwise.
+        // A line is deferred like its item when it comes with the days its service covers (without
+        // them it is sold at once); once added, its own setting stands. Unset checkboxes read as
+        // unchecked by now, so a new line is what tells the item's say from the line's.
         let flag = if side == Side::Selling { "enable_deferred_revenue" } else { "enable_deferred_expense" };
-        if has_child(flag) && row.get(flag).is_none_or(Value::is_null) && b(&item, flag) {
+        if has_child(flag) && fresh && b(&item, flag) && !b(row, flag) && s(row, "service_start_date").is_some() && s(row, "service_end_date").is_some() {
             set(row, flag, true);
         }
         if has_child("warehouse")

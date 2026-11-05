@@ -1,5 +1,23 @@
 # Changelog
 
+## ERP 0.14.0: a subscription's revenue over the days it pays for, and MRR as plans stood
+
+- A subscription invoice's lines carry the days they bill as their service period, so a plan whose
+  item defers its revenue bills (it could not: a deferred line needs its period) and is earned day
+  by day over the period. A cancellation or a smaller plan gives the unused days back on a credit
+  note deferred over those same days, so what is earned is what was used, month by month, rather
+  than all of the refund on its day.
+- A credit note's deferred lines are recognised like their invoice's, negative, over the days they
+  credit (ERP 0.9.0 refused them: a refund reversed income on its date while the invoice went on
+  earning). The deferred revenue and expense report lists them too.
+- A line is deferred like its item when it is added with the days its service covers; afterwards
+  its own setting stands. Until now an item's deferral never reached a line, since an unset
+  checkbox already reads as unchecked when prices are worked out.
+- Subscription metrics read each subscription's MRR as its plans stood on the day: changes of
+  plans are recorded from the day they take effect (a change dated before a later one replaces
+  it). The report adds expansion and contraction, so start, new, expansion, contraction and churn
+  take the start to the end, and net revenue retention.
+
 ## ERP 0.13.0: a sale within the group, in the buyer's books too
 
 - A sales invoice to a customer that represents one of the group's companies says so (**Group
