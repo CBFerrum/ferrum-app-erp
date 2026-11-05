@@ -614,6 +614,58 @@ async fn scenario() {
     assert_eq!(none["invoices"], json!([]));
     assert!(matches!(ask(stranger, format!("/portal/invoices/{si_id}")).await, Err(Error::NotFound(_))), "another customer's invoice");
 
+    // A supplier's orders and the bills ERP holds from them, through a contact of theirs.
+    let draft_po = uid(&t
+        .insert(
+            "PurchaseOrder",
+            json!({"company": cid.to_string(), "supplier": acme.to_string(), "items": [{"item": raw.to_string(), "qty": "5", "price_list_rate": "12", "warehouse": stores.to_string()}]}),
+        )
+        .await);
+    t.insert("Contact", json!({"first_name": "Asha", "supplier": acme.to_string(), "emails": [{"email": "Orders@Acme.test"}]})).await;
+    let supplier_ask = |who: Ctx, path: String| {
+        let k = t.k.clone();
+        async move {
+            let site = k.hooks.site("buying").expect("buying's endpoints").clone();
+            let req = ferrum_kernel::SiteRequest {
+                tenant: who.tenant,
+                user: Some(who),
+                method: "GET".into(),
+                path,
+                query: Default::default(),
+                headers: Default::default(),
+                body: vec![],
+                client_ip: "203.0.113.9".into(),
+            };
+            site.handle(&k, req).await
+        }
+    };
+    let asha = portal_person("orders@acme.test").await;
+    let theirs: Value = serde_json::from_slice(&supplier_ask(asha.clone(), "/portal/orders".into()).await.expect("orders").body).unwrap();
+    let listed: Vec<&str> = theirs["orders"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    assert_eq!(listed, [po_id.to_string()], "submitted orders of her supplier only, no drafts: {theirs}");
+    let first = &theirs["orders"][0];
+    assert_eq!(
+        (first["status"].as_str(), first["received"].as_str(), first["billed"].as_str(), first["total"].as_str()),
+        (Some("Completed"), Some("100"), Some("100"), Some("2832"))
+    );
+    let order: Value = serde_json::from_slice(&supplier_ask(asha.clone(), format!("/portal/orders/{po_id}")).await.expect("order").body).unwrap();
+    assert_eq!(
+        (order["lines"][0]["qty"].as_str(), order["lines"][0]["received"].as_str(), order["lines"][0]["rate"].as_str()),
+        (Some("200"), Some("200"), Some("12"))
+    );
+    assert!(order["taxes"].as_array().unwrap().iter().any(|x| x["amount"].as_str() == Some("216")), "{order}");
+    assert!(matches!(supplier_ask(asha.clone(), format!("/portal/orders/{draft_po}")).await, Err(Error::NotFound(_))), "a draft order is not hers to see");
+    let printed = supplier_ask(asha.clone(), format!("/portal/orders/{po_id}/print")).await.expect("print");
+    assert!(printed.content_type.starts_with("text/html") && printed.headers.iter().any(|(k, v)| k == "content-security-policy" && v.contains("sandbox")));
+    let bills: Value = serde_json::from_slice(&supplier_ask(asha.clone(), "/portal/bills".into()).await.expect("bills").body).unwrap();
+    let held: Vec<(&str, &str)> = bills["bills"].as_array().unwrap().iter().map(|x| (x["bill_no"].as_str().unwrap(), x["owed"].as_str().unwrap())).collect();
+    assert_eq!(held, [("ACME/778", "2832")], "the bill ERP holds from them, and what it still owes: {bills}");
+    // A customer's contact is no supplier's.
+    let none: Value = serde_json::from_slice(&supplier_ask(accounts.clone(), "/portal/orders".into()).await.unwrap().body).unwrap();
+    assert_eq!((none["orders"].clone(), none["next_cursor"].clone()), (json!([]), Value::Null));
+    assert!(matches!(supplier_ask(accounts.clone(), format!("/portal/orders/{po_id}")).await, Err(Error::NotFound(_))), "another's order");
+    assert!(matches!(supplier_ask(asha, format!("/portal/orders/{}", Uuid::new_v4())).await, Err(Error::NotFound(_))));
+
     // Credit note settles what is still open; the rest is a customer credit.
     let cn = t.action("SalesInvoice", si_id, "make_credit_note", json!({})).await;
     let cn_doc = t.submit("SalesInvoice", vid(&cn)).await;
