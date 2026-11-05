@@ -73,7 +73,54 @@ const COA: &[(&str, &str, &str, bool, &str, &str)] = &[
     ("5280", "Bank Charges", "Indirect Expenses", false, "Expense", "Expense"),
 ];
 
-/// Creates the standard chart, cost center, warehouses and default links. Idempotent.
+/// The company's default links and the standard accounts they point at.
+const DEFAULTS: &[(&str, &str)] = &[
+    ("default_receivable_account", "Debtors"),
+    ("default_payable_account", "Creditors"),
+    ("default_income_account", "Sales"),
+    ("default_expense_account", "Administrative Expenses"),
+    ("default_deferred_revenue_account", "Deferred Revenue"),
+    ("default_deferred_expense_account", "Prepaid Expenses"),
+    ("default_cash_account", "Cash"),
+    ("default_bank_account", "Primary Bank"),
+    ("default_inventory_account", "Stock In Hand"),
+    ("cogs_account", "Cost of Goods Sold"),
+    ("srbnb_account", "Stock Received But Not Billed"),
+    ("stock_adjustment_account", "Stock Adjustment"),
+    ("round_off_account", "Round Off"),
+    ("exchange_gain_loss_account", "Exchange Gain or Loss"),
+    ("retained_earnings_account", "Retained Earnings"),
+    ("opening_balance_account", "Opening Balance Equity"),
+    ("overhead_absorbed_account", "Manufacturing Overheads Absorbed"),
+];
+
+/// One account of the standard chart, as a new record for `company`.
+fn standard_account(company: Uuid, currency: &Value, entry: &(&str, &str, &str, bool, &str, &str), parent: Option<&String>, number: bool) -> Doc {
+    let &(account_number, name, _, is_group, root, typ) = entry;
+    let mut d = Doc::new();
+    d.insert("account_name".into(), json!(name));
+    if number {
+        d.insert("account_number".into(), json!(account_number));
+    }
+    d.insert("company".into(), json!(company.to_string()));
+    d.insert("is_group".into(), json!(is_group));
+    d.insert("root_type".into(), json!(root));
+    d.insert("account_currency".into(), currency.clone());
+    if !typ.is_empty() {
+        d.insert("account_type".into(), json!(typ));
+    }
+    // Borrowing is financing, which no account type says.
+    if name == "Secured Loans" {
+        d.insert("cash_flow_section".into(), json!("Financing"));
+    }
+    if let Some(p) = parent {
+        d.insert("parent_account".into(), json!(p));
+    }
+    d
+}
+
+/// Creates the standard chart, cost center, warehouses and default links. Idempotent: a company
+/// with accounts already is left to [`complete_chart`].
 pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> {
     let k = hc.kernel;
     let sctx = sys(hc.ctx);
@@ -84,26 +131,10 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
     let co = k.get_tx(&sctx, hc.tx, "Company", company, false).await?;
     let currency = co.get("default_currency").cloned().unwrap_or(Value::Null);
     let mut ids: HashMap<&str, String> = HashMap::new();
-    for &(number, name, parent, is_group, root, typ) in COA {
-        let mut d = Doc::new();
-        d.insert("account_name".into(), json!(name));
-        d.insert("account_number".into(), json!(number));
-        d.insert("company".into(), json!(company.to_string()));
-        d.insert("is_group".into(), json!(is_group));
-        d.insert("root_type".into(), json!(root));
-        d.insert("account_currency".into(), currency.clone());
-        if !typ.is_empty() {
-            d.insert("account_type".into(), json!(typ));
-        }
-        // Borrowing is financing, which no account type says.
-        if name == "Secured Loans" {
-            d.insert("cash_flow_section".into(), json!("Financing"));
-        }
-        if !parent.is_empty() {
-            d.insert("parent_account".into(), json!(ids.get(parent).cloned()));
-        }
-        let created = k.insert_tx(&sctx, hc.tx, "Account", d).await?;
-        ids.insert(name, s(&created, "id").unwrap_or_default().to_string());
+    for entry in COA {
+        let parent = (!entry.2.is_empty()).then(|| ids.get(entry.2)).flatten();
+        let created = k.insert_tx(&sctx, hc.tx, "Account", standard_account(company, &currency, entry, parent, true)).await?;
+        ids.insert(entry.1, s(&created, "id").unwrap_or_default().to_string());
     }
     let mut cc = Doc::new();
     cc.insert("cost_center_name".into(), json!("Main"));
@@ -126,31 +157,59 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
         }
     }
     let mut v = Doc::new();
-    for (field, account) in [
-        ("default_receivable_account", "Debtors"),
-        ("default_payable_account", "Creditors"),
-        ("default_income_account", "Sales"),
-        ("default_expense_account", "Administrative Expenses"),
-        ("default_deferred_revenue_account", "Deferred Revenue"),
-        ("default_deferred_expense_account", "Prepaid Expenses"),
-        ("default_cash_account", "Cash"),
-        ("default_bank_account", "Primary Bank"),
-        ("default_inventory_account", "Stock In Hand"),
-        ("cogs_account", "Cost of Goods Sold"),
-        ("srbnb_account", "Stock Received But Not Billed"),
-        ("stock_adjustment_account", "Stock Adjustment"),
-        ("round_off_account", "Round Off"),
-        ("exchange_gain_loss_account", "Exchange Gain or Loss"),
-        ("retained_earnings_account", "Retained Earnings"),
-        ("opening_balance_account", "Opening Balance Equity"),
-        ("overhead_absorbed_account", "Manufacturing Overheads Absorbed"),
-    ] {
+    for &(field, account) in DEFAULTS {
         v.insert(field.into(), json!(ids.get(account).cloned()));
     }
     v.insert("default_cost_center".into(), cc.get("id").cloned().unwrap_or(Value::Null));
     k.set_values_tx(&sctx, hc.tx, "Company", company, v).await?;
     crate::localization::setup_company(hc, company, &ids).await?;
     Ok(true)
+}
+
+/// Brings an existing company's chart up to the standard one, so accounts a later release adds
+/// (Deferred Revenue and Prepaid Expenses in 0.9.0, the accrual accounts in 0.10.0) reach companies
+/// made before it: each standard account the company lacks by name is added under its standard
+/// parent, where the company has that parent, without the standard number when another account
+/// holds it; then each default link still empty is set to its standard account. Nothing the
+/// company already has is changed. Answers the accounts added and how many links were set.
+pub async fn complete_chart(hc: &mut HookCtx<'_>, company: Uuid) -> Result<(Vec<&'static str>, usize)> {
+    let k = hc.kernel;
+    let sctx = sys(hc.ctx);
+    let rows = k.find_tx(&sctx, hc.tx, "Account", &[Filter::eq("company", company.to_string())], None, 100_000).await?;
+    let mut ids: HashMap<String, String> = rows.iter().filter_map(|r| Some((s(r, "account_name")?.to_string(), s(r, "id")?.to_string()))).collect();
+    let numbers: std::collections::HashSet<&str> = rows.iter().filter_map(|r| s(r, "account_number")).collect();
+    let co = k.get_tx(&sctx, hc.tx, "Company", company, false).await?;
+    let currency = co.get("default_currency").cloned().unwrap_or(Value::Null);
+    let mut added = Vec::new();
+    for entry in COA {
+        if ids.contains_key(entry.1) {
+            continue;
+        }
+        let parent = match entry.2 {
+            "" => None,
+            p => match ids.get(p) {
+                Some(id) => Some(id.clone()),
+                None => continue,
+            },
+        };
+        let doc = standard_account(company, &currency, entry, parent.as_ref(), !numbers.contains(entry.0));
+        let created = k.insert_tx(&sctx, hc.tx, "Account", doc).await?;
+        ids.insert(entry.1.to_string(), s(&created, "id").unwrap_or_default().to_string());
+        added.push(entry.1);
+    }
+    let mut v = Doc::new();
+    for &(field, account) in DEFAULTS {
+        if co.get(field).is_none_or(Value::is_null)
+            && let Some(a) = ids.get(account)
+        {
+            v.insert(field.into(), json!(a));
+        }
+    }
+    let linked = v.len();
+    if linked > 0 {
+        k.set_values_tx(&sctx, hc.tx, "Company", company, v).await?;
+    }
+    Ok((added, linked))
 }
 
 pub struct CompanyHook;
@@ -173,8 +232,16 @@ impl DocHook for CompanyHook {
         if name != "setup_chart_of_accounts" {
             return Ok(None);
         }
-        let created = setup_company(hc, company).await?;
-        Ok(Some(json!({"created": created, "message": if created { "Standard chart of accounts created" } else { "This company already has accounts" }})))
+        if setup_company(hc, company).await? {
+            return Ok(Some(json!({"created": true, "message": "Standard chart of accounts created"})));
+        }
+        let (added, linked) = complete_chart(hc, company).await?;
+        let message = match (added.is_empty(), linked) {
+            (true, 0) => "This company's chart already has every standard account".to_string(),
+            (true, n) => format!("{n} default account{} set", if n == 1 { "" } else { "s" }),
+            (false, n) => format!("Added {} from the standard chart; {n} default account{} set", added.join(", "), if n == 1 { "" } else { "s" }),
+        };
+        Ok(Some(json!({"created": false, "added": added, "defaults_set": linked, "message": message})))
     }
 }
 
