@@ -8,6 +8,8 @@ describe("a supplier's orders", () => {
     expect(progress({ received: "100", billed: "0", status: "To Bill" })).toBe("Received, to bill");
     expect(progress({ received: "100", billed: "100", status: "Completed" })).toBe("Received and billed");
     expect(progress({ received: "40", billed: "0", status: "Closed" })).toBe("Closed");
+    expect(progress({ received: "0", billed: "100", status: "To Receive" })).toBe("Billed, to deliver");
+    expect(progress({ received: "50", billed: "100", status: "To Receive" })).toBe("Billed, 50% received");
   });
 
   it("say what is still owed on a bill", () => {

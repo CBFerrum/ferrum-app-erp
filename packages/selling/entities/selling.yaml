@@ -178,6 +178,12 @@
     - {name: net_amount, type: currency, read_only: true}
     - {name: base_net_amount, type: currency, read_only: true}
     - {name: income_account, type: link, to: Account, link_filters: {is_group: false}}
+    - {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Recognised day by day over the service period; as its item is unless set"}
+    - {name: service_start_date, type: date}
+    - {name: service_end_date, type: date}
+    - {name: deferred_revenue_account, type: link, to: Account, link_filters: {is_group: false}, description: "Where it waits; the company's default deferred revenue account when empty"}
+    - {name: deferred_booked, type: currency, read_only: true, no_copy: true, label: Recognised So Far}
+    - {name: deferred_booked_till, type: date, read_only: true, no_copy: true, label: Recognised Through}
     - {name: cost_center, type: link, to: CostCenter}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}

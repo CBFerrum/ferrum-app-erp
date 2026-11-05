@@ -443,6 +443,11 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             }
             _ => {}
         }
+        // A line is deferred like its item unless it says otherwise.
+        let flag = if side == Side::Selling { "enable_deferred_revenue" } else { "enable_deferred_expense" };
+        if has_child(flag) && row.get(flag).is_none_or(Value::is_null) && b(&item, flag) {
+            set(row, flag, true);
+        }
         if has_child("warehouse")
             && id(row, "warehouse").is_none()
             && let Some(w) = id(doc, "set_warehouse").or_else(|| id(&item, "default_warehouse"))

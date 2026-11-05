@@ -83,6 +83,7 @@ export function progress(o: Pick<PortalOrder, "received" | "billed" | "status">)
   const billed = Number(o.billed);
   if (received >= 100 && billed >= 100) return "Received and billed";
   if (received >= 100) return "Received, to bill";
+  if (billed >= 100) return received > 0 ? `Billed, ${formatDecimal(o.received, 0)}% received` : "Billed, to deliver";
   if (received > 0) return `${formatDecimal(o.received, 0)}% received`;
   return "To deliver";
 }
