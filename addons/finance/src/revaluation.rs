@@ -12,7 +12,7 @@
 
 use crate::common::child_rows;
 use async_trait::async_trait;
-use chrono::{Duration, NaiveDate};
+use chrono::NaiveDate;
 use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_domain::util::{Company, b, company, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
@@ -144,9 +144,6 @@ impl DocHook for RevaluationHook {
             set(doc, "gain_loss_account", a.to_string());
         }
         let Ok(on) = date(doc, "posting_date") else { return Ok(()) };
-        if b(doc, "auto_reverse") && s(doc, "reversal_date").is_none() {
-            set(doc, "reversal_date", (on + Duration::days(1)).to_string());
-        }
         let found = balances(hc.kernel, hc.ctx, hc.tx, &co, on).await?;
         set(doc, "rows", rows_of(&found));
         set(doc, "total_gain_loss", money(found.iter().map(Balance::gain).sum()));
@@ -211,11 +208,8 @@ impl DocHook for RevaluationHook {
         }
         entry.lines.push(Line::new(gl, -net, &co.currency_code).remarks("Unrealised exchange difference"));
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
-        if b(doc, "auto_reverse")
-            && let Ok(back) = date(doc, "reversal_date")
-            && back <= hc.ctx.today()
-        {
-            reverse_posted(hc.kernel, hc.ctx, hc.tx, doc).await?;
+        if b(doc, "auto_reverse") {
+            ferrum_app_erp::accounting::reverse_from(hc, ENTITY, doc, on, co.precision).await?;
         }
         Ok(())
     }

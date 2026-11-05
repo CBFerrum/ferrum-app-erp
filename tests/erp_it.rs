@@ -1630,11 +1630,15 @@ async fn scenario() {
             days.iter().map(|d| d.to_string()).collect::<Vec<_>>()
         }
     };
-    let march = t.insert("JournalEntry", accrual(year(3, 31), json!({}))).await;
-    assert_eq!(march["reversal_date"], json!(year(4, 1)), "the day after, unless another is chosen");
+    // Drafted on the 30th and moved to the 31st, it takes the day after the 31st: the day is worked
+    // out when it is submitted, not kept from the draft.
+    let march = t.insert("JournalEntry", accrual(year(3, 30), json!({}))).await;
+    assert_eq!(march["reversal_date"], Value::Null, "the day after, unless another is chosen, taken when it is submitted");
     let march = uid(&march);
+    t.k.update(&t.ctx, "JournalEntry", march, obj(json!({"posting_date": year(3, 31)})), None).await.expect("moved to the 31st");
     t.submit("JournalEntry", march).await;
-    assert_eq!(t.get("JournalEntry", march).await["reversed_on"], json!(year(4, 1)));
+    let submitted = t.get("JournalEntry", march).await;
+    assert_eq!((submitted["reversal_date"].clone(), submitted["reversed_on"].clone()), (json!(year(4, 1)), json!(year(4, 1))));
     assert_eq!(entries_of(march).await, vec![year(3, 31), year(4, 1)], "in March's books, out of April's");
     assert_eq!(t.gl("Accrued Expenses").await, Decimal::ZERO);
     let early = t.k.insert(&t.ctx, "JournalEntry", obj(accrual(year(3, 31), json!({"reversal_date": year(3, 1)})))).await;
