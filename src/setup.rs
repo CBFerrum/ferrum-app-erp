@@ -27,6 +27,7 @@ const COA: &[(&str, &str, &str, bool, &str, &str)] = &[
     ("1151", "Input Tax", "Tax Assets", false, "Asset", "Tax"),
     ("1152", "TDS Receivable", "Tax Assets", false, "Asset", "Tax"),
     ("1160", "Advances to Suppliers", "Current Assets", false, "Asset", ""),
+    ("1170", "Prepaid Expenses", "Current Assets", false, "Asset", ""),
     ("1200", "Fixed Assets", "Assets", true, "Asset", ""),
     ("1210", "Plant and Machinery", "Fixed Assets", false, "Asset", "Fixed Asset"),
     ("1220", "Furniture and Fixtures", "Fixed Assets", false, "Asset", "Fixed Asset"),
@@ -41,6 +42,7 @@ const COA: &[(&str, &str, &str, bool, &str, &str)] = &[
     ("2131", "Output Tax", "Duties and Taxes", false, "Liability", "Tax"),
     ("2132", "TDS Payable", "Duties and Taxes", false, "Liability", "Tax"),
     ("2140", "Customer Advances", "Current Liabilities", false, "Liability", ""),
+    ("2150", "Deferred Revenue", "Current Liabilities", false, "Liability", ""),
     ("2200", "Loans", "Liabilities", true, "Liability", ""),
     ("2210", "Secured Loans", "Loans", false, "Liability", ""),
     ("3000", "Equity", "", true, "Equity", ""),
@@ -127,6 +129,8 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
         ("default_payable_account", "Creditors"),
         ("default_income_account", "Sales"),
         ("default_expense_account", "Administrative Expenses"),
+        ("default_deferred_revenue_account", "Deferred Revenue"),
+        ("default_deferred_expense_account", "Prepaid Expenses"),
         ("default_cash_account", "Cash"),
         ("default_bank_account", "Primary Bank"),
         ("default_inventory_account", "Stock In Hand"),
@@ -159,11 +163,14 @@ impl DocHook for CompanyHook {
         Ok(())
     }
 
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        let company = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
+        if name == "recognise_deferred" {
+            return Ok(Some(crate::deferred::action(hc.kernel, hc.ctx, hc.tx, company, params).await?));
+        }
         if name != "setup_chart_of_accounts" {
             return Ok(None);
         }
-        let company = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
         let created = setup_company(hc, company).await?;
         Ok(Some(json!({"created": created, "message": if created { "Standard chart of accounts created" } else { "This company already has accounts" }})))
     }

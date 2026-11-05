@@ -530,14 +530,22 @@ impl DocHook for InvoiceHook {
         let bk = breakup(doc);
         let update_stock = b(doc, "update_stock");
         let mut stock_cache = HashMap::new();
-        for (r, base) in &bk.lines {
+        for (i, (r, base)) in bk.lines.iter().enumerate() {
             let account_field = if self.0 == Side::Selling { "income_account" } else { "expense_account" };
             let mut account = id(r, account_field);
             let mut amount = *base;
+            // A line earned or used over a service period waits on its deferred account until then.
+            let deferred = crate::deferred::account(r, &co, self.0 == Side::Selling, i)?;
+            if deferred.is_some() && b(doc, "is_return") {
+                return Err(Error::field(format!("items.{i}.service_start_date"), "a return is not deferred: it reverses its invoice's lines"));
+            }
             if self.0 == Side::Buying
                 && let Some(item) = id(r, "item")
             {
                 let stock = is_stock_item(hc, &mut stock_cache, item).await?;
+                if stock && deferred.is_some() {
+                    return Err(Error::field(format!("items.{i}.enable_deferred_expense"), "a stock item is valued by its stock, not deferred"));
+                }
                 if stock && update_stock {
                     // Valued by the stock moves below; nothing to book here.
                     continue;
@@ -569,7 +577,7 @@ impl DocHook for InvoiceHook {
                     account = account.or(co.account("srbnb_account"));
                 }
             }
-            let account = match account {
+            let account = match deferred.or(account) {
                 Some(a) => a,
                 None => match self.0 {
                     Side::Selling => co.require("default_income_account", "default income account")?,

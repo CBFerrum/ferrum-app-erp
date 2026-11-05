@@ -1,5 +1,25 @@
 # Changelog
 
+## ERP 0.9.0: revenue and expense over a service period
+
+- Deferred revenue and expense (FERRUM-ERP-006), as ERPNext defers them: an invoice line marked
+  deferred, with the days its service starts and ends, books to a deferred revenue account (a
+  liability) or a deferred expense account (an asset) instead of its income or expense account.
+  Recognition moves what each day of the period earned or used to the line's own account, under
+  the invoice, so cancelling the invoice reverses what was recognised with the rest; the last day
+  takes what rounding left. It runs for every company through the end of last month, and the
+  company's **Recognise Deferred Revenue and Expense** recognises through a day an accountant
+  chooses (not one still to come). Each line shows what was recognised and through when. Two
+  runs at once (on two replicas, or an accountant's and the monthly one) recognise each day once:
+  each invoice is locked while its lines are recognised.
+- An item may be deferred by default (Deferred Revenue, Deferred Expense); a line is deferred like
+  its item unless it says otherwise. A deferred line needs its service period; a return and a
+  stock item are not deferred.
+- The standard chart has Deferred Revenue (2150) and Prepaid Expenses (1170), the company's
+  default deferred accounts.
+- Your orders says "Billed, to deliver" of an order billed in full before it was received (it read
+  "To deliver"), found walking the supplier portal.
+
 ## ERP 0.8.0, Procurement 0.1.2, Warehouse 0.2.1 and Shop Floor 0.2.1: a supplier's orders on the portal
 
 - **Your orders**, a page of the workspace's portal for suppliers (FERRUM-ERP-011): someone whose
