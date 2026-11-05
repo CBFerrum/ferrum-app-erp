@@ -376,6 +376,78 @@ impl DocHook for ShipmentHook {
     }
 }
 
+// ─────────────────────────── a sale within the group ───────────────────────────
+
+/// The purchase invoice a sale to one of the group's companies is in that company's books, if one
+/// was made from it (`submitted`: only a submitted one): its number, and the buying company's name.
+/// It is the one from the supplier that represents the seller, with the sale's number as the
+/// supplier's invoice number.
+async fn mirrored(hc: &mut HookCtx<'_>, doc: &Doc, submitted: bool) -> Result<Option<(String, String)>> {
+    let (Some(buyer), Some(seller), Some(number)) = (id(doc, "customer_company"), id(doc, "company"), s(doc, "number")) else { return Ok(None) };
+    if hc.ctx.schema.entity("PurchaseInvoice").is_none() {
+        return Ok(None);
+    }
+    Ok(sqlx::query_as(
+        "select coalesce(p.number, p.id::text), c.company_name from e_purchase_invoice p join e_supplier v on v.tenant_id = p.tenant_id and v.id = p.supplier \
+         join e_company c on c.tenant_id = p.tenant_id and c.id = p.company where p.tenant_id = $1 and p.company = $2 and v.represents_company = $3 \
+         and p.bill_no = $4 and p.docstatus = any($5) order by p.docstatus desc limit 1",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(buyer)
+    .bind(seller)
+    .bind(number)
+    .bind(if submitted { vec![1i16] } else { vec![0i16, 1] })
+    .fetch_optional(&mut **hc.tx)
+    .await?)
+}
+
+/// The purchase invoice a sale to one of the group's companies is in the buying company's books:
+/// from the supplier that represents the seller, with the sale's number and day as the supplier's
+/// invoice number and date, at the sale's net prices; the buying company's own taxes and accounts
+/// apply. Made once: a second is refused while the first stands.
+async fn inter_company_invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
+    if hc.ctx.schema.entity("PurchaseInvoice").is_none() {
+        return Err(Error::invalid("buying is not installed here: there is no purchase invoice to make"));
+    }
+    if b(doc, "is_return") {
+        return Err(Error::invalid("a credit note is not mirrored; make the group company's own debit note"));
+    }
+    let buyer = id(doc, "customer_company").ok_or_else(|| Error::invalid("the customer represents none of the group's companies"))?;
+    let seller = id(doc, "company").ok_or_else(|| Error::internal("an invoice without its company"))?;
+    if let Some((number, name)) = mirrored(hc, doc, false).await? {
+        return Err(Error::invalid(format!("this sale is already {number} in {name}'s books")));
+    }
+    let supplier: Option<Uuid> =
+        sqlx::query_scalar("select id from e_supplier where tenant_id = $1 and represents_company = $2 order by created_at, id limit 1")
+            .bind(hc.ctx.tenant)
+            .bind(seller)
+            .fetch_optional(&mut **hc.tx)
+            .await?;
+    let seller_name = company(hc.kernel, hc.ctx, hc.tx, seller).await?.name().to_string();
+    let supplier =
+        supplier.ok_or_else(|| Error::invalid(format!("no supplier represents {seller_name}: make one, Represents Company {seller_name}, to buy from")))?;
+    let lines: Vec<Value> = rows(doc, "items")
+        .iter()
+        .map(|r| json!({"item": r.get("item"), "qty": r.get("qty"), "uom": r.get("uom"), "price_list_rate": r.get("rate"), "discount_percent": "0"}))
+        .collect();
+    let mut input = Doc::new();
+    for (k, v) in [
+        ("company", json!(buyer.to_string())),
+        ("supplier", json!(supplier.to_string())),
+        ("posting_date", doc.get("posting_date").cloned().unwrap_or(Value::Null)),
+        ("bill_no", json!(s(doc, "number"))),
+        ("bill_date", doc.get("posting_date").cloned().unwrap_or(Value::Null)),
+        ("due_date", doc.get("due_date").cloned().unwrap_or(Value::Null)),
+        ("currency", doc.get("currency").cloned().unwrap_or(Value::Null)),
+        ("discount_percent", doc.get("discount_percent").cloned().unwrap_or(Value::Null)),
+        ("items", Value::Array(lines)),
+    ] {
+        input.insert(k.into(), v);
+    }
+    let made = create_for_user(hc, "PurchaseInvoice", input).await?;
+    Ok(created("PurchaseInvoice", &made))
+}
+
 // ─────────────────────────── invoices ───────────────────────────
 
 pub struct InvoiceHook(pub Side);
@@ -728,6 +800,11 @@ impl DocHook for InvoiceHook {
         if payments > 0 {
             return Err(Error::invalid("payments are allocated to this invoice; cancel those payments first"));
         }
+        if self.0 == Side::Selling
+            && let Some((number, buyer)) = mirrored(hc, doc, true).await?
+        {
+            return Err(Error::invalid(format!("this sale is {number} in {buyer}'s books; cancel that purchase invoice first")));
+        }
         Ok(())
     }
 
@@ -826,6 +903,7 @@ impl DocHook for InvoiceHook {
                 let c = create_for_user(hc, n.invoice, input).await?;
                 Ok(Some(created(n.invoice, &c)))
             }
+            "make_inter_company_invoice" if self.0 == Side::Selling => inter_company_invoice(hc, doc).await.map(Some),
             _ => Ok(None),
         }
     }

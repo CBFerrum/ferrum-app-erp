@@ -209,6 +209,8 @@
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
+    - {name: customer_company, type: link, to: Company, fetch_from: customer.represents_company, read_only: true, label: Group Company, in_filter: true,
+       description: "The group company the customer is: this sale is a purchase in that company's books"}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: posting_time, type: data, default_expr: time, description: "HH:MM:SS, local time (orders documents of the same day)"}
     - {name: due_date, type: date, in_list: true}
@@ -258,4 +260,5 @@
   actions:
     - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
     - {name: make_credit_note, label: Create Credit Note, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: make_inter_company_invoice, label: Create Purchase Invoice in the Group Company, docstatus: [1], permission: read, condition: "doc.customer_company != null && !doc.is_return"}
   list: {columns: [number, customer_name, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}
