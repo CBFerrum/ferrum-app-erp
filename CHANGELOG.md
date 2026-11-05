@@ -9,7 +9,9 @@
   the invoice, so cancelling the invoice reverses what was recognised with the rest; the last day
   takes what rounding left. It runs for every company through the end of last month, and the
   company's **Recognise Deferred Revenue and Expense** recognises through a day an accountant
-  chooses (not one still to come). Each line shows what was recognised and through when.
+  chooses (not one still to come). Each line shows what was recognised and through when. Two
+  runs at once (on two replicas, or an accountant's and the monthly one) recognise each day once:
+  each invoice is locked while its lines are recognised.
 - An item may be deferred by default (Deferred Revenue, Deferred Expense); a line is deferred like
   its item unless it says otherwise. A deferred line needs its service period; a return and a
   stock item are not deferred.

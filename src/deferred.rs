@@ -109,7 +109,8 @@ pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, t
             "select distinct i.id from {invoice_table} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
              where i.tenant_id = $1 and i.docstatus = 1 and coalesce(i.is_return, false) = false and ($2::uuid is null or i.company = $2) \
              and coalesce(l.{flag}, false) and l.service_start_date <= $3 \
-             and (l.deferred_booked_till is null or l.deferred_booked_till < l.service_end_date) and (l.deferred_booked_till is null or l.deferred_booked_till < $3)",
+             and (l.deferred_booked_till is null or l.deferred_booked_till < l.service_end_date) and (l.deferred_booked_till is null or l.deferred_booked_till < $3) \
+             order by i.id",
             invoice_table = q(&invoice_table),
             lines = q(&lines),
             flag = kd.flag,
@@ -127,7 +128,9 @@ pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, t
 }
 
 async fn recognise_invoice(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kd: &Kind, iid: Uuid, through: NaiveDate) -> Result<usize> {
-    let doc = k.get_tx(ctx, tx, kd.invoice, iid, false).await?;
+    // Locked, and taken in the order of their ids: two runs at once (on two replicas, or an
+    // accountant's and the monthly one) recognise each day once, the second finding it done.
+    let doc = k.get_tx(ctx, tx, kd.invoice, iid, true).await?;
     let co = company(k, ctx, tx, id(&doc, "company").unwrap_or_default()).await?;
     let mut entry: Option<(Entry, NaiveDate)> = None;
     let mut updates: Vec<(Uuid, Decimal, NaiveDate)> = Vec::new();
