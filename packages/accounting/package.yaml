@@ -31,6 +31,8 @@ overlays:
           description: "Each tax worked out once on the document's lines together (EN 16931), or line by line and added up"}}
       - {op: add_field, column: true, after: overhead_absorbed_account, field: {name: parent_company, type: link, to: Company, label: Parent Company,
           description: "The group it reports to: a group's books are added up from the parent and every company under it"}}
+      - {op: add_field, column: true, after: parent_company, field: {name: ownership_percent, type: percent, min: "0", max: "100", default: 100, label: Held by the Parent (%),
+          description: "The share of this company its parent company holds; the rest is non-controlling interests in the group's books"}}
       - {op: add_action, action: {name: setup_chart_of_accounts, label: Create Standard Chart of Accounts, permission: write, confirm: 'Create the standard chart of accounts for this company, or add the standard accounts it lacks?'}}
       - {op: add_action, action: {name: recognise_deferred, label: Recognise Deferred Revenue and Expense, permission: write, params: [{name: through, type: date, label: Through, description: "The last day to recognise; yesterday when empty"}]}}
   - entity: Customer
