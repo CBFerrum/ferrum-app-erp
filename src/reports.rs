@@ -64,7 +64,7 @@ const DEFS: &[Def] = &[
         label: "Cash Flow",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "finance_book"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "finance_book", "consolidated"],
     },
     Def {
         name: "deferred_revenue_and_expense",
@@ -155,7 +155,7 @@ impl ReportSource for ErpReports {
             "general_ledger" => general_ledger(&mut tx, ctx, &co, &p).await?,
             "profit_and_loss" => profit_and_loss(k, &mut tx, ctx, &co, &p).await?,
             "balance_sheet" => balance_sheet(k, &mut tx, ctx, &co, &p).await?,
-            "cash_flow" => cash_flow(&mut tx, ctx, &co, &p).await?,
+            "cash_flow" => cash_flow(k, &mut tx, ctx, &co, &p).await?,
             "deferred_revenue_and_expense" => deferred_lines(&mut tx, ctx, &co, &p).await?,
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
@@ -515,13 +515,17 @@ struct Group {
     /// (id, name, currency, currency code).
     members: Vec<(Uuid, String, Uuid, String)>,
     ids: Vec<Uuid>,
+    /// The share of each company the group's owners hold through the chain above it (the parent's
+    /// own: one); the rest of it is non-controlling interests (IFRS 10).
+    held: HashMap<Uuid, Decimal>,
 }
 
 impl Group {
     async fn of(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany) -> Result<Group> {
-        let rows: Vec<(Uuid, String, Option<Uuid>, Option<String>)> = sqlx::query_as(
+        let rows: Vec<(Uuid, String, Option<Uuid>, Option<String>, Option<Uuid>, Option<Decimal>)> = sqlx::query_as(
             "with recursive g(id) as (select $2::uuid union select c.id from e_company c join g on c.parent_company = g.id where c.tenant_id = $1) \
-             select c.id, c.company_name, c.default_currency, trim(cur.code) from g join e_company c on c.tenant_id = $1 and c.id = g.id \
+             select c.id, c.company_name, c.default_currency, trim(cur.code), c.parent_company, c.ownership_percent from g \
+             join e_company c on c.tenant_id = $1 and c.id = g.id \
              left join e_currency cur on cur.tenant_id = c.tenant_id and cur.id = c.default_currency order by c.id <> $2, c.company_name",
         )
         .bind(ctx.tenant)
@@ -535,15 +539,18 @@ impl Group {
         {
             return Err(Error::Forbidden(format!("you do not have access to {name}, a company of this group")));
         }
+        let above: HashMap<Uuid, (Option<Uuid>, Decimal)> =
+            rows.iter().map(|r| (r.0, (r.4, r.5.unwrap_or(Decimal::ONE_HUNDRED) / Decimal::ONE_HUNDRED))).collect();
+        let held = rows.iter().map(|r| (r.0, held_through(r.0, co.id, &above))).collect();
         let members = rows
             .into_iter()
-            .map(|(id, name, currency, code)| match currency {
+            .map(|(id, name, currency, code, ..)| match currency {
                 Some(c) => Ok((id, name, c, code.unwrap_or_default())),
                 None => Err(Error::invalid(format!("{name} has no default currency"))),
             })
             .collect::<Result<Vec<_>>>()?;
         let ids = members.iter().map(|m| m.0).collect();
-        Ok(Group { members, ids })
+        Ok(Group { members, ids, held })
     }
 
     /// How each company translates into the parent's currency up to `on` ([`Rates`]).
@@ -570,19 +577,43 @@ impl Group {
     /// Each company's rate into the parent's currency: its latest on or before `on`.
     async fn closing_rates(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, on: NaiveDate, field: &str) -> Result<HashMap<Uuid, Decimal>> {
         let mut rates = HashMap::new();
-        for (id, name, currency, code) in &self.members {
-            let rate = match crate::util::exchange_rate(k, ctx, tx, *currency, self.members[0].2, on).await {
-                Err(Error::Validation(_)) => {
-                    return Err(Error::field(
-                        field,
-                        format!("{name}: no exchange rate from {code} to {} on or before {on}; add one under Exchange Rate", co.currency),
-                    ));
-                }
-                other => other?,
-            };
-            rates.insert(*id, rate);
+        for i in 0..self.members.len() {
+            let id = self.members[i].0;
+            rates.insert(id, self.rate_on(k, tx, ctx, co, id, on, field).await?);
         }
         Ok(rates)
+    }
+
+    /// A company's latest rate into the parent's currency on or before `on`.
+    #[allow(clippy::too_many_arguments)]
+    async fn rate_on(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, company: Uuid, on: NaiveDate, field: &str) -> Result<Decimal> {
+        let (_, name, currency, code) = &self.members[self.position(company)];
+        match crate::util::exchange_rate(k, ctx, tx, *currency, self.members[0].2, on).await {
+            Err(Error::Validation(_)) => {
+                Err(Error::field(field, format!("{name}: no exchange rate from {code} to {} on or before {on}; add one under Exchange Rate", co.currency)))
+            }
+            other => other,
+        }
+    }
+
+    /// The group's cash and bank on `on` (`cash`: the companies' bank and cash accounts), each
+    /// company's at its rate then.
+    async fn cash_on(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, cash: &[Uuid], on: NaiveDate) -> Result<Decimal> {
+        let held: Vec<(Uuid, Decimal)> = sqlx::query_as(
+            "select company_id, sum(debit - credit) from journal_line_in_book where tenant_id = $1 and company_id = any($2) \
+             and account_id = any($3) and posting_date <= $4 group by 1",
+        )
+        .bind(ctx.tenant)
+        .bind(&self.ids)
+        .bind(cash)
+        .bind(on)
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut total = Decimal::ZERO;
+        for (company, net) in held.into_iter().filter(|h| !h.1.is_zero()) {
+            total += net * self.rate_on(k, tx, ctx, co, company, on, "from_date").await?;
+        }
+        Ok(total.round_dp(co.precision))
     }
 
     fn position(&self, company: Uuid) -> usize {
@@ -668,6 +699,83 @@ macro_rules! cancels {
     };
 }
 
+/// The share of `company` the owners of `top` hold: each holding along the chain of parents up to
+/// it, multiplied (`above`: a company's parent and the share of it that parent holds).
+fn held_through(company: Uuid, top: Uuid, above: &HashMap<Uuid, (Option<Uuid>, Decimal)>) -> Decimal {
+    let (mut share, mut at) = (Decimal::ONE, company);
+    for _ in 0..64 {
+        if at == top {
+            return share;
+        }
+        match above.get(&at) {
+            Some((Some(parent), part)) => {
+                share *= *part;
+                at = *parent;
+            }
+            _ => break,
+        }
+    }
+    share
+}
+
+/// The non-controlling interests in a group's books (IFRS 10), from what each company holds and
+/// earned itself: the share of it held outside the group (one less what the group's owners hold
+/// through the chain above it) of its own net assets on `on` at its closing rate, and of its own
+/// profit over `[from, to]` at the rate of each day ([`Rates`]). A company's investments in the
+/// group's companies (asset accounts marked Eliminate in Consolidation, with no customer or
+/// supplier) are left out of its net assets, so that a chain is not counted twice; what it owes or is
+/// owed by the group's companies stays in, as it is that company's. Per company: (share outside,
+/// net assets, profit, the interest in net assets, the interest in profit).
+async fn non_controlling(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    g: &Group,
+    rates: &Rates,
+    from: Option<NaiveDate>,
+    on: NaiveDate,
+) -> Result<Vec<(Uuid, Decimal, Decimal, Decimal, Decimal, Decimal)>> {
+    let outside: Vec<(Uuid, Decimal)> = g.members.iter().map(|m| (m.0, Decimal::ONE - g.held.get(&m.0).copied().unwrap_or(Decimal::ONE))).collect();
+    if outside.iter().all(|o| o.1.is_zero()) {
+        return Ok(vec![]);
+    }
+    let lines: Vec<(Uuid, String, NaiveDate, Decimal)> = sqlx::query_as(concat!(
+        "select l.company_id, a.root_type, l.posting_date, sum(l.debit - l.credit) from ",
+        group_lines!(),
+        " where l.tenant_id = $1 and l.company_id = any($2) and l.posting_date <= $4 \
+          and not (a.root_type = 'Asset' and a.eliminate_in_consolidation and l.customer_id is null and l.supplier_id is null) \
+          and (a.root_type in ('Asset', 'Liability') or ($3::date is not null and l.posting_date >= $3 and a.root_type in ('Income', 'Expense') \
+               and not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($5)))) \
+          group by 1, 2, 3"
+    ))
+    .bind(ctx.tenant)
+    .bind(&g.ids)
+    .bind(from)
+    .bind(on)
+    .bind(CLOSING_SOURCES.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut figures: HashMap<Uuid, (Decimal, Decimal)> = HashMap::new();
+    for (company, root, day, net) in lines {
+        let Some(rate) = rates.of(company, &root, day) else { continue };
+        let f = figures.entry(company).or_default();
+        if matches!(root.as_str(), "Asset" | "Liability") {
+            f.0 += net * rate;
+        } else {
+            f.1 -= net * rate;
+        }
+    }
+    let r = |v: Decimal| v.round_dp(co.precision);
+    Ok(outside
+        .into_iter()
+        .filter(|o| !o.1.is_zero())
+        .map(|(company, share)| {
+            let (assets, profit) = figures.get(&company).copied().unwrap_or_default();
+            (company, share, r(assets), r(profit), r(assets * share), r(profit * share))
+        })
+        .collect())
+}
+
 /// The accounts of a group's companies: (id, company, name, number, root type, parent account), in chart order.
 type GroupAcc = (Uuid, Uuid, String, Option<String>, String, Option<Uuid>);
 
@@ -713,6 +821,35 @@ async fn group_balances(
     to: NaiveDate,
     skip: &[&str],
 ) -> Result<(HashMap<Uuid, Decimal>, Decimal)> {
+    let mut out: HashMap<Uuid, Decimal> = HashMap::new();
+    let mut reserve = Decimal::ZERO;
+    for m in group_moves(tx, ctx, co, g, from, to, skip).await? {
+        let Some(rate) = rates.of(m.company, &m.root, m.day) else { continue };
+        if !m.eliminated {
+            reserve += rates.reserve(m.company, &m.root, m.day, m.net);
+            *out.entry(m.shown).or_default() += m.net * rate;
+        }
+    }
+    Ok((out.into_iter().map(|(a, v)| (a, v.round_dp(co.precision))).collect(), reserve.round_dp(co.precision)))
+}
+
+/// One day's lines of a group's company on one account: the account, the parent's account it
+/// shows on (itself when eliminated), its root type, whether it is business within the group
+/// (eliminated), and debit less credit.
+struct GroupMove {
+    company: Uuid,
+    account: Uuid,
+    shown: Uuid,
+    root: String,
+    day: NaiveDate,
+    eliminated: bool,
+    net: Decimal,
+}
+
+/// The lines of a group's companies over `[from, to]`, per company, account and day, entries from
+/// the `skip` sources left out, each with the parent's account it shows on ([`group_balances`]).
+#[allow(clippy::too_many_arguments)]
+async fn group_moves(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, g: &Group, from: Option<NaiveDate>, to: NaiveDate, skip: &[&str]) -> Result<Vec<GroupMove>> {
     let accs = group_accounts(tx, ctx, g).await?;
     let index: HashMap<Uuid, usize> = accs.iter().enumerate().map(|(i, a)| (a.0, i)).collect();
     let same = same_account(&accs, co.id);
@@ -752,18 +889,13 @@ async fn group_balances(
     .bind(skip.iter().map(|s| s.to_string()).collect::<Vec<_>>())
     .fetch_all(&mut **tx)
     .await?;
-    let mut out: HashMap<Uuid, Decimal> = HashMap::new();
-    let mut reserve = Decimal::ZERO;
+    let mut out = Vec::with_capacity(lines.len());
     for (company, account, day, eliminated, net) in lines {
         let Some(&i) = index.get(&account) else { continue };
-        let root = accs[i].4.as_str();
-        let Some(rate) = rates.of(company, root, day) else { continue };
-        if !eliminated {
-            reserve += rates.reserve(company, root, day, net);
-            *out.entry(shown_on(i)?).or_default() += net * rate;
-        }
+        let shown = if eliminated { account } else { shown_on(i)? };
+        out.push(GroupMove { company, account, shown, root: accs[i].4.clone(), day, eliminated, net });
     }
-    Ok((out.into_iter().map(|(a, v)| (a, v.round_dp(co.precision))).collect(), reserve.round_dp(co.precision)))
+    Ok(out)
 }
 
 /// The trial balance of a group: the company asked for and every company under it, each one
@@ -1031,10 +1163,15 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
     let dims = dims(tx, ctx, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let mut bals = Vec::new();
+    // The part of each period's profit that is non-controlling interests', and how it is made up.
+    let (mut minority, mut minority_of) = (Vec::new(), Vec::new());
     for (f, t) in &spans {
         bals.push(match &group {
             Some(g) => {
                 let rates = g.rates(k, tx, ctx, co, *t, "to_date").await?;
+                let parts = non_controlling(tx, ctx, co, g, &rates, Some(*f), *t).await?;
+                minority.push(parts.iter().map(|p| p.5).sum::<Decimal>());
+                minority_of.push(parts);
                 group_balances(tx, ctx, co, g, &rates, Some(*f), *t, CLOSING_SOURCES).await?.0
             }
             None => balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?,
@@ -1050,17 +1187,46 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
     rows.extend(node_rows(&exp_nodes, 1));
     rows.push(total_row("Total Expenses", &expense));
     rows.push(total_row(if net[0] >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, &net));
+    let split = minority.iter().any(|m| !m.is_zero());
+    let owners: Vec<Decimal> = net.iter().zip(minority.iter().chain(std::iter::repeat(&Decimal::ZERO))).map(|(n, m)| *n - *m).collect();
+    if split {
+        let mut row = json!({"account": "Attributable to owners of the parent", "_indent": 1});
+        amounts(&mut row, &owners);
+        rows.push(row);
+        let mut row = json!({"account": "Attributable to non-controlling interests", "_indent": 1});
+        amounts(&mut row, &minority);
+        rows.push(row);
+    }
     let labels: Vec<String> = spans.iter().map(|(f, t)| periods::label(*f, *t)).collect();
     let mut meta = json!({"from_date": from, "to_date": to, "periods": periods_meta(&spans, &labels, &[("income", &income), ("expense", &expense), ("net_profit", &net)])});
     if let Some(g) = &group {
         meta["companies"] = json!(g.names());
+        if split {
+            meta["non_controlling_interests"] = minority_json(g, &minority_of[0]);
+        }
+    }
+    let mut totals = json!({"income": money(income[0]), "expense": money(expense[0]), "net_profit": money(net[0])});
+    if split {
+        totals["profit_attributable_to_owners"] = money(owners[0]);
+        totals["profit_attributable_to_non_controlling_interests"] = money(minority[0]);
     }
     Ok(json!({
         "columns": statement_columns(&labels),
         "rows": rows,
-        "totals": {"income": money(income[0]), "expense": money(expense[0]), "net_profit": money(net[0])},
+        "totals": totals,
         "meta": meta,
     }))
+}
+
+/// How the non-controlling interests are made up, company by company ([`non_controlling`]).
+fn minority_json(g: &Group, parts: &[(Uuid, Decimal, Decimal, Decimal, Decimal, Decimal)]) -> Value {
+    json!(parts
+        .iter()
+        .map(|(company, share, assets, profit, in_assets, in_profit)| {
+            json!({"company": g.members[g.position(*company)].1, "held_outside_pct": money((*share * Decimal::ONE_HUNDRED).round_dp(4)),
+                   "net_assets": money(*assets), "profit": money(*profit), "interest_in_net_assets": money(*in_assets), "interest_in_profit": money(*in_profit)})
+        })
+        .collect::<Vec<_>>())
 }
 
 async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
@@ -1070,10 +1236,15 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
     let accs = accounts(tx, ctx, co).await?;
     let mut bals = Vec::new();
     let mut reserves = Vec::new();
+    // The part of each day's equity that is non-controlling interests', and how it is made up.
+    let (mut minority, mut minority_of) = (Vec::new(), Vec::new());
     for day in &on {
         bals.push(match &group {
             Some(g) => {
                 let rates = g.rates(k, tx, ctx, co, *day, "as_of").await?;
+                let parts = non_controlling(tx, ctx, co, g, &rates, None, *day).await?;
+                minority.push(parts.iter().map(|p| p.4).sum::<Decimal>());
+                minority_of.push(parts);
                 let (b, reserve) = group_balances(tx, ctx, co, g, &rates, None, *day, &[]).await?;
                 reserves.push(reserve);
                 b
@@ -1123,6 +1294,15 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
         amounts(&mut row, residue);
         rows.push(row);
     }
+    // Of the group's equity, what non-controlling interests hold, and so what is the owners'.
+    let split = minority.iter().any(|m| !m.is_zero());
+    let owners: Vec<Decimal> = all_equity.iter().zip(minority.iter().chain(std::iter::repeat(&Decimal::ZERO))).map(|(e, m)| *e - *m).collect();
+    if split {
+        rows.push(total_row("Equity attributable to owners of the parent", &owners));
+        let mut row = json!({"account": "Non-controlling interests", "_indent": 1});
+        amounts(&mut row, &minority);
+        rows.push(row);
+    }
     rows.push(total_row("Total Equity", &all_equity));
     rows.push(total_row("Total Liabilities and Equity", &total));
     let labels: Vec<String> = on.iter().map(|d| d.format("%d %b %Y").to_string()).collect();
@@ -1131,11 +1311,19 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
                           "periods": periods_meta(&spans, &labels, &[("assets", &assets), ("liabilities", &liabilities), ("equity", &all_equity)])});
     if let Some(g) = &group {
         meta["companies"] = json!(g.names());
+        if split {
+            meta["non_controlling_interests"] = minority_json(g, &minority_of[0]);
+        }
+    }
+    let mut totals = json!({"assets": money(assets[0]), "liabilities": money(liabilities[0]), "equity": money(all_equity[0])});
+    if split {
+        totals["equity_attributable_to_owners"] = money(owners[0]);
+        totals["non_controlling_interests"] = money(minority[0]);
     }
     Ok(json!({
         "columns": statement_columns(&labels),
         "rows": rows,
-        "totals": {"assets": money(assets[0]), "liabilities": money(liabilities[0]), "equity": money(all_equity[0])},
+        "totals": totals,
         "meta": meta,
     }))
 }
@@ -1157,22 +1345,82 @@ fn section(a: &Acc) -> &'static str {
 /// other accounts of the balance sheet, which the account's type or its own setting sorts into
 /// operating, investing and financing activities. It must end where the bank and cash accounts did;
 /// `meta.difference` says by how much it does not (it should always be nothing).
-async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+/// One period of a cash flow statement.
+struct CashFigures {
+    profit: Decimal,
+    /// The cash each balance sheet account's movement brought in (or took out).
+    impact: HashMap<Uuid, Decimal>,
+    /// The part of the cash accounts' movement that was only revaluation.
+    revalued: Decimal,
+    /// The effect of exchange rates on cash: its revaluation, and for a group, cash translated at the
+    /// rates of either end rather than of its days.
+    exchange: Decimal,
+    /// For a group: what business eliminated only in part left in the profit without a movement.
+    residue: Decimal,
+    opening: Decimal,
+    closing: Decimal,
+}
+
+/// A group's cash flow over `[f, t]` (IAS 7.25-28): every flow translated at the rate of its day,
+/// whatever it is booked to; business within the group left out; cash each company's bank and cash
+/// accounts, at the rates of either end. What translating at those rates rather than at the flows'
+/// own is the effect of exchange rates on cash.
+#[allow(clippy::too_many_arguments)]
+async fn group_cash_figures(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, g: &Group, f: NaiveDate, t: NaiveDate) -> Result<CashFigures> {
+    let cash: Vec<Uuid> =
+        sqlx::query_scalar("select id from e_account where tenant_id = $1 and company = any($2) and root_type = 'Asset' and account_type in ('Bank', 'Cash')")
+            .bind(ctx.tenant)
+            .bind(&g.ids)
+            .fetch_all(&mut **tx)
+            .await?;
+    let rates = g.rates(k, tx, ctx, co, t, "to_date").await?;
+    let (mut profit, mut impact, mut moved) = (Decimal::ZERO, HashMap::new(), Decimal::ZERO);
+    for m in group_moves(tx, ctx, co, g, Some(f), t, CLOSING_SOURCES).await? {
+        if m.eliminated {
+            continue;
+        }
+        let Some(rate) = rates.of(m.company, "Income", m.day) else { continue };
+        let v = m.net * rate;
+        if cash.contains(&m.account) {
+            moved += v;
+        } else if matches!(m.root.as_str(), "Income" | "Expense") {
+            profit -= v;
+        } else {
+            *impact.entry(m.shown).or_default() -= v;
+        }
+    }
+    let revalued: Vec<(Uuid, NaiveDate, Decimal)> = sqlx::query_as(
+        "select l.company_id, l.posting_date, sum(l.debit - l.credit) from journal_line_in_book l \
+         join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id where l.tenant_id = $1 and l.company_id = any($2) \
+         and l.account_id = any($3) and l.posting_date between $4 and $5 and e.source_entity = 'ExchangeRevaluation' group by 1, 2",
+    )
+    .bind(ctx.tenant)
+    .bind(&g.ids)
+    .bind(&cash)
+    .bind(f)
+    .bind(t)
+    .fetch_all(&mut **tx)
+    .await?;
+    let revalued: Decimal = revalued.iter().filter_map(|(c, d, net)| rates.of(*c, "Income", *d).map(|r| *net * r)).sum();
+    let opening = g.cash_on(k, tx, ctx, co, &cash, f.pred_opt().unwrap_or(f)).await?;
+    let closing = g.cash_on(k, tx, ctx, co, &cash, t).await?;
+    let residue = moved - profit - impact.values().copied().sum::<Decimal>();
+    let r = |v: Decimal| v.round_dp(co.precision);
+    Ok(CashFigures { profit: r(profit), impact, revalued: r(revalued), exchange: r(revalued + (closing - opening - moved)), residue, opening, closing })
+}
+
+async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
     let spans = spans(p, from, to)?;
+    let group = Group::asked(tx, ctx, co, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let cash = |a: &Acc| a.root_type == "Asset" && matches!(a.account_type.as_deref(), Some("Bank" | "Cash"));
-    struct Figures {
-        profit: Decimal,
-        /// The cash each balance sheet account's movement brought in (or took out).
-        impact: HashMap<Uuid, Decimal>,
-        /// The part of the cash accounts' movement that was only revaluation.
-        exchange: Decimal,
-        opening: Decimal,
-        closing: Decimal,
-    }
-    let mut per: Vec<Figures> = Vec::new();
+    let mut per: Vec<CashFigures> = Vec::new();
     for (f, t) in &spans {
+        if let Some(g) = &group {
+            per.push(group_cash_figures(k, tx, ctx, co, g, *f, *t).await?);
+            continue;
+        }
         let moves = balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &Dims::default()).await?;
         let moved = |a: &Acc| moves.get(&a.id).copied().unwrap_or_default();
         let profit = -accs.iter().filter(|a| matches!(a.root_type.as_str(), "Income" | "Expense")).map(moved).sum::<Decimal>();
@@ -1195,10 +1443,10 @@ async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
         .bind(t)
         .fetch_one(&mut **tx)
         .await?;
-        per.push(Figures { profit, impact, exchange, opening, closing });
+        per.push(CashFigures { profit, impact, revalued: exchange, exchange, residue: Decimal::ZERO, opening, closing });
     }
     let n = per.len();
-    let column = |f: &dyn Fn(&Figures) -> Decimal| -> Vec<Decimal> { per.iter().map(f).collect() };
+    let column = |f: &dyn Fn(&CashFigures) -> Decimal| -> Vec<Decimal> { per.iter().map(f).collect() };
     let sum_of = |parts: &[Vec<Decimal>]| -> Vec<Decimal> { (0..n).map(|i| parts.iter().map(|c| c[i]).sum()).collect() };
     let section_rows = |which: &str| -> (Vec<Value>, Vec<Decimal>) {
         let mut rows = Vec::new();
@@ -1218,12 +1466,13 @@ async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
         (rows, total)
     };
     let profit = column(&|f| f.profit);
-    let unrealised = column(&|f| -f.exchange);
+    let unrealised = column(&|f| -f.revalued);
     let exchange = column(&|f| f.exchange);
+    let residue = column(&|f| f.residue.round_dp(co.precision));
     let (operating_rows, operating_lines) = section_rows("operating");
     let (investing_rows, investing) = section_rows("investing");
     let (financing_rows, financing) = section_rows("financing");
-    let operating = sum_of(&[profit.clone(), operating_lines, unrealised.clone()]);
+    let operating = sum_of(&[profit.clone(), operating_lines, unrealised.clone(), residue.clone()]);
     let net = sum_of(&[operating.clone(), investing.clone(), financing.clone(), exchange.clone()]);
     let opening = column(&|f| f.opening);
     let closing = column(&|f| f.closing);
@@ -1236,6 +1485,11 @@ async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
     if unrealised.iter().any(|v| !v.is_zero()) {
         let mut row = json!({"account": "Exchange gain (loss) on cash and bank, not yet realised", "section": "exchange", "_indent": 1});
         amounts(&mut row, &unrealised);
+        rows.push(row);
+    }
+    if residue.iter().any(|v| !v.is_zero()) {
+        let mut row = json!({"account": INTERCOMPANY_DIFFERENCE, "section": "operating", "_indent": 1});
+        amounts(&mut row, &residue);
         rows.push(row);
     }
     rows.push(total_row("Net cash from operating activities", &operating));
@@ -1261,6 +1515,8 @@ async fn cash_flow(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
         "totals": {"operating": money(operating[0]), "investing": money(investing[0]), "financing": money(financing[0]), "net_change": money(net[0]),
                    "opening": money(opening[0]), "closing": money(closing[0])},
         "meta": {"from_date": from, "to_date": to, "reconciled": difference[0].is_zero(), "difference": money(difference[0]),
+                 "companies": group.as_ref().map(|g| g.names()),
+                 "translation": group.as_ref().map(|_| "each flow at the rate of its day; cash at the rates of either end, the rest the effect of exchange rates"),
                  "periods": periods_meta(&spans, &labels, &[("operating", &operating), ("investing", &investing), ("financing", &financing), ("net_change", &net),
                                                            ("opening", &opening), ("closing", &closing), ("difference", &difference)])},
     }))

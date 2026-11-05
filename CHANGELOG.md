@@ -1,5 +1,22 @@
 # Changelog
 
+## ERP 0.12.0: non-controlling interests and a group's cash flow
+
+- A company can say how much of it its parent holds (**Held by the Parent (%)**, 100 unless set).
+  The group's owners hold a company through the chain above it, and the rest is
+  **non-controlling interests** (IFRS 10): the consolidated balance sheet splits its equity into what
+  is attributable to the owners of the parent and the non-controlling interests, and the
+  consolidated profit and loss its profit the same way. Each company's share held outside the group
+  is taken of its own net assets at the closing rate and of its own profit at the rates of its days;
+  a company's investments in the group's companies are left out of its net assets, so that a chain
+  is not counted twice. `meta.non_controlling_interests` shows how each company's part is made up.
+  The group's totals are unchanged (FERRUM-ERP-005).
+- The **cash flow** of a group (`consolidated`): every flow translated at the rate of its day,
+  business within the group left out, each company's own bank and cash accounts as its cash, at the
+  rates of either end, and what that leaves the effect of exchange rates on cash (IAS 7). Business
+  eliminated only in part shows as a line of its own, so the statement ends where the group's cash
+  does.
+
 ## ERP 0.11.0: a group's books translated as IAS 21 says
 
 - A group's consolidated trial balance, profit and loss and balance sheet translate a company in

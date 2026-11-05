@@ -50,7 +50,7 @@ and CRM build on its engine.
 
 | | Module | What it does | Reports |
 |---|---|---|---|
-| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, period close | trial balance, general ledger, profit and loss, balance sheet, receivables, payables, and for a group of companies a consolidated trial balance and statements |
+| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, period close | trial balance, general ledger, profit and loss, balance sheet, cash flow, receivables, payables, and for a group of companies a consolidated trial balance and statements, with non-controlling interests |
 | 🧾 | **Selling** | sales orders, delivery notes and invoices with exact tax maths, pricing rules, receivables | receivables, sales register |
 | 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts | payables, purchase register |
 | 📦 | **Inventory** | warehouses and stock entries on an append-only stock ledger with moving-average and FIFO cost layers | stock balance, stock ledger |
@@ -336,6 +336,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.12.0** | Non-controlling interests: a company says how much of it its parent holds, and the consolidated balance sheet and profit and loss split equity and profit between the owners of the parent and the non-controlling interests. A group's cash flow, every flow at the rate of its day, with the effect of exchange rates on cash. |
 | **ERP 0.11.0** | A group's books translated as IAS 21 says: assets and liabilities at the closing rate, income, expenses and equity at the rate of their day where the books have one; what that leaves is the foreign currency translation reserve, in equity. |
 | **ERP 0.10.2, Finance 0.3.1** | A reversal day left empty is the day after the entry's own, worked out when it is submitted, not while it was a draft. Actions say what they did. |
 | **ERP 0.10.1** | Create Standard Chart of Accounts brings an existing company's chart up to the standard one: the accounts it lacks under their standard parents, and the empty default links set. |
