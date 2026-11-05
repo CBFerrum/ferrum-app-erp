@@ -68,8 +68,8 @@ and CRM build on its engine.
 | 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.0` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | `0.2.2` | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
-| 💰 | **Finance** | `0.3.1` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
-| 📋 | **Procurement** | `0.1.2` | material requests, requests for quotation, supplier quotations and scorecards |
+| 💰 | **Finance** | `0.3.2` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
+| 📋 | **Procurement** | `0.1.3` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
 | 🏭 | **Warehouse Management** | `0.2.1` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.14.2, Procurement 0.1.3, Finance 0.3.2** | Record pages' actions ask for what they need: the supplier of a supplier quotation and, where an item has no approved supplier, of a purchase order; the warehouses of a stock entry and a work order; who paid or was paid for a bank line's payment entry, and the account of its journal entry. |
 | **ERP 0.14.1** | Rebuilt with Ferrum-Frontend 00dea07: a workflow state's kept fields are read-only, its needed ones required. |
 | **ERP 0.14.0** | A subscription's revenue is earned over the days it pays for, refunds over the days they give back; MRR reads plans as they stood, with expansion, contraction and net revenue retention. |
 | **ERP 0.13.0** | A sale to one of the group's companies makes that company's purchase invoice, from the supplier that represents the seller, numbered as the sale, once. |

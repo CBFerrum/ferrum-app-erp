@@ -52,13 +52,16 @@
        message: "Required By cannot be before the request date"}
   actions:
     - {name: make_purchase_order, label: Create Purchase Order, docstatus: [1], permission: read,
-       condition: "doc.material_request_type == 'Purchase' && doc.status != 'Stopped' && doc.per_ordered < 100.0"}
+       condition: "doc.material_request_type == 'Purchase' && doc.status != 'Stopped' && doc.per_ordered < 100.0",
+       params: [{name: supplier, label: Supplier, type: link, to: Supplier, description: "For the lines whose item has no approved supplier"}]}
     - {name: make_rfq, label: Create Request for Quotation, docstatus: [1], permission: read,
        condition: "doc.material_request_type == 'Purchase' && doc.status != 'Stopped' && doc.per_ordered < 100.0"}
     - {name: make_work_order, label: Create Work Orders, docstatus: [1], permission: read,
-       condition: "doc.material_request_type == 'Manufacture' && doc.status != 'Stopped' && doc.per_ordered < 100.0"}
+       condition: "doc.material_request_type == 'Manufacture' && doc.status != 'Stopped' && doc.per_ordered < 100.0",
+       params: [{name: source_warehouse, label: Source Warehouse, type: link, to: Warehouse, description: "Where the materials come from"}]}
     - {name: make_stock_entry, label: Create Stock Entry, docstatus: [1], permission: read,
-       condition: "doc.material_request_type in ['Material Transfer', 'Material Issue', 'Customer Provided'] && doc.status != 'Stopped' && doc.per_ordered < 100.0"}
+       condition: "doc.material_request_type in ['Material Transfer', 'Material Issue', 'Customer Provided'] && doc.status != 'Stopped' && doc.per_ordered < 100.0",
+       params: [{name: from_warehouse, label: From Warehouse, type: link, to: Warehouse, description: "Where the stock comes from, when the request names none"}]}
     - {name: stop, label: Stop, docstatus: [1], permission: submit, condition: "doc.status != 'Stopped' && doc.per_ordered < 100.0",
        confirm: "Stop this request? Nothing more can be ordered against it until it is resumed."}
     - {name: resume, label: Resume, docstatus: [1], permission: submit, condition: "doc.status == 'Stopped'"}

@@ -896,13 +896,13 @@ async fn unreconcile(hc: &mut HookCtx<'_>, doc: &Doc, only: Option<Uuid>) -> Res
 /// With `allocate_invoices` it settles the party's oldest open invoices, otherwise it stays an
 /// advance (see the invoices' Allocate Advance Payments action).
 async fn make_payment(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
-    let party = params
-        .get("party")
-        .and_then(Value::as_str)
-        .and_then(|x| x.parse::<Uuid>().ok())
-        .ok_or_else(|| Error::field("party", "choose the customer or supplier"))?;
-    let bank = bank(hc, id(doc, "bank_account").unwrap_or_default()).await?;
     let receive = signed(doc) > Decimal::ZERO;
+    // `party`, or the record page's `customer` for money received and `supplier` for money paid out.
+    let uuid = |name: &str| params.get(name).and_then(Value::as_str).filter(|x| !x.is_empty()).and_then(|x| x.parse::<Uuid>().ok());
+    let party = uuid("party").or_else(|| uuid(if receive { "customer" } else { "supplier" })).ok_or_else(|| {
+        if receive { Error::field("customer", "choose the customer who paid") } else { Error::field("supplier", "choose the supplier who was paid") }
+    })?;
+    let bank = bank(hc, id(doc, "bank_account").unwrap_or_default()).await?;
     let mut pe = Doc::new();
     pe.insert("company".into(), json!(bank.company.id.to_string()));
     pe.insert("payment_type".into(), json!(if receive { "Receive" } else { "Pay" }));

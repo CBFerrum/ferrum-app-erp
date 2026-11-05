@@ -555,7 +555,11 @@ async fn scenario() {
     assert_eq!(coffees.len(), 2);
     t.action(&am, "BankTransaction", uid(&coffees[0]), "make_journal_entry", json!({"account": admin_exp.to_string(), "cost_center": main.to_string()})).await;
     let t_globex = uid(&t.find_one("BankTransaction", json!({"description": "Transfer, Globex"})).await);
-    let made = t.action(&au, "BankTransaction", t_globex, "make_payment_entry", json!({"party": globex.to_string()})).await;
+    // The record page names the customer for money received (its dialog has a customer and a
+    // supplier); a supplier does not do for a deposit.
+    let e = t.k.run_action(&au, "BankTransaction", t_globex, "make_payment_entry", json!({"supplier": supplies.to_string()})).await.unwrap_err();
+    assert!(invalid(&e, "choose the customer who paid"), "{e:?}");
+    let made = t.action(&au, "BankTransaction", t_globex, "make_payment_entry", json!({"customer": globex.to_string(), "supplier": ""})).await;
     let pe_globex = vid(&made);
     let pe_doc = t.get("PaymentEntry", pe_globex).await;
     assert_eq!(
