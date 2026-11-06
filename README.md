@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.14.5** | Rebuilt with Ferrum-Frontend a76295e: times on a person's own clock when they chose one. |
 | **ERP 0.14.4** | Rebuilt with Ferrum-Frontend 24c3951: times on the workspace's clock; drafts headed as drafts. |
 | **ERP 0.14.3** | Rebuilt with Ferrum-Frontend bb60115: empty numbers read as the server reads them; settings open as their record. |
 | **ERP 0.14.2, Procurement 0.1.3, Finance 0.3.2** | Record pages' actions ask for what they need: the supplier of a supplier quotation and, where an item has no approved supplier, of a purchase order; the warehouses of a stock entry and a work order; who paid or was paid for a bank line's payment entry, and the account of its journal entry. A purchase invoice is not submitted with the placeholder number its draft was made with. |
