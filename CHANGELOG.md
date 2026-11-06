@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3
+
+Rebuilt with Ferrum-Frontend bb60115: a record page reads an empty number or check as the server does, so an action whose condition needs one shows, and a workspace's settings open as their one record.
+
 ## ERP 0.14.2, Procurement 0.1.3, Finance 0.3.2: record pages' actions ask for what they need
 
 Found walking procure to pay in a browser: a material request's Create Purchase Order was refused
