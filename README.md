@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.14.8** | Rebuilt with Ferrum-Frontend 63280d3: right to left, pages mirror; the records pages' words in Arabic and Hindi. |
 | **ERP 0.14.7** | Rebuilt with Ferrum-Frontend a64416a: a box whose default is 1 shows ticked. |
 | **ERP 0.14.6** | Rebuilt with Ferrum-Frontend 922fcfb: action dialogs say every refusal and ask once. |
 | **ERP 0.14.5** | Rebuilt with Ferrum-Frontend a76295e: times on a person's own clock when they chose one. |
