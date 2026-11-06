@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **ERP 0.14.7** | Rebuilt with Ferrum-Frontend a64416a: a box whose default is 1 shows ticked. |
 | **ERP 0.14.6** | Rebuilt with Ferrum-Frontend 922fcfb: action dialogs say every refusal and ask once. |
 | **ERP 0.14.5** | Rebuilt with Ferrum-Frontend a76295e: times on a person's own clock when they chose one. |
 | **ERP 0.14.4** | Rebuilt with Ferrum-Frontend 24c3951: times on the workspace's clock; drafts headed as drafts. |

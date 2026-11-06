@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.7
+
+Rebuilt with Ferrum-Frontend a64416a: a new record's box whose default is 1 shows ticked, as it is saved.
+
 ## 0.14.6
 
 Rebuilt with Ferrum-Frontend 922fcfb: an action's dialog says every refusal, the errors on what the action made (another record's rows) among them, and an action with parameters and a confirmation asks once.
