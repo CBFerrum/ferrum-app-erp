@@ -7,7 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, formatDate, saveBlob, todayIso } from "@ferrum/client";
+import { api, formatDate, saveBlob, todayIso, t as tr } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe, useMetaIndex } from "@ferrum/records";
 import { sub } from "./decimal";
@@ -37,24 +37,24 @@ function Entries({ title, drill, onClose }: { title: string; drill: Drill; onClo
   });
   const known = new Set(entities?.map((e) => e.name));
   return (
-    <Dialog open wide onClose={onClose} title={title} footer={<Link className="btn btn-default btn-md" to={ledgerHref(drill)}>Open in the general ledger</Link>}>
+    <Dialog open wide onClose={onClose} title={title} footer={<Link className="btn btn-default btn-md" to={ledgerHref(drill)}>{tr("Open in the general ledger")}</Link>}>
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load the entries" />
+        <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the entries")} />
       ) : !q.data ? (
-        <PageLoading label="Loading the entries" />
+        <PageLoading label={tr("Loading the entries")} />
       ) : q.data.rows.length <= 2 ? (
-        <EmptyState title="No entries in this period" icon="list" />
+        <EmptyState title={tr("No entries in this period")} icon="list" />
       ) : (
         <div className="table-wrap erp-entries-table">
           <table className="table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Entry</th>
-                <th>Account</th>
-                <th className="num">Debit</th>
-                <th className="num">Credit</th>
-                <th className="num">Balance</th>
+                <th>{tr("Date")}</th>
+                <th>{tr("Entry")}</th>
+                <th>{tr("Account")}</th>
+                <th className="num">{tr("Debit")}</th>
+                <th className="num">{tr("Credit")}</th>
+                <th className="num">{tr("Balance")}</th>
               </tr>
             </thead>
             <tbody>
@@ -79,7 +79,7 @@ function Entries({ title, drill, onClose }: { title: string; drill: Drill; onClo
           </table>
         </div>
       )}
-      {q.data?.meta.truncated && <p className="faint">Only the first entries are shown. Open the general ledger for a narrower look.</p>}
+      {q.data?.meta.truncated && <p className="faint">{tr("Only the first entries are shown. Open the general ledger for a narrower look.")}</p>}
     </Dialog>
   );
 }
@@ -151,19 +151,19 @@ export function Statement({ kind }: { kind: Kind }) {
   const compared = columns.length > 1;
 
   let body: ReactNode;
-  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not run the statement" />;
-  else if (!data) body = <PageLoading label="Running the statement" />;
+  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not run the statement")} />;
+  else if (!data) body = <PageLoading label={tr("Running the statement")} />;
   else if (kind === "profit_and_loss" && data.rows.length <= 5) {
     body = (
-      <EmptyState title="Nothing was posted in this period" icon="chart">
-        <p className="muted">Pick another period, or check the company and the filters above.</p>
+      <EmptyState title={tr("Nothing was posted in this period")} icon="chart">
+        <p className="muted">{tr("Pick another period, or check the company and the filters above.")}</p>
       </EmptyState>
     );
   } else {
     body = (
       <>
-        {data.meta.balanced === false && <Alert tone="error">The balance sheet is out of balance by {show(data.meta.difference)}. This should never happen: tell whoever looks after the books.</Alert>}
-        {data.meta.reconciled === false && <Alert tone="error">The cash flow ends {show(data.meta.difference)} away from the bank and cash accounts. This should never happen: tell whoever looks after the books.</Alert>}
+        {data.meta.balanced === false && <Alert tone="error">{tr("The balance sheet is out of balance by")} {show(data.meta.difference)}{tr(". This should never happen: tell whoever looks after the books.")}</Alert>}
+        {data.meta.reconciled === false && <Alert tone="error">{tr("The cash flow ends")} {show(data.meta.difference)} {tr("away from the bank and cash accounts. This should never happen: tell whoever looks after the books.")}</Alert>}
         <Headlines kind={kind} data={data} />
         <div className="table-wrap erp-statement">
           <table className="table">
@@ -195,7 +195,7 @@ export function Statement({ kind }: { kind: Kind }) {
                     return (
                       <td key={c.name} className="num">
                         {r.account_id ? (
-                          <button type="button" className="erp-fig" title="Show the entries behind this figure" onClick={() => open(r, c.name)}>
+                          <button type="button" className="erp-fig" title={tr("Show the entries behind this figure")} onClick={() => open(r, c.name)}>
                             {show(v)}
                           </button>
                         ) : (
@@ -229,7 +229,7 @@ export function Statement({ kind }: { kind: Kind }) {
           <p className="page-sub">{kind === "balance_sheet" ? `As of ${formatDate(asOf)}` : `${formatDate(from)} to ${formatDate(to)}`}</p>
         </div>
         <div className="erp-tools">
-          <div className="segmented" role="group" aria-label="Statement">
+          <div className="segmented" role="group" aria-label={tr("Statement")}>
             {KINDS.map((k) => (
               <Link key={k.id} to={{ pathname: k.path, search: sp.toString() }} aria-current={k.id === kind ? "page" : undefined} className="erp-seg" data-on={k.id === kind || undefined}>
                 {k.label}
@@ -237,12 +237,12 @@ export function Statement({ kind }: { kind: Kind }) {
             ))}
           </div>
           <Button icon="download" onClick={save} disabled={!data}>
-            Download CSV
+            {tr("Download CSV")}
           </Button>
         </div>
       </header>
 
-      <form className="erp-filters" onSubmit={(e) => e.preventDefault()} aria-label="What the statement covers">
+      <form className="erp-filters" onSubmit={(e) => e.preventDefault()} aria-label={tr("What the statement covers")}>
         <Field label={kind === "balance_sheet" ? "As of" : "Period"} htmlFor="st-period">
           <select
             id="st-period"
@@ -258,32 +258,32 @@ export function Statement({ kind }: { kind: Kind }) {
                 {p.label}
               </option>
             ))}
-            <option value="custom">Choose dates…</option>
+            <option value="custom">{tr("Choose dates…")}</option>
           </select>
         </Field>
         {kind === "balance_sheet" ? (
-          <Field label="Date" htmlFor="st-as-of">
+          <Field label={tr("Date")} htmlFor="st-as-of">
             <input id="st-as-of" className="input" type="date" value={asOf} onChange={(e) => put({ as_of: e.target.value || null })} />
           </Field>
         ) : (
           <>
-            <Field label="From" htmlFor="st-from">
+            <Field label={tr("From")} htmlFor="st-from">
               <input id="st-from" className="input" type="date" value={from} max={to} onChange={(e) => put({ from_date: e.target.value || null })} />
             </Field>
-            <Field label="To" htmlFor="st-to">
+            <Field label={tr("To")} htmlFor="st-to">
               <input id="st-to" className="input" type="date" value={to} min={from} onChange={(e) => put({ to_date: e.target.value || null })} />
             </Field>
           </>
         )}
-        <Field label="Compare with" htmlFor="st-compare">
+        <Field label={tr("Compare with")} htmlFor="st-compare">
           <select id="st-compare" className="select" value={compare} onChange={(e) => put({ compare: e.target.value || null, periods: null })}>
-            <option value="">Nothing</option>
-            <option value="Previous period">The period before</option>
-            <option value="Previous year">The same period a year before</option>
+            <option value="">{tr("Nothing")}</option>
+            <option value="Previous period">{tr("The period before")}</option>
+            <option value="Previous year">{tr("The same period a year before")}</option>
           </select>
         </Field>
         {compare && (
-          <Field label="How many" htmlFor="st-many">
+          <Field label={tr("How many")} htmlFor="st-many">
             <select id="st-many" className="select" value={many} onChange={(e) => put({ periods: e.target.value === "1" ? null : e.target.value })}>
               {["1", "2", "3"].map((n) => (
                 <option key={n}>{n}</option>
@@ -291,16 +291,16 @@ export function Statement({ kind }: { kind: Kind }) {
             </select>
           </Field>
         )}
-        <Field label="Company" htmlFor="st-company">
+        <Field label={tr("Company")} htmlFor="st-company">
           <LinkInput to="Company" id="st-company" value={company} onChange={(id) => put({ company: id })} />
         </Field>
         {kind === "profit_and_loss" && (
           <>
-            <Field label="Cost centre" htmlFor="st-cc" hint="With the ones below it.">
-              <LinkInput to="CostCenter" id="st-cc" value={costCenter} placeholder="All" onChange={(id) => put({ cost_center: id })} />
+            <Field label={tr("Cost centre")} htmlFor="st-cc" hint={tr("With the ones below it.")}>
+              <LinkInput to="CostCenter" id="st-cc" value={costCenter} placeholder={tr("All")} onChange={(id) => put({ cost_center: id })} />
             </Field>
-            <Field label="Project" htmlFor="st-project">
-              <LinkInput to="Project" id="st-project" value={project} placeholder="All" onChange={(id) => put({ project: id })} />
+            <Field label={tr("Project")} htmlFor="st-project">
+              <LinkInput to="Project" id="st-project" value={project} placeholder={tr("All")} onChange={(id) => put({ project: id })} />
             </Field>
           </>
         )}

@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, todayIso } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, todayIso, t } from "@ferrum/client";
 import { Button, confirmDialog, EmptyState, ErrorState, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { destination, draftsPath, monthName, needing, type Overview, plural, row } from "./attention";
@@ -75,8 +75,8 @@ export function Today() {
   };
 
   let body: ReactNode;
-  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load the overview" />;
-  else if (!q.data) body = <PageLoading label="Looking at the books" />;
+  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={t("Could not load the overview")} />;
+  else if (!q.data) body = <PageLoading label={t("Looking at the books")} />;
   else {
     const o = q.data;
     const get = (key: string) => row(o, key);
@@ -94,14 +94,14 @@ export function Today() {
           {pressing === 0 ? "Everything is in hand." : `${plural(pressing, "thing")} to look at.`}
         </p>
         <div className="erp-today-grid">
-          <Card title="Owed to you" calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link="Open the receivables">
+          <Card title={t("Owed to you")} calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link="Open the receivables">
             {(late?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big erp-negative">{show(late!.amount)}</p>
                 <p className="muted">overdue: {parts(late)}</p>
               </>
             ) : (
-              <p className="muted">Nothing is overdue.</p>
+              <p className="muted">{t("Nothing is overdue.")}</p>
             )}
             {(soon?.count ?? 0) > 0 && (
               <p>
@@ -109,14 +109,14 @@ export function Today() {
               </p>
             )}
           </Card>
-          <Card title="Owed by you" calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link="Open the payables">
+          <Card title={t("Owed by you")} calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link="Open the payables">
             {(owed?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big erp-negative">{show(owed!.amount)}</p>
                 <p className="muted">overdue: {parts(owed, "bill")}</p>
               </>
             ) : (
-              <p className="muted">Nothing is overdue.</p>
+              <p className="muted">{t("Nothing is overdue.")}</p>
             )}
             {(owedSoon?.count ?? 0) > 0 && (
               <p>
@@ -125,11 +125,11 @@ export function Today() {
             )}
           </Card>
           {lines && (
-            <Card title="Bank" calm={(lines.count ?? 0) === 0} to={destination(lines, company, asOf)} link="Reconcile">
+            <Card title={t("Bank")} calm={(lines.count ?? 0) === 0} to={destination(lines, company, asOf)} link="Reconcile">
               {(lines.count ?? 0) > 0 ? (
                 <>
                   <p className="erp-figure-big">{plural(lines.count!, "line")}</p>
-                  <p className="muted">of the bank statements are not reconciled{lines.oldest ? `, the oldest from ${formatDate(lines.oldest)}` : ""}.</p>
+                  <p className="muted">{t("of the bank statements are not reconciled")}{lines.oldest ? `, the oldest from ${formatDate(lines.oldest)}` : ""}.</p>
                   <ul className="erp-attn-list">
                     {(lines.detail ?? [])
                       .filter((d) => (d.count ?? 0) > 0)
@@ -142,15 +142,15 @@ export function Today() {
                   </ul>
                 </>
               ) : (
-                <p className="muted">Every statement line is reconciled.</p>
+                <p className="muted">{t("Every statement line is reconciled.")}</p>
               )}
             </Card>
           )}
-          <Card title="Drafts" calm={(drafts?.count ?? 0) === 0}>
+          <Card title={t("Drafts")} calm={(drafts?.count ?? 0) === 0}>
             {(drafts?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big">{plural(drafts!.count!, "draft")}</p>
-                <p className="muted">waiting to be submitted{drafts!.oldest ? `, the oldest dated ${formatDate(drafts!.oldest)}` : ""}.</p>
+                <p className="muted">{t("waiting to be submitted")}{drafts!.oldest ? `, the oldest dated ${formatDate(drafts!.oldest)}` : ""}.</p>
                 <ul className="erp-attn-list">
                   {(drafts!.detail ?? []).map((d) => (
                     <li key={d.entity}>
@@ -161,16 +161,16 @@ export function Today() {
                 </ul>
               </>
             ) : (
-              <p className="muted">Nothing is waiting to be submitted.</p>
+              <p className="muted">{t("Nothing is waiting to be submitted.")}</p>
             )}
           </Card>
-          <Card title="Closing the books" calm={(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0}>
-            {(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0 && <p className="muted">Every month that has ended is closed.</p>}
+          <Card title={t("Closing the books")} calm={(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0}>
+            {(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0 && <p className="muted">{t("Every month that has ended is closed.")}</p>}
             {(months?.count ?? 0) > 0 && (
               <>
                 <p className="erp-figure-big">{plural(months!.count!, "month")}</p>
                 <p className="muted">
-                  ended and not closed{months!.oldest ? `, back to ${monthName(months!.oldest)}` : ""}. The latest:
+                  {t("ended and not closed")}{months!.oldest ? `, back to ${monthName(months!.oldest)}` : ""}{t(". The latest:")}
                 </p>
                 <ul className="erp-attn-list">
                   {(months!.detail ?? []).slice(0, 3).map((d) => (
@@ -178,7 +178,7 @@ export function Today() {
                       <span>{monthName(d.start!)}</span>
                       {manager && d.fiscal_year ? (
                         <Button size="sm" onClick={() => void close(d.fiscal_year!, d.start!)}>
-                          Close
+                          {t("Close")}
                         </Button>
                       ) : null}
                     </li>
@@ -191,11 +191,11 @@ export function Today() {
                 {years!.detail!.map((y) => (
                   <li key={y.id}>
                     <span>
-                      Fiscal year {y.name} ended {y.end ? formatDate(y.end) : ""}
+                      {t("Fiscal year {name} ended", { name: y.name ?? "" })} {y.end ? formatDate(y.end) : ""}
                     </span>
                     {manager && (
                       <Link className="btn btn-default btn-sm" to={`/e/PeriodClosingVoucher/new?fiscal_year=${y.id}`}>
-                        Close the year
+                        {t("Close the year")}
                       </Link>
                     )}
                   </li>
@@ -204,7 +204,7 @@ export function Today() {
             )}
           </Card>
           {cash && (
-            <Card title="Cash and bank" calm>
+            <Card title={t("Cash and bank")} calm>
               <p className="erp-figure-big">{show(cash.amount)}</p>
               <ul className="erp-attn-list">
                 {(cash.detail ?? []).map((d) => (
@@ -230,17 +230,17 @@ export function Today() {
         </div>
         <div className="erp-tools">
           <div className="erp-pick">
-            <LinkInput to="Company" id="td-company" label="Company" value={company} onChange={(id) => put({ company: id })} />
+            <LinkInput to="Company" id="td-company" label={t("Company")} value={company} onChange={(id) => put({ company: id })} />
           </div>
           <label className="erp-pick">
-            <span className="sr-only">Look as of</span>
+            <span className="sr-only">{t("Look as of")}</span>
             <input className="input" type="date" value={asOf} onChange={(e) => put({ as_of: e.target.value || null })} />
           </label>
         </div>
       </header>
       {!company && me ? (
-        <EmptyState title="Choose a company" icon="home">
-          <p className="muted">The overview is for one company at a time.</p>
+        <EmptyState title={t("Choose a company")} icon="home">
+          <p className="muted">{t("The overview is for one company at a time.")}</p>
         </EmptyState>
       ) : (
         body
