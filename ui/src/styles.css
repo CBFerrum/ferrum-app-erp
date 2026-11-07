@@ -106,7 +106,7 @@
 }
 
 .erp-figure + .erp-figure {
-  border-left: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
 }
 
 .erp-figure dt {
@@ -199,7 +199,7 @@
 
 .erp-line {
   padding: 0.5rem 0.75rem;
-  border-left: 3px solid transparent;
+  border-inline-start: 3px solid transparent;
   cursor: pointer;
 }
 
@@ -212,7 +212,7 @@
 }
 
 .erp-line[aria-selected="true"] {
-  border-left-color: var(--primary);
+  border-inline-start-color: var(--primary);
   background: var(--primary-soft);
 }
 
@@ -250,7 +250,7 @@
 .erp-line-balance {
   margin-top: 0.125rem;
   font-size: 12px;
-  text-align: right;
+  text-align: end;
 }
 
 .erp-keys {
@@ -428,7 +428,7 @@
 
 .erp-problems {
   margin: 0.25rem 0 0;
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
 }
 
 .erp-skipped td {
@@ -510,7 +510,7 @@
 
 .erp-apply .field-error {
   display: block;
-  text-align: right;
+  text-align: end;
 }
 
 .erp-pick-wide {
@@ -533,13 +533,13 @@
   min-width: 0;
   padding: 0.75rem 1rem;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--warning);
+  border-inline-start: 3px solid var(--warning);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
 .erp-attn[data-calm] {
-  border-left-color: var(--success);
+  border-inline-start-color: var(--success);
 }
 
 .erp-attn h2 {
@@ -589,14 +589,14 @@
   margin-bottom: 0.75rem;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--warning);
+  border-inline-start: 3px solid var(--warning);
   border-radius: var(--radius);
   background: var(--surface);
   font-size: 13.5px;
 }
 
 .erp-needs a {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* ── statements ── */
@@ -728,7 +728,7 @@
 
   .erp-figure + .erp-figure {
     border-top: 1px solid var(--border);
-    border-left: 0;
+    border-inline-start: 0;
   }
 
   .erp-lines {
