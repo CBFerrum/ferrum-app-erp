@@ -8,7 +8,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, download, errorMessage, formatDate, formatDecimal, openPrint } from "@ferrum/client";
+import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { amount } from "./Invoices";
 
@@ -119,21 +119,21 @@ export function PortalOrders() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Your orders</h1>
-          <p className="page-sub">What was ordered from you, how much of it was received, and what you are still owed.</p>
+          <h1 className="page-title">{tr("Your orders")}</h1>
+          <p className="page-sub">{tr("What was ordered from you, how much of it was received, and what you are still owed.")}</p>
         </div>
       </div>
       {waiting.length > 0 && (
-        <section className="stack" aria-label="Requests for quotation">
-          <h2 className="section-title">Waiting for your quotation</h2>
+        <section className="stack" aria-label={tr("Requests for quotation")}>
+          <h2 className="section-title">{tr("Waiting for your quotation")}</h2>
           <ul className="stack">
             {waiting.map((r) => (
               <li key={`${r.id}-${r.answer ?? ""}`} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span>
                   <strong>{r.number}</strong> · {asked(r)}
-                  {r.due_by && <span className="faint"> · due by {formatDate(r.due_by)}</span>}
+                  {r.due_by && <span className="faint"> {tr("· due by")} {formatDate(r.due_by)}</span>}
                 </span>
-                {r.answer ? <a href={r.answer}>Answer it</a> : <span className="faint">Ask {r.company ?? "them"} for a new link</span>}
+                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{tr("Ask")} {r.company ?? "them"} {tr("for a new link")}</span>}
               </li>
             ))}
           </ul>
@@ -144,21 +144,21 @@ export function PortalOrders() {
       ) : !orders.data ? (
         <PageLoading />
       ) : !orderRows.length ? (
-        <EmptyState title="No orders yet" icon="receipt">
-          <p className="muted">Orders placed with you appear here once they are sent.</p>
+        <EmptyState title={tr("No orders yet")} icon="receipt">
+          <p className="muted">{tr("Orders placed with you appear here once they are sent.")}</p>
         </EmptyState>
       ) : (
-        <section className="stack" aria-label="Orders">
+        <section className="stack" aria-label={tr("Orders")}>
           <div className="table-wrap" data-ferrum-nocard>
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">Order</th>
-                  <th scope="col">Date</th>
-                  <th scope="col">Required by</th>
-                  <th scope="col">Where it stands</th>
+                  <th scope="col">{tr("Order")}</th>
+                  <th scope="col">{tr("Date")}</th>
+                  <th scope="col">{tr("Required by")}</th>
+                  <th scope="col">{tr("Where it stands")}</th>
                   <th scope="col" className="num">
-                    Total
+                    {tr("Total")}
                   </th>
                 </tr>
               </thead>
@@ -181,32 +181,32 @@ export function PortalOrders() {
           </div>
           {orders.hasNextPage && (
             <Button loading={orders.isFetchingNextPage} onClick={() => void orders.fetchNextPage()}>
-              Show older orders
+              {tr("Show older orders")}
             </Button>
           )}
         </section>
       )}
-      <h2 className="section-title">Your bills</h2>
+      <h2 className="section-title">{tr("Your bills")}</h2>
       {bills.error ? (
         <ErrorState error={bills.error} onRetry={() => void bills.refetch()} />
       ) : !bills.data ? (
         <PageLoading />
       ) : !billRows.length ? (
-        <p className="muted">No bills of yours are recorded yet.</p>
+        <p className="muted">{tr("No bills of yours are recorded yet.")}</p>
       ) : (
-        <section className="stack" aria-label="Bills">
+        <section className="stack" aria-label={tr("Bills")}>
           <div className="table-wrap" data-ferrum-nocard>
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">Your invoice</th>
-                  <th scope="col">Date</th>
-                  <th scope="col">Status</th>
+                  <th scope="col">{tr("Your invoice")}</th>
+                  <th scope="col">{tr("Date")}</th>
+                  <th scope="col">{tr("Status")}</th>
                   <th scope="col" className="num">
-                    Total
+                    {tr("Total")}
                   </th>
                   <th scope="col" className="num">
-                    Still owed
+                    {tr("Still owed")}
                   </th>
                 </tr>
               </thead>
@@ -227,7 +227,7 @@ export function PortalOrders() {
           </div>
           {bills.hasNextPage && (
             <Button loading={bills.isFetchingNextPage} onClick={() => void bills.fetchNextPage()}>
-              Show older bills
+              {tr("Show older bills")}
             </Button>
           )}
         </section>
@@ -258,7 +258,7 @@ export function PortalOrderPage() {
   return (
     <div className="stack">
       <p className="crumbs">
-        <Link to="/">Your orders</Link>
+        <Link to="/">{tr("Your orders")}</Link>
       </p>
       <div className="page-head">
         <div>
@@ -269,11 +269,11 @@ export function PortalOrderPage() {
         </div>
         <div className="row">
           <Button loading={busy === "print"} onClick={() => void run("print")}>
-            Print
+            {tr("Print")}
           </Button>
           {o.pdf && (
             <Button loading={busy === "pdf"} onClick={() => void run("pdf")}>
-              Download PDF
+              {tr("Download PDF")}
             </Button>
           )}
         </div>
@@ -285,18 +285,18 @@ export function PortalOrderPage() {
         <table className="table">
           <thead>
             <tr>
-              <th scope="col">Item</th>
+              <th scope="col">{tr("Item")}</th>
               <th scope="col" className="num">
-                Ordered
+                {tr("Ordered")}
               </th>
               <th scope="col" className="num">
-                Received
+                {tr("Received")}
               </th>
               <th scope="col" className="num">
-                Rate
+                {tr("Rate")}
               </th>
               <th scope="col" className="num">
-                Amount
+                {tr("Amount")}
               </th>
             </tr>
           </thead>
@@ -306,7 +306,7 @@ export function PortalOrderPage() {
                 <td>
                   {l.item}
                   {l.description && l.description !== l.item && <div className="faint">{l.description}</div>}
-                  {l.required_by && l.required_by !== o.required_by && <div className="faint">Required by {formatDate(l.required_by)}</div>}
+                  {l.required_by && l.required_by !== o.required_by && <div className="faint">{tr("Required by")} {formatDate(l.required_by)}</div>}
                 </td>
                 <td className="num">
                   {formatDecimal(l.qty)} {l.unit ?? ""}
@@ -320,7 +320,7 @@ export function PortalOrderPage() {
           <tfoot>
             <tr>
               <th scope="row" colSpan={4} className="num">
-                Net total
+                {tr("Net total")}
               </th>
               <td className="num">{amount(o.net_total, o.currency)}</td>
             </tr>
@@ -334,7 +334,7 @@ export function PortalOrderPage() {
             ))}
             <tr>
               <th scope="row" colSpan={4} className="num">
-                Total
+                {tr("Total")}
               </th>
               <td className="num">
                 <strong>{amount(o.total, o.currency)}</strong>

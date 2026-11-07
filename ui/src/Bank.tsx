@@ -9,7 +9,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as tr } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, LinkInput, useMetaIndex } from "@ferrum/records";
 import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
@@ -37,20 +37,20 @@ function Figures({ wb }: { wb: Workbench }) {
   const f = wb.figures;
   const settled = isZero(f.unexplained);
   return (
-    <section className="erp-figures" aria-label="Where the bank and the books stand">
+    <section className="erp-figures" aria-label={tr("Where the bank and the books stand")}>
       <dl className="erp-figure-row">
         <div className="erp-figure">
-          <dt>Bank statement</dt>
+          <dt>{tr("Bank statement")}</dt>
           <dd>{fmt(f.statement_balance, wb.precision)}</dd>
-          <dd className="faint">as of {formatDate(wb.as_of)}</dd>
+          <dd className="faint">{tr("as of")} {formatDate(wb.as_of)}</dd>
         </div>
         <div className="erp-figure">
-          <dt>Your books</dt>
+          <dt>{tr("Your books")}</dt>
           <dd>{fmt(f.book_balance, wb.precision)}</dd>
           <dd className="faint">{wb.name}</dd>
         </div>
         <div className="erp-figure" data-tone={settled ? "calm" : "alarm"}>
-          <dt>Difference</dt>
+          <dt>{tr("Difference")}</dt>
           <dd>{fmt(f.difference, wb.precision)}</dd>
           <dd className={settled ? "faint" : "erp-negative"} role="status">
             {settled ? "All of it is explained below" : `${fmt(f.unexplained, wb.precision)} cannot be explained`}
@@ -58,27 +58,27 @@ function Figures({ wb }: { wb: Workbench }) {
         </div>
       </dl>
       <details className="erp-explain">
-        <summary>What makes up the difference</summary>
+        <summary>{tr("What makes up the difference")}</summary>
         <table className="table erp-explain-table">
           <tbody>
             <tr>
-              <td>In the books, not at the bank yet: money in</td>
+              <td>{tr("In the books, not at the bank yet: money in")}</td>
               <td className="num">{fmt(f.uncleared_deposits, wb.precision)}</td>
             </tr>
             <tr>
-              <td>In the books, not at the bank yet: money out</td>
+              <td>{tr("In the books, not at the bank yet: money out")}</td>
               <td className="num">{fmt(f.uncleared_payments, wb.precision)}</td>
             </tr>
             <tr>
-              <td>On the statement, not in the books yet</td>
+              <td>{tr("On the statement, not in the books yet")}</td>
               <td className="num">{fmt(f.unrecorded, wb.precision)}</td>
             </tr>
             <tr>
-              <td>The statement should say</td>
+              <td>{tr("The statement should say")}</td>
               <td className="num">{fmt(f.expected_bank_balance, wb.precision)}</td>
             </tr>
             <tr className="bold">
-              <td>Unexplained</td>
+              <td>{tr("Unexplained")}</td>
               <td className="num">{fmt(f.unexplained, wb.precision)}</td>
             </tr>
           </tbody>
@@ -91,9 +91,9 @@ function Figures({ wb }: { wb: Workbench }) {
 // ───────────────────────────── the statement lines ─────────────────────────────
 
 function statusBadge(line: Line) {
-  if (line.status === "Reconciled") return <Badge tone="green">Matched</Badge>;
-  if (line.status === "Partially Reconciled") return <Badge tone="amber">Partly matched</Badge>;
-  return line.match ? <Badge tone="blue">Match found</Badge> : null;
+  if (line.status === "Reconciled") return <Badge tone="green">{tr("Matched")}</Badge>;
+  if (line.status === "Partially Reconciled") return <Badge tone="amber">{tr("Partly matched")}</Badge>;
+  return line.match ? <Badge tone="blue">{tr("Match found")}</Badge> : null;
 }
 
 function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Workbench; selected: string | null; onSelect: (id: string) => void; onAcceptKey: (line: Line) => void; onAcceptAll: () => void }) {
@@ -123,7 +123,7 @@ function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Wo
     if (selected) box.current?.querySelector(`[data-line="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
   return (
-    <ul ref={box} className="erp-lines" role="listbox" tabIndex={0} aria-label="Statement lines" aria-activedescendant={selected ? `line-${selected}` : undefined} onKeyDown={onKeyDown}>
+    <ul ref={box} className="erp-lines" role="listbox" tabIndex={0} aria-label={tr("Statement lines")} aria-activedescendant={selected ? `line-${selected}` : undefined} onKeyDown={onKeyDown}>
       {wb.lines.map((l) => {
         const money = isDeposit(l) ? "in" : "out";
         return (
@@ -154,7 +154,7 @@ function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Wo
               <span className="spacer" />
               {statusBadge(l)}
             </div>
-            {l.balance != null && <div className="erp-line-balance faint num">Bank balance {fmt(l.balance, wb.precision)}</div>}
+            {l.balance != null && <div className="erp-line-balance faint num">{tr("Bank balance")} {fmt(l.balance, wb.precision)}</div>}
           </li>
         );
       })}
@@ -227,20 +227,20 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
       {line.match && cmp(left, line.unallocated) === 0 && (
         <div className="erp-best">
           <div>
-            <strong>{line.match.number ?? "An entry"}</strong> clears this line exactly.
+            <strong>{line.match.number ?? "An entry"}</strong> {tr("clears this line exactly.")}
             <div className="faint">
               {[line.match.party, line.match.reference, formatDate(line.match.posting_date)].filter(Boolean).join(" · ")}
             </div>
           </div>
           <Button type="button" variant="primary" loading={busy} onClick={() => onReconcile({ vouchers: [{ payment_document: line.match!.payment_document, payment_entry: line.match!.payment_entry, allocated_amount: line.match!.remaining }] })}>
-            Accept <span className="kbd">Enter</span>
+            {tr("Accept")} <span className="kbd">{tr("Enter")}</span>
           </Button>
         </div>
       )}
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not look for matches" />
+        <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not look for matches")} />
       ) : q.isPending ? (
-        <Spinner label="Looking for matches" />
+        <Spinner label={tr("Looking for matches")} />
       ) : (
         <>
           <h3 className="erp-group">{ranked.length ? "Entries that could clear it" : "Nothing in the books looks like this yet"}</h3>
@@ -265,7 +265,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
           )}
           {rest.length > 0 && (
             <details className="erp-more">
-              <summary>Everything else the bank has not cleared ({rest.length})</summary>
+              <summary>{tr("Everything else the bank has not cleared ({length})", { length: rest.length })}</summary>
               <ul className="erp-entries">
                 {rest.map((b) => (
                   <Entry
@@ -291,7 +291,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
           {Object.keys(ticks).length === 0 ? "Tick the entries this line pays off." : issues.total ? <span className="erp-negative">{issues.total}</span> : clearsLine(line.unallocated, ticks) ? "That clears the line." : `${fmt(left, wb.precision)} of the line would be left.`}
         </span>
         <Button type="submit" variant={line.match ? "default" : "primary"} loading={busy} disabled={!canReconcile(ticks, issues)}>
-          Reconcile
+          {tr("Reconcile")}
         </Button>
       </div>
     </form>
@@ -309,19 +309,19 @@ function PaymentTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        Makes {deposit ? "a payment received from a customer" : "a payment made to a supplier"} for the {fmt(line.unallocated, precision)} still to reconcile, and matches it with this line.
+        {tr("Makes")} {deposit ? "a payment received from a customer" : "a payment made to a supplier"} {tr("for the")} {fmt(line.unallocated, precision)} {tr("still to reconcile, and matches it with this line.")}
       </p>
       <Field label={deposit ? "Customer" : "Supplier"} htmlFor="bk-party" required>
         <LinkInput to={deposit ? "Customer" : "Supplier"} id="bk-party" value={party} required onChange={setParty} />
       </Field>
       <label className="check-field">
         <input type="checkbox" checked={settle} onChange={(e) => setSettle(e.target.checked)} />
-        <span>Pay off their oldest open invoices with it</span>
+        <span>{tr("Pay off their oldest open invoices with it")}</span>
       </label>
       <div className="erp-sticky-foot">
-        <span className="faint">Without that it waits as an advance, to be applied later.</span>
+        <span className="faint">{tr("Without that it waits as an advance, to be applied later.")}</span>
         <Button type="submit" variant="primary" loading={busy} disabled={!party}>
-          Make the payment
+          {tr("Make the payment")}
         </Button>
       </div>
     </form>
@@ -340,26 +340,26 @@ function JournalTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        Books the {fmt(line.unallocated, precision)} between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.
+        {tr("Books the")} {fmt(line.unallocated, precision)} {tr("between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.")}
       </p>
-      <Field label="Other account" htmlFor="bk-account" required hint="The bank's own account is not offered.">
+      <Field label={tr("Other account")} htmlFor="bk-account" required hint={tr("The bank's own account is not offered.")}>
         <LinkInput to="Account" id="bk-account" value={account} required linkFilters={{ is_group: false }} onChange={setAccount} />
       </Field>
       <div className="erp-two">
-        <Field label="Cost centre" htmlFor="bk-cc">
+        <Field label={tr("Cost centre")} htmlFor="bk-cc">
           <LinkInput to="CostCenter" id="bk-cc" value={costCenter} linkFilters={{ is_group: false }} onChange={setCostCenter} />
         </Field>
-        <Field label="Project" htmlFor="bk-project">
+        <Field label={tr("Project")} htmlFor="bk-project">
           <LinkInput to="Project" id="bk-project" value={project} onChange={setProject} />
         </Field>
       </div>
-      <Field label="Remark" htmlFor="bk-remark" hint="The line's reference and description when left empty.">
+      <Field label={tr("Remark")} htmlFor="bk-remark" hint={tr("The line's reference and description when left empty.")}>
         <input id="bk-remark" className="input" value={remark} onChange={(e) => setRemark(e.target.value)} />
       </Field>
       <div className="erp-sticky-foot">
         <span />
         <Button type="submit" variant="primary" loading={busy} disabled={!account}>
-          Make the journal entry
+          {tr("Make the journal entry")}
         </Button>
       </div>
     </form>
@@ -369,7 +369,7 @@ function JournalTab({ line, precision, busy, onMake }: { line: Line; precision: 
 function ClearedTab({ wb, line, busy, onUndo }: { wb: Workbench; line: Line; busy: boolean; onUndo: (entry: string | null) => void }) {
   return (
     <div className="stack erp-tight">
-      <p className="muted">This line has been matched with:</p>
+      <p className="muted">{tr("This line has been matched with:")}</p>
       <ul className="erp-entries">
         {line.allocations.map((a) => (
           <li key={a.payment_entry} className="erp-entry">
@@ -380,7 +380,7 @@ function ClearedTab({ wb, line, busy, onUndo }: { wb: Workbench; line: Line; bus
             <div className="erp-entry-amount">
               <span className="num">{fmt(a.allocated_amount, wb.precision)}</span>
               <Button size="sm" loading={busy} onClick={() => onUndo(a.payment_entry)}>
-                Undo
+                {tr("Undo")}
               </Button>
             </div>
           </li>
@@ -388,7 +388,7 @@ function ClearedTab({ wb, line, busy, onUndo }: { wb: Workbench; line: Line; bus
       </ul>
       {line.allocations.length > 1 && (
         <Button loading={busy} onClick={() => onUndo(null)}>
-          Undo all
+          {tr("Undo all")}
         </Button>
       )}
     </div>
@@ -399,10 +399,10 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
   const [mode, setMode] = useState("match");
   const open = !isZero(line.unallocated);
   return (
-    <section className="erp-panel" aria-label="The selected line">
+    <section className="erp-panel" aria-label={tr("The selected line")}>
       {narrow && (
         <Button size="sm" variant="ghost" icon="left" onClick={onBack}>
-          All lines
+          {tr("All lines")}
         </Button>
       )}
       <header className="erp-panel-head">
@@ -440,7 +440,7 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
           </TabPanel>
           {line.allocations.length > 0 && (
             <details className="erp-more">
-              <summary>Already cleared against ({line.allocations.length})</summary>
+              <summary>{tr("Already cleared against ({length})", { length: line.allocations.length })}</summary>
               <ClearedTab wb={wb} line={line} busy={busy} onUndo={(entry) => void act.undo(line, entry)} />
             </details>
           )}
@@ -462,24 +462,23 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
       title={`Accept ${all.lines.length} exact ${all.lines.length === 1 ? "match" : "matches"}`}
       footer={
         <>
-          <Button onClick={onClose}>Not yet</Button>
+          <Button onClick={onClose}>{tr("Not yet")}</Button>
           <Button variant="primary" loading={busy} onClick={onConfirm} data-autofocus>
-            Accept {all.lines.length}
+            {tr("Accept {length}", { length: all.lines.length })}
           </Button>
         </>
       }
     >
       <p className="muted">
-        Each line below has an entry in the books for exactly its amount. Money in {fmt(all.money_in, wb.precision)}, money out {fmt(all.money_out, wb.precision)}. If one is wrong, close this and choose
-        for it by hand.
+        {tr("Each line below has an entry in the books for exactly its amount. Money in")} {fmt(all.money_in, wb.precision)}{tr(", money out")} {fmt(all.money_out, wb.precision)}{tr(". If one is wrong, close this and choose for it by hand.")}
       </p>
       <div className="table-wrap erp-preview">
         <table className="table">
           <thead>
             <tr>
-              <th>Statement line</th>
-              <th className="num">Amount</th>
-              <th>Entry in the books</th>
+              <th>{tr("Statement line")}</th>
+              <th className="num">{tr("Amount")}</th>
+              <th>{tr("Entry in the books")}</th>
             </tr>
           </thead>
           <tbody>
@@ -668,21 +667,21 @@ export function Bank() {
 
   let body;
   if (accounts.error) body = <ErrorState error={accounts.error} onRetry={() => void accounts.refetch()} />;
-  else if (accounts.isPending) body = <PageLoading label="Loading your bank accounts" />;
+  else if (accounts.isPending) body = <PageLoading label={tr("Loading your bank accounts")} />;
   else if (!account) {
     body = (
-      <EmptyState title="No bank accounts yet" icon="file">
-        <p className="muted">Add the account at your bank, tied to its account in the books, and bring its statement in here.</p>
+      <EmptyState title={tr("No bank accounts yet")} icon="file">
+        <p className="muted">{tr("Add the account at your bank, tied to its account in the books, and bring its statement in here.")}</p>
         {can(meta?.entities.find((e) => e.name === "BankAccount")?.permissions, "create") && (
           <Link className="btn btn-primary btn-md" to="/e/BankAccount/new">
             <Icon name="plus" />
-            Add a bank account
+            {tr("Add a bank account")}
           </Link>
         )}
       </EmptyState>
     );
-  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load the workbench" />;
-  else if (!wb) body = <PageLoading label="Loading the statement" />;
+  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the workbench")} />;
+  else if (!wb) body = <PageLoading label={tr("Loading the statement")} />;
   else {
     body = (
       <>
@@ -696,7 +695,7 @@ export function Bank() {
           <span className="spacer" />
           <label className="check-field">
             <input type="checkbox" checked={all} onChange={(e) => put({ all: e.target.checked ? "1" : null, line: null })} />
-            <span>Show matched lines</span>
+            <span>{tr("Show matched lines")}</span>
           </label>
           <Button variant={exact ? "primary" : "default"} disabled={!exact} onClick={() => setAccepting(true)}>
             {exact ? `Accept ${exact} exact ${exact === 1 ? "match" : "matches"}` : "Accept exact matches"}
@@ -707,16 +706,16 @@ export function Bank() {
             <Icon name="check" size={14} />
             <span>{done.text}.</span>
             <Button size="sm" variant="ghost" loading={busy} onClick={() => void undoLast()}>
-              Undo
+              {tr("Undo")}
             </Button>
           </div>
         )}
         {wb.lines.length === 0 ? (
-          <EmptyState title="All caught up" icon="check">
-            <p className="muted">Every statement line up to {formatDate(wb.as_of)} is matched. Bring in the next statement when you have it.</p>
+          <EmptyState title={tr("All caught up")} icon="check">
+            <p className="muted">{tr("Every statement line up to")} {formatDate(wb.as_of)} {tr("is matched. Bring in the next statement when you have it.")}</p>
             {canImport && (
               <Button variant="primary" icon="upload" onClick={() => setImporting(true)}>
-                Import a statement
+                {tr("Import a statement")}
               </Button>
             )}
           </EmptyState>
@@ -726,17 +725,17 @@ export function Bank() {
               <div className="erp-list">
                 <LineList wb={wb} selected={selected?.id ?? null} onSelect={(id) => select(id)} onAcceptKey={acceptKey} onAcceptAll={() => exact && setAccepting(true)} />
                 <p className="faint erp-keys">
-                  <span className="kbd">j</span> <span className="kbd">k</span> move · <span className="kbd">Enter</span> accept the match · <span className="kbd">Shift</span>+<span className="kbd">A</span> accept every exact match
+                  <span className="kbd">j</span> <span className="kbd">k</span> {tr("move ·")} <span className="kbd">{tr("Enter")}</span> {tr("accept the match ·")} <span className="kbd">{tr("Shift")}</span>+<span className="kbd">A</span> {tr("accept every exact match")}
                 </p>
-                {(wb.truncated || wb.books_truncated) && <p className="faint">Only the first part of a long statement is shown. Narrow it with the date above.</p>}
+                {(wb.truncated || wb.books_truncated) && <p className="faint">{tr("Only the first part of a long statement is shown. Narrow it with the date above.")}</p>}
               </div>
             )}
             {showPanel &&
               (selected ? (
                 <Panel key={`${selected.id}-${selected.version}`} wb={wb} line={selected} narrow={narrow} onBack={() => select(null)} busy={busy} act={act} />
               ) : (
-                <EmptyState title="Choose a line" icon="list">
-                  <p className="muted">Pick a statement line to see what the books have for it.</p>
+                <EmptyState title={tr("Choose a line")} icon="list">
+                  <p className="muted">{tr("Pick a statement line to see what the books have for it.")}</p>
                 </EmptyState>
               ))}
           </div>
@@ -751,11 +750,11 @@ export function Bank() {
       <header className="erp-head">
         <div>
           <AccountsTabs />
-          <p className="page-sub">Match what the bank says with what the books say.</p>
+          <p className="page-sub">{tr("Match what the bank says with what the books say.")}</p>
         </div>
         <div className="erp-tools">
           <label className="erp-pick">
-            <span className="sr-only">Bank account</span>
+            <span className="sr-only">{tr("Bank account")}</span>
             <select className="select" value={account ?? ""} disabled={!accounts.data?.length} onChange={(e) => put({ account: e.target.value, line: null })}>
               {(accounts.data ?? []).map((a) => (
                 <option key={a.id} value={a.id}>
@@ -766,12 +765,12 @@ export function Bank() {
             </select>
           </label>
           <label className="erp-pick">
-            <span className="sr-only">Statement balance as of</span>
+            <span className="sr-only">{tr("Statement balance as of")}</span>
             <input className="input" type="date" value={asOf} max={todayIso()} onChange={(e) => put({ as_of: e.target.value || null, line: null })} />
           </label>
           {canImport && account && (
             <Button icon="upload" onClick={() => setImporting(true)}>
-              Import a statement
+              {tr("Import a statement")}
             </Button>
           )}
         </div>

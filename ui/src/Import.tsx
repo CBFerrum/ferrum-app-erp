@@ -5,7 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, type DragEvent, useMemo, useState } from "react";
-import { api, docPath, errorMessage, formatDate, formatDecimal } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, formatDecimal, t as tr } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, Field, Spinner, toast, useDebounced } from "@ferrum/kit";
 import { csvHeaders, DATE_FORMATS, guessMapping, type Mapping, mappingBody, mappingProblem } from "./reconcile";
 
@@ -97,10 +97,10 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
       open
       wide
       onClose={onClose}
-      title="Import a bank statement"
+      title={tr("Import a bank statement")}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{tr("Cancel")}</Button>
           <Button variant="primary" loading={busy} disabled={!t || t.imported === 0 || t.errors.length > 0} onClick={() => void run()}>
             {t && t.imported > 0 ? `Import ${t.imported} ${t.imported === 1 ? "line" : "lines"}` : "Import"}
           </Button>
@@ -113,16 +113,16 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
           <>
             <label className="erp-drop" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
               <input type="file" accept=".csv,.txt,text/csv,text/plain" onChange={onFile} data-autofocus />
-              <span>Drop the statement here, or choose the file</span>
-              <span className="faint">A CSV from your bank, up to 5 MB.</span>
+              <span>{tr("Drop the statement here, or choose the file")}</span>
+              <span className="faint">{tr("A CSV from your bank, up to 5 MB.")}</span>
             </label>
             {pasting ? (
-              <Field label="The statement's text" htmlFor="imp-text">
+              <Field label={tr("The statement's text")} htmlFor="imp-text">
                 <textarea id="imp-text" className="textarea mono" rows={6} onChange={(e) => setText(e.target.value)} />
               </Field>
             ) : (
               <Button variant="ghost" size="sm" onClick={() => setPasting(true)}>
-                Paste the text instead
+                {tr("Paste the text instead")}
               </Button>
             )}
           </>
@@ -139,7 +139,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                   setMapping(null);
                 }}
               >
-                Choose another
+                {tr("Choose another")}
               </Button>
             </div>
             <div className="erp-mapping">
@@ -157,7 +157,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
               ))}
             </div>
             <div className="erp-two">
-              <Field label="Dates are written" htmlFor="imp-dates">
+              <Field label={tr("Dates are written")} htmlFor="imp-dates">
                 <select id="imp-dates" className="select" value={dateFormat} onChange={(e) => setDateFormat(e.target.value)}>
                   {DATE_FORMATS.map((f) => (
                     <option key={f.value} value={f.value}>
@@ -166,25 +166,25 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                   ))}
                 </select>
               </Field>
-              <Field label="Header row" htmlFor="imp-header" hint="Which line holds the column names.">
+              <Field label={tr("Header row")} htmlFor="imp-header" hint={tr("Which line holds the column names.")}>
                 <input id="imp-header" className="input num" type="number" min={1} max={50} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, Number(e.target.value) || 1))} />
               </Field>
             </div>
             <label className="check-field">
               <input type="checkbox" checked={comma} onChange={(e) => setComma(e.target.checked)} />
-              <span>Amounts use a decimal comma (1.234,50)</span>
+              <span>{tr("Amounts use a decimal comma (1.234,50)")}</span>
             </label>
             {missing ? (
               <Alert tone="warning">{missing}</Alert>
             ) : trial.error ? (
               <Alert tone="error">{errorMessage(trial.error)}</Alert>
             ) : !t ? (
-              <Spinner label="Checking the statement" />
+              <Spinner label={tr("Checking the statement")} />
             ) : (
               <div className="stack erp-tight" aria-live="polite">
                 {t.errors.length > 0 ? (
                   <Alert tone="error">
-                    <strong>The statement cannot be imported as it is.</strong>
+                    <strong>{tr("The statement cannot be imported as it is.")}</strong>
                     <ul className="erp-problems">
                       {t.errors.slice(0, 8).map((m) => (
                         <li key={m}>{m}</li>
@@ -195,8 +195,8 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                 ) : (
                   <p>
                     <strong>{t.imported}</strong> new {t.imported === 1 ? "line" : "lines"}
-                    {t.from_date && t.to_date ? `, ${formatDate(t.from_date)} to ${formatDate(t.to_date)}` : ""}. {t.duplicates > 0 && <>{t.duplicates} already in the account will be skipped. </>}
-                    {t.skipped > 0 && <>{t.skipped} with no amount will be left out.</>}
+                    {t.from_date && t.to_date ? `, ${formatDate(t.from_date)} to ${formatDate(t.to_date)}` : ""}. {t.duplicates > 0 && <>{tr("{duplicates} already in the account will be skipped.", { duplicates: t.duplicates })} </>}
+                    {t.skipped > 0 && <>{tr("{skipped} with no amount will be left out.", { skipped: t.skipped })}</>}
                   </p>
                 )}
                 {t.preview.length > 0 && (
@@ -204,10 +204,10 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                     <table className="table">
                       <thead>
                         <tr>
-                          <th>Date</th>
-                          <th>Description</th>
-                          <th className="num">In</th>
-                          <th className="num">Out</th>
+                          <th>{tr("Date")}</th>
+                          <th>{tr("Description")}</th>
+                          <th className="num">{tr("In")}</th>
+                          <th className="num">{tr("Out")}</th>
                           <th />
                         </tr>
                       </thead>
@@ -221,7 +221,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                             </td>
                             <td className="num">{formatDecimal(l.deposit, 2)}</td>
                             <td className="num">{formatDecimal(l.withdrawal, 2)}</td>
-                            <td>{l.duplicate && <Badge>Already imported</Badge>}</td>
+                            <td>{l.duplicate && <Badge>{tr("Already imported")}</Badge>}</td>
                           </tr>
                         ))}
                       </tbody>

@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, download, errorMessage, formatDate, formatDecimal, openPrint } from "@ferrum/client";
+import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 
 const BASE = "/api/app/selling/portal/invoices";
@@ -71,8 +71,8 @@ export function PortalInvoices() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Your invoices</h1>
-          <p className="page-sub">What you were billed, and what is still to pay.</p>
+          <h1 className="page-title">{tr("Your invoices")}</h1>
+          <p className="page-sub">{tr("What you were billed, and what is still to pay.")}</p>
         </div>
       </div>
       {q.error ? (
@@ -80,22 +80,22 @@ export function PortalInvoices() {
       ) : !q.data ? (
         <PageLoading />
       ) : !invoices.length ? (
-        <EmptyState title="No invoices yet" icon="receipt">
-          <p className="muted">Invoices made out to you appear here once they are issued.</p>
+        <EmptyState title={tr("No invoices yet")} icon="receipt">
+          <p className="muted">{tr("Invoices made out to you appear here once they are issued.")}</p>
         </EmptyState>
       ) : (
         <div className="table-wrap" data-ferrum-nocard>
           <table className="table">
             <thead>
               <tr>
-                <th scope="col">Invoice</th>
-                <th scope="col">Date</th>
-                <th scope="col">Status</th>
+                <th scope="col">{tr("Invoice")}</th>
+                <th scope="col">{tr("Date")}</th>
+                <th scope="col">{tr("Status")}</th>
                 <th scope="col" className="num">
-                  Total
+                  {tr("Total")}
                 </th>
                 <th scope="col" className="num">
-                  To pay
+                  {tr("To pay")}
                 </th>
               </tr>
             </thead>
@@ -119,7 +119,7 @@ export function PortalInvoices() {
       )}
       {q.hasNextPage && (
         <Button loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Show older invoices
+          {tr("Show older invoices")}
         </Button>
       )}
     </div>
@@ -148,7 +148,7 @@ export function PortalInvoice() {
   return (
     <div className="stack">
       <p className="crumbs">
-        <Link to="/">Your invoices</Link>
+        <Link to="/">{tr("Your invoices")}</Link>
       </p>
       <div className="page-head">
         <div>
@@ -159,32 +159,32 @@ export function PortalInvoice() {
         </div>
         <div className="row">
           <Button loading={busy === "print"} onClick={() => void run("print")}>
-            Print
+            {tr("Print")}
           </Button>
           {inv.pdf && (
             <Button loading={busy === "pdf"} onClick={() => void run("pdf")}>
-              Download PDF
+              {tr("Download PDF")}
             </Button>
           )}
         </div>
       </div>
       <p>
         <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{dueLabel(inv)}</Badge>{" "}
-        {Number(inv.outstanding) > 0 && <strong>{amount(inv.outstanding, inv.currency)} to pay</strong>}
+        {Number(inv.outstanding) > 0 && <strong>{amount(inv.outstanding, inv.currency)} {tr("to pay")}</strong>}
       </p>
       <div className="table-wrap" data-ferrum-nocard>
         <table className="table">
           <thead>
             <tr>
-              <th scope="col">Item</th>
+              <th scope="col">{tr("Item")}</th>
               <th scope="col" className="num">
-                Quantity
+                {tr("Quantity")}
               </th>
               <th scope="col" className="num">
-                Rate
+                {tr("Rate")}
               </th>
               <th scope="col" className="num">
-                Amount
+                {tr("Amount")}
               </th>
             </tr>
           </thead>
@@ -206,7 +206,7 @@ export function PortalInvoice() {
           <tfoot>
             <tr>
               <th scope="row" colSpan={3} className="num">
-                Net total
+                {tr("Net total")}
               </th>
               <td className="num">{amount(inv.net_total, inv.currency)}</td>
             </tr>
@@ -220,7 +220,7 @@ export function PortalInvoice() {
             ))}
             <tr>
               <th scope="row" colSpan={3} className="num">
-                Total
+                {tr("Total")}
               </th>
               <td className="num">
                 <strong>{amount(inv.total, inv.currency)}</strong>

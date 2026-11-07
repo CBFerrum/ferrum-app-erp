@@ -3,6 +3,7 @@
 
 import { Link, useLocation } from "react-router";
 import { can, useMetaIndex } from "@ferrum/records";
+import { t as tr } from "@ferrum/client";
 
 interface Tab {
   to: string;
@@ -29,7 +30,7 @@ export function AccountsTabs() {
   const shown = TABS.filter((t) => meta?.entities.some((e) => e.name === t.needs && can(e.permissions, "read")));
   if (shown.length < 2) return null;
   return (
-    <nav className="erp-tabs" aria-label="Accounts">
+    <nav className="erp-tabs" aria-label={tr("Accounts")}>
       {shown.map((t) => (
         <Link key={t.to} to={t.to} aria-current={[t.to, ...(t.also ?? [])].includes(pathname) ? "page" : undefined}>
           {t.label}

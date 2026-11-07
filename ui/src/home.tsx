@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { api, todayIso } from "@ferrum/client";
+import { api, todayIso, t } from "@ferrum/client";
 import { Icon } from "@ferrum/kit";
 import { can, useMe, useMetaIndex } from "@ferrum/records";
 import { ModulesHome } from "@ferrum/records/frame";
@@ -25,10 +25,10 @@ function Needs() {
   const items = q.data ? needing(q.data) : [];
   if (!items.length) return null;
   return (
-    <aside className="erp-needs" aria-label="Needs you today">
+    <aside className="erp-needs" aria-label={t("Needs you today")}>
       <Icon name="alert" size={15} />
       <span>{items.map(say).join(" · ")}</span>
-      <Link to="/r/finance_overview">Open accounts today</Link>
+      <Link to="/r/finance_overview">{t("Open accounts today")}</Link>
     </aside>
   );
 }

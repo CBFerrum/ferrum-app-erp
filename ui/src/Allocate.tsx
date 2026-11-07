@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, todayIso } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, todayIso, t as tr } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { currencies, documentBody, dueWords, fill, fromReport, kindLabel, type Open, pairOff, postingDate, ready, split, type Tally, tally } from "./allocation";
@@ -37,15 +37,15 @@ function Summary({ t, currency, onFill, onClear, onReview, canFill }: { t: Tally
     <div className="erp-summary" role="status">
       <dl className="erp-sums">
         <div>
-          <dt>Money to apply</dt>
+          <dt>{tr("Money to apply")}</dt>
           <dd>{show(t.available)}</dd>
         </div>
         <div>
-          <dt>Applying</dt>
+          <dt>{tr("Applying")}</dt>
           <dd>{show(t.applied)}</dd>
         </div>
         <div data-tone={cmp(t.left, "0") > 0 ? "left" : undefined}>
-          <dt>Left over</dt>
+          <dt>{tr("Left over")}</dt>
           <dd>{show(t.left)}</dd>
         </div>
       </dl>
@@ -53,13 +53,13 @@ function Summary({ t, currency, onFill, onClear, onReview, canFill }: { t: Tally
       {t.over && <span className="erp-negative">{t.over}</span>}
       <span className="spacer" />
       <Button onClick={onFill} disabled={!canFill}>
-        Oldest invoices first
+        {tr("Oldest invoices first")}
       </Button>
       <Button variant="ghost" onClick={onClear} disabled={cmp(t.applied, "0") === 0}>
-        Clear
+        {tr("Clear")}
       </Button>
       <Button variant="primary" onClick={onReview} disabled={!ready(t)}>
-        Review
+        {tr("Review")}
       </Button>
     </div>
   );
@@ -69,18 +69,18 @@ function MoneyTable({ credits, left, used, precision, onToggle }: { credits: Ope
   return (
     <section className="erp-card" aria-labelledby="al-money">
       <h2 id="al-money" className="erp-card-title">
-        Money to apply
+        {tr("Money to apply")}
       </h2>
       <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
               <th>
-                <span className="sr-only">Use</span>
+                <span className="sr-only">{tr("Use")}</span>
               </th>
-              <th>Document</th>
-              <th className="num">Available</th>
-              <th className="num">Left over</th>
+              <th>{tr("Document")}</th>
+              <th className="num">{tr("Available")}</th>
+              <th className="num">{tr("Left over")}</th>
             </tr>
           </thead>
           <tbody>
@@ -96,7 +96,7 @@ function MoneyTable({ credits, left, used, precision, onToggle }: { credits: Ope
                   </div>
                 </td>
                 <td className="num">{show(sub("0", c.outstanding), precision)}</td>
-                <td className="num">{used.has(c.id) ? show(left[c.id], precision) : <span className="faint">not used</span>}</td>
+                <td className="num">{used.has(c.id) ? show(left[c.id], precision) : <span className="faint">{tr("not used")}</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -123,17 +123,17 @@ function InvoiceTable({ invoices, amounts, t, available, onAmount, today }: { in
   return (
     <section className="erp-card" aria-labelledby="al-owed">
       <h2 id="al-owed" className="erp-card-title">
-        Open invoices
+        {tr("Open invoices")}
       </h2>
       <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
-              <th>Invoice</th>
-              <th>Due</th>
-              <th className="num">Owed</th>
-              <th className="num">Apply</th>
-              <th className="num">Left owed</th>
+              <th>{tr("Invoice")}</th>
+              <th>{tr("Due")}</th>
+              <th className="num">{tr("Owed")}</th>
+              <th className="num">{tr("Apply")}</th>
+              <th className="num">{tr("Left owed")}</th>
             </tr>
           </thead>
           <tbody>
@@ -162,7 +162,7 @@ function InvoiceTable({ invoices, amounts, t, available, onAmount, today }: { in
                       onChange={(e) => onAmount(inv.id, e.target.value)}
                     />
                     <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={`Apply as much as possible to ${inv.number ?? "the invoice"}`}>
-                      Full
+                      {tr("Full")}
                     </Button>
                     {t.errors[inv.id] && <span className="field-error">{t.errors[inv.id]}</span>}
                   </td>
@@ -214,12 +214,12 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
       open
       wide
       onClose={onClose}
-      title="Review before applying"
+      title={tr("Review before applying")}
       footer={
         <>
-          <Button onClick={onClose}>Back</Button>
+          <Button onClick={onClose}>{tr("Back")}</Button>
           <Button variant="primary" type="submit" form="al-confirm" loading={busy} disabled={!p}>
-            Apply {p ? show(p.total_allocated) : ""}
+            {tr("Apply")} {p ? show(p.total_allocated) : ""}
           </Button>
         </>
       }
@@ -233,10 +233,10 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
             <table className="table">
               <thead>
                 <tr>
-                  <th>Money</th>
-                  <th>Applied to</th>
-                  <th className="num">Amount</th>
-                  <th className="num">Exchange gain (loss)</th>
+                  <th>{tr("Money")}</th>
+                  <th>{tr("Applied to")}</th>
+                  <th className="num">{tr("Amount")}</th>
+                  <th className="num">{tr("Exchange gain (loss)")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -255,7 +255,7 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
               {p && cmp(gain, "0") !== 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan={3}>{cmp(gain, "0") > 0 ? "Exchange gain" : "Exchange loss"}, in the company's currency</td>
+                    <td colSpan={3}>{cmp(gain, "0") > 0 ? "Exchange gain" : "Exchange loss"}{tr(", in the company's currency")}</td>
                     <td className="num">{show(gain)}</td>
                   </tr>
                 </tfoot>
@@ -264,10 +264,10 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
           </div>
         )}
         <div className="erp-two">
-          <Field label="Dated" htmlFor="al-date" hint="Not before the money or the invoices it joins.">
+          <Field label={tr("Dated")} htmlFor="al-date" hint={tr("Not before the money or the invoices it joins.")}>
             <input id="al-date" className="input" type="date" required min={minDate} value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
-          <Field label="Note" htmlFor="al-note">
+          <Field label={tr("Note")} htmlFor="al-note">
             <input id="al-note" className="input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </Field>
         </div>
@@ -308,7 +308,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
         {!credits.length && (
           <Link className="btn btn-default btn-md" to="/e/PaymentEntry/new">
             <Icon name="plus" />
-            Record a payment
+            {tr("Record a payment")}
           </Link>
         )}
       </EmptyState>
@@ -317,7 +317,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
   return (
     <>
       {all.length > 1 && (
-        <div className="segmented" role="group" aria-label="Currency">
+        <div className="segmented" role="group" aria-label={tr("Currency")}>
           {all.map((c) => (
             <button
               key={c}
@@ -375,7 +375,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
           }}
         />
       )}
-      <p className="faint">Untick a payment to keep it for later. Oldest invoices first pays the earliest due dates with the oldest money.</p>
+      <p className="faint">{tr("Untick a payment to keep it for later. Oldest invoices first pays the earliest due dates with the oldest money.")}</p>
     </>
   );
 }
@@ -416,17 +416,17 @@ export function Allocate() {
   if (!party) {
     body = (
       <EmptyState title={`Choose a ${partyType.toLowerCase()}`} icon="user">
-        <p className="muted">Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.</p>
+        <p className="muted">{tr("Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.")}</p>
       </EmptyState>
     );
   } else if (!company) {
     body = (
-      <EmptyState title="Choose a company" icon="home">
-        <p className="muted">What is open is kept for one company at a time.</p>
+      <EmptyState title={tr("Choose a company")} icon="home">
+        <p className="muted">{tr("What is open is kept for one company at a time.")}</p>
       </EmptyState>
     );
-  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title="Could not load what is open" />;
-  else if (!q.data) body = <PageLoading label="Loading what is open" />;
+  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load what is open")} />;
+  else if (!q.data) body = <PageLoading label={tr("Loading what is open")} />;
   else body = <Body key={`${partyType}-${party}`} items={items} company={company} partyType={partyType} party={party} onApplied={refresh} />;
 
   return (
@@ -434,10 +434,10 @@ export function Allocate() {
       <header className="erp-head">
         <div>
           <AccountsTabs />
-          <p className="page-sub">Apply payments, credit notes and journal credits to open invoices.</p>
+          <p className="page-sub">{tr("Apply payments, credit notes and journal credits to open invoices.")}</p>
         </div>
         <div className="erp-tools">
-          <div className="segmented" role="group" aria-label="Whose">
+          <div className="segmented" role="group" aria-label={tr("Whose")}>
             {(["Customer", "Supplier"] as const).map((k) => (
               <button key={k} type="button" aria-pressed={partyType === k} onClick={() => put({ type: k === "Customer" ? null : k, party: null, currency: null })}>
                 {k === "Customer" ? "Customers" : "Suppliers"}
@@ -448,7 +448,7 @@ export function Allocate() {
             <LinkInput to={partyType} id="al-party" label={partyType} placeholder={`Find a ${partyType.toLowerCase()}…`} value={party} onChange={(id) => put({ party: id, currency: null })} />
           </div>
           <div className="erp-pick">
-            <LinkInput to="Company" id="al-company" label="Company" value={company} onChange={(id) => put({ company: id })} />
+            <LinkInput to="Company" id="al-company" label={tr("Company")} value={company} onChange={(id) => put({ company: id })} />
           </div>
         </div>
       </header>
