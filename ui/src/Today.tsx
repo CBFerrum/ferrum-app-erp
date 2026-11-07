@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, todayIso, t } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, todayIso, t, isolate } from "@ferrum/client";
 import { Button, confirmDialog, EmptyState, ErrorState, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { destination, draftsPath, monthName, needing, type Overview, plural, row } from "./attention";
@@ -21,12 +21,12 @@ function Card({ title, calm, children, to, link }: { title: string; calm: boolea
     <section className="erp-attn" data-calm={calm || undefined} aria-label={title}>
       <h2>
         <Icon name={calm ? "check" : "alert"} size={15} />
-        {title}
+        {isolate(title)}
       </h2>
       {children}
       {to && link && (
         <Link className="erp-attn-link" to={to}>
-          {link}
+          {isolate(link)}
         </Link>
       )}
     </section>
@@ -34,7 +34,7 @@ function Card({ title, calm, children, to, link }: { title: string; calm: boolea
 }
 
 export function Today() {
-  useShellTitle("Accounts today");
+  useShellTitle(t("Accounts today"));
   const qc = useQueryClient();
   const me = useMe().data;
   const [sp, setSp] = useSearchParams();
@@ -63,11 +63,11 @@ export function Today() {
     );
 
   const close = async (fiscalYear: string, start: string) => {
-    const ok = await confirmDialog({ title: `Close ${monthName(start)}?`, message: "Postings dated in it are refused from then on, until it is opened again.", confirmLabel: "Close the month" });
+    const ok = await confirmDialog({ title: t("Close {start}?", { start: monthName(start) }), message: t("Postings dated in it are refused from then on, until it is opened again."), confirmLabel: t("Close the month") });
     if (!ok) return;
     try {
       await api.post(docPath("FiscalYear", fiscalYear, "actions", "close_period"), { period_start: start });
-      toast(`${monthName(start)} closed`);
+      toast(t("{start} closed", { start: monthName(start) }));
       refresh();
     } catch (e) {
       toast(errorMessage(e), "error");
@@ -91,36 +91,36 @@ export function Today() {
     body = (
       <>
         <p className="page-sub" aria-live="polite">
-          {pressing === 0 ? "Everything is in hand." : `${plural(pressing, "thing")} to look at.`}
+          {pressing === 0 ? t("Everything is in hand.") : t("{pressing} to look at.", { pressing: plural(pressing, "thing") })}
         </p>
         <div className="erp-today-grid">
           <Card title={t("Owed to you")} calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link="Open the receivables">
             {(late?.count ?? 0) > 0 ? (
               <>
-                <p className="erp-figure-big erp-negative">{show(late!.amount)}</p>
-                <p className="muted">overdue: {parts(late)}</p>
+                <p className="erp-figure-big erp-negative">{isolate(show(late!.amount))}</p>
+                <p className="muted">{t("overdue: {late}", { late: parts(late) })}</p>
               </>
             ) : (
               <p className="muted">{t("Nothing is overdue.")}</p>
             )}
             {(soon?.count ?? 0) > 0 && (
               <p>
-                <strong>{show(soon!.amount)}</strong> <span className="muted">{`falls due this week (${plural(soon!.count!, "invoice")})`}</span>
+                <strong>{isolate(show(soon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(soon!.count!, "invoice") })}</span>
               </p>
             )}
           </Card>
           <Card title={t("Owed by you")} calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link="Open the payables">
             {(owed?.count ?? 0) > 0 ? (
               <>
-                <p className="erp-figure-big erp-negative">{show(owed!.amount)}</p>
-                <p className="muted">overdue: {parts(owed, "bill")}</p>
+                <p className="erp-figure-big erp-negative">{isolate(show(owed!.amount))}</p>
+                <p className="muted">{t("overdue: {owed}", { owed: parts(owed, "bill") })}</p>
               </>
             ) : (
               <p className="muted">{t("Nothing is overdue.")}</p>
             )}
             {(owedSoon?.count ?? 0) > 0 && (
               <p>
-                <strong>{show(owedSoon!.amount)}</strong> <span className="muted">{`falls due this week (${plural(owedSoon!.count!, "bill")})`}</span>
+                <strong>{isolate(show(owedSoon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(owedSoon!.count!, "bill") })}</span>
               </p>
             )}
           </Card>
@@ -128,14 +128,14 @@ export function Today() {
             <Card title={t("Bank")} calm={(lines.count ?? 0) === 0} to={destination(lines, company, asOf)} link="Reconcile">
               {(lines.count ?? 0) > 0 ? (
                 <>
-                  <p className="erp-figure-big">{plural(lines.count!, "line")}</p>
-                  <p className="muted">{t("of the bank statements are not reconciled")}{lines.oldest ? `, the oldest from ${formatDate(lines.oldest)}` : ""}.</p>
+                  <p className="erp-figure-big">{isolate(plural(lines.count!, "line"))}</p>
+                  <p className="muted">{t("of the bank statements are not reconciled")}{lines.oldest ? t(", the oldest from {value}", { value: formatDate(lines.oldest) }) : ""}.</p>
                   <ul className="erp-attn-list">
                     {(lines.detail ?? [])
                       .filter((d) => (d.count ?? 0) > 0)
                       .map((d) => (
                         <li key={d.id}>
-                          <Link to={`/r/bank_reconciliation?account=${d.id}`}>{d.name}</Link>
+                          <Link to={`/r/bank_reconciliation?account=${d.id}`}>{isolate(d.name ?? "")}</Link>
                           <span className="faint">{d.count}</span>
                         </li>
                       ))}
@@ -149,12 +149,12 @@ export function Today() {
           <Card title={t("Drafts")} calm={(drafts?.count ?? 0) === 0}>
             {(drafts?.count ?? 0) > 0 ? (
               <>
-                <p className="erp-figure-big">{plural(drafts!.count!, "draft")}</p>
-                <p className="muted">{t("waiting to be submitted")}{drafts!.oldest ? `, the oldest dated ${formatDate(drafts!.oldest)}` : ""}.</p>
+                <p className="erp-figure-big">{isolate(plural(drafts!.count!, "draft"))}</p>
+                <p className="muted">{t("waiting to be submitted")}{drafts!.oldest ? t(", the oldest dated {value}", { value: formatDate(drafts!.oldest) }) : ""}.</p>
                 <ul className="erp-attn-list">
                   {(drafts!.detail ?? []).map((d) => (
                     <li key={d.entity}>
-                      <Link to={draftsPath(d.entity!)}>{d.label}</Link>
+                      <Link to={draftsPath(d.entity!)}>{isolate(d.label ?? "")}</Link>
                       <span className="faint">{d.count}</span>
                     </li>
                   ))}
@@ -168,14 +168,14 @@ export function Today() {
             {(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0 && <p className="muted">{t("Every month that has ended is closed.")}</p>}
             {(months?.count ?? 0) > 0 && (
               <>
-                <p className="erp-figure-big">{plural(months!.count!, "month")}</p>
+                <p className="erp-figure-big">{isolate(plural(months!.count!, "month"))}</p>
                 <p className="muted">
-                  {t("ended and not closed")}{months!.oldest ? `, back to ${monthName(months!.oldest)}` : ""}{t(". The latest:")}
+                  {t("ended and not closed")}{months!.oldest ? t(", back to {value}", { value: monthName(months!.oldest) }) : ""}{t(". The latest:")}
                 </p>
                 <ul className="erp-attn-list">
                   {(months!.detail ?? []).slice(0, 3).map((d) => (
                     <li key={d.start}>
-                      <span>{monthName(d.start!)}</span>
+                      <span>{isolate(monthName(d.start!))}</span>
                       {manager && d.fiscal_year ? (
                         <Button size="sm" onClick={() => void close(d.fiscal_year!, d.start!)}>
                           {t("Close")}
@@ -205,12 +205,12 @@ export function Today() {
           </Card>
           {cash && (
             <Card title={t("Cash and bank")} calm>
-              <p className="erp-figure-big">{show(cash.amount)}</p>
+              <p className="erp-figure-big">{isolate(show(cash.amount))}</p>
               <ul className="erp-attn-list">
                 {(cash.detail ?? []).map((d) => (
                   <li key={d.id}>
-                    <span>{d.name}</span>
-                    <span className="num">{show(d.balance)}</span>
+                    <span>{isolate(d.name ?? "")}</span>
+                    <span className="num">{isolate(show(d.balance))}</span>
                   </li>
                 ))}
               </ul>
@@ -226,7 +226,7 @@ export function Today() {
       <header className="erp-head">
         <div>
           <AccountsTabs />
-          <p className="page-sub">{new Date(`${asOf}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+          <p className="page-sub">{isolate(new Date(`${asOf}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))}</p>
         </div>
         <div className="erp-tools">
           <div className="erp-pick">

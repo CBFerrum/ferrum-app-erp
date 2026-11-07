@@ -7,7 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, formatDate, saveBlob, todayIso, t as tr } from "@ferrum/client";
+import { api, formatDate, saveBlob, todayIso, t as tr, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe, useMetaIndex } from "@ferrum/records";
 import { sub } from "./decimal";
@@ -67,12 +67,12 @@ function Entries({ title, drill, onClose }: { title: string; drill: Drill; onClo
                     ) : (
                       (r.voucher_no ?? "")
                     )}
-                    {r.party && <div className="faint">{r.party}</div>}
+                    {r.party && <div className="faint">{isolate(r.party)}</div>}
                   </td>
-                  <td>{r.account}</td>
+                  <td>{isolate(r.account)}</td>
                   <td className="num">{r.debit && r.debit !== "0" ? show(r.debit) : ""}</td>
                   <td className="num">{r.credit && r.credit !== "0" ? show(r.credit) : ""}</td>
-                  <td className="num">{show(r.balance)}</td>
+                  <td className="num">{isolate(show(r.balance))}</td>
                 </tr>
               ))}
             </tbody>
@@ -162,8 +162,8 @@ export function Statement({ kind }: { kind: Kind }) {
   } else {
     body = (
       <>
-        {data.meta.balanced === false && <Alert tone="error">{tr("The balance sheet is out of balance by")} {show(data.meta.difference)}{tr(". This should never happen: tell whoever looks after the books.")}</Alert>}
-        {data.meta.reconciled === false && <Alert tone="error">{tr("The cash flow ends")} {show(data.meta.difference)} {tr("away from the bank and cash accounts. This should never happen: tell whoever looks after the books.")}</Alert>}
+        {data.meta.balanced === false && <Alert tone="error">{tr("The balance sheet is out of balance by")} {isolate(show(data.meta.difference))}{tr(". This should never happen: tell whoever looks after the books.")}</Alert>}
+        {data.meta.reconciled === false && <Alert tone="error">{tr("The cash flow ends")} {isolate(show(data.meta.difference))} {tr("away from the bank and cash accounts. This should never happen: tell whoever looks after the books.")}</Alert>}
         <Headlines kind={kind} data={data} />
         <div className="table-wrap erp-statement">
           <table className="table">
@@ -173,7 +173,7 @@ export function Statement({ kind }: { kind: Kind }) {
                   .filter((c) => c.name !== "change_pct")
                   .map((c, i) => (
                     <th key={c.name} scope="col" className={i === 0 ? "erp-first" : "num"}>
-                      {c.label}
+                      {isolate(c.label)}
                     </th>
                   ))}
               </tr>
@@ -185,18 +185,18 @@ export function Statement({ kind }: { kind: Kind }) {
                     if (ci === 0) {
                       return (
                         <th key={c.name} scope="row" className="erp-first erp-account" style={{ paddingLeft: `${0.75 + (r._indent ?? 0) * 1.1}rem` }}>
-                          {String(r[c.name] ?? "")}
+                          {isolate(String(r[c.name] ?? ""))}
                         </th>
                       );
                     }
                     const v = r[c.name];
-                    if (c.name === "change") return <td key={c.name} className="num">{moved(r.change as string, r.change_pct as string | null, show)}</td>;
+                    if (c.name === "change") return <td key={c.name} className="num">{isolate(moved(r.change as string, r.change_pct as string | null, show))}</td>;
                     if (v === undefined || v === null || v === "") return <td key={c.name} />;
                     return (
                       <td key={c.name} className="num">
                         {r.account_id ? (
                           <button type="button" className="erp-fig" title={tr("Show the entries behind this figure")} onClick={() => open(r, c.name)}>
-                            {show(v)}
+                            {isolate(show(v))}
                           </button>
                         ) : (
                           show(v)
@@ -211,10 +211,10 @@ export function Statement({ kind }: { kind: Kind }) {
         </div>
         <p className="faint">
           {kind === "cash_flow"
-            ? "Changes in the other accounts are sorted by the account's type, or by the cash flow section set on the account."
+            ? tr("Changes in the other accounts are sorted by the account's type, or by the cash flow section set on the account.")
             : compared
-              ? "Click a figure to see the entries behind it."
-              : "Click a figure to see the entries behind it, or set the statement beside an earlier period."}
+              ? tr("Click a figure to see the entries behind it.")
+              : tr("Click a figure to see the entries behind it, or set the statement beside an earlier period.")}
         </p>
       </>
     );
@@ -226,13 +226,13 @@ export function Statement({ kind }: { kind: Kind }) {
       <header className="erp-head">
         <div>
           <AccountsTabs />
-          <p className="page-sub">{kind === "balance_sheet" ? `As of ${formatDate(asOf)}` : `${formatDate(from)} to ${formatDate(to)}`}</p>
+          <p className="page-sub">{kind === "balance_sheet" ? tr("As of {asOf}", { asOf: formatDate(asOf) }) : tr("{from} to {to}", { from: formatDate(from), to: formatDate(to) })}</p>
         </div>
         <div className="erp-tools">
           <div className="segmented" role="group" aria-label={tr("Statement")}>
             {KINDS.map((k) => (
               <Link key={k.id} to={{ pathname: k.path, search: sp.toString() }} aria-current={k.id === kind ? "page" : undefined} className="erp-seg" data-on={k.id === kind || undefined}>
-                {k.label}
+                {isolate(k.label)}
               </Link>
             ))}
           </div>
@@ -243,7 +243,7 @@ export function Statement({ kind }: { kind: Kind }) {
       </header>
 
       <form className="erp-filters" onSubmit={(e) => e.preventDefault()} aria-label={tr("What the statement covers")}>
-        <Field label={kind === "balance_sheet" ? "As of" : "Period"} htmlFor="st-period">
+        <Field label={kind === "balance_sheet" ? tr("As of") : tr("Period")} htmlFor="st-period">
           <select
             id="st-period"
             className="select"
@@ -255,7 +255,7 @@ export function Statement({ kind }: { kind: Kind }) {
           >
             {chooser.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.label}
+                {isolate(p.label)}
               </option>
             ))}
             <option value="custom">{tr("Choose dates…")}</option>
@@ -286,7 +286,7 @@ export function Statement({ kind }: { kind: Kind }) {
           <Field label={tr("How many")} htmlFor="st-many">
             <select id="st-many" className="select" value={many} onChange={(e) => put({ periods: e.target.value === "1" ? null : e.target.value })}>
               {["1", "2", "3"].map((n) => (
-                <option key={n}>{n}</option>
+                <option key={n}>{isolate(n)}</option>
               ))}
             </select>
           </Field>
@@ -323,9 +323,9 @@ function Headlines({ kind, data }: { kind: Kind; data: Data }) {
         const was = before?.[key] as string | undefined;
         return (
           <div key={key} className="erp-headline">
-            <dt>{label}</dt>
-            <dd>{show(v)}</dd>
-            {was !== undefined && <dd className="faint">{moved(sub(v, was), null, show)} from {before!.label}</dd>}
+            <dt>{isolate(label)}</dt>
+            <dd>{isolate(show(v))}</dd>
+            {was !== undefined && <dd className="faint">{tr("{value} from {label}", { value: moved(sub(v, was), null, show), label: before!.label })}</dd>}
           </div>
         );
       })}

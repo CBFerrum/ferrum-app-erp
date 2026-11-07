@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr } from "@ferrum/client";
+import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 
 const BASE = "/api/app/selling/portal/invoices";
@@ -59,7 +59,7 @@ export function dueLabel(inv: Pick<PortalInvoice, "outstanding" | "overdue" | "d
 }
 
 export function PortalInvoices() {
-  useShellTitle("Your invoices");
+  useShellTitle(tr("Your invoices"));
   const q = useInfiniteQuery({
     queryKey: ["erp", "portal", "invoices"],
     queryFn: ({ pageParam, signal }) => api.get<{ invoices: PortalInvoice[]; next_cursor?: string | null }>(BASE, pageParam ? { cursor: pageParam } : {}, signal),
@@ -103,13 +103,13 @@ export function PortalInvoices() {
               {invoices.map((inv) => (
                 <tr key={inv.id}>
                   <td>
-                    <Link to={`/${inv.id}`}>{inv.number}</Link>
+                    <Link to={`/${inv.id}`}>{isolate(inv.number ?? "")}</Link>
                   </td>
-                  <td>{formatDate(inv.date)}</td>
+                  <td>{isolate(formatDate(inv.date))}</td>
                   <td>
-                    <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{dueLabel(inv)}</Badge>
+                    <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{isolate(dueLabel(inv))}</Badge>
                   </td>
-                  <td className="num">{amount(inv.total, inv.currency)}</td>
+                  <td className="num">{isolate(amount(inv.total, inv.currency))}</td>
                   <td className="num">{Number(inv.outstanding) > 0 ? amount(inv.outstanding, inv.currency) : "—"}</td>
                 </tr>
               ))}
@@ -130,7 +130,7 @@ export function PortalInvoice() {
   const { id = "" } = useParams();
   const q = useQuery({ queryKey: ["erp", "portal", "invoice", id], queryFn: ({ signal }) => api.get<PortalInvoiceDetail>(`${BASE}/${encodeURIComponent(id)}`, {}, signal) });
   const [busy, setBusy] = useState<"print" | "pdf" | null>(null);
-  useShellTitle(q.data?.number ?? "Invoice");
+  useShellTitle(q.data?.number ?? tr("Invoice"));
   if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   if (!q.data) return <PageLoading />;
   const inv = q.data;
@@ -152,9 +152,9 @@ export function PortalInvoice() {
       </p>
       <div className="page-head">
         <div>
-          <h1 className="page-title">{inv.number}</h1>
+          <h1 className="page-title">{isolate(inv.number ?? "")}</h1>
           <p className="page-sub">
-            {[inv.company, formatDate(inv.date)].filter(Boolean).join(" · ")}
+            {isolate([inv.company, formatDate(inv.date)].filter(Boolean).join(" · "))}
           </p>
         </div>
         <div className="row">
@@ -169,8 +169,8 @@ export function PortalInvoice() {
         </div>
       </div>
       <p>
-        <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{dueLabel(inv)}</Badge>{" "}
-        {Number(inv.outstanding) > 0 && <strong>{amount(inv.outstanding, inv.currency)} {tr("to pay")}</strong>}
+        <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{isolate(dueLabel(inv))}</Badge>{isolate(" ")}
+        {Number(inv.outstanding) > 0 && <strong>{isolate(amount(inv.outstanding, inv.currency))} {tr("to pay")}</strong>}
       </p>
       <div className="table-wrap" data-ferrum-nocard>
         <table className="table">
@@ -192,14 +192,14 @@ export function PortalInvoice() {
             {inv.lines.map((l, i) => (
               <tr key={i}>
                 <td>
-                  {l.item}
-                  {l.description && l.description !== l.item && <div className="faint">{l.description}</div>}
+                  {isolate(l.item ?? "")}
+                  {l.description && l.description !== l.item && <div className="faint">{isolate(l.description)}</div>}
                 </td>
                 <td className="num">
-                  {formatDecimal(l.qty)} {l.unit ?? ""}
+                  {isolate(formatDecimal(l.qty))} {l.unit ?? ""}
                 </td>
-                <td className="num">{amount(l.rate, inv.currency)}</td>
-                <td className="num">{amount(l.amount, inv.currency)}</td>
+                <td className="num">{isolate(amount(l.rate, inv.currency))}</td>
+                <td className="num">{isolate(amount(l.amount, inv.currency))}</td>
               </tr>
             ))}
           </tbody>
@@ -208,14 +208,14 @@ export function PortalInvoice() {
               <th scope="row" colSpan={3} className="num">
                 {tr("Net total")}
               </th>
-              <td className="num">{amount(inv.net_total, inv.currency)}</td>
+              <td className="num">{isolate(amount(inv.net_total, inv.currency))}</td>
             </tr>
             {inv.taxes.map((t, i) => (
               <tr key={i}>
                 <th scope="row" colSpan={3} className="num">
-                  {t.description ?? "Tax"}
+                  {t.description ?? tr("Tax")}
                 </th>
-                <td className="num">{amount(t.amount, inv.currency)}</td>
+                <td className="num">{isolate(amount(t.amount, inv.currency))}</td>
               </tr>
             ))}
             <tr>
@@ -223,7 +223,7 @@ export function PortalInvoice() {
                 {tr("Total")}
               </th>
               <td className="num">
-                <strong>{amount(inv.total, inv.currency)}</strong>
+                <strong>{isolate(amount(inv.total, inv.currency))}</strong>
               </td>
             </tr>
           </tfoot>
