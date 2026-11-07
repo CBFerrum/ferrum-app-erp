@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, todayIso, t as tr } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, todayIso, t as tr, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { currencies, documentBody, dueWords, fill, fromReport, kindLabel, type Open, pairOff, postingDate, ready, split, type Tally, tally } from "./allocation";
@@ -38,19 +38,19 @@ function Summary({ t, currency, onFill, onClear, onReview, canFill }: { t: Tally
       <dl className="erp-sums">
         <div>
           <dt>{tr("Money to apply")}</dt>
-          <dd>{show(t.available)}</dd>
+          <dd>{isolate(show(t.available))}</dd>
         </div>
         <div>
           <dt>{tr("Applying")}</dt>
-          <dd>{show(t.applied)}</dd>
+          <dd>{isolate(show(t.applied))}</dd>
         </div>
         <div data-tone={cmp(t.left, "0") > 0 ? "left" : undefined}>
           <dt>{tr("Left over")}</dt>
-          <dd>{show(t.left)}</dd>
+          <dd>{isolate(show(t.left))}</dd>
         </div>
       </dl>
-      <span className="faint">{currency}</span>
-      {t.over && <span className="erp-negative">{t.over}</span>}
+      <span className="faint">{isolate(currency)}</span>
+      {t.over && <span className="erp-negative">{isolate(t.over)}</span>}
       <span className="spacer" />
       <Button onClick={onFill} disabled={!canFill}>
         {tr("Oldest invoices first")}
@@ -87,15 +87,15 @@ function MoneyTable({ credits, left, used, precision, onToggle }: { credits: Ope
             {credits.map((c) => (
               <tr key={c.id} data-off={!used.has(c.id) || undefined}>
                 <td>
-                  <input type="checkbox" aria-label={`Use ${kindLabel(c)} ${c.number ?? ""}`} checked={used.has(c.id)} onChange={(e) => onToggle(c.id, e.target.checked)} />
+                  <input type="checkbox" aria-label={tr("Use {c} {value}", { c: kindLabel(c), value: c.number ?? "" })} checked={used.has(c.id)} onChange={(e) => onToggle(c.id, e.target.checked)} />
                 </td>
                 <td>
                   <DocLink item={c} />
                   <div className="faint">
-                    {kindLabel(c)} · {formatDate(c.date)}
+                    {isolate(kindLabel(c))} · {isolate(formatDate(c.date))}
                   </div>
                 </td>
-                <td className="num">{show(sub("0", c.outstanding), precision)}</td>
+                <td className="num">{isolate(show(sub("0", c.outstanding), precision))}</td>
                 <td className="num">{used.has(c.id) ? show(left[c.id], precision) : <span className="faint">{tr("not used")}</span>}</td>
               </tr>
             ))}
@@ -109,10 +109,10 @@ function MoneyTable({ credits, left, used, precision, onToggle }: { credits: Ope
 function DocLink({ item }: { item: Open }) {
   const label = item.number ?? kindLabel(item);
   // A journal's open items are its lines: the journal itself is found from its list.
-  if (item.kind === "JournalEntry") return <span className="cell-title">{label}</span>;
+  if (item.kind === "JournalEntry") return <span className="cell-title">{isolate(label)}</span>;
   return (
     <Link className="cell-title" to={`/e/${item.kind}/${item.id}`}>
-      {label}
+      {isolate(label)}
     </Link>
   );
 }
@@ -144,29 +144,29 @@ function InvoiceTable({ invoices, amounts, t, available, onAmount, today }: { in
                 <tr key={inv.id}>
                   <td>
                     <DocLink item={inv} />
-                    <div className="faint">{formatDate(inv.date)}</div>
+                    <div className="faint">{isolate(formatDate(inv.date))}</div>
                   </td>
                   <td>
                     {inv.due ? formatDate(inv.due) : ""}
-                    <div className={late.includes("overdue") ? "erp-negative" : "faint"}>{late}</div>
+                    <div className={late.includes("overdue") ? "erp-negative" : "faint"}>{isolate(late)}</div>
                   </td>
-                  <td className="num">{show(inv.outstanding)}</td>
+                  <td className="num">{isolate(show(inv.outstanding))}</td>
                   <td className="num erp-apply">
                     <input
                       className="input num"
                       inputMode="decimal"
-                      aria-label={`Amount to apply to ${inv.number ?? "the invoice"}`}
+                      aria-label={tr("Amount to apply to {value}", { value: inv.number ?? "the invoice" })}
                       aria-invalid={t.errors[inv.id] ? true : undefined}
                       placeholder="0"
                       value={amounts[inv.id] ?? ""}
                       onChange={(e) => onAmount(inv.id, e.target.value)}
                     />
-                    <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={`Apply as much as possible to ${inv.number ?? "the invoice"}`}>
+                    <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={tr("Apply as much as possible to {value}", { value: inv.number ?? "the invoice" })}>
                       {tr("Full")}
                     </Button>
-                    {t.errors[inv.id] && <span className="field-error">{t.errors[inv.id]}</span>}
+                    {t.errors[inv.id] && <span className="field-error">{isolate(t.errors[inv.id])}</span>}
                   </td>
-                  <td className="num">{show(t.invoiceLeft[inv.id])}</td>
+                  <td className="num">{isolate(show(t.invoiceLeft[inv.id]))}</td>
                 </tr>
               );
             })}
@@ -199,7 +199,7 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
     try {
       made = await api.post<{ id: string; version: number }>("/api/v1/PaymentAllocation", body);
       const done = await api.post<{ number?: string }>(docPath("PaymentAllocation", made.id, "submit"), {}, { ifMatch: made.version });
-      toast(`Applied ${show(p?.total_allocated)}${done.number ? ` (${done.number})` : ""}`);
+      toast(tr("Applied {value}{value2}", { value: show(p?.total_allocated), value2: done.number ? ` (${done.number})` : "" }));
       onDone();
     } catch (err) {
       // A draft that could not be posted is not left behind.
@@ -225,9 +225,9 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
       }
     >
       <form id="al-confirm" className="stack erp-tight" onSubmit={submit}>
-        {problem && <Alert tone="error">{problem}</Alert>}
+        {problem && <Alert tone="error">{isolate(problem)}</Alert>}
         {seen.error ? (
-          <Alert tone="error">{errorMessage(seen.error)}</Alert>
+          <Alert tone="error">{isolate(errorMessage(seen.error))}</Alert>
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -244,19 +244,19 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
                   <tr key={`${pair.credit}-${pair.invoice}`}>
                     <td>
                       {p?.allocations[i]?.credit_number ?? byId.get(pair.credit)?.number}
-                      <div className="faint">{p?.allocations[i]?.credit_type}</div>
+                      <div className="faint">{isolate(p?.allocations[i]?.credit_type ?? "")}</div>
                     </td>
                     <td>{p?.allocations[i]?.invoice_number ?? byId.get(pair.invoice)?.number}</td>
-                    <td className="num">{show(pair.amount)}</td>
-                    <td className="num">{p ? (cmp(p.allocations[i]?.exchange_difference ?? "0", "0") === 0 ? <span className="faint">none</span> : show(p.allocations[i].exchange_difference)) : "…"}</td>
+                    <td className="num">{isolate(show(pair.amount))}</td>
+                    <td className="num">{p ? (cmp(p.allocations[i]?.exchange_difference ?? "0", "0") === 0 ? <span className="faint">{tr("none")}</span> : show(p.allocations[i].exchange_difference)) : "…"}</td>
                   </tr>
                 ))}
               </tbody>
               {p && cmp(gain, "0") !== 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan={3}>{cmp(gain, "0") > 0 ? "Exchange gain" : "Exchange loss"}{tr(", in the company's currency")}</td>
-                    <td className="num">{show(gain)}</td>
+                    <td colSpan={3}>{cmp(gain, "0") > 0 ? tr("Exchange gain") : tr("Exchange loss")}{tr(", in the company's currency")}</td>
+                    <td className="num">{isolate(show(gain))}</td>
                   </tr>
                 </tfoot>
               )}
@@ -299,11 +299,11 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
 
   if (!credits.length || !invoices.length) {
     return (
-      <EmptyState title={!credits.length ? "No money waiting to be applied" : "No open invoices to apply it to"} icon="check">
+      <EmptyState title={!credits.length ? tr("No money waiting to be applied") : tr("No open invoices to apply it to")} icon="check">
         <p className="muted">
           {!credits.length
-            ? `${items.length ? "Everything this party owes is still to be paid" : "Nothing is open for this party"}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.`
-            : "The money is waiting, with nothing yet to apply it to."}
+            ? tr("{value}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.", { value: items.length ? "Everything this party owes is still to be paid" : "Nothing is open for this party" })
+            : tr("The money is waiting, with nothing yet to apply it to.")}
         </p>
         {!credits.length && (
           <Link className="btn btn-default btn-md" to="/e/PaymentEntry/new">
@@ -329,7 +329,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
                 setSp((prev) => new URLSearchParams({ ...Object.fromEntries(prev), currency: c }), { replace: true });
               }}
             >
-              {c}
+              {isolate(c)}
             </button>
           ))}
         </div>
@@ -381,7 +381,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
 }
 
 export function Allocate() {
-  useShellTitle("Apply payments");
+  useShellTitle(tr("Apply payments"));
   const qc = useQueryClient();
   const me = useMe().data;
   const [sp, setSp] = useSearchParams();
@@ -415,7 +415,7 @@ export function Allocate() {
   let body;
   if (!party) {
     body = (
-      <EmptyState title={`Choose a ${partyType.toLowerCase()}`} icon="user">
+      <EmptyState title={tr("Choose a {partyType}", { partyType: partyType.toLowerCase() })} icon="user">
         <p className="muted">{tr("Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.")}</p>
       </EmptyState>
     );
@@ -440,12 +440,12 @@ export function Allocate() {
           <div className="segmented" role="group" aria-label={tr("Whose")}>
             {(["Customer", "Supplier"] as const).map((k) => (
               <button key={k} type="button" aria-pressed={partyType === k} onClick={() => put({ type: k === "Customer" ? null : k, party: null, currency: null })}>
-                {k === "Customer" ? "Customers" : "Suppliers"}
+                {k === "Customer" ? tr("Customers") : tr("Suppliers")}
               </button>
             ))}
           </div>
           <div className="erp-pick erp-pick-wide">
-            <LinkInput to={partyType} id="al-party" label={partyType} placeholder={`Find a ${partyType.toLowerCase()}…`} value={party} onChange={(id) => put({ party: id, currency: null })} />
+            <LinkInput to={partyType} id="al-party" label={partyType} placeholder={tr("Find a {partyType}…", { partyType: partyType.toLowerCase() })} value={party} onChange={(id) => put({ party: id, currency: null })} />
           </div>
           <div className="erp-pick">
             <LinkInput to="Company" id="al-company" label={tr("Company")} value={company} onChange={(id) => put({ company: id })} />

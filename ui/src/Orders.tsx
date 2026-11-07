@@ -8,7 +8,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr } from "@ferrum/client";
+import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { amount } from "./Invoices";
 
@@ -97,7 +97,7 @@ export function owedLabel(b: Pick<PortalBill, "owed" | "overdue" | "due_date" | 
 }
 
 export function PortalOrders() {
-  useShellTitle("Your orders");
+  useShellTitle(tr("Your orders"));
   const orders = useInfiniteQuery({
     queryKey: ["erp", "portal", "orders"],
     queryFn: ({ pageParam, signal }) => api.get<{ orders: PortalOrder[]; next_cursor?: string | null }>(`${BASE}/orders`, pageParam ? { cursor: pageParam } : {}, signal),
@@ -130,10 +130,10 @@ export function PortalOrders() {
             {waiting.map((r) => (
               <li key={`${r.id}-${r.answer ?? ""}`} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span>
-                  <strong>{r.number}</strong> · {asked(r)}
-                  {r.due_by && <span className="faint"> {tr("· due by")} {formatDate(r.due_by)}</span>}
+                  <strong>{isolate(r.number ?? "")}</strong> · {isolate(asked(r))}
+                  {r.due_by && <span className="faint"> {tr("· due by")} {isolate(formatDate(r.due_by))}</span>}
                 </span>
-                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{tr("Ask")} {r.company ?? "them"} {tr("for a new link")}</span>}
+                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{tr("Ask")} {r.company ?? tr("them")} {tr("for a new link")}</span>}
               </li>
             ))}
           </ul>
@@ -166,14 +166,14 @@ export function PortalOrders() {
                 {orderRows.map((o) => (
                   <tr key={o.id}>
                     <td>
-                      <Link to={`/${o.id}`}>{o.number}</Link>
+                      <Link to={`/${o.id}`}>{isolate(o.number ?? "")}</Link>
                     </td>
-                    <td>{formatDate(o.date)}</td>
+                    <td>{isolate(formatDate(o.date))}</td>
                     <td>{o.required_by ? formatDate(o.required_by) : "—"}</td>
                     <td>
-                      <Badge tone={statusTone(o.status)}>{progress(o)}</Badge>
+                      <Badge tone={statusTone(o.status)}>{isolate(progress(o))}</Badge>
                     </td>
-                    <td className="num">{amount(o.total, o.currency)}</td>
+                    <td className="num">{isolate(amount(o.total, o.currency))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -213,12 +213,12 @@ export function PortalOrders() {
               <tbody>
                 {billRows.map((b) => (
                   <tr key={b.id}>
-                    <td>{b.bill_no}</td>
-                    <td>{formatDate(b.bill_date)}</td>
+                    <td>{isolate(b.bill_no ?? "")}</td>
+                    <td>{isolate(formatDate(b.bill_date))}</td>
                     <td>
-                      <Badge tone={b.overdue ? "red" : statusTone(b.status)}>{owedLabel(b)}</Badge>
+                      <Badge tone={b.overdue ? "red" : statusTone(b.status)}>{isolate(owedLabel(b))}</Badge>
                     </td>
-                    <td className="num">{amount(b.total, b.currency)}</td>
+                    <td className="num">{isolate(amount(b.total, b.currency))}</td>
                     <td className="num">{Number(b.owed) > 0 ? amount(b.owed, b.currency) : "—"}</td>
                   </tr>
                 ))}
@@ -240,7 +240,7 @@ export function PortalOrderPage() {
   const { id = "" } = useParams();
   const q = useQuery({ queryKey: ["erp", "portal", "order", id], queryFn: ({ signal }) => api.get<PortalOrderDetail>(`${BASE}/orders/${encodeURIComponent(id)}`, {}, signal) });
   const [busy, setBusy] = useState<"print" | "pdf" | null>(null);
-  useShellTitle(q.data?.number ?? "Order");
+  useShellTitle(q.data?.number ?? tr("Order"));
   if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   if (!q.data) return <PageLoading />;
   const o = q.data;
@@ -262,9 +262,9 @@ export function PortalOrderPage() {
       </p>
       <div className="page-head">
         <div>
-          <h1 className="page-title">{o.number}</h1>
+          <h1 className="page-title">{isolate(o.number ?? "")}</h1>
           <p className="page-sub">
-            {[o.company, formatDate(o.date), o.required_by ? `required by ${formatDate(o.required_by)}` : null].filter(Boolean).join(" · ")}
+            {isolate([o.company, formatDate(o.date), o.required_by ? `required by ${formatDate(o.required_by)}` : null].filter(Boolean).join(" · "))}
           </p>
         </div>
         <div className="row">
@@ -279,7 +279,7 @@ export function PortalOrderPage() {
         </div>
       </div>
       <p>
-        <Badge tone={statusTone(o.status)}>{progress(o)}</Badge>
+        <Badge tone={statusTone(o.status)}>{isolate(progress(o))}</Badge>
       </p>
       <div className="table-wrap" data-ferrum-nocard>
         <table className="table">
@@ -304,16 +304,16 @@ export function PortalOrderPage() {
             {o.lines.map((l, i) => (
               <tr key={i}>
                 <td>
-                  {l.item}
-                  {l.description && l.description !== l.item && <div className="faint">{l.description}</div>}
-                  {l.required_by && l.required_by !== o.required_by && <div className="faint">{tr("Required by")} {formatDate(l.required_by)}</div>}
+                  {isolate(l.item ?? "")}
+                  {l.description && l.description !== l.item && <div className="faint">{isolate(l.description)}</div>}
+                  {l.required_by && l.required_by !== o.required_by && <div className="faint">{tr("Required by")} {isolate(formatDate(l.required_by))}</div>}
                 </td>
                 <td className="num">
-                  {formatDecimal(l.qty)} {l.unit ?? ""}
+                  {isolate(formatDecimal(l.qty))} {l.unit ?? ""}
                 </td>
-                <td className="num">{formatDecimal(l.received)}</td>
-                <td className="num">{amount(l.rate, o.currency)}</td>
-                <td className="num">{amount(l.amount, o.currency)}</td>
+                <td className="num">{isolate(formatDecimal(l.received))}</td>
+                <td className="num">{isolate(amount(l.rate, o.currency))}</td>
+                <td className="num">{isolate(amount(l.amount, o.currency))}</td>
               </tr>
             ))}
           </tbody>
@@ -322,14 +322,14 @@ export function PortalOrderPage() {
               <th scope="row" colSpan={4} className="num">
                 {tr("Net total")}
               </th>
-              <td className="num">{amount(o.net_total, o.currency)}</td>
+              <td className="num">{isolate(amount(o.net_total, o.currency))}</td>
             </tr>
             {o.taxes.map((t, i) => (
               <tr key={i}>
                 <th scope="row" colSpan={4} className="num">
-                  {t.description ?? "Tax"}
+                  {t.description ?? tr("Tax")}
                 </th>
-                <td className="num">{amount(t.amount, o.currency)}</td>
+                <td className="num">{isolate(amount(t.amount, o.currency))}</td>
               </tr>
             ))}
             <tr>
@@ -337,7 +337,7 @@ export function PortalOrderPage() {
                 {tr("Total")}
               </th>
               <td className="num">
-                <strong>{amount(o.total, o.currency)}</strong>
+                <strong>{isolate(amount(o.total, o.currency))}</strong>
               </td>
             </tr>
           </tfoot>

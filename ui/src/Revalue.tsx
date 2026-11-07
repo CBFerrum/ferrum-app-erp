@@ -8,7 +8,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, todayIso, t } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, todayIso, t, isolate } from "@ferrum/client";
 import { Alert, Button, confirmDialog, EmptyState, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
 import { can, LinkInput, LinkTitle, useMe, useMetaIndex } from "@ferrum/records";
 import { cmp } from "./decimal";
@@ -17,7 +17,7 @@ import { bodyOf, defaultDay, type Draft, outcome, party } from "./revaluation";
 import { AccountsTabs } from "./Tabs";
 
 export function Revalue() {
-  useShellTitle("Revalue foreign currency balances");
+  useShellTitle(t("Revalue foreign currency balances"));
   const navigate = useNavigate();
   const me = useMe().data;
   const perms = useMetaIndex().data?.entities.find((e) => e.name === "ExchangeRevaluation")?.permissions;
@@ -54,7 +54,7 @@ export function Revalue() {
     if (!body || !d) return;
     const word = result === "gain" ? `a net gain of ${show(net)}` : result === "loss" ? `a net loss of ${show(net.replace("-", ""))}` : "nothing net";
     const back = reverse ? ` It is reversed on ${formatDate(d.reversal_date)}.` : " It is not reversed afterwards.";
-    const ok = await confirmDialog({ title: `Revalue at ${formatDate(date)}?`, message: `${d.rows.length} balances are carried at that day's rate: ${word}.${back}`, confirmLabel: "Post the revaluation" });
+    const ok = await confirmDialog({ title: t("Revalue at {date}?", { date: formatDate(date) }), message: t("{length} balances are carried at that day's rate: {word}.{back}", { length: d.rows.length, word, back }), confirmLabel: t("Post the revaluation") });
     if (!ok) return;
     setBusy(true);
     setProblem(null);
@@ -62,7 +62,7 @@ export function Revalue() {
     try {
       made = await api.post<{ id: string; version: number }>("/api/v1/ExchangeRevaluation", body);
       const done = await api.post<{ number?: string }>(docPath("ExchangeRevaluation", made.id, "submit"), {}, { ifMatch: made.version });
-      toast(`Revalued at ${formatDate(date)}${done.number ? ` (${done.number})` : ""}`);
+      toast(t("Revalued at {date}{value}", { date: formatDate(date), value: done.number ? ` (${done.number})` : "" }));
       navigate(`/e/ExchangeRevaluation/${made.id}`);
     } catch (e) {
       // A draft that could not be posted is not left behind.
@@ -133,19 +133,19 @@ export function Revalue() {
                   <td>
                     <LinkTitle to="Currency" id={r.currency} />
                   </td>
-                  <td className="num">{show(r.balance)}</td>
-                  <td className="num">{show(r.book_value)}</td>
-                  <td className="num">{show(r.exchange_rate)}</td>
-                  <td className="num">{show(r.revalued)}</td>
-                  <td className={`num ${cmp(r.gain_loss, "0") < 0 ? "erp-negative" : ""}`}>{show(r.gain_loss)}</td>
+                  <td className="num">{isolate(show(r.balance))}</td>
+                  <td className="num">{isolate(show(r.book_value))}</td>
+                  <td className="num">{isolate(show(r.exchange_rate))}</td>
+                  <td className="num">{isolate(show(r.revalued))}</td>
+                  <td className={`num ${cmp(r.gain_loss, "0") < 0 ? "erp-negative" : ""}`}>{isolate(show(r.gain_loss))}</td>
                 </tr>
               );
             })}
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={7}>{result === "gain" ? "Net gain" : result === "loss" ? "Net loss" : "Net"}</td>
-              <td className={`num ${result === "loss" ? "erp-negative" : ""}`}>{show(net)}</td>
+              <td colSpan={7}>{result === "gain" ? t("Net gain") : result === "loss" ? t("Net loss") : t("Net")}</td>
+              <td className={`num ${result === "loss" ? "erp-negative" : ""}`}>{isolate(show(net))}</td>
             </tr>
           </tfoot>
         </table>
@@ -186,14 +186,14 @@ export function Revalue() {
           <LinkInput to="Account" id="rv-account" value={account} linkFilters={{ is_group: false }} placeholder={t("The company's")} onChange={(id) => put({ account: id })} />
         </Field>
       </form>
-      {problem && <Alert tone="error">{problem}</Alert>}
+      {problem && <Alert tone="error">{isolate(problem)}</Alert>}
       {table}
       <div className="erp-sticky-foot">
         <span className="muted" aria-live="polite">
           {!mayPost
-            ? "You can look at what a revaluation would do. An Accounts Manager posts it."
+            ? t("You can look at what a revaluation would do. An Accounts Manager posts it.")
             : d && d.rows.length > 0
-              ? `${d.rows.length} ${d.rows.length === 1 ? "balance" : "balances"}. The gain is unrealised: the real difference is booked when a balance is settled.`
+              ? t("{length} {value}. The gain is unrealised: the real difference is booked when a balance is settled.", { length: d.rows.length, value: d.rows.length === 1 ? "balance" : "balances" })
               : ""}
         </span>
         <Button variant="primary" loading={busy} disabled={!mayPost || !d || d.rows.length === 0} onClick={() => void post()}>

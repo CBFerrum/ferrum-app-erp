@@ -3,7 +3,7 @@
 
 import { Link, useLocation } from "react-router";
 import { can, useMetaIndex } from "@ferrum/records";
-import { t as tr } from "@ferrum/client";
+import { t as tr, isolate } from "@ferrum/client";
 
 interface Tab {
   to: string;
@@ -17,11 +17,11 @@ interface Tab {
 export const STATEMENTS = ["/r/profit_and_loss", "/r/balance_sheet", "/r/cash_flow"];
 
 const TABS: Tab[] = [
-  { to: "/r/finance_overview", label: "Today", needs: "BankTransaction" },
-  { to: "/r/bank_reconciliation", label: "Bank", needs: "BankAccount" },
-  { to: "/e/PaymentAllocation/new", label: "Allocate payments", needs: "PaymentAllocation" },
-  { to: "/r/profit_and_loss", label: "Statements", needs: "JournalEntry", also: STATEMENTS },
-  { to: "/e/ExchangeRevaluation/new", label: "Revalue", needs: "ExchangeRevaluation" },
+  { to: "/r/finance_overview", get label() { return tr("Today"); }, needs: "BankTransaction" },
+  { to: "/r/bank_reconciliation", get label() { return tr("Bank"); }, needs: "BankAccount" },
+  { to: "/e/PaymentAllocation/new", get label() { return tr("Allocate payments"); }, needs: "PaymentAllocation" },
+  { to: "/r/profit_and_loss", get label() { return tr("Statements"); }, needs: "JournalEntry", also: STATEMENTS },
+  { to: "/e/ExchangeRevaluation/new", get label() { return tr("Revalue"); }, needs: "ExchangeRevaluation" },
 ];
 
 export function AccountsTabs() {
@@ -33,7 +33,7 @@ export function AccountsTabs() {
     <nav className="erp-tabs" aria-label={tr("Accounts")}>
       {shown.map((t) => (
         <Link key={t.to} to={t.to} aria-current={[t.to, ...(t.also ?? [])].includes(pathname) ? "page" : undefined}>
-          {t.label}
+          {isolate(t.label)}
         </Link>
       ))}
     </nav>

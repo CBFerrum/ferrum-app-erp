@@ -9,7 +9,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as tr } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, LinkInput, useMetaIndex } from "@ferrum/records";
 import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
@@ -41,19 +41,19 @@ function Figures({ wb }: { wb: Workbench }) {
       <dl className="erp-figure-row">
         <div className="erp-figure">
           <dt>{tr("Bank statement")}</dt>
-          <dd>{fmt(f.statement_balance, wb.precision)}</dd>
-          <dd className="faint">{tr("as of")} {formatDate(wb.as_of)}</dd>
+          <dd>{isolate(fmt(f.statement_balance, wb.precision))}</dd>
+          <dd className="faint">{tr("as of")} {isolate(formatDate(wb.as_of))}</dd>
         </div>
         <div className="erp-figure">
           <dt>{tr("Your books")}</dt>
-          <dd>{fmt(f.book_balance, wb.precision)}</dd>
-          <dd className="faint">{wb.name}</dd>
+          <dd>{isolate(fmt(f.book_balance, wb.precision))}</dd>
+          <dd className="faint">{isolate(wb.name ?? "")}</dd>
         </div>
         <div className="erp-figure" data-tone={settled ? "calm" : "alarm"}>
           <dt>{tr("Difference")}</dt>
-          <dd>{fmt(f.difference, wb.precision)}</dd>
+          <dd>{isolate(fmt(f.difference, wb.precision))}</dd>
           <dd className={settled ? "faint" : "erp-negative"} role="status">
-            {settled ? "All of it is explained below" : `${fmt(f.unexplained, wb.precision)} cannot be explained`}
+            {settled ? tr("All of it is explained below") : tr("{value} cannot be explained", { value: fmt(f.unexplained, wb.precision) })}
           </dd>
         </div>
       </dl>
@@ -63,23 +63,23 @@ function Figures({ wb }: { wb: Workbench }) {
           <tbody>
             <tr>
               <td>{tr("In the books, not at the bank yet: money in")}</td>
-              <td className="num">{fmt(f.uncleared_deposits, wb.precision)}</td>
+              <td className="num">{isolate(fmt(f.uncleared_deposits, wb.precision))}</td>
             </tr>
             <tr>
               <td>{tr("In the books, not at the bank yet: money out")}</td>
-              <td className="num">{fmt(f.uncleared_payments, wb.precision)}</td>
+              <td className="num">{isolate(fmt(f.uncleared_payments, wb.precision))}</td>
             </tr>
             <tr>
               <td>{tr("On the statement, not in the books yet")}</td>
-              <td className="num">{fmt(f.unrecorded, wb.precision)}</td>
+              <td className="num">{isolate(fmt(f.unrecorded, wb.precision))}</td>
             </tr>
             <tr>
               <td>{tr("The statement should say")}</td>
-              <td className="num">{fmt(f.expected_bank_balance, wb.precision)}</td>
+              <td className="num">{isolate(fmt(f.expected_bank_balance, wb.precision))}</td>
             </tr>
             <tr className="bold">
               <td>{tr("Unexplained")}</td>
-              <td className="num">{fmt(f.unexplained, wb.precision)}</td>
+              <td className="num">{isolate(fmt(f.unexplained, wb.precision))}</td>
             </tr>
           </tbody>
         </table>
@@ -142,19 +142,19 @@ function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Wo
             onClick={() => onSelect(l.id)}
           >
             <div className="erp-line-main">
-              <span className="erp-line-desc">{l.description || l.reference_number || "No description"}</span>
+              <span className="erp-line-desc">{l.description || l.reference_number || tr("No description")}</span>
               <span className="erp-line-amount num" data-money={money}>
-                {fmt(l.amount, wb.precision)}
+                {isolate(fmt(l.amount, wb.precision))}
               </span>
             </div>
             <div className="erp-line-sub">
-              <span>{formatDate(l.date)}</span>
-              {l.reference_number && <span className="faint">{l.reference_number}</span>}
-              {l.status === "Partially Reconciled" && <span className="faint">{fmt(l.unallocated, wb.precision)} left</span>}
+              <span>{isolate(formatDate(l.date))}</span>
+              {l.reference_number && <span className="faint">{isolate(l.reference_number)}</span>}
+              {l.status === "Partially Reconciled" && <span className="faint">{tr("{value} left", { value: fmt(l.unallocated, wb.precision) })}</span>}
               <span className="spacer" />
               {statusBadge(l)}
             </div>
-            {l.balance != null && <div className="erp-line-balance faint num">{tr("Bank balance")} {fmt(l.balance, wb.precision)}</div>}
+            {l.balance != null && <div className="erp-line-balance faint num">{tr("Bank balance")} {isolate(fmt(l.balance, wb.precision))}</div>}
           </li>
         );
       })}
@@ -174,13 +174,13 @@ function Entry({ title, sub, reasons, remaining, ticked, amount, error, precisio
       <label className="erp-entry-pick">
         <input type="checkbox" checked={ticked} onChange={(e) => onTick(e.target.checked)} />
         <span className="erp-entry-text">
-          <strong>{title}</strong>
-          <span className="faint">{sub}</span>
+          <strong>{isolate(title)}</strong>
+          <span className="faint">{isolate(sub)}</span>
           {reasons && (
             <span className="erp-reasons">
               {reasons.map((r) => (
                 <Badge key={r} tone={r === "Exact amount" ? "green" : "neutral"}>
-                  {r}
+                  {isolate(r)}
                 </Badge>
               ))}
             </span>
@@ -188,11 +188,11 @@ function Entry({ title, sub, reasons, remaining, ticked, amount, error, precisio
         </span>
       </label>
       <div className="erp-entry-amount">
-        <span className="faint num">{fmt(remaining, precision)} left</span>
+        <span className="faint num">{tr("{remaining} left", { remaining: fmt(remaining, precision) })}</span>
         {ticked && (
           <>
-            <input className="input num" inputMode="decimal" aria-label={`Amount to clear against ${title}`} aria-invalid={error ? true : undefined} value={amount} onChange={(e) => onAmount(e.target.value)} />
-            {error && <span className="field-error">{error}</span>}
+            <input className="input num" inputMode="decimal" aria-label={tr("Amount to clear against {title}", { title })} aria-invalid={error ? true : undefined} value={amount} onChange={(e) => onAmount(e.target.value)} />
+            {error && <span className="field-error">{isolate(error)}</span>}
           </>
         )}
       </div>
@@ -227,9 +227,9 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
       {line.match && cmp(left, line.unallocated) === 0 && (
         <div className="erp-best">
           <div>
-            <strong>{line.match.number ?? "An entry"}</strong> {tr("clears this line exactly.")}
+            <strong>{line.match.number ?? tr("An entry")}</strong> {tr("clears this line exactly.")}
             <div className="faint">
-              {[line.match.party, line.match.reference, formatDate(line.match.posting_date)].filter(Boolean).join(" · ")}
+              {isolate([line.match.party, line.match.reference, formatDate(line.match.posting_date)].filter(Boolean).join(" · "))}
             </div>
           </div>
           <Button type="button" variant="primary" loading={busy} onClick={() => onReconcile({ vouchers: [{ payment_document: line.match!.payment_document, payment_entry: line.match!.payment_entry, allocated_amount: line.match!.remaining }] })}>
@@ -243,13 +243,13 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
         <Spinner label={tr("Looking for matches")} />
       ) : (
         <>
-          <h3 className="erp-group">{ranked.length ? "Entries that could clear it" : "Nothing in the books looks like this yet"}</h3>
+          <h3 className="erp-group">{ranked.length ? tr("Entries that could clear it") : tr("Nothing in the books looks like this yet")}</h3>
           {ranked.length > 0 && (
             <ul className="erp-entries">
               {ranked.map((m) => (
                 <Entry
                   key={m.payment_entry}
-                  title={m.number ?? "Entry"}
+                  title={m.number ?? tr("Entry")}
                   sub={[m.party, m.reference, formatDate(m.posting_date)].filter(Boolean).join(" · ")}
                   reasons={why(m)}
                   remaining={m.remaining}
@@ -270,7 +270,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
                 {rest.map((b) => (
                   <Entry
                     key={b.payment_entry}
-                    title={b.number ?? "Entry"}
+                    title={b.number ?? tr("Entry")}
                     sub={[b.party, b.reference, formatDate(b.posting_date)].filter(Boolean).join(" · ")}
                     remaining={b.remaining}
                     ticked={b.payment_entry in ticks}
@@ -288,7 +288,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
       )}
       <div className="erp-sticky-foot">
         <span aria-live="polite">
-          {Object.keys(ticks).length === 0 ? "Tick the entries this line pays off." : issues.total ? <span className="erp-negative">{issues.total}</span> : clearsLine(line.unallocated, ticks) ? "That clears the line." : `${fmt(left, wb.precision)} of the line would be left.`}
+          {Object.keys(ticks).length === 0 ? tr("Tick the entries this line pays off.") : issues.total ? <span className="erp-negative">{isolate(issues.total)}</span> : clearsLine(line.unallocated, ticks) ? tr("That clears the line.") : tr("{left} of the line would be left.", { left: fmt(left, wb.precision) })}
         </span>
         <Button type="submit" variant={line.match ? "default" : "primary"} loading={busy} disabled={!canReconcile(ticks, issues)}>
           {tr("Reconcile")}
@@ -309,9 +309,9 @@ function PaymentTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        {tr("Makes")} {deposit ? "a payment received from a customer" : "a payment made to a supplier"} {tr("for the")} {fmt(line.unallocated, precision)} {tr("still to reconcile, and matches it with this line.")}
+        {tr("Makes")} {deposit ? tr("a payment received from a customer") : tr("a payment made to a supplier")} {tr("for the")} {isolate(fmt(line.unallocated, precision))} {tr("still to reconcile, and matches it with this line.")}
       </p>
-      <Field label={deposit ? "Customer" : "Supplier"} htmlFor="bk-party" required>
+      <Field label={deposit ? tr("Customer") : tr("Supplier")} htmlFor="bk-party" required>
         <LinkInput to={deposit ? "Customer" : "Supplier"} id="bk-party" value={party} required onChange={setParty} />
       </Field>
       <label className="check-field">
@@ -340,7 +340,7 @@ function JournalTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        {tr("Books the")} {fmt(line.unallocated, precision)} {tr("between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.")}
+        {tr("Books the")} {isolate(fmt(line.unallocated, precision))} {tr("between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.")}
       </p>
       <Field label={tr("Other account")} htmlFor="bk-account" required hint={tr("The bank's own account is not offered.")}>
         <LinkInput to="Account" id="bk-account" value={account} required linkFilters={{ is_group: false }} onChange={setAccount} />
@@ -374,11 +374,11 @@ function ClearedTab({ wb, line, busy, onUndo }: { wb: Workbench; line: Line; bus
         {line.allocations.map((a) => (
           <li key={a.payment_entry} className="erp-entry">
             <div className="erp-entry-text">
-              <strong>{a.payment_number ?? "Entry"}</strong>
+              <strong>{a.payment_number ?? tr("Entry")}</strong>
               <span className="faint">{a.posting_date ? formatDate(a.posting_date) : ""}</span>
             </div>
             <div className="erp-entry-amount">
-              <span className="num">{fmt(a.allocated_amount, wb.precision)}</span>
+              <span className="num">{isolate(fmt(a.allocated_amount, wb.precision))}</span>
               <Button size="sm" loading={busy} onClick={() => onUndo(a.payment_entry)}>
                 {tr("Undo")}
               </Button>
@@ -407,12 +407,12 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
       )}
       <header className="erp-panel-head">
         <div className="erp-panel-title">
-          <h2>{line.description || line.reference_number || "Statement line"}</h2>
-          <span className="faint">{[formatDate(line.date), line.reference_number, line.number].filter(Boolean).join(" · ")}</span>
+          <h2>{line.description || line.reference_number || tr("Statement line")}</h2>
+          <span className="faint">{isolate([formatDate(line.date), line.reference_number, line.number].filter(Boolean).join(" · "))}</span>
         </div>
         <div className="erp-panel-amount num" data-money={isDeposit(line) ? "in" : "out"}>
-          {fmt(line.amount, wb.precision)}
-          {line.status === "Partially Reconciled" && <span className="faint"> · {fmt(line.unallocated, wb.precision)} left</span>}
+          {isolate(fmt(line.amount, wb.precision))}
+          {line.status === "Partially Reconciled" && <span className="faint"> {tr("· {value} left", { value: fmt(line.unallocated, wb.precision) })}</span>}
         </div>
       </header>
       {!open ? (
@@ -424,9 +424,9 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
             value={mode}
             onChange={setMode}
             tabs={[
-              { id: "match", label: "Match" },
-              { id: "payment", label: "Create payment" },
-              { id: "journal", label: "Create journal" },
+              { id: "match", label: tr("Match") },
+              { id: "payment", label: tr("Create payment") },
+              { id: "journal", label: tr("Create journal") },
             ]}
           />
           <TabPanel id="bk-mode" tab={mode}>
@@ -459,7 +459,7 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
       open
       wide
       onClose={onClose}
-      title={`Accept ${all.lines.length} exact ${all.lines.length === 1 ? "match" : "matches"}`}
+      title={tr("Accept {length} exact {value}", { length: all.lines.length, value: all.lines.length === 1 ? "match" : "matches" })}
       footer={
         <>
           <Button onClick={onClose}>{tr("Not yet")}</Button>
@@ -470,7 +470,7 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
       }
     >
       <p className="muted">
-        {tr("Each line below has an entry in the books for exactly its amount. Money in")} {fmt(all.money_in, wb.precision)}{tr(", money out")} {fmt(all.money_out, wb.precision)}{tr(". If one is wrong, close this and choose for it by hand.")}
+        {tr("Each line below has an entry in the books for exactly its amount. Money in")} {isolate(fmt(all.money_in, wb.precision))}{tr(", money out")} {isolate(fmt(all.money_out, wb.precision))}{tr(". If one is wrong, close this and choose for it by hand.")}
       </p>
       <div className="table-wrap erp-preview">
         <table className="table">
@@ -485,13 +485,13 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
             {all.lines.map((l) => (
               <tr key={l.id}>
                 <td>
-                  {l.description || l.reference_number || "No description"}
-                  <div className="faint">{formatDate(l.date)}</div>
+                  {l.description || l.reference_number || tr("No description")}
+                  <div className="faint">{isolate(formatDate(l.date))}</div>
                 </td>
-                <td className="num">{fmt(l.unallocated, wb.precision)}</td>
+                <td className="num">{isolate(fmt(l.unallocated, wb.precision))}</td>
                 <td>
-                  {l.match!.number}
-                  <div className="faint">{[l.match!.party, formatDate(l.match!.posting_date)].filter(Boolean).join(" · ")}</div>
+                  {isolate(l.match!.number ?? "")}
+                  <div className="faint">{isolate([l.match!.party, formatDate(l.match!.posting_date)].filter(Boolean).join(" · "))}</div>
                 </td>
               </tr>
             ))}
@@ -511,7 +511,7 @@ type Actions = {
 };
 
 export function Bank() {
-  useShellTitle("Bank reconciliation");
+  useShellTitle(tr("Bank reconciliation"));
   const qc = useQueryClient();
   const meta = useMetaIndex().data;
   const narrow = useNarrow();
@@ -651,7 +651,7 @@ export function Bank() {
       await api.post(docPath("BankAccount", wb.bank_account, "actions", "accept_matches"), {
         matches: picked.map((l) => ({ transaction: l.id, payment_document: l.match!.payment_document, payment_entry: l.match!.payment_entry })),
       });
-      toast(`Matched ${picked.length} ${picked.length === 1 ? "line" : "lines"}`);
+      toast(tr("Matched {length} {value}", { length: picked.length, value: picked.length === 1 ? "line" : "lines" }));
       setAccepting(false);
     } catch (e) {
       toast(errorMessage(e), "error");
@@ -689,8 +689,8 @@ export function Bank() {
         <div className="erp-subbar">
           <span aria-live="polite">
             {open.length === 0
-              ? "Nothing left to reconcile"
-              : `${open.length} ${open.length === 1 ? "line" : "lines"} to reconcile, ${exact} with an exact match`}
+              ? tr("Nothing left to reconcile")
+              : tr("{length} {value} to reconcile, {exact} with an exact match", { length: open.length, value: open.length === 1 ? "line" : "lines", exact })}
           </span>
           <span className="spacer" />
           <label className="check-field">
@@ -698,13 +698,13 @@ export function Bank() {
             <span>{tr("Show matched lines")}</span>
           </label>
           <Button variant={exact ? "primary" : "default"} disabled={!exact} onClick={() => setAccepting(true)}>
-            {exact ? `Accept ${exact} exact ${exact === 1 ? "match" : "matches"}` : "Accept exact matches"}
+            {exact ? tr("Accept {exact} exact {value}", { exact, value: exact === 1 ? "match" : "matches" }) : tr("Accept exact matches")}
           </Button>
         </div>
         {done && (
           <div className="erp-done" role="status">
             <Icon name="check" size={14} />
-            <span>{done.text}.</span>
+            <span>{isolate(done.text)}.</span>
             <Button size="sm" variant="ghost" loading={busy} onClick={() => void undoLast()}>
               {tr("Undo")}
             </Button>
@@ -712,7 +712,7 @@ export function Bank() {
         )}
         {wb.lines.length === 0 ? (
           <EmptyState title={tr("All caught up")} icon="check">
-            <p className="muted">{tr("Every statement line up to")} {formatDate(wb.as_of)} {tr("is matched. Bring in the next statement when you have it.")}</p>
+            <p className="muted">{tr("Every statement line up to")} {isolate(formatDate(wb.as_of))} {tr("is matched. Bring in the next statement when you have it.")}</p>
             {canImport && (
               <Button variant="primary" icon="upload" onClick={() => setImporting(true)}>
                 {tr("Import a statement")}
@@ -758,7 +758,7 @@ export function Bank() {
             <select className="select" value={account ?? ""} disabled={!accounts.data?.length} onChange={(e) => put({ account: e.target.value, line: null })}>
               {(accounts.data ?? []).map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.account_name}
+                  {isolate(a.account_name)}
                   {a.masked_number ? ` ${a.masked_number}` : ""}
                 </option>
               ))}

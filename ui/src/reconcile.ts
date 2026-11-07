@@ -4,6 +4,7 @@
 // Amounts are the server's decimal strings, added and compared exactly (decimal.ts).
 
 import { cmp, isDecimal, isZero, min, normalize, sub, sum } from "./decimal";
+import { t } from "@ferrum/client";
 
 export interface Match {
   payment_document: "PaymentEntry" | "JournalEntry";
@@ -266,7 +267,7 @@ export function mappingBody(m: Mapping): Record<string, string> {
 
 /** How the statement writes its dates, as the server's `date_format` (empty: day first, or ISO). */
 export const DATE_FORMATS: { label: string; value: string }[] = [
-  { label: "Day first (31/12/2026) or 2026-12-31", value: "" },
-  { label: "Month first (12/31/2026)", value: "%m/%d/%Y" },
-  { label: "Year first (2026/12/31)", value: "%Y/%m/%d" },
+  { get label() { return t("Day first (31/12/2026) or 2026-12-31"); }, value: "" },
+  { get label() { return t("Month first (12/31/2026)"); }, value: "%m/%d/%Y" },
+  { get label() { return t("Year first (2026/12/31)"); }, value: "%Y/%m/%d" },
 ];

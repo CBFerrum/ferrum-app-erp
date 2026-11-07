@@ -5,7 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, type DragEvent, useMemo, useState } from "react";
-import { api, docPath, errorMessage, formatDate, formatDecimal, t as tr } from "@ferrum/client";
+import { api, docPath, errorMessage, formatDate, formatDecimal, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, Field, Spinner, toast, useDebounced } from "@ferrum/kit";
 import { csvHeaders, DATE_FORMATS, guessMapping, type Mapping, mappingBody, mappingProblem } from "./reconcile";
 
@@ -22,12 +22,12 @@ interface Trial {
 }
 
 const COLUMNS: { key: keyof Mapping; label: string; hint?: string }[] = [
-  { key: "date", label: "Date" },
-  { key: "description", label: "Description" },
-  { key: "reference", label: "Reference" },
-  { key: "amount", label: "Amount", hint: "One column, money out as a minus." },
-  { key: "deposit", label: "Money in", hint: "Instead of one amount column." },
-  { key: "withdrawal", label: "Money out" },
+  { key: "date", get label() { return tr("Date"); } },
+  { key: "description", get label() { return tr("Description"); } },
+  { key: "reference", get label() { return tr("Reference"); } },
+  { key: "amount", get label() { return tr("Amount"); }, get hint() { return tr("One column, money out as a minus."); } },
+  { key: "deposit", get label() { return tr("Money in"); }, get hint() { return tr("Instead of one amount column."); } },
+  { key: "withdrawal", get label() { return tr("Money out"); } },
 ];
 
 export default function ImportDialog({ account, onClose, onDone }: { account: string; onClose: () => void; onDone: () => void }) {
@@ -83,7 +83,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
     setBusy(true);
     try {
       const done = await api.post<Trial>(docPath("BankAccount", account, "actions", "import_transactions"), body(false));
-      toast(`Imported ${done.imported} ${done.imported === 1 ? "line" : "lines"}`);
+      toast(tr("Imported {imported} {value}", { imported: done.imported, value: done.imported === 1 ? "line" : "lines" }));
       onDone();
     } catch (e) {
       setProblem(errorMessage(e));
@@ -102,13 +102,13 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
         <>
           <Button onClick={onClose}>{tr("Cancel")}</Button>
           <Button variant="primary" loading={busy} disabled={!t || t.imported === 0 || t.errors.length > 0} onClick={() => void run()}>
-            {t && t.imported > 0 ? `Import ${t.imported} ${t.imported === 1 ? "line" : "lines"}` : "Import"}
+            {t && t.imported > 0 ? tr("Import {imported} {value}", { imported: t.imported, value: t.imported === 1 ? "line" : "lines" }) : tr("Import")}
           </Button>
         </>
       }
     >
       <div className="stack erp-tight">
-        {problem && <Alert tone="error">{problem}</Alert>}
+        {problem && <Alert tone="error">{isolate(problem)}</Alert>}
         {!text ? (
           <>
             <label className="erp-drop" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
@@ -129,8 +129,8 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
         ) : (
           <>
             <div className="row">
-              <strong>{name || "Pasted statement"}</strong>
-              <span className="faint">{headers.length} columns</span>
+              <strong>{name || tr("Pasted statement")}</strong>
+              <span className="faint">{tr("{length} columns", { length: headers.length })}</span>
               <Button
                 size="sm"
                 variant="ghost"
@@ -149,7 +149,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                     <option value="">—</option>
                     {headers.map((h) => (
                       <option key={h} value={h}>
-                        {h}
+                        {isolate(h)}
                       </option>
                     ))}
                   </select>
@@ -161,7 +161,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                 <select id="imp-dates" className="select" value={dateFormat} onChange={(e) => setDateFormat(e.target.value)}>
                   {DATE_FORMATS.map((f) => (
                     <option key={f.value} value={f.value}>
-                      {f.label}
+                      {isolate(f.label)}
                     </option>
                   ))}
                 </select>
@@ -175,9 +175,9 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
               <span>{tr("Amounts use a decimal comma (1.234,50)")}</span>
             </label>
             {missing ? (
-              <Alert tone="warning">{missing}</Alert>
+              <Alert tone="warning">{isolate(missing)}</Alert>
             ) : trial.error ? (
-              <Alert tone="error">{errorMessage(trial.error)}</Alert>
+              <Alert tone="error">{isolate(errorMessage(trial.error))}</Alert>
             ) : !t ? (
               <Spinner label={tr("Checking the statement")} />
             ) : (
@@ -187,15 +187,15 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                     <strong>{tr("The statement cannot be imported as it is.")}</strong>
                     <ul className="erp-problems">
                       {t.errors.slice(0, 8).map((m) => (
-                        <li key={m}>{m}</li>
+                        <li key={m}>{isolate(m)}</li>
                       ))}
                     </ul>
-                    {t.errors.length > 8 && <span className="faint">and {t.errors.length - 8} more.</span>}
+                    {t.errors.length > 8 && <span className="faint">{tr("and")} {t.errors.length - 8} {tr("more.")}</span>}
                   </Alert>
                 ) : (
                   <p>
-                    <strong>{t.imported}</strong> new {t.imported === 1 ? "line" : "lines"}
-                    {t.from_date && t.to_date ? `, ${formatDate(t.from_date)} to ${formatDate(t.to_date)}` : ""}. {t.duplicates > 0 && <>{tr("{duplicates} already in the account will be skipped.", { duplicates: t.duplicates })} </>}
+                    <strong>{t.imported}</strong> {tr("new")} {t.imported === 1 ? tr("line") : tr("lines")}
+                    {t.from_date && t.to_date ? tr(", {value} to {value2}", { value: formatDate(t.from_date), value2: formatDate(t.to_date) }) : ""}. {t.duplicates > 0 && <>{tr("{duplicates} already in the account will be skipped.", { duplicates: t.duplicates })} </>}
                     {t.skipped > 0 && <>{tr("{skipped} with no amount will be left out.", { skipped: t.skipped })}</>}
                   </p>
                 )}
@@ -214,13 +214,13 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                       <tbody>
                         {t.preview.map((l, i) => (
                           <tr key={i} className={l.duplicate ? "erp-skipped" : undefined}>
-                            <td className="nowrap">{formatDate(l.date)}</td>
+                            <td className="nowrap">{isolate(formatDate(l.date))}</td>
                             <td>
-                              {l.description}
-                              {l.reference && <span className="faint"> · {l.reference}</span>}
+                              {isolate(l.description)}
+                              {l.reference && <span className="faint"> · {isolate(l.reference)}</span>}
                             </td>
-                            <td className="num">{formatDecimal(l.deposit, 2)}</td>
-                            <td className="num">{formatDecimal(l.withdrawal, 2)}</td>
+                            <td className="num">{isolate(formatDecimal(l.deposit, 2))}</td>
+                            <td className="num">{isolate(formatDecimal(l.withdrawal, 2))}</td>
                             <td>{l.duplicate && <Badge>{tr("Already imported")}</Badge>}</td>
                           </tr>
                         ))}

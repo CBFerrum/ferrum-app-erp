@@ -8,10 +8,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError, type RouteObject } from "react-router";
-import { bootstrap, routeBase, shell, t } from "@ferrum/client";
+import { addCatalogs, bootstrap, isolate, routeBase, shell, t, wordsReady } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { recordsRoutes, RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import "./styles.css";
+
+// Its own words in the page's language (src/locales), fetched as the page starts; it is drawn once they are in.
+void addCatalogs({ ar: () => import("./locales/ar.json"), hi: () => import("./locales/hi.json") });
 
 /** ERP's packages and its add-ons': the sidebar shows their modules (Studio has its own interface). */
 const ERP_PACKAGES = [
@@ -30,7 +33,7 @@ function RouteError() {
 function NotFound({ back = "Go to ERP's home" }: { back?: string }) {
   return (
     <EmptyState title={t("Page not found")}>
-      <Link to="/">{back}</Link>
+      <Link to="/">{isolate(back)}</Link>
     </EmptyState>
   );
 }
@@ -119,12 +122,15 @@ const router = portal
   ? createBrowserRouter(portalRoutes, { basename: routeBase(entry) })
   : createBrowserRouter(erpRoutes, { basename: routeBase("erp") });
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      <Toaster />
-      <ConfirmHost />
-    </QueryClientProvider>
-  </StrictMode>,
+// Drawn once the page's words are in (its language's catalogs, fetched as the page starts).
+void wordsReady().then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+        <Toaster />
+        <ConfirmHost />
+      </QueryClientProvider>
+    </StrictMode>,
+  ),
 );

@@ -1,3 +1,4 @@
+import { t } from "@ferrum/client";
 // The financial statements' rules: the periods a person picks by name, what a figure opens when
 // it is clicked, and the file a statement downloads as. Pure, so they are tested without a browser.
 // Dates are `YYYY-MM-DD` text throughout (no time zone can move a day), and amounts are the
@@ -6,9 +7,9 @@
 export type Kind = "profit_and_loss" | "balance_sheet" | "cash_flow";
 
 export const KINDS: { id: Kind; label: string; path: string }[] = [
-  { id: "profit_and_loss", label: "Profit and loss", path: "/r/profit_and_loss" },
-  { id: "balance_sheet", label: "Balance sheet", path: "/r/balance_sheet" },
-  { id: "cash_flow", label: "Cash flow", path: "/r/cash_flow" },
+  { id: "profit_and_loss", get label() { return t("Profit and loss"); }, path: "/r/profit_and_loss" },
+  { id: "balance_sheet", get label() { return t("Balance sheet"); }, path: "/r/balance_sheet" },
+  { id: "cash_flow", get label() { return t("Cash flow"); }, path: "/r/cash_flow" },
 ];
 
 export interface Column {
@@ -92,12 +93,12 @@ export function presets(today: string, startMonth: number): Preset[] {
   const [lqy, lqm] = monthStart(thisQuarter, -3);
   const lastQuarter = iso(lqy, lqm, 1);
   return [
-    { id: "this-month", label: "This month", from: thisMonth, to: lastDayOfMonths(thisMonth, 1) },
-    { id: "last-month", label: "Last month", from: lastMonth, to: lastDayOfMonths(lastMonth, 1) },
-    { id: "this-quarter", label: "This quarter", from: thisQuarter, to: lastDayOfMonths(thisQuarter, 3) },
-    { id: "last-quarter", label: "Last quarter", from: lastQuarter, to: lastDayOfMonths(lastQuarter, 3) },
-    { id: "this-year", label: "This fiscal year", from: fy, to: lastDayOfMonths(fy, 12) },
-    { id: "last-year", label: "Last fiscal year", from: lastFy, to: lastDayOfMonths(lastFy, 12) },
+    { id: "this-month", label: t("This month"), from: thisMonth, to: lastDayOfMonths(thisMonth, 1) },
+    { id: "last-month", label: t("Last month"), from: lastMonth, to: lastDayOfMonths(lastMonth, 1) },
+    { id: "this-quarter", label: t("This quarter"), from: thisQuarter, to: lastDayOfMonths(thisQuarter, 3) },
+    { id: "last-quarter", label: t("Last quarter"), from: lastQuarter, to: lastDayOfMonths(lastQuarter, 3) },
+    { id: "this-year", label: t("This fiscal year"), from: fy, to: lastDayOfMonths(fy, 12) },
+    { id: "last-year", label: t("Last fiscal year"), from: lastFy, to: lastDayOfMonths(lastFy, 12) },
   ];
 }
 
@@ -106,10 +107,10 @@ export function days(today: string, startMonth: number): Preset[] {
   const all = presets(today, startMonth);
   const end = (id: string) => all.find((p) => p.id === id)!.to;
   return [
-    { id: "today", label: "Today", from: today, to: today },
-    { id: "last-month", label: "End of last month", from: end("last-month"), to: end("last-month") },
-    { id: "last-quarter", label: "End of last quarter", from: end("last-quarter"), to: end("last-quarter") },
-    { id: "last-year", label: "End of last fiscal year", from: end("last-year"), to: end("last-year") },
+    { id: "today", label: t("Today"), from: today, to: today },
+    { id: "last-month", label: t("End of last month"), from: end("last-month"), to: end("last-month") },
+    { id: "last-quarter", label: t("End of last quarter"), from: end("last-quarter"), to: end("last-quarter") },
+    { id: "last-year", label: t("End of last fiscal year"), from: end("last-year"), to: end("last-year") },
   ];
 }
 
