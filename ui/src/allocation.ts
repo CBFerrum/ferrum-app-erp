@@ -3,6 +3,7 @@
 // Amounts are the server's decimal strings, added and compared exactly (decimal.ts); the server
 // still decides what holds (it refuses more than is left, another party, another currency).
 
+import { t as tr } from "@ferrum/client";
 import { abs, add, cmp, isDecimal, isZero, min, normalize, sub, sum } from "./decimal";
 
 /** An open item of a party, as the receivables and payables reports list it. */
@@ -41,10 +42,10 @@ export function kindLabel(item: Pick<Open, "kind" | "outstanding">): string {
     case "PaymentEntry":
       return "Payment";
     case "JournalEntry":
-      return "Journal credit";
+      return tr("Journal credit");
     case "SalesInvoice":
     case "PurchaseInvoice":
-      return cmp(item.outstanding, "0") < 0 ? "Credit note" : "Invoice";
+      return cmp(item.outstanding, "0") < 0 ? tr("Credit note") : "Invoice";
     default:
       return item.kind;
   }
@@ -137,12 +138,12 @@ export function tally(credits: Open[], invoices: Open[], amounts: Record<string,
     const typed = amounts[inv.id];
     const given = isDecimal(typed) ? typed : "0";
     invoiceLeft[inv.id] = sub(inv.outstanding, given);
-    if (typed !== undefined && typed !== "" && (!isDecimal(typed) || cmp(typed, "0") < 0)) errors[inv.id] = "Enter an amount, or leave it empty";
-    else if (cmp(given, inv.outstanding) > 0) errors[inv.id] = `Only ${normalize(inv.outstanding)} is owed on this`;
+    if (typed !== undefined && typed !== "" && (!isDecimal(typed) || cmp(typed, "0") < 0)) errors[inv.id] = tr("Enter an amount, or leave it empty");
+    else if (cmp(given, inv.outstanding) > 0) errors[inv.id] = tr("Only {outstanding} is owed on this", { outstanding: normalize(inv.outstanding) });
   }
   const available = sum(credits.map((c) => abs(c.outstanding)));
   const applied = sum(pairings.map((p) => p.amount));
-  return { available, applied, left: sub(available, applied), creditLeft, invoiceLeft, errors, over: isZero(short) ? null : `That is ${normalize(short)} more than the money there is to apply` };
+  return { available, applied, left: sub(available, applied), creditLeft, invoiceLeft, errors, over: isZero(short) ? null : tr("That is {short} more than the money there is to apply", { short: normalize(short) }) };
 }
 
 /** Whether there is something to confirm and nothing in the way. */
@@ -176,6 +177,6 @@ export function daysPast(due: string | null, today: string): number | null {
 export function dueWords(due: string | null, today: string): string {
   const days = daysPast(due, today);
   if (days === null) return "";
-  if (days === 0) return "Due today";
-  return days > 0 ? `${days} ${days === 1 ? "day" : "days"} overdue` : `Due in ${-days} ${days === -1 ? "day" : "days"}`;
+  if (days === 0) return tr("Due today");
+  return days > 0 ? (days === 1 ? tr("{days} day overdue", { days }) : tr("{days} days overdue", { days })) : (days === -1 ? tr("Due in {value} day", { value: -days }) : tr("Due in {value} days", { value: -days }));
 }

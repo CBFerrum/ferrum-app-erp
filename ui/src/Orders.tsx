@@ -9,7 +9,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle, placed } from "@ferrum/kit";
 import { amount } from "./Invoices";
 
 const BASE = "/api/app/buying/portal";
@@ -81,19 +81,19 @@ export function progress(o: Pick<PortalOrder, "received" | "billed" | "status">)
   if (o.status === "Closed") return "Closed";
   const received = Number(o.received);
   const billed = Number(o.billed);
-  if (received >= 100 && billed >= 100) return "Received and billed";
-  if (received >= 100) return "Received, to bill";
-  if (billed >= 100) return received > 0 ? `Billed, ${formatDecimal(o.received, 0)}% received` : "Billed, to deliver";
-  if (received > 0) return `${formatDecimal(o.received, 0)}% received`;
-  return "To deliver";
+  if (received >= 100 && billed >= 100) return tr("Received and billed");
+  if (received >= 100) return tr("Received, to bill");
+  if (billed >= 100) return received > 0 ? tr("Billed, {received}% received", { received: formatDecimal(o.received, 0) }) : tr("Billed, to deliver");
+  if (received > 0) return tr("{received}% received", { received: formatDecimal(o.received, 0) });
+  return tr("To deliver");
 }
 
 /** What is still owed on a bill, in words a supplier reads. */
 export function owedLabel(b: Pick<PortalBill, "owed" | "overdue" | "due_date" | "is_return">): string {
-  if (b.is_return) return "Debit note";
+  if (b.is_return) return tr("Debit note");
   if (Number(b.owed) <= 0) return "Paid";
-  if (b.overdue) return `Overdue since ${formatDate(b.due_date)}`;
-  return b.due_date ? `Due ${formatDate(b.due_date)}` : "To be paid";
+  if (b.overdue) return tr("Overdue since {due_date}", { due_date: formatDate(b.due_date) });
+  return b.due_date ? tr("Due {due_date}", { due_date: formatDate(b.due_date) }) : tr("To be paid");
 }
 
 export function PortalOrders() {
@@ -133,7 +133,7 @@ export function PortalOrders() {
                   <strong>{isolate(r.number ?? "")}</strong> · {isolate(asked(r))}
                   {r.due_by && <span className="faint"> {tr("· due by")} {isolate(formatDate(r.due_by))}</span>}
                 </span>
-                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{tr("Ask")} {r.company ?? tr("them")} {tr("for a new link")}</span>}
+                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{placed(tr("Ask {p1} for a new link"), { p1: r.company ?? tr("them") })}</span>}
               </li>
             ))}
           </ul>
@@ -264,7 +264,7 @@ export function PortalOrderPage() {
         <div>
           <h1 className="page-title">{isolate(o.number ?? "")}</h1>
           <p className="page-sub">
-            {isolate([o.company, formatDate(o.date), o.required_by ? `required by ${formatDate(o.required_by)}` : null].filter(Boolean).join(" · "))}
+            {isolate([o.company, formatDate(o.date), o.required_by ? tr("required by {required_by}", { required_by: formatDate(o.required_by) }) : null].filter(Boolean).join(" · "))}
           </p>
         </div>
         <div className="row">

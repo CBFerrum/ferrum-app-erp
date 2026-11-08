@@ -1,6 +1,8 @@
 // The finance overview's rules: which of its rows ask for attention, in what order, and the words
 // for them. Pure, so they are tested without a browser. The counts and amounts are the server's.
 
+import { t } from "@ferrum/client";
+
 export interface Overview {
   rows: OverviewRow[];
   meta: { as_of: string };
@@ -50,17 +52,17 @@ export function say(r: OverviewRow): string {
   const n = r.count ?? 0;
   switch (r.key) {
     case "overdue_receivables":
-      return `${plural(n, "overdue invoice")} to collect`;
+      return n === 1 ? t("1 overdue invoice to collect") : t("{n} overdue invoices to collect", { n });
     case "overdue_payables":
-      return `${plural(n, "overdue bill")} to pay`;
+      return n === 1 ? t("1 overdue bill to pay") : t("{n} overdue bills to pay", { n });
     case "unreconciled_lines":
-      return `${plural(n, "bank line")} to reconcile`;
+      return n === 1 ? t("1 bank line to reconcile") : t("{n} bank lines to reconcile", { n });
     case "drafts":
-      return `${plural(n, "draft")} waiting`;
+      return n === 1 ? t("1 draft waiting") : t("{n} drafts waiting", { n });
     case "open_months":
-      return `${plural(n, "month")} not closed`;
+      return n === 1 ? t("1 month not closed") : t("{n} months not closed", { n });
     case "unclosed_years":
-      return `${plural(n, "fiscal year")} not closed`;
+      return n === 1 ? t("1 fiscal year not closed") : t("{n} fiscal years not closed", { n });
     default:
       return r.item;
   }

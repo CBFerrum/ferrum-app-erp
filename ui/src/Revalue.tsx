@@ -52,8 +52,8 @@ export function Revalue() {
 
   const post = async () => {
     if (!body || !d) return;
-    const word = result === "gain" ? `a net gain of ${show(net)}` : result === "loss" ? `a net loss of ${show(net.replace("-", ""))}` : "nothing net";
-    const back = reverse ? ` It is reversed on ${formatDate(d.reversal_date)}.` : " It is not reversed afterwards.";
+    const word = result === "gain" ? t("a net gain of {net}", { net: show(net) }) : result === "loss" ? t("a net loss of {value}", { value: show(net.replace("-", "")) }) : t("nothing net");
+    const back = reverse ? t(" It is reversed on {reversal_date}.", { reversal_date: formatDate(d.reversal_date) }) : t(" It is not reversed afterwards.");
     const ok = await confirmDialog({ title: t("Revalue at {date}?", { date: formatDate(date) }), message: t("{length} balances are carried at that day's rate: {word}.{back}", { length: d.rows.length, word, back }), confirmLabel: t("Post the revaluation") });
     if (!ok) return;
     setBusy(true);
@@ -62,7 +62,7 @@ export function Revalue() {
     try {
       made = await api.post<{ id: string; version: number }>("/api/v1/ExchangeRevaluation", body);
       const done = await api.post<{ number?: string }>(docPath("ExchangeRevaluation", made.id, "submit"), {}, { ifMatch: made.version });
-      toast(t("Revalued at {date}{value}", { date: formatDate(date), value: done.number ? ` (${done.number})` : "" }));
+      toast((done.number ? t("Revalued at {date} ({number})", { date: formatDate(date), number: done.number }) : t("Revalued at {date}", { date: formatDate(date) })));
       navigate(`/e/ExchangeRevaluation/${made.id}`);
     } catch (e) {
       // A draft that could not be posted is not left behind.
@@ -193,7 +193,7 @@ export function Revalue() {
           {!mayPost
             ? t("You can look at what a revaluation would do. An Accounts Manager posts it.")
             : d && d.rows.length > 0
-              ? t("{length} {value}. The gain is unrealised: the real difference is booked when a balance is settled.", { length: d.rows.length, value: d.rows.length === 1 ? "balance" : "balances" })
+              ? (d.rows.length === 1 ? t("{length} balance. The gain is unrealised: the real difference is booked when a balance is settled.", { length: d.rows.length }) : t("{length} balances. The gain is unrealised: the real difference is booked when a balance is settled.", { length: d.rows.length }))
               : ""}
         </span>
         <Button variant="primary" loading={busy} disabled={!mayPost || !d || d.rows.length === 0} onClick={() => void post()}>

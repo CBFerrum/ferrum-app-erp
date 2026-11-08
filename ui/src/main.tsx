@@ -30,7 +30,7 @@ function RouteError() {
   return <ErrorState error={useRouteError()} onRetry={() => window.location.reload()} />;
 }
 
-function NotFound({ back = "Go to ERP's home" }: { back?: string }) {
+function NotFound({ back = t("Go to ERP's home") }: { back?: string }) {
   return (
     <EmptyState title={t("Page not found")}>
       <Link to="/">{isolate(back)}</Link>
@@ -56,14 +56,14 @@ function Started() {
 /** The portal's pages, when the platform serves this release there, by their entry. */
 const PORTALS: Record<string, { back: string; pages: RouteObject[] }> = {
   "portal/invoices": {
-    back: "Go to your invoices",
+    get back() { return t("Go to your invoices"); },
     pages: [
       { index: true, lazy: () => import("./Invoices").then((m) => ({ Component: m.PortalInvoices })) },
       { path: ":id", lazy: () => import("./Invoices").then((m) => ({ Component: m.PortalInvoice })) },
     ],
   },
   "portal/orders": {
-    back: "Go to your orders",
+    get back() { return t("Go to your orders"); },
     pages: [
       { index: true, lazy: () => import("./Orders").then((m) => ({ Component: m.PortalOrders })) },
       { path: ":id", lazy: () => import("./Orders").then((m) => ({ Component: m.PortalOrderPage })) },

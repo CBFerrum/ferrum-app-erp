@@ -119,10 +119,10 @@ export function exactMatches(lines: Line[]): { lines: Line[]; money_in: string; 
 /** Why an entry was put forward, in words. */
 export function why(m: Pick<Match, "exact_amount" | "reference_match" | "party_match" | "days_apart">): string[] {
   const out: string[] = [];
-  if (m.exact_amount) out.push("Exact amount");
-  if (m.reference_match) out.push("Same reference");
-  if (m.party_match) out.push("Party named");
-  out.push(m.days_apart === 0 ? "Same day" : m.days_apart === 1 ? "1 day apart" : `${m.days_apart} days apart`);
+  if (m.exact_amount) out.push(t("Exact amount"));
+  if (m.reference_match) out.push(t("Same reference"));
+  if (m.party_match) out.push(t("Party named"));
+  out.push(m.days_apart === 0 ? t("Same day") : m.days_apart === 1 ? "1 day apart" : `${m.days_apart} days apart`);
   return out;
 }
 
@@ -152,11 +152,11 @@ export function problems(ticks: Ticks, entries: { id: string; remaining: string 
   const amounts: Record<string, string> = {};
   for (const [id, text] of Object.entries(ticks)) {
     const entry = entries.find((e) => e.id === id);
-    if (!isDecimal(text) || cmp(text, "0") <= 0) amounts[id] = "Enter an amount above zero";
-    else if (entry && cmp(text, entry.remaining) > 0) amounts[id] = `Only ${normalize(entry.remaining)} of this is left to clear`;
+    if (!isDecimal(text) || cmp(text, "0") <= 0) amounts[id] = t("Enter an amount above zero");
+    else if (entry && cmp(text, entry.remaining) > 0) amounts[id] = t("Only {remaining} of this is left to clear", { remaining: normalize(entry.remaining) });
   }
   const over = cmp(sum(Object.values(ticks)), unallocated) > 0;
-  return { amounts, total: over ? `That is more than the ${normalize(unallocated)} left on the line` : null };
+  return { amounts, total: over ? t("That is more than the {unallocated} left on the line", { unallocated: normalize(unallocated) }) : null };
 }
 
 export const canReconcile = (ticks: Ticks, p: ReturnType<typeof problems>): boolean => Object.keys(ticks).length > 0 && !p.total && !Object.keys(p.amounts).length;
@@ -255,8 +255,8 @@ export function guessMapping(headers: string[]): Mapping {
 }
 
 export function mappingProblem(m: Mapping): string | null {
-  if (!m.date) return "Choose the column that holds the date.";
-  if (!m.amount && !m.deposit && !m.withdrawal) return "Choose the amount column, or one column for money in and one for money out.";
+  if (!m.date) return t("Choose the column that holds the date.");
+  if (!m.amount && !m.deposit && !m.withdrawal) return t("Choose the amount column, or one column for money in and one for money out.");
   return null;
 }
 
