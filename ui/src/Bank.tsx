@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
 import { can, LinkInput, useMetaIndex } from "@ferrum/records";
 import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
 import { cmp, isZero } from "./decimal";
@@ -309,7 +309,7 @@ function PaymentTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        {tr("Makes")} {deposit ? tr("a payment received from a customer") : tr("a payment made to a supplier")} {tr("for the")} {isolate(fmt(line.unallocated, precision))} {tr("still to reconcile, and matches it with this line.")}
+        {placed(tr("Makes {p1} for the {p2} still to reconcile, and matches it with this line."), { p1: deposit ? tr("a payment received from a customer") : tr("a payment made to a supplier"), p2: isolate(fmt(line.unallocated, precision)) })}
       </p>
       <Field label={deposit ? tr("Customer") : tr("Supplier")} htmlFor="bk-party" required>
         <LinkInput to={deposit ? "Customer" : "Supplier"} id="bk-party" value={party} required onChange={setParty} />
@@ -340,7 +340,7 @@ function JournalTab({ line, precision, busy, onMake }: { line: Line; precision: 
   return (
     <form className="stack erp-tight" onSubmit={submit}>
       <p className="muted">
-        {tr("Books the")} {isolate(fmt(line.unallocated, precision))} {tr("between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line.")}
+        {placed(tr("Books the {p1} between the bank and another account: bank charges, interest, a transfer. The entry is made and matched with this line."), { p1: isolate(fmt(line.unallocated, precision)) })}
       </p>
       <Field label={tr("Other account")} htmlFor="bk-account" required hint={tr("The bank's own account is not offered.")}>
         <LinkInput to="Account" id="bk-account" value={account} required linkFilters={{ is_group: false }} onChange={setAccount} />
@@ -459,7 +459,7 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
       open
       wide
       onClose={onClose}
-      title={tr("Accept {length} exact {value}", { length: all.lines.length, value: all.lines.length === 1 ? "match" : "matches" })}
+      title={(all.lines.length === 1 ? tr("Accept {length} exact match", { length: all.lines.length }) : tr("Accept {length} exact matches", { length: all.lines.length }))}
       footer={
         <>
           <Button onClick={onClose}>{tr("Not yet")}</Button>
@@ -470,7 +470,7 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
       }
     >
       <p className="muted">
-        {tr("Each line below has an entry in the books for exactly its amount. Money in")} {isolate(fmt(all.money_in, wb.precision))}{tr(", money out")} {isolate(fmt(all.money_out, wb.precision))}{tr(". If one is wrong, close this and choose for it by hand.")}
+        {placed(tr("Each line below has an entry in the books for exactly its amount. Money in {p1}, money out {p2}. If one is wrong, close this and choose for it by hand."), { p1: isolate(fmt(all.money_in, wb.precision)), p2: isolate(fmt(all.money_out, wb.precision)) })}
       </p>
       <div className="table-wrap erp-preview">
         <table className="table">
@@ -607,17 +607,17 @@ export function Bank() {
         line,
         () => api.post(docPath("BankTransaction", line.id, "actions", "reconcile"), body),
         clearsLine(line.unallocated, Object.fromEntries(body.vouchers.map((v) => [v.payment_entry, v.allocated_amount]))),
-        `Matched ${line.description || "the line"}`,
+        line.description ? tr("Matched {description}", { description: line.description }) : tr("Matched the line"),
       ),
     make: (line, action, body, what) =>
       run(
         line,
         async () => {
           const made = await api.post<{ number?: string }>(docPath("BankTransaction", line.id, "actions", action), body);
-          toast(`Made ${what} ${made.number ?? ""}`.trim());
+          toast((what === "payment" ? tr("Made payment {number}", { number: made.number ?? "" }) : tr("Made journal entry {number}", { number: made.number ?? "" })).trim());
         },
         true,
-        `Matched ${line.description || "the line"}`,
+        line.description ? tr("Matched {description}", { description: line.description }) : tr("Matched the line"),
       ),
     undo: async (line, entry) => {
       await run(line, () => api.post(docPath("BankTransaction", line.id, "actions", "unreconcile"), entry ? { payment_entry: entry } : {}), false, null);
@@ -651,7 +651,7 @@ export function Bank() {
       await api.post(docPath("BankAccount", wb.bank_account, "actions", "accept_matches"), {
         matches: picked.map((l) => ({ transaction: l.id, payment_document: l.match!.payment_document, payment_entry: l.match!.payment_entry })),
       });
-      toast(tr("Matched {length} {value}", { length: picked.length, value: picked.length === 1 ? "line" : "lines" }));
+      toast((picked.length === 1 ? tr("Matched {length} line", { length: picked.length }) : tr("Matched {length} lines", { length: picked.length })));
       setAccepting(false);
     } catch (e) {
       toast(errorMessage(e), "error");
@@ -690,7 +690,7 @@ export function Bank() {
           <span aria-live="polite">
             {open.length === 0
               ? tr("Nothing left to reconcile")
-              : tr("{length} {value} to reconcile, {exact} with an exact match", { length: open.length, value: open.length === 1 ? "line" : "lines", exact })}
+              : (open.length === 1 ? tr("{length} line to reconcile, {exact} with an exact match", { length: open.length, exact }) : tr("{length} lines to reconcile, {exact} with an exact match", { length: open.length, exact }))}
           </span>
           <span className="spacer" />
           <label className="check-field">
@@ -698,7 +698,7 @@ export function Bank() {
             <span>{tr("Show matched lines")}</span>
           </label>
           <Button variant={exact ? "primary" : "default"} disabled={!exact} onClick={() => setAccepting(true)}>
-            {exact ? tr("Accept {exact} exact {value}", { exact, value: exact === 1 ? "match" : "matches" }) : tr("Accept exact matches")}
+            {exact ? (exact === 1 ? tr("Accept {exact} exact match", { exact }) : tr("Accept {exact} exact matches", { exact })) : tr("Accept exact matches")}
           </Button>
         </div>
         {done && (
@@ -712,7 +712,7 @@ export function Bank() {
         )}
         {wb.lines.length === 0 ? (
           <EmptyState title={tr("All caught up")} icon="check">
-            <p className="muted">{tr("Every statement line up to")} {isolate(formatDate(wb.as_of))} {tr("is matched. Bring in the next statement when you have it.")}</p>
+            <p className="muted">{placed(tr("Every statement line up to {p1} is matched. Bring in the next statement when you have it."), { p1: isolate(formatDate(wb.as_of)) })}</p>
             {canImport && (
               <Button variant="primary" icon="upload" onClick={() => setImporting(true)}>
                 {tr("Import a statement")}
@@ -725,7 +725,7 @@ export function Bank() {
               <div className="erp-list">
                 <LineList wb={wb} selected={selected?.id ?? null} onSelect={(id) => select(id)} onAcceptKey={acceptKey} onAcceptAll={() => exact && setAccepting(true)} />
                 <p className="faint erp-keys">
-                  <span className="kbd">j</span> <span className="kbd">k</span> {tr("move ·")} <span className="kbd">{tr("Enter")}</span> {tr("accept the match ·")} <span className="kbd">{tr("Shift")}</span>+<span className="kbd">A</span> {tr("accept every exact match")}
+                  {placed(tr("{p1} {p2} move · {p3} accept the match · {p4}+{p5} accept every exact match"), { p1: <span className="kbd">j</span>, p2: <span className="kbd">k</span>, p3: <span className="kbd">{tr("Enter")}</span>, p4: <span className="kbd">{tr("Shift")}</span>, p5: <span className="kbd">A</span> })}
                 </p>
                 {(wb.truncated || wb.books_truncated) && <p className="faint">{tr("Only the first part of a long statement is shown. Narrow it with the date above.")}</p>}
               </div>

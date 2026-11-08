@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, formatDate, saveBlob, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, useShellTitle, placed } from "@ferrum/kit";
 import { LinkInput, useMe, useMetaIndex } from "@ferrum/records";
 import { sub } from "./decimal";
 import { show } from "./money";
@@ -17,9 +17,9 @@ import { AccountsTabs } from "./Tabs";
 
 /** What is added up at the top, per statement: [label, key in a period's figures]. */
 const HEADLINES: Record<Kind, [string, string][]> = {
-  profit_and_loss: [["Income", "income"], ["Expenses", "expense"], ["Net profit", "net_profit"]],
+  get profit_and_loss(): [string, string][] { return [["Income", "income"], ["Expenses", "expense"], [tr("Net profit"), "net_profit"]]; },
   balance_sheet: [["Assets", "assets"], ["Liabilities", "liabilities"], ["Equity", "equity"]],
-  cash_flow: [["Operating", "operating"], ["Investing", "investing"], ["Financing", "financing"], ["Net change in cash", "net_change"]],
+  get cash_flow(): [string, string][] { return [["Operating", "operating"], ["Investing", "investing"], ["Financing", "financing"], [tr("Net change in cash"), "net_change"]]; },
 };
 
 interface Ledger {
@@ -162,8 +162,8 @@ export function Statement({ kind }: { kind: Kind }) {
   } else {
     body = (
       <>
-        {data.meta.balanced === false && <Alert tone="error">{tr("The balance sheet is out of balance by")} {isolate(show(data.meta.difference))}{tr(". This should never happen: tell whoever looks after the books.")}</Alert>}
-        {data.meta.reconciled === false && <Alert tone="error">{tr("The cash flow ends")} {isolate(show(data.meta.difference))} {tr("away from the bank and cash accounts. This should never happen: tell whoever looks after the books.")}</Alert>}
+        {data.meta.balanced === false && <Alert tone="error">{placed(tr("The balance sheet is out of balance by {p1}. This should never happen: tell whoever looks after the books."), { p1: isolate(show(data.meta.difference)) })}</Alert>}
+        {data.meta.reconciled === false && <Alert tone="error">{placed(tr("The cash flow ends {p1} away from the bank and cash accounts. This should never happen: tell whoever looks after the books."), { p1: isolate(show(data.meta.difference)) })}</Alert>}
         <Headlines kind={kind} data={data} />
         <div className="table-wrap erp-statement">
           <table className="table">

@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, todayIso, t, isolate } from "@ferrum/client";
-import { Button, confirmDialog, EmptyState, ErrorState, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Button, confirmDialog, EmptyState, ErrorState, Icon, PageLoading, toast, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { destination, draftsPath, monthName, needing, type Overview, plural, row } from "./attention";
 import { show } from "./money";
@@ -87,14 +87,20 @@ export function Today() {
     const years = get("unclosed_years");
     const cash = get("cash");
     const pressing = needing(o).length;
-    const parts = (a?: { count?: number; oldest?: string | null }, noun = "invoice") => ((a?.count ?? 0) > 0 ? `${plural(a!.count!, noun)}${a!.oldest ? `, the oldest due ${formatDate(a!.oldest)}` : ""}` : "");
+    const parts = (a?: { count?: number; oldest?: string | null }, bills = false) => {
+      const n = a?.count ?? 0;
+      const oldest = a?.oldest ? formatDate(a.oldest) : "";
+      if (n <= 0) return "";
+      if (bills) return n === 1 ? (oldest ? t("1 bill, due {oldest}", { oldest }) : t("1 bill")) : oldest ? t("{n} bills, the oldest due {oldest}", { n, oldest }) : t("{n} bills", { n });
+      return n === 1 ? (oldest ? t("1 invoice, due {oldest}", { oldest }) : t("1 invoice")) : oldest ? t("{n} invoices, the oldest due {oldest}", { n, oldest }) : t("{n} invoices", { n });
+    };
     body = (
       <>
         <p className="page-sub" aria-live="polite">
           {pressing === 0 ? t("Everything is in hand.") : t("{pressing} to look at.", { pressing: plural(pressing, "thing") })}
         </p>
         <div className="erp-today-grid">
-          <Card title={t("Owed to you")} calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link="Open the receivables">
+          <Card title={t("Owed to you")} calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link={t("Open the receivables")}>
             {(late?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big erp-negative">{isolate(show(late!.amount))}</p>
@@ -109,11 +115,11 @@ export function Today() {
               </p>
             )}
           </Card>
-          <Card title={t("Owed by you")} calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link="Open the payables">
+          <Card title={t("Owed by you")} calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link={t("Open the payables")}>
             {(owed?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big erp-negative">{isolate(show(owed!.amount))}</p>
-                <p className="muted">{t("overdue: {owed}", { owed: parts(owed, "bill") })}</p>
+                <p className="muted">{t("overdue: {owed}", { owed: parts(owed, true) })}</p>
               </>
             ) : (
               <p className="muted">{t("Nothing is overdue.")}</p>
@@ -129,7 +135,7 @@ export function Today() {
               {(lines.count ?? 0) > 0 ? (
                 <>
                   <p className="erp-figure-big">{isolate(plural(lines.count!, "line"))}</p>
-                  <p className="muted">{t("of the bank statements are not reconciled")}{lines.oldest ? t(", the oldest from {value}", { value: formatDate(lines.oldest) }) : ""}.</p>
+                  <p className="muted">{(lines.oldest ? t("of the bank statements are not reconciled, the oldest from {value}", { value: formatDate(lines.oldest) }) : t("of the bank statements are not reconciled"))}.</p>
                   <ul className="erp-attn-list">
                     {(lines.detail ?? [])
                       .filter((d) => (d.count ?? 0) > 0)
@@ -150,7 +156,7 @@ export function Today() {
             {(drafts?.count ?? 0) > 0 ? (
               <>
                 <p className="erp-figure-big">{isolate(plural(drafts!.count!, "draft"))}</p>
-                <p className="muted">{t("waiting to be submitted")}{drafts!.oldest ? t(", the oldest dated {value}", { value: formatDate(drafts!.oldest) }) : ""}.</p>
+                <p className="muted">{(drafts!.oldest ? t("waiting to be submitted, the oldest dated {value}", { value: formatDate(drafts!.oldest) }) : t("waiting to be submitted"))}.</p>
                 <ul className="erp-attn-list">
                   {(drafts!.detail ?? []).map((d) => (
                     <li key={d.entity}>
@@ -170,7 +176,7 @@ export function Today() {
               <>
                 <p className="erp-figure-big">{isolate(plural(months!.count!, "month"))}</p>
                 <p className="muted">
-                  {t("ended and not closed")}{months!.oldest ? t(", back to {value}", { value: monthName(months!.oldest) }) : ""}{t(". The latest:")}
+                  {placed(t("ended and not closed{p1}. The latest:"), { p1: months!.oldest ? t(", back to {value}", { value: monthName(months!.oldest) }) : "" })}
                 </p>
                 <ul className="erp-attn-list">
                   {(months!.detail ?? []).slice(0, 3).map((d) => (

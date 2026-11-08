@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.12
+
+Rebuilt with Ferrum-Frontend c59c9a2: the names of its models, fields and manifest in Arabic and Hindi (551 each in ui/src/locales/names, which the platform serves to every page of the workspace, so a record's labels, the launcher and the bar read in the person's language), and the sentences its pages still showed in English (split around a link or a figure, built in code from a template or word by word) whole and translated (383 words each in ui/src/locales). Translated by the model, to be reviewed by native speakers.
+
 ## 0.14.11
 
 Rebuilt with Ferrum-Frontend 5b22e7b: its own words carry built-in Arabic and Hindi (317 words each, ui/src/locales, translated by the model and to be reviewed by native speakers), fetched for the page's language only. The labels it keeps in objects, its dialogs, its page titles and the words it keeps in variables go through t() as well, and the names and sizes it shows as they are keep their order right to left. Its pages are drawn once their words are in, and its entry carries only the parts of the kit it uses.

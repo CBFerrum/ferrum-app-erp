@@ -6,7 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, type DragEvent, useMemo, useState } from "react";
 import { api, docPath, errorMessage, formatDate, formatDecimal, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, Field, Spinner, toast, useDebounced } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, Field, Spinner, toast, useDebounced, placed } from "@ferrum/kit";
 import { csvHeaders, DATE_FORMATS, guessMapping, type Mapping, mappingBody, mappingProblem } from "./reconcile";
 
 const MAX_BYTES = 5 << 20;
@@ -64,7 +64,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
 
   const take = (file: File | undefined) => {
     if (!file) return;
-    if (file.size > MAX_BYTES) return setProblem("That file is larger than 5 MB. Split the statement and import it in parts.");
+    if (file.size > MAX_BYTES) return setProblem(tr("That file is larger than 5 MB. Split the statement and import it in parts."));
     setProblem(null);
     void file.text().then((t) => {
       setText(t);
@@ -83,7 +83,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
     setBusy(true);
     try {
       const done = await api.post<Trial>(docPath("BankAccount", account, "actions", "import_transactions"), body(false));
-      toast(tr("Imported {imported} {value}", { imported: done.imported, value: done.imported === 1 ? "line" : "lines" }));
+      toast((done.imported === 1 ? tr("Imported {imported} line", { imported: done.imported }) : tr("Imported {imported} lines", { imported: done.imported })));
       onDone();
     } catch (e) {
       setProblem(errorMessage(e));
@@ -102,7 +102,7 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
         <>
           <Button onClick={onClose}>{tr("Cancel")}</Button>
           <Button variant="primary" loading={busy} disabled={!t || t.imported === 0 || t.errors.length > 0} onClick={() => void run()}>
-            {t && t.imported > 0 ? tr("Import {imported} {value}", { imported: t.imported, value: t.imported === 1 ? "line" : "lines" }) : tr("Import")}
+            {t && t.imported > 0 ? (t.imported === 1 ? tr("Import {imported} line", { imported: t.imported }) : tr("Import {imported} lines", { imported: t.imported })) : tr("Import")}
           </Button>
         </>
       }
@@ -190,12 +190,11 @@ export default function ImportDialog({ account, onClose, onDone }: { account: st
                         <li key={m}>{isolate(m)}</li>
                       ))}
                     </ul>
-                    {t.errors.length > 8 && <span className="faint">{tr("and")} {t.errors.length - 8} {tr("more.")}</span>}
+                    {t.errors.length > 8 && <span className="faint">{placed(tr("and {p1} more."), { p1: t.errors.length - 8 })}</span>}
                   </Alert>
                 ) : (
                   <p>
-                    <strong>{t.imported}</strong> {tr("new")} {t.imported === 1 ? tr("line") : tr("lines")}
-                    {t.from_date && t.to_date ? tr(", {value} to {value2}", { value: formatDate(t.from_date), value2: formatDate(t.to_date) }) : ""}. {t.duplicates > 0 && <>{tr("{duplicates} already in the account will be skipped.", { duplicates: t.duplicates })} </>}
+                    <strong>{t.imported}</strong> {(t.imported === 1 ? (t.from_date && t.to_date ? tr("new line, {value} to {value2}", { value: formatDate(t.from_date), value2: formatDate(t.to_date) }) : tr("new line")) : (t.from_date && t.to_date ? tr("new lines, {value} to {value2}", { value: formatDate(t.from_date), value2: formatDate(t.to_date) }) : tr("new lines")))}. {t.duplicates > 0 && <>{tr("{duplicates} already in the account will be skipped.", { duplicates: t.duplicates })} </>}
                     {t.skipped > 0 && <>{tr("{skipped} with no amount will be left out.", { skipped: t.skipped })}</>}
                   </p>
                 )}

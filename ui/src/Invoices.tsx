@@ -52,10 +52,10 @@ export function amount(value: string, currency?: string | null): string {
 
 /** What is still to pay, in words a customer reads. */
 export function dueLabel(inv: Pick<PortalInvoice, "outstanding" | "overdue" | "due_date" | "is_return">): string {
-  if (inv.is_return) return "Credit note";
+  if (inv.is_return) return tr("Credit note");
   if (Number(inv.outstanding) <= 0) return "Paid";
-  if (inv.overdue) return `Overdue since ${formatDate(inv.due_date)}`;
-  return inv.due_date ? `Due ${formatDate(inv.due_date)}` : "Due";
+  if (inv.overdue) return tr("Overdue since {due_date}", { due_date: formatDate(inv.due_date) });
+  return inv.due_date ? tr("Due {due_date}", { due_date: formatDate(inv.due_date) }) : "Due";
 }
 
 export function PortalInvoices() {

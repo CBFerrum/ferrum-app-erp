@@ -155,13 +155,13 @@ function InvoiceTable({ invoices, amounts, t, available, onAmount, today }: { in
                     <input
                       className="input num"
                       inputMode="decimal"
-                      aria-label={tr("Amount to apply to {value}", { value: inv.number ?? "the invoice" })}
+                      aria-label={tr("Amount to apply to {value}", { value: inv.number ?? tr("the invoice") })}
                       aria-invalid={t.errors[inv.id] ? true : undefined}
                       placeholder="0"
                       value={amounts[inv.id] ?? ""}
                       onChange={(e) => onAmount(inv.id, e.target.value)}
                     />
-                    <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={tr("Apply as much as possible to {value}", { value: inv.number ?? "the invoice" })}>
+                    <Button size="sm" variant="ghost" disabled={cmp(full, "0") <= 0} onClick={() => onAmount(inv.id, full)} aria-label={tr("Apply as much as possible to {value}", { value: inv.number ?? tr("the invoice") })}>
                       {tr("Full")}
                     </Button>
                     {t.errors[inv.id] && <span className="field-error">{isolate(t.errors[inv.id])}</span>}
@@ -255,7 +255,7 @@ function Review({ company, partyType, party, pairings, byId, minDate, onClose, o
               {p && cmp(gain, "0") !== 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan={3}>{cmp(gain, "0") > 0 ? tr("Exchange gain") : tr("Exchange loss")}{tr(", in the company's currency")}</td>
+                    <td colSpan={3}>{(cmp(gain, "0") > 0 ? tr("Exchange gain, in the company's currency") : tr("Exchange loss, in the company's currency"))}</td>
                     <td className="num">{isolate(show(gain))}</td>
                   </tr>
                 </tfoot>
@@ -302,7 +302,7 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
       <EmptyState title={!credits.length ? tr("No money waiting to be applied") : tr("No open invoices to apply it to")} icon="check">
         <p className="muted">
           {!credits.length
-            ? tr("{value}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.", { value: items.length ? "Everything this party owes is still to be paid" : "Nothing is open for this party" })
+            ? tr("{value}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.", { value: items.length ? tr("Everything this party owes is still to be paid") : tr("Nothing is open for this party") })
             : tr("The money is waiting, with nothing yet to apply it to.")}
         </p>
         {!credits.length && (
