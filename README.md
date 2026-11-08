@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.14.13** | Its reports' names in Arabic and Hindi. |
 | **0.14.12** | Its names in Arabic and Hindi; the last English sentences translated. |
 | **0.14.11** | Rebuilt with Ferrum-Frontend 5b22e7b: its own words in Arabic and Hindi. |
 | **ERP 0.14.10** | Rebuilt with Ferrum-Frontend 6537d65: once-shown answers kept; English isolated right to left; its own words translatable by a workspace. |
