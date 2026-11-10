@@ -17,9 +17,17 @@
 {% set co = links.company or {} %}{% set cu = links.customer or {} %}
 <div class="head">
  <div>
+  {% if co.acc_logo %}<img src="{{ co.acc_logo }}" alt="" style="max-height:56px;max-width:150px;object-fit:contain;display:block;margin-bottom:6px">{% endif %}
   <h1>{{ co.company_name or doc._titles.company }}</h1>
-  {% if co.in_address %}<div class="addr">{{ co.in_address }}</div>{% endif %}
-  <div>{{ co.in_city or "" }}{% if co.in_pincode %} {{ co.in_pincode }}{% endif %}</div>
+  {# The company's letterhead (ERP's address fields), else the registered address typed for GST #}
+  {% set generic = [co.acc_address_line1, co.acc_address_line2, co.acc_city, co.acc_region, co.acc_postal_code]|select|list|length > 0 %}
+  {% if generic %}
+   {% for ln in [[co.acc_address_line1, co.acc_address_line2]|select|join("\n"), [[co.acc_city, co.acc_region]|select|join(", "), co.acc_postal_code]|select|join(" "), co.country]|select %}<div class="addr">{{ ln }}</div>{% endfor %}
+  {% else %}
+   {% if co.in_address %}<div class="addr">{{ co.in_address }}</div>{% endif %}
+   {% set cl = [co.in_city, co.in_pincode]|select|join(" ") %}{% if cl %}<div>{{ cl }}</div>{% endif %}
+  {% endif %}
+  {% set contact = [co.acc_phone, co.acc_email, co.acc_website]|select|join(" · ") %}{% if contact %}<div class="muted">{{ contact }}</div>{% endif %}
   {% if co.in_gstin %}<div><b>GSTIN</b> {{ co.in_gstin }} · State code {{ co.in_state_code }}</div>{% endif %}
  </div>
  <div style="text-align:right">
@@ -94,6 +102,11 @@
  <tr class="grand"><td>Total {{ doc._titles.currency or "" }}</td><td class="num">{{ (doc.rounded_total or doc.grand_total) | money }}</td></tr>
 </table>
 
-{% if doc.terms %}<h2>Terms</h2><div class="small">{{ doc.terms }}</div>{% endif %}
+{% set bank = [co.acc_bank_account_name, co.acc_bank_name, co.acc_bank_account_no, co.acc_bank_branch_code]|select|list %}
+{% if bank and not doc.is_return %}<h2>Bank details</h2>
+<div class="small">{% if co.acc_bank_account_name %}<div><b>Account name</b> {{ co.acc_bank_account_name }}</div>{% endif %}{% if co.acc_bank_name %}<div><b>Bank</b> {{ co.acc_bank_name }}</div>{% endif %}{% if co.acc_bank_account_no %}<div><b>Account no</b> {{ co.acc_bank_account_no }}</div>{% endif %}{% if co.acc_bank_branch_code %}<div><b>IFSC / branch</b> {{ co.acc_bank_branch_code }}</div>{% endif %}</div>{% endif %}
+{% set terms = doc.terms or co.acc_print_terms %}
+{% if terms %}<h2>Terms</h2><div class="small addr">{{ terms }}</div>{% endif %}
+{% if co.acc_print_footer %}<p class="small addr" style="text-align:center">{{ co.acc_print_footer }}</p>{% endif %}
 <p class="muted small">This is a computer-generated invoice. Printed {{ now }}.</p>
 </body></html>

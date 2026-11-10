@@ -84,6 +84,8 @@
     - {name: status, type: select, options: [Draft, To Deliver and Bill, To Deliver, To Bill, Completed, Closed, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: project, type: link, to: Project}
     - {name: terms, type: text}
+    - {name: print_as_proforma, type: check, label: Print as Pro Forma Invoice, no_copy: true,
+       description: "The printed order is titled Pro Forma Invoice and carries the bank details: for a customer who pays in advance or needs it for customs or a bank"}
   actions:
     - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'"}
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'"}
@@ -157,6 +159,8 @@
     - {name: status, type: select, options: [Draft, To Bill, Completed, Return, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: transporter, type: data}
     - {name: vehicle_no, type: data}
+    - {name: print_prices, type: check, label: Show Prices on the Print, no_copy: true,
+       description: "A delivery note prints without prices, as it travels with the goods; tick to print rates and amounts on it"}
   actions:
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
     - {name: make_sales_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}

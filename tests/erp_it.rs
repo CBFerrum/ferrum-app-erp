@@ -753,6 +753,33 @@ async fn scenario() {
     for part in ["Tax Invoice", number.rsplit('/').next().unwrap(), irn.as_str(), "<svg", "27AAPFU0939F1ZV", "Andheri East", "8479", "Bengaluru", "354.00"] {
         assert!(printed.contains(part), "{part} on the tax invoice");
     }
+    // The company's own letterhead (ERP's address, contact and bank fields) is preferred to the registered
+    // address typed for GST, so that neither is typed twice; the GSTIN stays, and the bank and footer print.
+    t.k.update(
+        &t.ctx,
+        "Company",
+        cid,
+        obj(json!({"acc_address_line1": "Tower B, Business Park", "acc_city": "Pune", "acc_postal_code": "411014", "acc_phone": "+91 20 5550 0000",
+                   "acc_bank_name": "Harbour Bank", "acc_bank_account_no": "000123456", "acc_print_terms": "Pay within 15 days", "acc_print_footer": "Thank you for your business"})),
+        None,
+    )
+    .await
+    .expect("the letterhead");
+    let printed = t.k.render_print(&t.ctx, "SalesInvoice", ein).await.expect("print");
+    for part in [
+        "Tax Invoice",
+        "Tower B, Business Park",
+        "Pune 411014",
+        "+91 20 5550 0000",
+        "Harbour Bank",
+        "000123456",
+        "Pay within 15 days",
+        "Thank you for your business",
+        "27AAPFU0939F1ZV",
+    ] {
+        assert!(printed.contains(part), "{part} on the tax invoice with a letterhead");
+    }
+    assert!(!printed.contains("Andheri East"), "the generic address wins over the GST one");
 
     // Transport details after invoicing, then the e-way bill by IRN.
     let no_vehicle = t.k.run_action(&t.ctx, "SalesInvoice", ein, "e_way_bill_json", json!({})).await;
