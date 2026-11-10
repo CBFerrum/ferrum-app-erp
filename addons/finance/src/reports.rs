@@ -767,7 +767,7 @@ async fn overview(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>) ->
             "detail": lines.iter().map(|(id, name, n, oldest)| json!({"id": id, "name": name, "count": n, "oldest": oldest})).collect::<Vec<_>>()}));
     }
     let mut drafts = Vec::new();
-    for entity in ["SalesInvoice", "PurchaseInvoice", "PaymentEntry", "JournalEntry", "PaymentAllocation", "ExchangeRevaluation"] {
+    for entity in ["SalesInvoice", "PurchaseInvoice", "OpeningInvoice", "PaymentEntry", "JournalEntry", "PaymentAllocation", "ExchangeRevaluation"] {
         let Some(ent) = ctx.schema.entity(entity).filter(|_| all_of(ctx, entity)).cloned() else { continue };
         let (Some(c), Some(d)) = (ferrum_kernel::store::field_expr(&ent, "company", "a"), ferrum_kernel::store::field_expr(&ent, "posting_date", "a")) else {
             continue;

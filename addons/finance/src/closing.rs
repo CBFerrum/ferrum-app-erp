@@ -24,6 +24,7 @@ const POSTING: &[&str] = &[
     "PaymentEntry",
     "SalesInvoice",
     "PurchaseInvoice",
+    "OpeningInvoice",
     "DeliveryNote",
     "PurchaseReceipt",
     "StockEntry",
