@@ -70,6 +70,7 @@ fn kind(entity: &str) -> &str {
     match entity {
         "SalesInvoice" => "Sales Invoice",
         "PurchaseInvoice" => "Purchase Invoice",
+        "OpeningInvoice" => "Opening Invoice",
         "PaymentEntry" => "Payment Entry",
         "JournalEntry" => "Journal Entry",
         other => other,

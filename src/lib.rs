@@ -16,6 +16,7 @@ pub mod flow;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
+pub mod opening;
 pub mod periods;
 pub mod portal;
 pub mod pricing;
@@ -58,7 +59,8 @@ pub fn register(h: &mut HookRegistry) {
         h.register("Company", Arc::new(setup::CompanyHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
-            .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook));
+            .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
+            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook));
     });
     h.scoped(&only("inventory"), |h| {
         h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));

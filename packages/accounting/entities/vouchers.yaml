@@ -107,3 +107,38 @@
   actions:
     - {name: get_outstanding_invoices, label: Get Outstanding Invoices, docstatus: [0], permission: write}
   list: {columns: [number, posting_date, payment_type, party_name, paid_amount], sort: posting_date desc}
+
+- name: OpeningInvoice
+  label: Opening Invoice
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  title_field: party_name
+  search_fields: [invoice_no]
+  description: "An invoice still open in the books a company comes from, carried into these: what a customer still owes or the company still owes a supplier, under its own number and due date, in its own currency. A negative amount is an open credit: an advance, a credit note not yet used. One record per invoice, so a spreadsheet imports them; Post Opening Invoices on the company posts them all at once."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: party_type, type: select, options: [Customer, Supplier], required: true, default: Customer, in_list: true, in_filter: true}
+    - {name: customer, type: link, to: Customer, in_filter: true, visible_if: "doc.party_type == 'Customer'", required_if: "doc.party_type == 'Customer'"}
+    - {name: supplier, type: link, to: Supplier, in_filter: true, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'"}
+    - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: invoice_no, type: data, required: true, label: Invoice No, in_list: true, in_filter: true,
+       description: "The number the customer or supplier knows it by, from the books it comes from"}
+    - {name: invoice_date, type: date, required: true, in_list: true}
+    - {name: due_date, type: date, in_list: true, description: "When it falls due, for ageing and reminders; the invoice date when empty"}
+    - {name: posting_date, type: date, required: true, default_expr: today, label: Opening Date, in_filter: true,
+       description: "The day the balance is carried into these books: the books' first day, or the day before it"}
+    - {name: currency, type: link, to: Currency, description: "Empty: the company's"}
+    - {name: conversion_rate, type: decimal, min: "0", label: Exchange Rate, description: "Its currency → the company's, the rate it is carried at; needed for another currency"}
+    - {name: amount, type: currency, currency: currency, required: true, label: Amount Still Open, in_list: true,
+       description: "What is still owed on it, in its currency; negative for an open credit"}
+    - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
+    - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
+    - {name: party_account, type: link, to: Account, read_only: true, label: Receivable / Payable Account}
+    - {name: opening_account, type: link, to: Account, read_only: true, label: Opening Balance Account, description: "The company's Opening Balance Account, which the balance is carried against"}
+    - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Credit, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: remarks, type: text}
+  rules:
+    - {name: due_after_invoice, check: "doc.due_date == null || doc.due_date >= doc.invoice_date", message: "Due date cannot be before the invoice date"}
+  list: {columns: [party_name, invoice_no, invoice_date, due_date, amount, outstanding_amount, status], sort: invoice_date desc}

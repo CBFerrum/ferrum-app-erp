@@ -92,14 +92,19 @@ pub fn invoice_status(amount: Decimal, outstanding: Decimal, is_return: bool) ->
 
 /// Mirrors an open item's outstanding amount onto its invoice document.
 pub async fn sync_invoice_outstanding(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, invoice: Uuid) -> Result<()> {
-    if !matches!(entity, "SalesInvoice" | "PurchaseInvoice") || ctx.schema.entity(entity).is_none() {
+    if !matches!(entity, "SalesInvoice" | "PurchaseInvoice" | "OpeningInvoice") || ctx.schema.entity(entity).is_none() {
         return Ok(());
     }
     let Some(item) = crate::ledger::load_open_item(tx, ctx.tenant, invoice, false).await? else { return Ok(()) };
     let sctx = sys(ctx);
     let doc = k.get_tx(&sctx, tx, entity, invoice, false).await?;
     let is_return = crate::util::b(&doc, "is_return");
-    let status = if item.status == "cancelled" { "Cancelled" } else { invoice_status(item.amount, item.outstanding, is_return) };
+    let status = match () {
+        _ if item.status == "cancelled" => "Cancelled",
+        // An opening credit (an advance, a credit note from the books before) until it is used up.
+        _ if entity == "OpeningInvoice" && item.amount < Decimal::ZERO && !item.outstanding.is_zero() => "Credit",
+        _ => invoice_status(item.amount, item.outstanding, is_return),
+    };
     let mut v = Doc::new();
     v.insert("outstanding_amount".into(), money(item.outstanding));
     v.insert("status".into(), json!(status));
