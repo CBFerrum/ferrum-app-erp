@@ -318,6 +318,42 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
     }
 }
 
+/// A line without an item: named by its description, in no unit of an item (a quantity is its own,
+/// and per-unit taxes count it), booked to the company's default income or expense account unless
+/// it names one, with the document's or the company's cost centre.
+fn free_line(row: &mut Doc, doc: &Doc, co: &Company, side: Side, has_child: &dyn Fn(&str) -> bool) {
+    if has_child("item_name") {
+        set(row, "item_name", row.get("description").cloned().unwrap_or(Value::Null));
+    }
+    for f in ["price_basis", "stock_uom"] {
+        if has_child(f) {
+            set(row, f, Value::Null);
+        }
+    }
+    if has_child("conversion_factor") {
+        set(row, "conversion_factor", money(Decimal::ONE));
+    }
+    if has_child("stock_qty") {
+        set(row, "stock_qty", money(d(row, "qty")));
+    }
+    let (field, default) = match side {
+        Side::Selling => ("income_account", "default_income_account"),
+        Side::Buying => ("expense_account", "default_expense_account"),
+    };
+    if has_child(field)
+        && id(row, field).is_none()
+        && let Some(a) = co.account(default)
+    {
+        set(row, field, a.to_string());
+    }
+    if has_child("cost_center")
+        && id(row, "cost_center").is_none()
+        && let Some(c) = id(doc, "cost_center").or(co.account("default_cost_center"))
+    {
+        set(row, "cost_center", c.to_string());
+    }
+}
+
 /// Fills prices, discounts, item tax rates, taxes and totals. Returns the company for reuse.
 pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<Company> {
     // The addresses the countries' rules read, then their rules (India: the GST template for the
@@ -374,7 +410,10 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let mut line_rates: Vec<Vec<Doc>> = Vec::with_capacity(items.len());
     for (i, row) in items.iter_mut().enumerate() {
         let Some(item_id) = id(row, "item") else {
+            // A line without an item (rent, a fee, a one-off charge): its own description, price and
+            // account. No price list, pricing rule, unit or warehouse; taxed as the document is.
             line_rates.push(Vec::new());
+            free_line(row, doc, &co, side, &has_child);
             continue;
         };
         if let std::collections::hash_map::Entry::Vacant(e) = item_cache.entry(item_id) {

@@ -2,8 +2,9 @@
   label: Purchase Order Item
   kind: child
   fields:
-    - {name: item, type: link, to: Item, required: true, in_list: true}
-    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: item, type: link, to: Item, in_list: true, description: "Empty for a line that is not an item: a service, a fee, a one-off charge, described below"}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true, description: "The item's name, or the line's description when it has no item"}
+    - {name: description, type: text, description: "What the line is; needed on a line without an item"}
     - {name: uom, type: link, to: Uom, in_list: true, label: Unit, description: The item's stock unit unless another of its units is chosen}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: conversion_factor, type: decimal, read_only: true, label: Stock Units per Unit}
@@ -137,8 +138,9 @@
   label: Purchase Invoice Item
   kind: child
   fields:
-    - {name: item, type: link, to: Item, required: true, in_list: true}
-    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: item, type: link, to: Item, in_list: true, description: "Empty for a line booked straight to an account: rent, electricity, a consultant's fee, described below"}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true, description: "The item's name, or the line's description when it has no item"}
+    - {name: description, type: text, description: "What the line is; needed on a line without an item"}
     - {name: uom, type: link, to: Uom, in_list: true, label: Unit, description: The item's stock unit unless another of its units is chosen}
     - {name: qty, type: decimal, required: true, in_list: true}
     - {name: conversion_factor, type: decimal, read_only: true, label: Stock Units per Unit}
