@@ -3,6 +3,7 @@ version: 0.3.0
 label: Accounting
 description: Universal journal (append-only, balanced in the database), payments with open-item allocation, period close, financial reports.
 depends: [core, parties, products, project_records]
+field_prefix: acc_
 
 overlays:
   - entity: Company
@@ -33,6 +34,25 @@ overlays:
           description: "The group it reports to: a group's books are added up from the parent and every company under it"}}
       - {op: add_field, column: true, after: parent_company, field: {name: ownership_percent, type: percent, min: "0", max: "100", default: 100, label: Held by the Parent (%),
           description: "The share of this company its parent company holds; the rest is non-controlling interests in the group's books"}}
+      # The letterhead and bank details printed on documents (print/ layouts of selling, buying, accounting, inventory).
+      - {op: add_field, after: tax_id, field: {name: acc_address_line1, type: data, label: Address Line 1, description: "Printed at the top of every document; India's registered address is used where this is empty"}}
+      - {op: add_field, after: acc_address_line1, field: {name: acc_address_line2, type: data, label: Address Line 2}}
+      - {op: add_field, after: acc_address_line2, field: {name: acc_city, type: data, label: City, max_length: 80}}
+      - {op: add_field, after: acc_city, field: {name: acc_region, type: data, label: State / Region, max_length: 80}}
+      - {op: add_field, after: acc_region, field: {name: acc_postal_code, type: data, label: Postal Code, max_length: 20}}
+      - {op: add_field, after: acc_postal_code, field: {name: acc_phone, type: phone, label: Phone}}
+      - {op: add_field, after: acc_phone, field: {name: acc_email, type: email, label: E-mail}}
+      - {op: add_field, after: acc_email, field: {name: acc_website, type: data, label: Website, max_length: 120}}
+      - {op: add_field, after: acc_website, field: {name: acc_logo, type: attach, label: Logo, description: "An image (PNG, JPG or SVG) printed in the letterhead, uploaded to the company's files"}}
+      - {op: add_field, after: acc_logo, field: {name: acc_bank_account_name, type: data, label: Account Name}}
+      - {op: add_field, after: acc_bank_account_name, field: {name: acc_bank_name, type: data, label: Bank}}
+      - {op: add_field, after: acc_bank_name, field: {name: acc_bank_account_no, type: data, label: Account No / IBAN, max_length: 40}}
+      - {op: add_field, after: acc_bank_account_no, field: {name: acc_bank_branch_code, type: data, label: Branch / SWIFT / Routing Code, max_length: 40, description: "A branch, SWIFT/BIC, sort, routing or IFSC code, as customers need it to pay you"}}
+      - {op: add_field, after: acc_bank_branch_code, field: {name: acc_print_terms, type: text, label: Default Terms, description: "Printed on invoices, orders and pro formas that carry no terms of their own"}}
+      - {op: add_field, after: acc_print_terms, field: {name: acc_print_footer, type: text, label: Footer, description: "A line at the foot of every printed document: registration numbers, a thank-you, a reminder"}}
+      - {op: add_section, after: fy_start_month, section: {label: Letterhead, collapsible: true, fields: [acc_address_line1, acc_address_line2, acc_city, acc_region, acc_postal_code, acc_phone, acc_email, acc_website, acc_logo]}}
+      - {op: add_section, after: acc_logo, section: {label: Bank Details on Documents, collapsible: true, fields: [acc_bank_account_name, acc_bank_name, acc_bank_account_no, acc_bank_branch_code]}}
+      - {op: add_section, after: acc_bank_branch_code, section: {label: Document Defaults, collapsible: true, fields: [acc_print_terms, acc_print_footer]}}
       - {op: add_action, action: {name: setup_chart_of_accounts, label: Create Standard Chart of Accounts, permission: write, confirm: 'Create the standard chart of accounts for this company, or add the standard accounts it lacks?'}}
       - {op: add_action, action: {name: post_opening_invoices, label: Post Opening Invoices, permission: write,
           confirm: "Post every draft opening invoice of this company against its Opening Balance Account? All are posted, or none if one is refused."}}
