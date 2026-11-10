@@ -12,6 +12,14 @@ deliveries. Their contract is each entity's definition under `packages/` (its fi
 required, its workflow and actions) and the platform's: validation, permissions, the audit trail,
 the records API's idempotency keys. A document submits once; cancelling it undoes its effects.
 
+Returns and refunds, since 0.15.0: a return (`is_return` with `return_against`) gives back what
+its original's lines have left (`returned_qty`, and on invoices `credited_amount` before tax), and
+a line names the original's line it gives back in `return_line` (the first with its item when it
+does not). A credit note without an original needs `return_reason`. A `PaymentEntry` names its
+party with `party_type` (a customer when received, a supplier when paid, when it does not), and
+one the other way (paying a customer, receiving from a supplier) refunds their credit: its
+`references` are the party's negative open items, all of the money allocated to them.
+
 ## Through the engine
 
 Apps that post their own documents' effects (Point of Sale's sales, Commerce's orders, Assets'
@@ -36,7 +44,7 @@ operations:
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
 | `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |
-| `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount)` | Settles part of an open item with a payment | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
+| `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount)` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
 | `ledger::unallocate(tx, ctx, payment_entity, payment_id, on) -> Vec<Uuid>` | Reverses what a payment allocated, restoring what is outstanding; returns the items | | Undoes once |
 | `ledger::cancel_open_item(tx, ctx, id)` | Cancels an item: nothing outstanding, no payment taken | `Error::Invalid` while payments are allocated to it | Stays cancelled |
 | `ledger::load_open_item(tx, tenant, id, lock) -> Option<OpenItemRow>` | Reads an item, locked for the transaction when asked | | |
