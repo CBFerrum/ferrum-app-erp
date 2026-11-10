@@ -210,27 +210,23 @@ fn item_kind(ctx: &ferrum_kernel::Ctx, entity: &str) -> String {
     ctx.schema.entity(entity).map(|e| e.def.label.clone()).unwrap_or_else(|| entity.to_string())
 }
 
-/// The payment's party (customer or supplier) and whether money comes in. A payment without a
-/// party type (one made before there was one) is from a customer when received, to a supplier
-/// when paid.
+/// The payment's party (customer or supplier) and whether money comes in.
 fn party(doc: &Doc) -> (Option<Uuid>, Option<Uuid>, bool) {
     let receive = s(doc, "payment_type") != Some("Pay");
     if to_customer(doc) { (id(doc, "customer"), None, receive) } else { (None, id(doc, "supplier"), receive) }
 }
 
+/// A customer's when received, a supplier's when paid; the other way round for a refund.
 fn to_customer(doc: &Doc) -> bool {
-    match s(doc, "party_type") {
-        Some("Customer") => true,
-        Some("Supplier") => false,
-        _ => s(doc, "payment_type") != Some("Pay"),
-    }
+    (s(doc, "payment_type") != Some("Pay")) != refund(doc)
 }
 
-/// Whether the payment gives back a party's credit: money paid to a customer, or received from a
-/// supplier. It settles what the party is owed (credit notes, overpayments, advances), whose open
-/// items are negative, and never more than that.
+/// Whether the payment gives back a party's credit (Refund ticked): money paid to a customer, or
+/// received from a supplier. It settles what the party is owed (credit notes, overpayments,
+/// advances), whose open items are negative, and never more than that. Never inferred: a payment
+/// without the tick is a customer's receipt or a payment to a supplier.
 fn refund(doc: &Doc) -> bool {
-    to_customer(doc) == (s(doc, "payment_type") == Some("Pay"))
+    b(doc, "is_refund")
 }
 
 /// What a payment settles with its parties: the bank amount, plus deductions (debits) on a receipt
@@ -247,8 +243,19 @@ impl DocHook for PaymentEntryHook {
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let (customer, supplier, receive) = party(doc);
         let to_customer = to_customer(doc);
-        set(doc, "party_type", if to_customer { "Customer" } else { "Supplier" });
-        set(doc, if to_customer { "supplier" } else { "customer" }, Value::Null);
+        // The other party is left over from before the type changed, unless nothing else is named:
+        // then it is a refund not ticked, said in words rather than booked either way.
+        let (other, other_field) = if to_customer { (id(doc, "supplier"), "supplier") } else { (id(doc, "customer"), "customer") };
+        if other.is_some() && customer.is_none() && supplier.is_none() {
+            let msg = match (to_customer, s(doc, "payment_type") == Some("Pay")) {
+                (false, true) => "a payment to a customer gives back their credit: tick Refund, or choose the supplier paid",
+                (true, false) => "money from a supplier gives back their credit: tick Refund, or choose the customer who paid",
+                (false, false) => "a refund received comes from a supplier: choose the supplier, or untick Refund",
+                (true, true) => "a refund paid goes to a customer: choose the customer, or untick Refund",
+            };
+            return Err(Error::field(other_field, msg));
+        }
+        set(doc, other_field, Value::Null);
         let party_doc = match (customer, supplier) {
             (Some(c), _) => Some(get(hc.kernel, hc.ctx, hc.tx, "Customer", c).await?),
             (_, Some(s_)) => Some(get(hc.kernel, hc.ctx, hc.tx, "Supplier", s_).await?),

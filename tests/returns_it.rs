@@ -394,8 +394,8 @@ async fn scenario() {
     let refund = t.action("SalesInvoice", cn3, "make_refund", json!({})).await;
     let rf = t.get("PaymentEntry", refund).await;
     assert_eq!(
-        (rf["payment_type"].clone(), rf["party_type"].clone(), rf["customer"].clone(), dec(&rf["paid_amount"]), dec(&rf["references"][0]["outstanding"])),
-        (json!("Pay"), json!("Customer"), json!(globex.to_string()), n("330"), n("330"))
+        (rf["payment_type"].clone(), rf["is_refund"].clone(), rf["customer"].clone(), dec(&rf["paid_amount"]), dec(&rf["references"][0]["outstanding"])),
+        (json!("Pay"), json!(true), json!(globex.to_string()), n("330"), n("330"))
     );
     // Never more than the credit, and all of it allocated.
     let line = rf["references"][0]["id"].clone();
@@ -427,6 +427,23 @@ async fn scenario() {
     t.submit("PaymentEntry", rest).await;
     assert_eq!(t.owes(globex).await, owed);
 
+    // ───────────── the party follows Receive or Pay; a refund is a deliberate tick ─────────────
+    let switched = uid(&t
+        .insert(
+            "PaymentEntry",
+            json!({"company": c, "payment_type": "Receive", "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": "25"}),
+        )
+        .await);
+    let changed = t.update("PaymentEntry", switched, json!({"payment_type": "Pay", "supplier": acme.to_string()})).await;
+    assert_eq!((changed["customer"].clone(), changed["supplier"].clone(), changed["is_refund"].clone()), (Value::Null, json!(acme.to_string()), json!(false)));
+    let owe_before = t.owed_supplier(acme).await;
+    t.submit("PaymentEntry", switched).await;
+    assert_eq!(t.posted(switched).await, map(&[("Creditors", "25"), ("Primary Bank", "-25")]), "the supplier is paid");
+    assert_eq!(t.owed_supplier(acme).await, owe_before - n("25"));
+    let untick = |payment_type: &str, party: &str, who: Uuid| json!({"company": c, "payment_type": payment_type, party: who.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": "10"});
+    refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Pay", "customer", globex))).await, "a payment to a customer gives back their credit: tick Refund");
+    refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Receive", "supplier", acme))).await, "money from a supplier gives back their credit: tick Refund");
+
     // ───────────── an overpayment: part applied, the rest given back ─────────────
     let small =
         uid(&t.insert("SalesInvoice", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "2"}]})).await);
@@ -442,7 +459,7 @@ async fn scenario() {
     t.submit("PaymentEntry", over).await;
     assert_eq!(t.owes(globex).await, owed - n("500"), "300 paid beyond the invoice");
     let back = uid(&t
-        .insert("PaymentEntry", json!({"company": c, "payment_type": "Pay", "party_type": "Customer", "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": "0"}))
+        .insert("PaymentEntry", json!({"company": c, "payment_type": "Pay", "is_refund": true, "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": "0"}))
         .await);
     let offered = t.k.run_action(&t.ctx, "PaymentEntry", back, "get_outstanding_invoices", json!({})).await.unwrap();
     let offer: Vec<(String, Decimal)> =
@@ -634,7 +651,10 @@ async fn scenario() {
     t.submit("PurchaseInvoice", rebate).await;
     let paid_in = t.action("PurchaseInvoice", rebate, "make_refund", json!({})).await;
     let pin = t.get("PaymentEntry", paid_in).await;
-    assert_eq!((pin["payment_type"].clone(), pin["party_type"].clone(), dec(&pin["paid_amount"])), (json!("Receive"), json!("Supplier"), n("60")));
+    assert_eq!(
+        (pin["payment_type"].clone(), pin["is_refund"].clone(), pin["supplier"].is_string(), dec(&pin["paid_amount"])),
+        (json!("Receive"), json!(true), true, n("60"))
+    );
     t.submit("PaymentEntry", paid_in).await;
     assert_eq!(t.posted(paid_in).await, map(&[("Creditors", "-60"), ("Primary Bank", "60")]), "the supplier pays back: debit bank, credit payable");
     assert_eq!(dec(&t.get("PurchaseInvoice", rebate).await["outstanding_amount"]), Decimal::ZERO);

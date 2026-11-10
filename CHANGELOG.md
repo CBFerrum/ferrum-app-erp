@@ -30,8 +30,8 @@
 - **Create Debit Note** on a sales invoice: an invoice charging more on it (a price increase,
   something charged short), linked to it, posted and counted against the credit limit as an
   invoice, and shown on the original (**Debit Notes**), which is not cancelled while it stands.
-- Refunds: a payment entry names its party (**Party Type**), so it can pay a customer and receive
-  from a supplier. One the other way gives back their open credit (a credit note's balance, an
+- Refunds: a payment entry with **Refund** ticked pays a customer, or receives from a supplier, and
+  gives back their open credit (a credit note's balance, an
   overpayment, an advance), in part or in full, never more than is open and all of it allocated,
   in the credit's currency with the exchange difference booked as payments do; cancelling it
   restores the credit. **Refund** on a credit note or supplier's debit note with credit left makes
@@ -43,8 +43,9 @@
 
 For data already there: returns made before 0.15.0 are counted on their originals by the
 migrations `selling/sql/001_returns.sql` and `buying/sql/001_returns.sql`, each old return line
-tied to the first line of its original with its item. Payment entries made before keep their party
-from Receive (a customer) or Pay (a supplier). Credit and debit notes have no menu entry of their
+tied to the first line of its original with its item. Payment entries made before, and those other apps
+make, are unticked: a customer's receipt or a payment to a supplier, as before. A payment to a
+customer without the tick is refused in words, never booked as a refund. Credit and debit notes have no menu entry of their
 own: a menu lists entities and reports only, and the invoice lists filter on Is Return and Debit
 Note. The interface is not rebuilt; its names in Arabic and Hindi gain the new fields' (594
 each), translated by the model, to be reviewed by native speakers.

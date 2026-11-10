@@ -15,10 +15,11 @@ the records API's idempotency keys. A document submits once; cancelling it undoe
 Returns and refunds, since 0.15.0: a return (`is_return` with `return_against`) gives back what
 its original's lines have left (`returned_qty`, and on invoices `credited_amount` before tax), and
 a line names the original's line it gives back in `return_line` (the first with its item when it
-does not). A credit note without an original needs `return_reason`. A `PaymentEntry` names its
-party with `party_type` (a customer when received, a supplier when paid, when it does not), and
-one the other way (paying a customer, receiving from a supplier) refunds their credit: its
-`references` are the party's negative open items, all of the money allocated to them.
+does not). A credit note without an original needs `return_reason`. A `PaymentEntry` with
+`is_refund` ticked pays a customer or receives from a supplier, refunding their credit: its
+`references` are the party's negative open items, all of the money allocated to them. Unticked (as
+every payment made before, and every one sent with only `payment_type` and a party), it is a
+customer's receipt or a payment to a supplier, as before.
 
 ## Through the engine
 

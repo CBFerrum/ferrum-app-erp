@@ -73,14 +73,12 @@
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: payment_type, type: select, options: [Receive, Pay], required: true, default: Receive, in_list: true, in_filter: true}
-    - {name: party_type, type: select, options: [Customer, Supplier], default_expr: "doc.payment_type == 'Pay' ? 'Supplier' : 'Customer'", in_filter: true,
-       description: "Who is paid or pays: a customer pays, or is paid back their credit; a supplier is paid, or pays back theirs"}
+    - {name: is_refund, type: check, label: Refund, in_filter: true,
+       description: "Gives back the party's credit: a payment out to a customer or in from a supplier"}
     - {name: customer, type: link, to: Customer, in_filter: true,
-       visible_if: "doc.party_type == 'Customer' || (doc.party_type != 'Supplier' && doc.payment_type == 'Receive')",
-       required_if: "doc.party_type == 'Customer' || (doc.party_type != 'Supplier' && doc.payment_type == 'Receive')"}
+       visible_if: "(doc.payment_type == 'Receive') != doc.is_refund", required_if: "(doc.payment_type == 'Receive') != doc.is_refund"}
     - {name: supplier, type: link, to: Supplier, in_filter: true,
-       visible_if: "doc.party_type == 'Supplier' || (doc.party_type != 'Customer' && doc.payment_type == 'Pay')",
-       required_if: "doc.party_type == 'Supplier' || (doc.party_type != 'Customer' && doc.payment_type == 'Pay')"}
+       visible_if: "(doc.payment_type == 'Receive') == doc.is_refund", required_if: "(doc.payment_type == 'Receive') == doc.is_refund"}
     - {name: party_name, type: data, read_only: true, in_list: true}
     - {name: party_account, type: link, to: Account, read_only: true}
     - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Bank / Cash Account}
