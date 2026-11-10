@@ -19,7 +19,29 @@ impl DocHook for JournalEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
-        let lines = rows(doc, "accounts");
+        let mut lines = rows(doc, "accounts");
+        // A party's line in their currency: its debit or credit is the amount in it at its rate.
+        let mut errors = Vec::new();
+        for (i, l) in lines.iter_mut().enumerate() {
+            let Some(cur) = id(l, "currency").filter(|c| *c != co.currency_id) else { continue };
+            let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+            let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
+            let rate = d(l, "exchange_rate");
+            if s(l, "party_type").is_none() {
+                errors.push(at("currency", format!("only a customer's or supplier's line is carried in another currency; book {code} to an account in the company's")));
+            } else if rate <= Decimal::ZERO {
+                errors.push(at("exchange_rate", format!("the rate {code} is carried at is needed")));
+            } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
+                errors.push(at("debit_in_currency", format!("a debit or a credit in {code}, one of the two")));
+            } else {
+                set(l, "debit", money(round(d(l, "debit_in_currency") * rate, co.precision)));
+                set(l, "credit", money(round(d(l, "credit_in_currency") * rate, co.precision)));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(Error::Validation(errors));
+        }
+        set(doc, "accounts", Value::Array(lines.iter().cloned().map(Value::Object).collect()));
         let dr: Decimal = lines.iter().map(|l| round(d(l, "debit"), co.precision)).sum();
         let cr: Decimal = lines.iter().map(|l| round(d(l, "credit"), co.precision)).sum();
         set(doc, "total_debit", money(dr));
@@ -93,8 +115,18 @@ impl DocHook for JournalEntryHook {
             }
             if line.customer.is_some() || line.supplier.is_some() {
                 line = line.against("JournalEntry", line_id);
-                // Party lines become open items so they show in ageing and can be settled.
-                let open = if line.customer.is_some() { amount } else { -amount };
+                // In the party's currency when the line names one: the amount in it, at its rate.
+                let (code, rate, txn) = match id(&l, "currency").filter(|c| *c != co.currency_id) {
+                    Some(cur) => {
+                        let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+                        (code, d(&l, "exchange_rate"), d(&l, "debit_in_currency") - d(&l, "credit_in_currency"))
+                    }
+                    None => (co.currency_code.clone(), Decimal::ONE, amount),
+                };
+                line = line.txn(txn, &code, rate);
+                // Party lines become open items so they show in ageing and can be settled: under
+                // the number the party knows and on the day it falls due, when the line gives them.
+                let sign = if line.customer.is_some() { Decimal::ONE } else { -Decimal::ONE };
                 ledger::open_item(
                     hc.tx,
                     hc.ctx,
@@ -102,16 +134,16 @@ impl DocHook for JournalEntryHook {
                         id: line_id,
                         company: co.id,
                         entity: "JournalEntry".into(),
-                        number: s(doc, "number").map(str::to_string),
+                        number: s(&l, "reference_no").filter(|r| !r.trim().is_empty()).or(s(doc, "number")).map(str::to_string),
                         customer: line.customer,
                         supplier: line.supplier,
                         account: line.account,
                         posting_date: on,
-                        due_date: Some(on),
-                        currency: co.currency_code.clone(),
-                        exchange_rate: Decimal::ONE,
-                        amount: open,
-                        base_amount: open,
+                        due_date: Some(date(&l, "due_date").unwrap_or(on)),
+                        currency: code,
+                        exchange_rate: rate,
+                        amount: sign * txn,
+                        base_amount: sign * amount,
                     },
                 )
                 .await?;
