@@ -1,0 +1,172 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }} {{ doc.number or "" }}</title>
+<style>
+ :root{--ink:#14171c;--muted:#5b6470;--line:#d3d8de;--soft:#f3f5f7;--accent:#1f3a5f}
+ *{box-sizing:border-box}
+ body{margin:0;padding:22px 28px;font:12px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans","Noto Sans Arabic","Noto Sans Devanagari",Arial,sans-serif;color:var(--ink);background:#fff}
+ h1{font-size:22px;line-height:1.2;margin:0;color:var(--accent)}
+ h2{font-size:10px;margin:0 0 4px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+ .muted{color:var(--muted)} .small{font-size:11px} .pre{white-space:pre-line} .strong{font-weight:600}
+ .head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:12px;border-bottom:2px solid var(--accent)}
+ .brand{display:flex;gap:14px;align-items:flex-start;min-width:0}
+ .logo{max-height:64px;max-width:160px;object-fit:contain}
+ .co-name{font-size:15px;font-weight:700}
+ .title{text-align:end;flex:none}
+ .mark{display:inline-block;margin-top:4px;padding:1px 9px;border:1px solid var(--muted);border-radius:10px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+ .cols{display:flex;gap:16px 28px;flex-wrap:wrap;margin:14px 0}
+ .cols>div{flex:1 1 200px;min-width:0}
+ .kv{display:grid;grid-template-columns:auto 1fr;gap:1px 12px}
+ .kv dt{color:var(--muted)} .kv dd{margin:0}
+ table{border-collapse:collapse;width:100%}
+ .lines{margin:8px 0}
+ .lines th,.lines td{padding:5px 7px;text-align:start;vertical-align:top;border-bottom:1px solid var(--line)}
+ .lines th{background:var(--soft);font-weight:600;border-top:1px solid var(--line)}
+ .lines .num{text-align:end;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .lines .n{width:2.2em;color:var(--muted)}
+ .after{display:flex;gap:16px 28px;flex-wrap:wrap;align-items:flex-start;margin:10px 0}
+ .after>.grow{flex:1 1 240px;min-width:0}
+ .after>.side{flex:0 1 300px;margin-inline-start:auto}
+ .totals td{padding:3px 7px;font-variant-numeric:tabular-nums} .totals td:last-child{text-align:end;white-space:nowrap}
+ .totals .due td{font-weight:700}
+ .totals .grand td{border-top:2px solid var(--ink);font-weight:700;font-size:13px}
+ .taxes{margin:0 0 8px} .taxes th,.taxes td{padding:3px 7px;text-align:start;border-bottom:1px solid var(--line)}
+ .taxes th{color:var(--muted);font-weight:600;font-size:10.5px} .taxes .num{text-align:end;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .box{border:1px solid var(--line);border-radius:4px;padding:8px 10px;margin:8px 0}
+ .sign{display:flex;gap:28px;margin-top:34px}
+ .sign>div{flex:1;border-top:1px solid var(--ink);padding-top:3px;color:var(--muted);font-size:10.5px}
+ .foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);text-align:center}
+ @page{margin:12mm}
+ @media print{
+  body{padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  thead{display:table-header-group} tfoot{display:table-footer-group}
+  tr,.keep{break-inside:avoid;page-break-inside:avoid}
+  h2{break-after:avoid}
+ }
+</style>
+</head><body>
+{% macro mo(v, neg, p) %}{{ (v|string|replace("-","") if neg else v)|money(p) }}{% endmacro %}
+{% macro qty(v, neg) %}{{ display({"name":"q","type":"decimal"}, {"q": (v|string|replace("-","") if neg else v)}) }}{% endmacro %}
+{% macro dec(v) %}{{ display({"name":"q","type":"decimal"}, {"q": v}) }}{% endmacro %}
+{% macro addr(a) %}{% for ln in [[a.address_line1, a.address_line2]|select|join("\n"), [[a.city, a.state]|select|join(", "), a.postal_code]|select|join(" "), a.country]|select %}<div class="pre" dir="auto">{{ ln }}</div>{% endfor %}{% if a.phone %}<div dir="auto">{{ a.phone }}</div>{% endif %}{% endmacro %}
+{% set co = links.company or {} %}{% set dt = doc._titles or {} %}
+{% set cur = dt.currency or "" %}{% set cu_rec = links.currency or {} %}
+{% set prec = cu_rec.precision if cu_rec.precision is not none else 2 %}
+{% set neg = doc.is_return %}
+{% set title = "Credit Note" if doc.is_return else ("Debit Note" if doc.is_debit_note else "Invoice") %}
+{% set cu = links.customer or {} %}{% set ba = links.customer_address %}{% set sa = links.ship_to %}
+{% set ag = links.return_against or links.debit_note_against or {} %}
+{% set has_disc = doc["items"]|map(attribute="discount_percent")|select|map("float")|select|list|length > 0 %}
+<div class="head">
+ <div class="brand">
+  {% if co.acc_logo %}<img class="logo" src="{{ co.acc_logo }}" alt="">{% endif %}
+  <div>
+   <div class="co-name" dir="auto">{{ co.company_name or dt.company }}</div>
+   {% set generic = [co.acc_address_line1, co.acc_address_line2, co.acc_city, co.acc_region, co.acc_postal_code]|select|list|length > 0 %}
+   {% set street = [co.acc_address_line1, co.acc_address_line2]|select|join("\n") if generic else co.in_address %}
+   {% set cityline = [[co.acc_city, co.acc_region]|select|join(", "), co.acc_postal_code]|select|join(" ") if generic else [co.in_city, co.in_pincode]|select|join(" ") %}
+   {% for ln in [street, cityline, co.country]|select %}<div class="pre" dir="auto">{{ ln }}</div>{% endfor %}
+   {% set contact = [co.acc_phone, co.acc_email, co.acc_website]|select|join(" · ") %}
+   {% if contact %}<div class="muted" dir="auto">{{ contact }}</div>{% endif %}
+   {% if co.tax_id %}<div><span class="muted">Tax ID</span> {{ co.tax_id }}</div>{% endif %}
+   {% if co.in_gstin and co.in_gstin != co.tax_id %}<div><span class="muted">GSTIN</span> {{ co.in_gstin }}</div>{% endif %}
+  </div>
+ </div>
+ <div class="title">
+  <h1>{{ title }}</h1>
+  {% if doc.number %}<div class="strong">{{ doc.number }}</div>{% endif %}
+  {% if doc.docstatus == 2 %}<div><span class="mark">Cancelled</span></div>{% elif doc.docstatus != 1 %}<div><span class="mark">Draft</span></div>{% endif %}
+  {% if doc.posting_date %}<div><span class="muted">Date</span> {{ doc.posting_date }}</div>{% endif %}
+  {% if doc.due_date and not neg %}<div><span class="muted">Due</span> {{ doc.due_date }}</div>{% endif %}
+ </div>
+</div>
+<div class="cols">
+ <div>
+  <h2>Bill to</h2>
+  <div class="strong" dir="auto">{{ cu.customer_name or doc.customer_name }}</div>
+  {% if ba %}{{ addr(ba) }}{% elif cu.billing_address %}<div class="pre" dir="auto">{{ cu.billing_address }}</div>{% endif %}
+  {% if cu.tax_id %}<div><span class="muted">Tax ID</span> {{ cu.tax_id }}</div>{% endif %}
+  {% if cu.in_gstin %}<div><span class="muted">GSTIN</span> {{ cu.in_gstin }}</div>{% endif %}
+  {% if cu.email %}<div dir="auto">{{ cu.email }}</div>{% endif %}
+ </div>
+  {% if sa and doc.ship_to != doc.customer_address %}<div><h2>Ship to</h2>{{ addr(sa) }}</div>
+ {% elif not sa and cu.shipping_address and cu.shipping_address != cu.billing_address %}<div><h2>Ship to</h2><div class="pre" dir="auto">{{ cu.shipping_address }}</div></div>{% endif %}
+ {% set pt = cu.payment_terms_days|float %}
+ {% if doc.po_no or ag.number or doc.return_reason or doc.price_only or (pt > 0 and not neg) %}<div><h2>Details</h2><dl class="kv">
+  {% if ag.number %}<dt>{{ "Credit note against" if doc.is_return else "Debit note against" }}</dt><dd>Invoice {{ ag.number }}{% if ag.posting_date %} of {{ ag.posting_date }}{% endif %}</dd>{% endif %}
+  {% if doc.return_reason %}<dt>Reason</dt><dd class="pre" dir="auto">{{ doc.return_reason }}</dd>{% endif %}
+  {% if doc.price_only %}<dt>Type</dt><dd>Price only: no goods move</dd>{% endif %}
+  {% if doc.po_no %}<dt>Customer PO</dt><dd dir="auto">{{ doc.po_no }}</dd>{% endif %}
+  {% if pt > 0 and not neg %}<dt>Payment terms</dt><dd>{{ pt|int }} days</dd>{% endif %}
+ </dl></div>{% endif %}
+</div>
+{% set co_cur = (links.company or {})._titles.default_currency if (links.company or {})._titles else none %}
+{% if doc.conversion_rate and doc.conversion_rate|float != 1 %}<div class="muted small">Amounts in {{ cur }}. Exchange rate: 1 {{ cur }} = {{ dec(doc.conversion_rate) }} {{ co_cur or "" }}{% if doc.base_grand_total and co_cur %} (total {{ mo(doc.base_grand_total, neg, 2) }} {{ co_cur }}){% endif %}</div>{% endif %}
+<table class="lines">
+ <thead><tr><th class="n">#</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th>{% if has_disc %}<th class="num">Disc. %</th>{% endif %}<th class="num">Amount</th></tr></thead>
+ <tbody>
+ {% for row in doc["items"] %}{% set rt = row._titles or {} %}
+  <tr>
+   <td class="n">{{ loop.index }}</td>
+   <td dir="auto">{% set nm = row.item_name or row.description or rt.item %}{{ nm }}{% if row.description and row.description != nm %}<div class="muted small pre">{{ row.description }}</div>{% endif %}</td>
+   <td class="num">{{ qty(row.qty, neg) }}{% if rt.uom %} {{ rt.uom }}{% endif %}</td>
+   <td class="num">{{ mo(row.price_list_rate if row.price_list_rate is not none else row.rate, neg, prec) }}</td>
+   {% if has_disc %}<td class="num">{% if row.discount_percent|float > 0 %}{{ dec(row.discount_percent) }}{% endif %}</td>{% endif %}
+   <td class="num">{{ mo(row.amount, neg, prec) }}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+<div class="after">
+ <div class="grow">
+{% set trows = doc.tax_breakdown if doc.tax_breakdown and not (doc.taxes|selectattr("charge_type", "in", ["On Item Quantity", "Actual"])|list) else none %}
+{% if trows %}
+<table class="taxes keep">
+ <thead><tr><th>Tax</th><th class="num">Rate</th><th class="num">Taxable amount</th><th class="num">Tax</th></tr></thead>
+ <tbody>{% for t in trows %}<tr>
+  <td dir="auto">{{ t.description or (t._titles or {}).account }}{% if t.category and t.category != "Standard" %} <span class="muted small">({{ t.category }}{% if t.exemption_reason %}: {{ t.exemption_reason }}{% endif %})</span>{% endif %}{% if t.reverse_charge %} <span class="muted small">(reverse charge: not added to the total)</span>{% endif %}</td>
+  <td class="num">{% if t.rate|float != 0 %}{{ dec(t.rate) }}%{% endif %}</td>
+  <td class="num">{{ mo(t.taxable_amount, neg, prec) }}</td>
+  <td class="num">{{ mo(t.tax_amount, neg, prec) }}</td>
+ </tr>{% endfor %}</tbody>
+</table>
+{% elif doc.taxes %}
+<table class="taxes keep">
+ <thead><tr><th>Tax</th><th class="num">Rate</th><th class="num">Tax</th></tr></thead>
+ <tbody>{% for t in doc.taxes %}<tr>
+  <td dir="auto">{{ t.description or (t._titles or {}).account }}{% if t.reverse_charge %} <span class="muted small">(reverse charge: not added to the total)</span>{% endif %}{% if t.deduct %} <span class="muted small">(deducted)</span>{% endif %}</td>
+  <td class="num">{% if t.rate|float != 0 and t.charge_type != "Actual" %}{{ dec(t.rate) }}{% if t.charge_type != "On Item Quantity" %}%{% else %} per unit{% endif %}{% endif %}</td>
+  <td class="num">{{ mo(t.tax_amount, neg, prec) }}</td>
+ </tr>{% endfor %}</tbody>
+</table>
+{% endif %}
+{% if doc.taxes|selectattr("included_in_price")|list %}<div class="muted small">Prices include tax.</div>{% endif %}
+  {% if not neg %}{% set bank = [co.acc_bank_account_name, co.acc_bank_name, co.acc_bank_account_no, co.acc_bank_branch_code]|select|list %}
+{% if bank %}<div class="box keep"><h2>Bank details</h2><dl class="kv">
+ {% if co.acc_bank_account_name %}<dt>Account name</dt><dd dir="auto">{{ co.acc_bank_account_name }}</dd>{% endif %}
+ {% if co.acc_bank_name %}<dt>Bank</dt><dd dir="auto">{{ co.acc_bank_name }}</dd>{% endif %}
+ {% if co.acc_bank_account_no %}<dt>Account / IBAN</dt><dd dir="auto">{{ co.acc_bank_account_no }}</dd>{% endif %}
+ {% if co.acc_bank_branch_code %}<dt>Branch / SWIFT</dt><dd dir="auto">{{ co.acc_bank_branch_code }}</dd>{% endif %}
+</dl></div>{% endif %}{% endif %}
+ </div>
+ <div class="side">
+{% set grand = doc.rounded_total if doc.rounded_total is not none and doc.rounded_total|float != 0 else doc.grand_total %}
+<table class="totals keep">
+ {% if doc.discount_amount|float != 0 %}<tr><td>Subtotal</td><td>{{ mo(doc.total, neg, prec) }}</td></tr>
+ <tr><td>Discount{% if doc.discount_percent|float > 0 %} ({{ dec(doc.discount_percent) }}%){% endif %}</td><td>-{{ mo(doc.discount_amount, neg, prec) }}</td></tr>{% endif %}
+ {% if doc.total_taxes|float != 0 %}<tr><td>Total before tax</td><td>{{ mo(doc.net_total, neg, prec) }}</td></tr>
+ <tr><td>Tax</td><td>{{ mo(doc.total_taxes, neg, prec) }}</td></tr>{% endif %}
+ {% if doc.rounding_adjustment|float != 0 %}<tr><td>Rounding</td><td>{{ mo(doc.rounding_adjustment, neg, prec) }}</td></tr>{% endif %}
+ <tr class="grand"><td>Total {{ cur }}</td><td>{{ mo(grand, neg, prec) }}</td></tr>
+
+ {% if doc.docstatus == 1 %}{% set owed = doc.outstanding_amount|float %}
+  {% if not neg %}{% set paid = grand|float - owed %}
+   {% if paid > 0.004 %}<tr><td>Paid or credited</td><td>{{ paid|money(prec) }}</td></tr>{% endif %}
+   <tr class="due"><td>Balance due</td><td>{{ owed|money(prec) }}</td></tr>
+  {% elif owed < -0.004 %}<tr class="due"><td>Credit not yet settled</td><td>{{ (0 - owed)|money(prec) }}</td></tr>{% endif %}
+ {% endif %}
+</table>
+ </div>
+</div>
+{% set terms = doc.terms or co.acc_print_terms %}
+{% if terms %}<div class="box keep"><h2>Terms</h2><div class="pre small" dir="auto">{{ terms }}</div></div>{% endif %}{% if doc.remarks %}<div class="box keep"><h2>Remarks</h2><div class="pre small" dir="auto">{{ doc.remarks }}</div></div>{% endif %}<div class="foot small">{% if co.acc_print_footer %}<div class="pre" dir="auto">{{ co.acc_print_footer }}</div>{% endif %}<div class="muted">Printed {{ now }}</div></div>
+</body></html>

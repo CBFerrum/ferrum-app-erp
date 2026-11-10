@@ -1,5 +1,56 @@
 # Changelog
 
+## ERP 0.17.0, India 0.3.1: documents that print like documents
+
+- **A letterhead a company fills in once.** The company's form has three new sections:
+  **Letterhead** (address lines, city, state or region, postal code, phone, e-mail, website and a
+  **Logo**, an image uploaded to the company's files), **Bank Details on Documents** (account name,
+  bank, account number or IBAN, and a branch, SWIFT, routing or IFSC code, as free text) and
+  **Document Defaults** (default terms, for documents that carry none of their own, and a footer).
+  Every layout below prints what is filled in and leaves out what is not: a company that has filled
+  in nothing prints its name, as before. Where India's add-on holds the registered address
+  (**Address** on the GST section), the layouts prefer the letterhead address and fall back to
+  India's, so neither has to be typed twice.
+- **Print layouts** for sales invoices (titled **Invoice**, **Credit Note** for a return and **Debit
+  Note** for a supplementary invoice, each naming the invoice it is against, giving the reason of a
+  note with no original, and marked **Price only** where no goods move), sales orders, delivery
+  notes, purchase orders, purchase receipts, purchase invoices (the company's own record of the
+  bill, a **Debit Note** when it is a return), payment entries (**Receipt**, **Payment Voucher**,
+  **Refund** and **Transfer**, listing the invoices each settles, its deductions and what stays on
+  account), journal entries (a voucher with debits and credits and their totals) and stock entries
+  (titled by their purpose, with the warehouses that purpose has). The trade documents show the
+  letterhead; the party with billing and shipping addresses and tax ID; number and dates; the
+  customer's PO number or the supplier's invoice number; each line's name and description,
+  quantity with unit, rate, discount where any and amount; every tax with its rate and amount (and
+  the taxable amount per rate where the invoice has a breakdown), a note where prices include tax
+  or a tax is reverse-charged; the totals before tax, discount, tax, rounding and the total, and on an invoice what was
+  paid or credited and what is still due; the currency and, for a foreign one, the rate and the
+  total in the company's currency; the party's payment terms; bank details on invoices and pro
+  formas; terms; the footer; and a small **Draft** or **Cancelled** mark when the document is not
+  submitted. A credit note, debit note or goods return prints the amounts credited or returned
+  without minus signs. A line without an item prints its own description. They print on A4 or
+  Letter with system fonts only, repeat a long invoice's table header on each page, never split a
+  totals block, and read right to left where the text is Arabic.
+- **Two ticks.** **Print as Pro Forma Invoice** on a sales order titles it Pro Forma Invoice, adds
+  the bank details and says it is not a tax invoice. **Show Prices on the Print** on a delivery
+  note prints rates, taxes and totals on it; without it a delivery note travels without prices.
+- **India:** the GST tax invoice stays the invoice where India is installed and gains the
+  letterhead's logo, contact line, bank details, default terms and footer; the letterhead's address
+  is printed when filled in, the registered address when not.
+
+What to fill in: the company's **Letterhead**, **Bank Details on Documents** and **Document
+Defaults** (Company form). Not printed, because the platform's print templates cannot do it: the
+amount in words, and the currency's symbol (the code is printed) and the precision of a company's
+own currency on a stock entry (two decimals).
+
+For data already there: nothing posted changes; documents print with the new layouts the next time
+they are printed or saved as PDF, and look plainer where no letterhead is filled in. The new fields
+reach an upgrading workspace with its next schema update: there is no SQL migration. They are named
+`acc_address_line1`, `acc_city`, `acc_phone`, `acc_email`, `acc_logo`, `acc_bank_name`,
+`acc_print_footer` and so on, on the company, for imports and the API. The interface is not rebuilt;
+its names in Arabic and Hindi gain the new fields' (25 each), translated by the model, to be reviewed
+by native speakers.
+
 ## ERP 0.16.0, Finance 0.4.0, India 0.3.0: no entry barrier for a company switching books
 
 - **Lines without an item.** A sales or purchase invoice line, and a sales or purchase order's, may
