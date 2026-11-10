@@ -19,7 +19,32 @@ impl DocHook for JournalEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
-        let lines = rows(doc, "accounts");
+        let mut lines = rows(doc, "accounts");
+        // A party's line in their currency: its debit or credit is the amount in it at its rate.
+        let mut errors = Vec::new();
+        for (i, l) in lines.iter_mut().enumerate() {
+            let Some(cur) = id(l, "currency").filter(|c| *c != co.currency_id) else { continue };
+            let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+            let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
+            let rate = d(l, "exchange_rate");
+            if s(l, "party_type").is_none() {
+                errors.push(at(
+                    "currency",
+                    format!("only a customer's or supplier's line is carried in another currency; book {code} to an account in the company's"),
+                ));
+            } else if rate <= Decimal::ZERO {
+                errors.push(at("exchange_rate", format!("the rate {code} is carried at is needed")));
+            } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
+                errors.push(at("debit_in_currency", format!("a debit or a credit in {code}, one of the two")));
+            } else {
+                set(l, "debit", money(round(d(l, "debit_in_currency") * rate, co.precision)));
+                set(l, "credit", money(round(d(l, "credit_in_currency") * rate, co.precision)));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(Error::Validation(errors));
+        }
+        set(doc, "accounts", Value::Array(lines.iter().cloned().map(Value::Object).collect()));
         let dr: Decimal = lines.iter().map(|l| round(d(l, "debit"), co.precision)).sum();
         let cr: Decimal = lines.iter().map(|l| round(d(l, "credit"), co.precision)).sum();
         set(doc, "total_debit", money(dr));
@@ -93,8 +118,18 @@ impl DocHook for JournalEntryHook {
             }
             if line.customer.is_some() || line.supplier.is_some() {
                 line = line.against("JournalEntry", line_id);
-                // Party lines become open items so they show in ageing and can be settled.
-                let open = if line.customer.is_some() { amount } else { -amount };
+                // In the party's currency when the line names one: the amount in it, at its rate.
+                let (code, rate, txn) = match id(&l, "currency").filter(|c| *c != co.currency_id) {
+                    Some(cur) => {
+                        let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+                        (code, d(&l, "exchange_rate"), d(&l, "debit_in_currency") - d(&l, "credit_in_currency"))
+                    }
+                    None => (co.currency_code.clone(), Decimal::ONE, amount),
+                };
+                line = line.txn(txn, &code, rate);
+                // Party lines become open items so they show in ageing and can be settled: under
+                // the number the party knows and on the day it falls due, when the line gives them.
+                let sign = if line.customer.is_some() { Decimal::ONE } else { -Decimal::ONE };
                 ledger::open_item(
                     hc.tx,
                     hc.ctx,
@@ -102,16 +137,16 @@ impl DocHook for JournalEntryHook {
                         id: line_id,
                         company: co.id,
                         entity: "JournalEntry".into(),
-                        number: s(doc, "number").map(str::to_string),
+                        number: s(&l, "reference_no").filter(|r| !r.trim().is_empty()).or(s(doc, "number")).map(str::to_string),
                         customer: line.customer,
                         supplier: line.supplier,
                         account: line.account,
                         posting_date: on,
-                        due_date: Some(on),
-                        currency: co.currency_code.clone(),
-                        exchange_rate: Decimal::ONE,
-                        amount: open,
-                        base_amount: open,
+                        due_date: Some(date(&l, "due_date").unwrap_or(on)),
+                        currency: code,
+                        exchange_rate: rate,
+                        amount: sign * txn,
+                        base_amount: sign * amount,
                     },
                 )
                 .await?;
@@ -229,6 +264,107 @@ fn refund(doc: &Doc) -> bool {
     b(doc, "is_refund")
 }
 
+/// Money moved between two of the company's own bank and cash accounts: no party, nothing settled.
+fn transfer(doc: &Doc) -> bool {
+    s(doc, "payment_type") == Some("Internal Transfer")
+}
+
+/// A transfer's figures: each side in its account's currency (an account without one is in the
+/// company's), the amount paid at the payment's rate and the amount received at the receiving
+/// side's. Between two currencies, a rate not given is worked out from the two amounts (so the
+/// company's figure is the same on both sides), or taken from the exchange rates when only the
+/// amount paid is known; given both amounts and both rates, the sides may differ in the company's
+/// currency, and the difference is an exchange gain or loss as on any payment.
+async fn transfer_values(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &crate::util::Company) -> Result<()> {
+    for f in ["customer", "supplier", "party_account"] {
+        set(doc, f, Value::Null);
+    }
+    set(doc, "is_refund", false);
+    let on = date(doc, "posting_date")?;
+    let mut names = Vec::new();
+    let mut currencies = Vec::new();
+    for f in ["bank_account", "paid_to"] {
+        let cur = match id(doc, f) {
+            Some(a) => {
+                let a = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
+                names.push(s(&a, "account_name").unwrap_or_default().to_string());
+                id(&a, "account_currency").unwrap_or(co.currency_id)
+            }
+            None => id(doc, "currency").unwrap_or(co.currency_id),
+        };
+        currencies.push(cur);
+    }
+    let (from, to) = (currencies[0], currencies[1]);
+    set(doc, "party_name", names.join(" → "));
+    set(doc, "currency", from.to_string());
+    set(doc, "received_currency", to.to_string());
+    let given = |f: &str| Some(d(doc, f)).filter(|r| *r > Decimal::ZERO && *r != Decimal::ONE);
+    let rate = match given("exchange_rate") {
+        _ if from == co.currency_id => Decimal::ONE,
+        Some(r) => r,
+        None => exchange_rate(hc.kernel, hc.ctx, hc.tx, from, co.currency_id, on).await?,
+    };
+    let paid = d(doc, "paid_amount");
+    let base_paid = round(paid * rate, co.precision);
+    let (_, to_precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, to).await?;
+    let received = d(doc, "received_amount");
+    let (received, target, base_received) = if to == from {
+        (paid, rate, base_paid)
+    } else if to == co.currency_id {
+        let r = if received > Decimal::ZERO { received } else { base_paid };
+        (r, Decimal::ONE, r)
+    } else {
+        match given("target_exchange_rate") {
+            Some(t) => {
+                let r = if received > Decimal::ZERO { received } else { round(base_paid / t, to_precision) };
+                (r, t, round(r * t, co.precision))
+            }
+            None if received > Decimal::ZERO => (received, (base_paid / received).round_dp(9), base_paid),
+            None => {
+                let t = exchange_rate(hc.kernel, hc.ctx, hc.tx, to, co.currency_id, on).await?;
+                let r = round(base_paid / t, to_precision);
+                (r, t, round(r * t, co.precision))
+            }
+        }
+    };
+    set(doc, "exchange_rate", money(rate));
+    set(doc, "base_paid_amount", money(base_paid));
+    set(doc, "received_amount", money(received));
+    set(doc, "target_exchange_rate", money(target));
+    set(doc, "base_received_amount", money(base_received));
+    set(doc, "total_deductions", money(rows(doc, "deductions").iter().map(|r| d(r, "amount")).sum::<Decimal>()));
+    set(doc, "unallocated_amount", money(Decimal::ZERO));
+    Ok(())
+}
+
+/// A transfer's checks: two different Bank or Cash accounts of the company, something received,
+/// and nothing a party's payment has (allocations, deductions).
+async fn check_transfer(hc: &mut HookCtx<'_>, doc: &Doc, cid: Uuid) -> Result<()> {
+    if !rows(doc, "references").is_empty() {
+        return Err(Error::field("references", "a transfer between the company's own accounts settles no invoices: remove its allocations"));
+    }
+    if !rows(doc, "deductions").is_empty() {
+        return Err(Error::field("deductions", "a transfer has no deductions: book its bank charges with a journal entry"));
+    }
+    for (f, which) in [("bank_account", "the money leaves"), ("paid_to", "the money goes to")] {
+        let Some(acc) = id(doc, f) else { return Err(Error::field(f, format!("choose the account {which}"))) };
+        let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
+        if id(&a, "company") != Some(cid) || !matches!(s(&a, "account_type"), Some("Bank" | "Cash")) {
+            return Err(Error::field(
+                f,
+                format!("{} is not a Bank or Cash account of this company: a transfer moves money between two of them", s(&a, "account_name").unwrap_or("it")),
+            ));
+        }
+    }
+    if id(doc, "bank_account") == id(doc, "paid_to") {
+        return Err(Error::field("paid_to", "a transfer moves money from one account to another: choose another account to send it to"));
+    }
+    if d(doc, "received_amount") <= Decimal::ZERO {
+        return Err(Error::field("received_amount", "what reached the other account is needed"));
+    }
+    Ok(())
+}
+
 /// What a payment settles with its parties: the bank amount, plus deductions (debits) on a receipt
 /// or minus them on a payment, so that 98 received with 2 of bank charges settles 100.
 fn settled(doc: &Doc, receive: bool) -> Decimal {
@@ -241,6 +377,9 @@ impl DocHook for PaymentEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        if transfer(doc) {
+            return transfer_values(hc, doc, &co).await;
+        }
         let (customer, supplier, receive) = party(doc);
         let to_customer = to_customer(doc);
         // The other party is left over from before the type changed, unless nothing else is named:
@@ -314,6 +453,9 @@ impl DocHook for PaymentEntryHook {
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
+        if transfer(doc) {
+            return check_transfer(hc, doc, cid).await;
+        }
         if d(doc, "unallocated_amount") < Decimal::ZERO {
             let msg =
                 if d(doc, "total_deductions").is_zero() { "allocations exceed the paid amount" } else { "allocations exceed the paid amount and deductions" };
@@ -403,6 +545,26 @@ impl DocHook for PaymentEntryHook {
         let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(doc, "currency").unwrap_or(co.currency_id)).await?;
         let paid = d(doc, "paid_amount");
         let base_paid = d(doc, "base_paid_amount");
+        if transfer(doc) {
+            let (from, to) = (id(doc, "bank_account").unwrap_or_default(), id(doc, "paid_to").ok_or_else(|| Error::field("paid_to", "is required"))?);
+            let (to_code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(doc, "received_currency").unwrap_or(co.currency_id)).await?;
+            let mut entry = Entry::new(co.id, on, "PaymentEntry", pid, s(doc, "number").map(str::to_string));
+            entry.memo = s(doc, "remarks").map(str::to_string);
+            entry.lines.push(Line::new(from, -base_paid, &co.currency_code).txn(-paid, &code, rate));
+            let base_received = d(doc, "base_received_amount");
+            entry.lines.push(Line::new(to, base_received, &co.currency_code).txn(d(doc, "received_amount"), &to_code, d(doc, "target_exchange_rate")));
+            // The two sides at their own rates: what they differ by is an exchange gain or loss.
+            let diff = base_received - base_paid;
+            if !diff.is_zero() {
+                let gl = co.require("exchange_gain_loss_account", "exchange gain/loss account")?;
+                entry.lines.push(Line::new(gl, -diff, &co.currency_code).remarks("Exchange difference"));
+                let mut v = Doc::new();
+                v.insert("exchange_difference".into(), money(diff));
+                hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
+            }
+            ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+            return Ok(());
+        }
         let party_account = id(doc, "party_account").ok_or_else(|| Error::field("party_account", "is required"))?;
         // A refund takes from a credit (a negative item), so its allocations are negative.
         let item_sign = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
@@ -512,6 +674,9 @@ impl DocHook for PaymentEntryHook {
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
         if name != "get_outstanding_invoices" {
             return Ok(None);
+        }
+        if transfer(doc) {
+            return Err(Error::invalid("a transfer between the company's own accounts settles no invoices"));
         }
         let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;

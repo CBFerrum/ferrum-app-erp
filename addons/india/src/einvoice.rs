@@ -232,9 +232,14 @@ impl Sources {
         let mut items = Vec::new();
         for (i, l) in self.lines.iter().enumerate() {
             let row = &l.row;
-            let hsn = text(&l.item, "hsn_code");
+            // The line's own code (a line without an item carries one), else its item's.
+            let hsn = match text(row, "in_hsn_code") {
+                own if !own.is_empty() => own,
+                _ => text(&l.item, "hsn_code"),
+            };
             if !(4..=8).contains(&hsn.len()) || !hsn.bytes().all(|c| c.is_ascii_digit()) {
-                problems.push(format!("line {}: item {} needs an HSN/SAC code of 4 to 8 digits", i + 1, text(&l.item, "item_code")));
+                let what = if l.item.is_empty() { format!("'{}'", text(row, "item_name")) } else { format!("item {}", text(&l.item, "item_code")) };
+                problems.push(format!("line {}: {what} needs an HSN/SAC code of 4 to 8 digits", i + 1));
             }
             let qty = r3(d(row, "qty").abs());
             let assessable = r2(match row.get("base_net_amount") {
@@ -1077,6 +1082,23 @@ mod tests {
             json!({"AssVal": 1700.0, "CgstVal": 153.0, "SgstVal": 153.0, "IgstVal": 0.0, "CesVal": 0.0, "StCesVal": 0,
                                            "Discount": 0, "OthChrg": 0.0, "RndOffAmt": 0.0, "TotInvVal": 2006.0})
         );
+    }
+
+    /// A line without an item (a consultant's fee booked to an account) carries its own SAC code: it
+    /// is a service, described as the line is; without a code it is named by its description.
+    #[test]
+    fn a_line_without_an_item_carries_its_own_sac_code() {
+        let mut s = intra_state();
+        s.lines[1].item = Doc::new();
+        s.lines[1].row.insert("item_name".into(), json!("Consulting, October"));
+        s.lines[1].row.insert("in_hsn_code".into(), json!("998311"));
+        let out = s.e_invoice().unwrap();
+        let line = &out["ItemList"][1];
+        assert_eq!((&line["HsnCd"], &line["IsServc"], &line["PrdDesc"]), (&json!("998311"), &json!("Y"), &json!("Consulting, October")));
+        assert_eq!(out["ValDtls"]["TotInvVal"], json!(2006.0), "the invoice adds up as before");
+        s.lines[1].row.remove("in_hsn_code");
+        let err = s.e_invoice().unwrap_err().to_string();
+        assert!(err.contains("line 2: 'Consulting, October' needs an HSN/SAC code"), "{err}");
     }
 
     /// Under reverse charge the buyer pays the tax: it is reported, and the items' and the

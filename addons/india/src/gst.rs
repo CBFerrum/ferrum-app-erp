@@ -210,6 +210,17 @@ impl Localization for India {
         if doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
             return Ok(());
         }
+        // A line's HSN/SAC is its item's; a line without an item keeps the one entered on it.
+        if ent.field("items").and_then(|f| f.of.as_deref()).and_then(|c| ctx.schema.entity(c)).is_some_and(|c| c.field("in_hsn_code").is_some()) {
+            let mut items = rows(doc, "items");
+            for r in items.iter_mut() {
+                if let Some(item) = id(r, "item") {
+                    let it = get(k, ctx, tx, "Item", item).await?;
+                    set(r, "in_hsn_code", it.get("hsn_code").cloned().unwrap_or(Value::Null));
+                }
+            }
+            set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
+        }
         let (Some(cid), Some(pid)) = (id(doc, "company"), id(doc, party_of(side).0)) else { return Ok(()) };
         let company = get(k, ctx, tx, "Company", cid).await?;
         if !indian(&company) {
@@ -299,9 +310,18 @@ impl Localization for India {
         if !indian(&company) || s(&company, "in_gstin").is_none() {
             return Ok(());
         }
+        let lines_carry =
+            hc.entity.field("items").and_then(|f| f.of.as_deref()).and_then(|c| hc.ctx.schema.entity(c)).is_some_and(|c| c.field("in_hsn_code").is_some());
         let mut missing = Vec::new();
-        for r in rows(doc, "items") {
-            let Some(item) = id(&r, "item") else { continue };
+        let mut lines = Vec::new();
+        for (i, r) in rows(doc, "items").iter().enumerate() {
+            let Some(item) = id(r, "item") else {
+                // A line without an item carries its own code (a SAC code for a service).
+                if lines_carry && s(r, "in_hsn_code").is_none_or(|c| c.trim().is_empty()) {
+                    lines.push(format!("line {} ({})", i + 1, s(r, "description").unwrap_or("no description").trim()));
+                }
+                continue;
+            };
             let it = get(hc.kernel, hc.ctx, hc.tx, "Item", item).await?;
             if s(&it, "hsn_code").is_none() {
                 missing.push(s(&it, "item_code").unwrap_or("?").to_string());
@@ -311,6 +331,9 @@ impl Localization for India {
             missing.sort();
             missing.dedup();
             return Err(Error::invalid(format!("set the HSN/SAC code on these items before invoicing: {}", missing.join(", "))));
+        }
+        if !lines.is_empty() {
+            return Err(Error::invalid(format!("give these lines without an item their HSN/SAC code before invoicing: {}", lines.join(", "))));
         }
         Ok(())
     }

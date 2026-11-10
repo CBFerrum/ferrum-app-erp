@@ -21,6 +21,22 @@ does not). A credit note without an original needs `return_reason`. A `PaymentEn
 every payment made before, and every one sent with only `payment_type` and a party), it is a
 customer's receipt or a payment to a supplier, as before.
 
+Since 0.16.0: a line of `SalesInvoice`, `PurchaseInvoice`, `SalesOrder` and `PurchaseOrder` may
+have no `item`: it then needs a `description` (copied to `item_name`), its `price_list_rate`, and on
+invoices an `income_account` or `expense_account` (the company's default when not sent). Such a line
+takes no price list or pricing rule, moves no stock, is left off deliveries and receipts made from
+its order, and is refused (naming the line) with no description, no account to go to, or an
+account that is a group, a receivable, payable, bank, cash or stock account. Lines with an item are
+checked and booked as before. On selling documents a person's `price_list_rate` is kept on a line
+without an item only; on a line with one it comes from the price list or a pricing rule, and is kept
+as sent only on the engine's own (elevated) writes, as before. Readers of invoice lines (`items.item`) must allow it to be empty.
+`PaymentEntry` has a third `payment_type`, `Internal Transfer`: no party, `bank_account` to
+`paid_to`, `received_amount` in the receiving account's currency; payments sent with `Receive` or
+`Pay` and a party are as before. An open item's `entity` may be `OpeningInvoice` (an invoice
+carried in from the books before, its `number` the old one), and a `JournalEntry` party line's
+item carries the line's `reference_no`, `due_date` and `currency` when given;
+`flow::sync_invoice_outstanding` also mirrors an `OpeningInvoice`.
+
 ## Through the engine
 
 Apps that post their own documents' effects (Point of Sale's sales, Commerce's orders, Assets'
@@ -54,10 +70,10 @@ operations:
 | `stock::reverse_moves(tx, ctx, &Company, entity, id, date, ts) -> Vec<Posted>` | Exact reversals of the source's moves not reversed yet; a valuation difference goes to the stock adjustment account | | Reverses once |
 | `stock::valuation_rate(tx, tenant, company, item, warehouse) -> Decimal` | An item's current rate in a warehouse, else in any of the company's | | |
 | `stock::parse_serials(Option<&str>) -> Vec<String>` | Serial numbers from text, one per line or comma | | |
-| `pricing::calculate(k, ctx, tx, &EffEntity, &mut Doc, Side) -> Company` | Fills a priced document's prices, discounts, item tax rates, taxes and totals, after the installed countries choose its taxes | Field errors: no company, no posting date, what the countries refuse | The same document, the same figures |
+| `pricing::calculate(k, ctx, tx, &EffEntity, &mut Doc, Side) -> Company` | Fills a priced document's prices, discounts, item tax rates, taxes and totals, after the installed countries choose its taxes. Since 0.16.0, on a person's selling save it drops a typed `price_list_rate` on a new line with an item (or one whose item changed) only when the line entity declares that field with a `read_only_if`; a plainly editable price (a cashier's override) is kept, a plainly read-only one is the kernel's to drop, and elevated writes are untouched | Field errors: no company, no posting date, what the countries refuse | The same document, the same figures |
 | `pricing::calc_input`, `tax_in`, `line_tax_rates`, `tax_breakdown`, `breakup` | The calculation's parts over a document's lines, without reading anything | | |
 | `localization::check(hc, doc, Side)` | Each installed country's checks before a priced document is submitted: call it in `before_submit` | What the countries refuse | Reads only |
-| `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice` or `PurchaseInvoice` | | Sets the same values |
+| `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice`, `PurchaseInvoice` or `OpeningInvoice` | | Sets the same values |
 
 Not in it: closing periods, reports, set-up, the trade documents' own hooks and everything under
 `addons/`. They are ERP's, and apps reach them through documents and reports.
