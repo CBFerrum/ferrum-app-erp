@@ -1276,7 +1276,7 @@ impl DocHook for InvoiceHook {
                 let mut input = Doc::new();
                 input.insert("company".into(), json!(co.id.to_string()));
                 input.insert("payment_type".into(), json!(if self.0 == Side::Selling { "Pay" } else { "Receive" }));
-                input.insert("party_type".into(), json!(n.party_entity));
+                input.insert("is_refund".into(), json!(true));
                 input.insert(n.party.into(), doc.get(n.party).cloned().unwrap_or(Value::Null));
                 input.insert("currency".into(), doc.get("currency").cloned().unwrap_or(Value::Null));
                 input.insert("paid_amount".into(), money(credit));
