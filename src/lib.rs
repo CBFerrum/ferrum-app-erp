@@ -16,6 +16,7 @@ pub mod flow;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
+pub mod opening;
 pub mod periods;
 pub mod portal;
 pub mod pricing;
@@ -58,7 +59,8 @@ pub fn register(h: &mut HookRegistry) {
         h.register("Company", Arc::new(setup::CompanyHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
-            .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook));
+            .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
+            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook));
     });
     h.scoped(&only("inventory"), |h| {
         h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));
@@ -166,6 +168,28 @@ mod tests {
         for p in &names {
             ferrum_meta::effective::build(&catalog, std::slice::from_ref(p), &[], 1).unwrap_or_else(|e| panic!("package {p} alone: {e}"));
         }
+    }
+
+    /// A person's typed price on an item line is dropped only where the line's definition makes the
+    /// price read-only on a condition the kernel cannot judge on a new row; a plainly editable price
+    /// (another app's own lines, buying's) is kept, a plainly read-only one never reaches the engine,
+    /// and the engine's own writes are never touched.
+    #[test]
+    fn typed_prices_are_dropped_only_where_the_definition_asks() {
+        use pricing::{Side, guards_typed_price};
+        let mut all = ferrum_domain::packages().expect("the shared packages");
+        all.extend(ferrum_meta::catalog::load_embedded(EMBEDDED).expect("ERP's packages"));
+        let catalog = ferrum_meta::Catalog::from_packages(all).expect("they validate together");
+        let names: Vec<String> = ferrum_meta::catalog::load_embedded(EMBEDDED).unwrap().iter().map(|p| p.name().to_string()).collect();
+        let schema = ferrum_meta::effective::build(&catalog, &names, &[], 1).unwrap();
+        let line = |e: &str| schema.entity(e).cloned();
+        let (conditional, editable, read_only) = (line("SalesInvoiceItem"), line("PurchaseInvoiceItem"), line("DeliveryNoteItem"));
+        assert!(guards_typed_price(conditional.as_deref(), Side::Selling, false), "read-only on a condition: dropped on a new item line");
+        assert!(guards_typed_price(line("SalesOrderItem").as_deref(), Side::Selling, false));
+        assert!(!guards_typed_price(editable.as_deref(), Side::Selling, false), "plainly editable: kept");
+        assert!(!guards_typed_price(read_only.as_deref(), Side::Selling, false), "plainly read-only: the kernel drops it");
+        assert!(!guards_typed_price(conditional.as_deref(), Side::Selling, true), "the engine's own writes: kept");
+        assert!(!guards_typed_price(conditional.as_deref(), Side::Buying, false));
     }
 
     /// Clusters record each package SQL file they applied with its checksum, and refuse to start

@@ -48,7 +48,8 @@ overlays:
       - {op: add_field, after: uom_name, field: {name: in_uqc, type: select, label: GST Unit Code (UQC), description: "The unit e-invoices and e-way bills use; guessed from the name when empty (Nos, Kg, Box…), otherwise OTH", options: [BAG, BAL, BDL, BKL, BOU, BOX, BTL, BUN, CAN, CBM, CCM, CMS, CTN, DOZ, DRM, GGK, GMS, GRS, GYD, KGS, KLR, KME, LTR, MLT, MTR, MTS, NOS, OTH, PAC, PCS, PRS, QTL, ROL, SET, SQF, SQM, SQY, TBS, TGM, THD, TON, TUB, UGS, UNT, YDS]}}
   - entity: SalesInvoiceItem
     ops:
-      - {op: add_field, after: item_name, field: {name: in_hsn_code, type: data, label: HSN/SAC, fetch_from: item.hsn_code, read_only: true}}
+      - {op: add_field, after: item_name, field: {name: in_hsn_code, type: data, label: HSN/SAC, max_length: 8, read_only_if: "doc.item != null",
+          description: "The item's; entered on a line without an item (a SAC code for a service)"}}
   - entity: SalesInvoice
     ops:
       # GST invoice numbers have at most 16 characters (rule 46): SI/2026-27/00001.

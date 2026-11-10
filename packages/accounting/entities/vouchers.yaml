@@ -8,6 +8,14 @@
     - {name: supplier, type: link, to: Supplier, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'", in_list: true}
     - {name: debit, type: currency, min: "0", default: 0, in_list: true}
     - {name: credit, type: currency, min: "0", default: 0, in_list: true}
+    - {name: reference_no, type: data, label: Invoice / Reference No, visible_if: "doc.party_type != null",
+       description: "The number the customer or supplier knows it by (an invoice from the books before): what payments and statements show; the entry's number when empty"}
+    - {name: due_date, type: date, visible_if: "doc.party_type != null", description: "When what the party owes falls due, for ageing and reminders; the entry's date when empty"}
+    - {name: currency, type: link, to: Currency, visible_if: "doc.party_type != null", label: Party Currency,
+       description: "Empty: the company's. Another currency carries what the party owes in it: give the rate and the amount in it, and the debit or credit is worked out"}
+    - {name: exchange_rate, type: decimal, min: "0", visible_if: "doc.currency != null", description: "Party currency → company currency"}
+    - {name: debit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Debit (Party Currency)}
+    - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
     - {name: project, type: link, to: Project}
     - {name: remarks, type: data}
@@ -72,20 +80,33 @@
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
-    - {name: payment_type, type: select, options: [Receive, Pay], required: true, default: Receive, in_list: true, in_filter: true}
-    - {name: is_refund, type: check, label: Refund, in_filter: true,
+    - {name: payment_type, type: select, options: [Receive, Pay, Internal Transfer], required: true, default: Receive, in_list: true, in_filter: true,
+       description: "Internal Transfer: money moved between two of the company's own bank and cash accounts, with no party"}
+    - {name: is_refund, type: check, label: Refund, in_filter: true, visible_if: "doc.payment_type != 'Internal Transfer'",
        description: "Gives back the party's credit: a payment out to a customer or in from a supplier"}
     - {name: customer, type: link, to: Customer, in_filter: true,
-       visible_if: "(doc.payment_type == 'Receive') != doc.is_refund", required_if: "(doc.payment_type == 'Receive') != doc.is_refund"}
+       visible_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') != doc.is_refund",
+       required_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') != doc.is_refund"}
     - {name: supplier, type: link, to: Supplier, in_filter: true,
-       visible_if: "(doc.payment_type == 'Receive') == doc.is_refund", required_if: "(doc.payment_type == 'Receive') == doc.is_refund"}
+       visible_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') == doc.is_refund",
+       required_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') == doc.is_refund"}
     - {name: party_name, type: data, read_only: true, in_list: true}
     - {name: party_account, type: link, to: Account, read_only: true}
-    - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Bank / Cash Account}
-    - {name: currency, type: link, to: Currency, required: true, in_list: true}
+    - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Bank / Cash Account,
+       description: "For a transfer, the account the money leaves"}
+    - {name: paid_to, type: link, to: Account, link_filters: {is_group: false}, label: To Bank / Cash Account,
+       visible_if: "doc.payment_type == 'Internal Transfer'", required_if: "doc.payment_type == 'Internal Transfer'", description: "The account the money goes to"}
+    - {name: currency, type: link, to: Currency, required: true, in_list: true, description: "On a transfer, the currency of the account the money leaves"}
     - {name: exchange_rate, type: decimal, default: 1, min: "0.000000001", description: Payment currency → company currency}
     - {name: paid_amount, type: currency, currency: currency, required: true, min: "0", in_list: true}
     - {name: base_paid_amount, type: currency, read_only: true}
+    - {name: received_currency, type: link, to: Currency, read_only: true, visible_if: "doc.payment_type == 'Internal Transfer'",
+       description: "The currency of the account the money goes to"}
+    - {name: received_amount, type: currency, currency: received_currency, min: "0", visible_if: "doc.payment_type == 'Internal Transfer'",
+       description: "What reached the other account, in its currency: the amount paid when both are in one currency"}
+    - {name: target_exchange_rate, type: decimal, min: "0", visible_if: "doc.payment_type == 'Internal Transfer'", label: Exchange Rate (To Account),
+       description: "The receiving account's currency → company currency; worked out from the two amounts when empty"}
+    - {name: base_received_amount, type: currency, read_only: true, visible_if: "doc.payment_type == 'Internal Transfer'"}
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true}
     - {name: exchange_difference, type: currency, read_only: true}
     - {name: reference_no, type: data, label: Cheque / Reference No}
@@ -99,3 +120,38 @@
   actions:
     - {name: get_outstanding_invoices, label: Get Outstanding Invoices, docstatus: [0], permission: write}
   list: {columns: [number, posting_date, payment_type, party_name, paid_amount], sort: posting_date desc}
+
+- name: OpeningInvoice
+  label: Opening Invoice
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  title_field: party_name
+  search_fields: [invoice_no]
+  description: "An invoice still open in the books a company comes from, carried into these: what a customer still owes or the company still owes a supplier, under its own number and due date, in its own currency. A negative amount is an open credit: an advance, a credit note not yet used. One record per invoice, so a spreadsheet imports them; Post Opening Invoices on the company posts them all at once."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: party_type, type: select, options: [Customer, Supplier], required: true, default: Customer, in_list: true, in_filter: true}
+    - {name: customer, type: link, to: Customer, in_filter: true, visible_if: "doc.party_type == 'Customer'", required_if: "doc.party_type == 'Customer'"}
+    - {name: supplier, type: link, to: Supplier, in_filter: true, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'"}
+    - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: invoice_no, type: data, required: true, label: Invoice No, in_list: true, in_filter: true,
+       description: "The number the customer or supplier knows it by, from the books it comes from"}
+    - {name: invoice_date, type: date, required: true, in_list: true}
+    - {name: due_date, type: date, in_list: true, description: "When it falls due, for ageing and reminders; the invoice date when empty"}
+    - {name: posting_date, type: date, required: true, default_expr: today, label: Opening Date, in_filter: true,
+       description: "The day the balance is carried into these books: the books' first day, or the day before it"}
+    - {name: currency, type: link, to: Currency, description: "Empty: the company's"}
+    - {name: conversion_rate, type: decimal, min: "0", label: Exchange Rate, description: "Its currency → the company's, the rate it is carried at; needed for another currency"}
+    - {name: amount, type: currency, currency: currency, required: true, label: Amount Still Open, in_list: true,
+       description: "What is still owed on it, in its currency; negative for an open credit"}
+    - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
+    - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
+    - {name: party_account, type: link, to: Account, read_only: true, label: Receivable / Payable Account}
+    - {name: opening_account, type: link, to: Account, read_only: true, label: Opening Balance Account, description: "The company's Opening Balance Account, which the balance is carried against"}
+    - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Credit, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: remarks, type: text}
+  rules:
+    - {name: due_after_invoice, check: "doc.due_date == null || doc.due_date >= doc.invoice_date", message: "Due date cannot be before the invoice date"}
+  list: {columns: [party_name, invoice_no, invoice_date, due_date, amount, outstanding_amount, status], sort: invoice_date desc}

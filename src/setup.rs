@@ -226,6 +226,9 @@ impl DocHook for CompanyHook {
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let company = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
+        if name == "post_opening_invoices" {
+            return Ok(Some(crate::opening::post_all(hc, company).await?));
+        }
         if name == "recognise_deferred" {
             return Ok(Some(crate::deferred::action(hc.kernel, hc.ctx, hc.tx, company, params).await?));
         }

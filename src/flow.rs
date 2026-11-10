@@ -20,9 +20,14 @@ pub async fn refresh_order(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, doc
     let order = k.get_tx(&sctx, tx, entity, doc_id, false).await?;
     let lines = rows(&order, "items");
     let total: Decimal = lines.iter().map(|l| d(l, "qty")).sum();
-    let done: Decimal = lines.iter().map(|l| d(l, fulfil_field).min(d(l, "qty"))).sum();
+    // Lines without an item (services, fees) are billed, never delivered or received: an order of
+    // them alone has nothing to deliver.
+    let goods: Vec<&Doc> = lines.iter().filter(|l| l.get("item").is_some_and(|v| !v.is_null())).collect();
+    let to_move: Decimal = goods.iter().map(|l| d(l, "qty")).sum();
+    let done: Decimal = goods.iter().map(|l| d(l, fulfil_field).min(d(l, "qty"))).sum();
     let billed: Decimal = lines.iter().map(|l| d(l, "billed_qty").min(d(l, "qty"))).sum();
-    let (pf, pb) = (pct(done, total), pct(billed, total));
+    let pf = if goods.is_empty() { Decimal::ONE_HUNDRED } else { pct(done, to_move) };
+    let pb = pct(billed, total);
     let docstatus = d(&order, "docstatus");
     let current = s(&order, "status").unwrap_or_default();
     let (to_fulfil, both) = if fulfil_field == "delivered_qty" { ("To Deliver", "To Deliver and Bill") } else { ("To Receive", "To Receive and Bill") };
@@ -87,14 +92,19 @@ pub fn invoice_status(amount: Decimal, outstanding: Decimal, is_return: bool) ->
 
 /// Mirrors an open item's outstanding amount onto its invoice document.
 pub async fn sync_invoice_outstanding(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, invoice: Uuid) -> Result<()> {
-    if !matches!(entity, "SalesInvoice" | "PurchaseInvoice") || ctx.schema.entity(entity).is_none() {
+    if !matches!(entity, "SalesInvoice" | "PurchaseInvoice" | "OpeningInvoice") || ctx.schema.entity(entity).is_none() {
         return Ok(());
     }
     let Some(item) = crate::ledger::load_open_item(tx, ctx.tenant, invoice, false).await? else { return Ok(()) };
     let sctx = sys(ctx);
     let doc = k.get_tx(&sctx, tx, entity, invoice, false).await?;
     let is_return = crate::util::b(&doc, "is_return");
-    let status = if item.status == "cancelled" { "Cancelled" } else { invoice_status(item.amount, item.outstanding, is_return) };
+    let status = match () {
+        _ if item.status == "cancelled" => "Cancelled",
+        // An opening credit (an advance, a credit note from the books before) until it is used up.
+        _ if entity == "OpeningInvoice" && item.amount < Decimal::ZERO && !item.outstanding.is_zero() => "Credit",
+        _ => invoice_status(item.amount, item.outstanding, is_return),
+    };
     let mut v = Doc::new();
     v.insert("outstanding_amount".into(), money(item.outstanding));
     v.insert("status".into(), json!(status));

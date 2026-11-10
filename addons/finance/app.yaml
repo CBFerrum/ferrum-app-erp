@@ -1,6 +1,6 @@
 id: finance
 name: Finance
-version: 0.3.2
+version: 0.4.0
 publisher: cbferrum
 summary: Budgets, bank reconciliation, payment allocation, exchange revaluation, period closing, dunning, subscriptions and payment terms
 description: README.md
@@ -8,7 +8,7 @@ categories: [finance]
 license: AGPL-3.0-only
 runtime: native
 platform: ">=0.3, <0.4"
-requires: {erp: ">=0.5"}
+requires: {erp: ">=0.16"}
 parent: erp
 packages: [finance]
 uninstall: ask

@@ -318,6 +318,71 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
     }
 }
 
+/// A line without an item: named by its description, in no unit of an item (a quantity is its own,
+/// and per-unit taxes count it), booked to the company's default income or expense account unless
+/// it names one, with the document's or the company's cost centre.
+fn free_line(row: &mut Doc, doc: &Doc, co: &Company, side: Side, has_child: &dyn Fn(&str) -> bool) {
+    if has_child("item_name") {
+        set(row, "item_name", row.get("description").cloned().unwrap_or(Value::Null));
+    }
+    for f in ["price_basis", "stock_uom"] {
+        if has_child(f) {
+            set(row, f, Value::Null);
+        }
+    }
+    if has_child("conversion_factor") {
+        set(row, "conversion_factor", money(Decimal::ONE));
+    }
+    if has_child("stock_qty") {
+        set(row, "stock_qty", money(d(row, "qty")));
+    }
+    let (field, default) = match side {
+        Side::Selling => ("income_account", "default_income_account"),
+        Side::Buying => ("expense_account", "default_expense_account"),
+    };
+    if has_child(field)
+        && id(row, field).is_none()
+        && let Some(a) = co.account(default)
+    {
+        set(row, field, a.to_string());
+    }
+    if has_child("cost_center")
+        && id(row, "cost_center").is_none()
+        && let Some(c) = id(doc, "cost_center").or(co.account("default_cost_center"))
+    {
+        set(row, "cost_center", c.to_string());
+    }
+}
+
+/// Whether a person's typed price on a document's lines (of entity `line`) is dropped where the
+/// line has an item. Only where the line's definition makes `price_list_rate` read-only on a
+/// condition (`read_only_if`, as ERP's sales order and invoice lines do for lines with an item):
+/// the kernel judges such a condition on the stored row, so on a new row (or one whose item just
+/// changed) it lets a person's price through, and the engine stands in for it. A price that is
+/// plainly editable (a Point of Sale override) is the definition's choice and kept; a plainly
+/// read-only one never reaches here (the kernel drops it). The engine's own (elevated) writes and
+/// buying, whose prices are typed, are never touched.
+pub(crate) fn guards_typed_price(line: Option<&EffEntity>, side: Side, is_system: bool) -> bool {
+    side == Side::Selling && !is_system && line.and_then(|l| l.field("price_list_rate")).is_some_and(|f| !f.read_only && f.read_only_if.is_some())
+}
+
+/// Each stored line's item by line id (empty for a new document) when [`guards_typed_price`]
+/// holds, so that a typed price on a new item line, or one whose item changed, is dropped and the
+/// price list or a pricing rule fills it; a line without an item keeps its price. `None` otherwise.
+async fn typed_prices(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &Doc, side: Side) -> Result<Option<HashMap<String, Option<Uuid>>>> {
+    let line = ent.field("items").and_then(|f| f.of.as_deref()).and_then(|c| ctx.schema.entity(c)).map(|e| &**e);
+    if !guards_typed_price(line, side, ctx.is_system) {
+        return Ok(None);
+    }
+    let Some(doc_id) = id(doc, "id") else { return Ok(Some(HashMap::new())) };
+    let stored = match k.get_tx(&crate::util::sys(ctx), tx, &ent.def.name, doc_id, false).await {
+        Ok(d) => d,
+        Err(Error::NotFound(_)) => return Ok(Some(HashMap::new())),
+        Err(e) => return Err(e),
+    };
+    Ok(Some(rows(&stored, "items").iter().filter_map(|r| Some((s(r, "id")?.to_string(), id(r, "item")))).collect()))
+}
+
 /// Fills prices, discounts, item tax rates, taxes and totals. Returns the company for reuse.
 pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<Company> {
     // The addresses the countries' rules read, then their rules (India: the GST template for the
@@ -369,18 +434,26 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let child_ent = ent.field("items").and_then(|f| f.of.clone()).and_then(|c| ctx.schema.entity(&c).cloned());
     let has_child = |f: &str| child_ent.as_ref().is_some_and(|c| c.field(f).is_some());
     let mut item_cache: HashMap<Uuid, Doc> = HashMap::new();
+    let typed = typed_prices(k, ctx, tx, ent, doc, side).await?;
     let mut items = rows(doc, "items");
     // Each line's item tax rates (by tax account), for the tax breakdown's categories.
     let mut line_rates: Vec<Vec<Doc>> = Vec::with_capacity(items.len());
     for (i, row) in items.iter_mut().enumerate() {
         let Some(item_id) = id(row, "item") else {
+            // A line without an item (rent, a fee, a one-off charge): its own description, price and
+            // account. No price list, pricing rule, unit or warehouse; taxed as the document is.
             line_rates.push(Vec::new());
+            free_line(row, doc, &co, side, &has_child);
             continue;
         };
         if let std::collections::hash_map::Entry::Vacant(e) = item_cache.entry(item_id) {
             e.insert(get(k, ctx, tx, "Item", item_id).await?);
         }
         let item = item_cache[&item_id].clone();
+        if typed.as_ref().is_some_and(|stored| stored.get(s(row, "id").unwrap_or_default()) != Some(&Some(item_id))) {
+            // A person's price on a new item line, or one whose item changed, is not theirs to give.
+            set(row, "price_list_rate", money(Decimal::ZERO));
+        }
         line_rates.push(rows(&item, "tax_rates"));
         let qty = d(row, "qty");
         // Units: quantities and prices are per the line's unit; stock moves count stock units.

@@ -1087,5 +1087,45 @@ async fn scenario() {
         .await;
     assert_eq!(dec(&cf["totals"]["opening_balance"]), opening);
     assert!(dec(&cf["totals"]["receivables"]) > Decimal::ZERO && dec(&cf["totals"]["subscriptions"]) > Decimal::ZERO, "{cf}");
+
+    // ───────────── what a company brings from its old books, dunned and reconciled here ─────────────
+    // An invoice carried in from the books before is dunned as one made here, under its own number.
+    let oldco = uid(&t.insert(&a, "Customer", customer("Oldco", json!({}))).await);
+    let carried = t
+        .make(
+            &am,
+            "OpeningInvoice",
+            json!({"company": cid, "customer": oldco.to_string(), "invoice_no": "OLD-1", "invoice_date": "2027-10-01", "due_date": "2027-11-01",
+                   "posting_date": "2027-12-31", "amount": "800"}),
+        )
+        .await;
+    let dn = t.insert(&am, "Dunning", json!({"company": cid, "customer": oldco.to_string(), "posting_date": "2028-03-01"})).await;
+    let od = &dn["overdue_payments"][0];
+    assert_eq!(
+        (od["opening_invoice"].clone(), od["sales_invoice"].clone(), od["invoice_number"].clone(), dec(&od["outstanding"]), od["overdue_days"].clone()),
+        (json!(uid(&carried).to_string()), Value::Null, json!("OLD-1"), n("800"), json!(121))
+    );
+    // Money moved from the bank to the till is money out of the bank, cleared on its statement.
+    let to_till = uid(&t
+        .make(
+            &am,
+            "PaymentEntry",
+            json!({"company": cid, "payment_type": "Internal Transfer", "posting_date": "2026-03-20", "bank_account": bank_gl.to_string(),
+                   "paid_to": cash.to_string(), "paid_amount": "300", "reference_no": "TILL-1"}),
+        )
+        .await);
+    let out = uid(&t
+        .make(
+            &am,
+            "BankTransaction",
+            json!({"bank_account": ba_id.to_string(), "date": "2026-03-20", "withdrawal": "300", "description": "To till", "reference_number": "TILL-1"}),
+        )
+        .await);
+    let sug = t.action(&au, "BankTransaction", out, "get_suggestions", json!({})).await;
+    assert!(sug["suggestions"].as_array().unwrap().iter().any(|s| s["payment_entry"] == json!(to_till.to_string()) && dec(&s["amount"]) == n("300")), "{sug}");
+    let r = t
+        .action(&au, "BankTransaction", out, "reconcile", json!({"vouchers": [{"payment_document": "PaymentEntry", "payment_entry": to_till.to_string()}]}))
+        .await;
+    assert_eq!(r["status"], json!("Reconciled"));
     t.books_balance().await;
 }
