@@ -523,6 +523,33 @@ async fn payment_allocation(t: &mut T) {
     assert_eq!(t.get("SalesInvoice", a_id).await["status"], json!("Unpaid"));
     assert_eq!(t.amount(owed, Some(acme)).await, n("570"));
 
+    // A credit partly applied, the rest given back (ERP 0.15.0): 100 of the credit note's 150 to C,
+    // then Refund pays Acme the 50 left. A refunded credit is no longer open, and what Acme owes is
+    // what the ledger says, both 50 more.
+    let part = t
+        .make(
+            &au,
+            "PaymentAllocation",
+            json!({"company": cid, "party_type": "Customer", "customer": acme.to_string(), "posting_date": "2026-03-28",
+                                                         "allocations": [one(cn_id, c_id, "100")]}),
+        )
+        .await;
+    assert_eq!((t.outstanding(cn_id).await, t.outstanding(c_id).await), (n("-50"), n("300")));
+    let refund = vid(&t.action(&am, "SalesInvoice", cn_id, "make_refund", json!({})).await);
+    t.k.update(&am, "PaymentEntry", refund, obj(json!({"posting_date": "2026-03-29"})), None).await.expect("the refund's date");
+    let refund_doc = t.submit(&am, "PaymentEntry", refund).await;
+    assert_eq!((refund_doc["payment_type"].clone(), dec(&refund_doc["paid_amount"])), (json!("Pay"), n("50")));
+    assert_eq!(t.outstanding(cn_id).await, Decimal::ZERO);
+    assert_eq!((t.amount(owed, Some(acme)).await, t.amount(ledger, Some(acme)).await), (n("620"), n("620")));
+    let again =
+        json!({"company": cid, "party_type": "Customer", "customer": acme.to_string(), "posting_date": "2026-03-30", "allocations": [one(cn_id, b_id, "10")]});
+    let e = t.k.insert(&au, "PaymentAllocation", obj(again)).await.unwrap_err();
+    assert!(invalid(&e, "no longer open"), "the credit is given back: nothing left to apply: {e:?}");
+    // Undone in turn, the credit is open again, then applied as before.
+    t.k.cancel(&am, "PaymentEntry", refund, None).await.expect("cancel the refund");
+    t.k.cancel(&am, "PaymentAllocation", uid(&part), None).await.expect("cancel the allocation");
+    assert_eq!((t.outstanding(cn_id).await, t.amount(owed, Some(acme)).await, t.amount(ledger, Some(acme)).await), (n("-150"), n("570"), n("570")));
+
     // A supplier: 500 paid ahead, a bill of 800; applying the 500 leaves 300 to pay.
     let supplies = uid(&t.insert(&a, "Supplier", json!({"supplier_name": "Supplies Co"})).await);
     let advance = uid(&t

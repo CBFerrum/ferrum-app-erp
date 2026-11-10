@@ -210,9 +210,23 @@ fn item_kind(ctx: &ferrum_kernel::Ctx, entity: &str) -> String {
     ctx.schema.entity(entity).map(|e| e.def.label.clone()).unwrap_or_else(|| entity.to_string())
 }
 
+/// The payment's party (customer or supplier) and whether money comes in.
 fn party(doc: &Doc) -> (Option<Uuid>, Option<Uuid>, bool) {
     let receive = s(doc, "payment_type") != Some("Pay");
-    if receive { (id(doc, "customer"), None, true) } else { (None, id(doc, "supplier"), false) }
+    if to_customer(doc) { (id(doc, "customer"), None, receive) } else { (None, id(doc, "supplier"), receive) }
+}
+
+/// A customer's when received, a supplier's when paid; the other way round for a refund.
+fn to_customer(doc: &Doc) -> bool {
+    (s(doc, "payment_type") != Some("Pay")) != refund(doc)
+}
+
+/// Whether the payment gives back a party's credit (Refund ticked): money paid to a customer, or
+/// received from a supplier. It settles what the party is owed (credit notes, overpayments,
+/// advances), whose open items are negative, and never more than that. Never inferred: a payment
+/// without the tick is a customer's receipt or a payment to a supplier.
+fn refund(doc: &Doc) -> bool {
+    b(doc, "is_refund")
 }
 
 /// What a payment settles with its parties: the bank amount, plus deductions (debits) on a receipt
@@ -228,20 +242,29 @@ impl DocHook for PaymentEntryHook {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let (customer, supplier, receive) = party(doc);
-        if receive {
-            set(doc, "supplier", Value::Null);
-        } else {
-            set(doc, "customer", Value::Null);
+        let to_customer = to_customer(doc);
+        // The other party is left over from before the type changed, unless nothing else is named:
+        // then it is a refund not ticked, said in words rather than booked either way.
+        let (other, other_field) = if to_customer { (id(doc, "supplier"), "supplier") } else { (id(doc, "customer"), "customer") };
+        if other.is_some() && customer.is_none() && supplier.is_none() {
+            let msg = match (to_customer, s(doc, "payment_type") == Some("Pay")) {
+                (false, true) => "a payment to a customer gives back their credit: tick Refund, or choose the supplier paid",
+                (true, false) => "money from a supplier gives back their credit: tick Refund, or choose the customer who paid",
+                (false, false) => "a refund received comes from a supplier: choose the supplier, or untick Refund",
+                (true, true) => "a refund paid goes to a customer: choose the customer, or untick Refund",
+            };
+            return Err(Error::field(other_field, msg));
         }
+        set(doc, other_field, Value::Null);
         let party_doc = match (customer, supplier) {
             (Some(c), _) => Some(get(hc.kernel, hc.ctx, hc.tx, "Customer", c).await?),
             (_, Some(s_)) => Some(get(hc.kernel, hc.ctx, hc.tx, "Supplier", s_).await?),
             _ => None,
         };
         if let Some(p) = &party_doc {
-            let name = s(p, if receive { "customer_name" } else { "supplier_name" }).unwrap_or_default().to_string();
+            let name = s(p, if to_customer { "customer_name" } else { "supplier_name" }).unwrap_or_default().to_string();
             set(doc, "party_name", name);
-            let acc = if receive {
+            let acc = if to_customer {
                 id(p, "receivable_account").or(co.account("default_receivable_account"))
             } else {
                 id(p, "payable_account").or(co.account("default_payable_account"))
@@ -267,12 +290,14 @@ impl DocHook for PaymentEntryHook {
         let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
         let mut refs = rows(doc, "references");
         let mut allocated = Decimal::ZERO;
+        // A refund settles credits: what is shown is the credit left to give back.
+        let shown = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
         for r in refs.iter_mut() {
             let Some(inv) = id(r, "invoice") else { continue };
             if let Some(item) = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, false).await? {
                 set(r, "invoice_type", item_kind(hc.ctx, &item.entity));
                 set(r, "invoice_number", item.number.clone().map(Value::String).unwrap_or(Value::Null));
-                set(r, "outstanding", money(item.outstanding));
+                set(r, "outstanding", money(shown * item.outstanding));
                 set(r, "due_date", item.due_date.map(|x| json!(x.to_string())).unwrap_or(Value::Null));
                 if item.currency != code {
                     return Err(Error::Validation(vec![FieldError::new("invoice", format!("this invoice is in {}, the payment in {code}", item.currency))]));
@@ -326,6 +351,17 @@ impl DocHook for PaymentEntryHook {
             }
         }
         let (customer, supplier, _) = party(doc);
+        let refund = refund(doc);
+        if refund && d(doc, "unallocated_amount") > Decimal::ZERO {
+            let whom = if customer.is_some() { "a customer" } else { "a supplier" };
+            return Err(Error::field(
+                "references",
+                format!(
+                    "a refund gives back {whom}'s credit: allocate all of it to their credit notes, advances or overpayments ({} is not allocated)",
+                    d(doc, "unallocated_amount").normalize()
+                ),
+            ));
+        }
         for (i, r) in rows(doc, "references").iter().enumerate() {
             let Some(inv) = id(r, "invoice") else {
                 return Err(Error::Validation(vec![FieldError::new("invoice", "not a valid invoice id").in_row("references", i)]));
@@ -336,8 +372,23 @@ impl DocHook for PaymentEntryHook {
             if item.customer_id != customer || item.supplier_id != supplier {
                 return Err(Error::Validation(vec![FieldError::new("invoice", "invoice belongs to another party").in_row("references", i)]));
             }
-            if d(r, "allocated_amount") > item.outstanding {
-                return Err(Error::Validation(vec![FieldError::new("allocated_amount", "more than the outstanding amount").in_row("references", i)]));
+            let what = item.number.clone().unwrap_or_else(|| item_kind(hc.ctx, &item.entity));
+            if refund && item.outstanding >= Decimal::ZERO {
+                return Err(Error::Validation(vec![
+                    FieldError::new("invoice", format!("{what} is owed by the party, not a credit to give back")).in_row("references", i),
+                ]));
+            }
+            if !refund && item.outstanding < Decimal::ZERO {
+                return Err(Error::Validation(vec![
+                    FieldError::new("invoice", format!("{what} is a credit of the party's: give it back with a refund (a payment the other way)"))
+                        .in_row("references", i),
+                ]));
+            }
+            let open = item.outstanding.abs();
+            if d(r, "allocated_amount") > open {
+                let msg =
+                    if refund { format!("more than the credit left on {what} ({})", open.normalize()) } else { "more than the outstanding amount".to_string() };
+                return Err(Error::Validation(vec![FieldError::new("allocated_amount", msg).in_row("references", i)]));
             }
         }
         Ok(())
@@ -353,6 +404,8 @@ impl DocHook for PaymentEntryHook {
         let paid = d(doc, "paid_amount");
         let base_paid = d(doc, "base_paid_amount");
         let party_account = id(doc, "party_account").ok_or_else(|| Error::field("party_account", "is required"))?;
+        // A refund takes from a credit (a negative item), so its allocations are negative.
+        let item_sign = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
         let mut lines = Vec::new();
         let mut touched = Vec::new();
         for r in rows(doc, "references") {
@@ -363,7 +416,7 @@ impl DocHook for PaymentEntryHook {
             let inv = id(&r, "invoice").ok_or_else(|| Error::internal("allocation without invoice"))?;
             let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::invalid("invoice is no longer open"))?;
             let base_at_invoice = round(amount * item.exchange_rate, co.precision);
-            ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, amount, base_at_invoice).await?;
+            ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
             lines.push(
                 Line::new(party_account, sign * base_at_invoice, &co.currency_code)
@@ -465,9 +518,11 @@ impl DocHook for PaymentEntryHook {
         let (customer, supplier, receive) = party(doc);
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(doc, "currency").unwrap_or(co.currency_id)).await?;
+        // A refund is offered the party's credits (negative items), shown as the credit left.
+        let sign = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
         let items: Vec<(Uuid, String, Option<String>, Decimal, Option<chrono::NaiveDate>)> = sqlx::query_as(
-            "select id, entity, number, outstanding, due_date from open_item where tenant_id = $1 and company_id = $2 and status = 'open' \
-             and outstanding > 0 and customer_id is not distinct from $3 and supplier_id is not distinct from $4 and trim(currency) = $5 \
+            "select id, entity, number, $6 * outstanding, due_date from open_item where tenant_id = $1 and company_id = $2 and status = 'open' \
+             and $6 * outstanding > 0 and customer_id is not distinct from $3 and supplier_id is not distinct from $4 and trim(currency) = $5 \
              order by coalesce(due_date, posting_date), posting_date limit 500",
         )
         .bind(hc.ctx.tenant)
@@ -475,6 +530,7 @@ impl DocHook for PaymentEntryHook {
         .bind(customer)
         .bind(supplier)
         .bind(&code)
+        .bind(sign)
         .fetch_all(&mut **hc.tx)
         .await?;
         // Deductions settle invoices too, so they count towards what can be allocated.
