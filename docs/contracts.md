@@ -26,8 +26,10 @@ have no `item`: it then needs a `description` (copied to `item_name`), its `pric
 invoices an `income_account` or `expense_account` (the company's default when not sent). Such a line
 takes no price list or pricing rule, moves no stock, is left off deliveries and receipts made from
 its order, and is refused (naming the line) with no description, no account to go to, or an
-account that is a group, a receivable, payable, bank, cash or stock account; any line booked to
-one of those is refused alike. Readers of invoice lines (`items.item`) must allow it to be empty.
+account that is a group, a receivable, payable, bank, cash or stock account. Lines with an item are
+checked and booked as before. On selling documents a person's `price_list_rate` is kept on a line
+without an item only; on a line with one it comes from the price list or a pricing rule, and is kept
+as sent only on the engine's own (elevated) writes, as before. Readers of invoice lines (`items.item`) must allow it to be empty.
 `PaymentEntry` has a third `payment_type`, `Internal Transfer`: no party, `bank_account` to
 `paid_to`, `received_amount` in the receiving account's currency; payments sent with `Receive` or
 `Pay` and a party are as before. An open item's `entity` may be `OpeningInvoice` (an invoice

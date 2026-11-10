@@ -212,10 +212,10 @@ fn line_label(i: usize, r: &Doc) -> String {
     }
 }
 
-/// Every line says what it is: an item, or a description. On an invoice (`account_field` given),
-/// each line's account must be one a sale or purchase can be booked to: not a group, nor an
+/// Every line says what it is: an item, or a description. On an invoice (`account_field` given), a
+/// line without an item needs an account a sale or purchase can be booked to: not a group, nor an
 /// account that only parties, money or stock move (a receivable or payable, a bank or cash
-/// account, stock), and a line without an item needs one.
+/// account, stock). Lines with an item are left as they were.
 async fn check_lines(hc: &mut HookCtx<'_>, doc: &Doc, account_field: Option<&str>) -> Result<()> {
     let company = id(doc, "company");
     let mut errors = Vec::new();
@@ -225,14 +225,14 @@ async fn check_lines(hc: &mut HookCtx<'_>, doc: &Doc, account_field: Option<&str
             errors.push(FieldError::new("description", format!("{} has no item: say what it is in its description", line_label(i, r))).in_row("items", i));
             continue;
         }
-        let Some(field) = account_field else { continue };
+        // A line with an item is booked as it always was (its item's or group's account, stock by
+        // its warehouse): only the account a person chooses for a line without one is checked.
+        let Some(field) = account_field.filter(|_| free) else { continue };
         let Some(acc) = id(r, field) else {
-            if free {
-                errors.push(
-                    FieldError::new(field, format!("{} has neither an item nor an account: choose the account it is booked to", line_label(i, r)))
-                        .in_row("items", i),
-                );
-            }
+            errors.push(
+                FieldError::new(field, format!("{} has neither an item nor an account: choose the account it is booked to", line_label(i, r)))
+                    .in_row("items", i),
+            );
             continue;
         };
         let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;

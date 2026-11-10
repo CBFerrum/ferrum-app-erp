@@ -33,8 +33,8 @@
   given both, what the sides differ by is an exchange gain or loss as on any payment. It is cancelled
   like any payment; Finance reconciles it on both accounts' statements.
 
-Refused, in words: a line without an item that does not say what it is or has no account to go to,
-and any line booked to a group, receivable, payable, bank, cash or stock account (naming the line);
+Refused, in words: a line without an item that does not say what it is, has no account to go to, or
+is booked to a group, receivable, payable, bank, cash or stock account (naming the line);
 an opening invoice of zero, in another currency without its rate, a number already carried in for
 that party, dated after its opening date, or already in these books as a submitted invoice (a sale's
 number, a supplier's invoice number); cancelling one while payments are allocated to it; another
@@ -43,9 +43,11 @@ account that is not a bank or cash account of the company, or with allocations o
 
 For data already there: nothing posted changes. Journal entries' party lines made before age on
 their entry's day under its number, as before; payment entries made before, and those other apps
-make with a type and a party, are Receive or Pay as before. On selling lines the price is now
-entered on a line without an item; on a line with one it still comes from the price list, but a new
-line sent through the API with its own price keeps it (the form shows it read-only). India's
+make with a type and a party, are Receive or Pay as before. Lines with an item are checked and
+booked exactly as in 0.15.0, whatever account they name. On selling lines a price is typed on a line
+without an item only: on a line with one it comes from the price list or a pricing rule, and a price
+a person sends for a new item line, or for a line whose item changed, is not kept (the engine's own
+documents, an order made from a quotation, keep theirs). India's
 HSN/SAC on a sales invoice line is now copied from the item when the invoice is saved rather than
 fetched, so an invoice keeps the code it was made with. The new fields and the Opening Invoice
 entity reach an upgrading workspace with its next schema update: there is no SQL migration, and the

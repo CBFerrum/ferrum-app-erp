@@ -326,6 +326,42 @@ async fn scenario() {
     refused(t.k.insert(&t.ctx, "SalesInvoice", obj(line(json!({"description": "Fee"})))).await, "line 2 (Fee) has neither an item nor an account");
     t.update("Company", cid, json!({"default_income_account": default_income})).await;
 
+    // A line with an item is left as 0.15 had it: booked to the account it names, however odd.
+    let odd = t.make("SalesInvoice", json!({"company": c, "customer": umbrella, "items": [{"item": advice, "qty": "1", "income_account": bank}]})).await;
+    assert_eq!(t.posted(uid(&odd)).await, map(&[("Debtors", "100"), ("Primary Bank", "-100")]));
+
+    // ───────────── a sales line's price: from the list for an item, typed for a line without one ─────────────
+    // As a Sales User through the records API: a price sent for an item line is not kept; the
+    // engine's own documents (an order made from a quotation) keep theirs.
+    let clerk = t.k.create_user(&t.ctx, "clerk@sw.test", "Sales Clerk", Some("Correct-Horse-9"), &["Sales User".into()], false).await.expect("user");
+    let clerk = t.k.load_ctx(tenant, clerk, None, "it".into()).await.expect("clerk ctx");
+    let price = |d: &Doc, i: usize| dec(&d["items"][i]["price_list_rate"]);
+    let made_up =
+        t.k.insert(&clerk, "SalesInvoice", obj(json!({"company": c, "customer": umbrella, "items": [{"item": advice, "qty": "1", "price_list_rate": "1"}]})))
+            .await
+            .unwrap();
+    assert_eq!(price(&made_up, 0), n("100"), "a new item line is priced from the list");
+    let visit =
+        t.k.insert(
+            &clerk,
+            "SalesInvoice",
+            obj(json!({"company": c, "customer": umbrella, "items": [{"description": "Site visit", "qty": "1", "price_list_rate": "70"}]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(price(&visit, 0), n("70"), "a line without an item keeps its price");
+    let turned =
+        t.k.update(&clerk, "SalesInvoice", uid(&visit), obj(json!({"items": [{"id": visit["items"][0]["id"], "item": advice, "price_list_rate": "5"}]})), None)
+            .await
+            .unwrap();
+    assert_eq!(price(&turned, 0), n("100"), "a line turned into an item line is priced from the list");
+    let engine = ferrum_domain::util::elevated(&clerk);
+    let quoted =
+        t.k.insert(&engine, "SalesOrder", obj(json!({"company": c, "customer": umbrella, "items": [{"item": advice, "qty": "1", "price_list_rate": "80"}]})))
+            .await
+            .unwrap();
+    assert_eq!(price(&quoted, 0), n("80"), "the engine's price stands");
+
     // ───────────── an electricity bill booked straight to Utilities, with a cost centre ─────────────
     let bill = t
         .make(
