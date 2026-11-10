@@ -1,5 +1,60 @@
 # Changelog
 
+## ERP 0.16.0, Finance 0.4.0, India 0.3.0: no entry barrier for a company switching books
+
+- **Lines without an item.** A sales or purchase invoice line, and a sales or purchase order's, may
+  be a description, a quantity and a price booked straight to an account: rent, an electricity
+  bill, a consultant's fee, a one-off charge. Leave **Item** empty: the line goes to the company's
+  default income or expense account unless it names one, with its cost centre, and is taxed by the
+  document's template (included in the price, compound, rounded per line, as any line). It takes no
+  price list or pricing rule and moves no stock. Everything after treats it as a service item's
+  line: totals and the ledger, part billing from an order, credit and debit notes against it
+  (counted on its line, by its description when the note does not name it), credits of price
+  alone, deferral over a service period, the sale mirrored in a group company's books. Registers,
+  reports and e-invoices show its description. Deliveries and receipts keep items only: an order's
+  lines without one are left off them, and an order of services alone is To Bill at once. India: a
+  line without an item carries its own **HSN/SAC** code, needed on a GST-registered company's sales.
+- **Opening invoices.** The invoices still open in the old books come in one record each (**Opening
+  Invoice**: the party, the old invoice's number and date, its due date, the amount still open and
+  its currency at the rate it is carried at; a negative amount for an open credit, an advance or an
+  unused credit note), from a spreadsheet through the platform's import. **Post Opening Invoices** on
+  the company posts every draft at once against its Opening Balance Account, all or none. Each is an
+  open item under the number the party knows, aged from its own dates, that a payment settles as
+  it settles an invoice made here: allocation, part payment, the exchange difference in another
+  currency, the refund of an opening credit, Get Outstanding Invoices, and the Finance add-on's
+  dunning.
+- **A journal entry's party line** may give the number the party knows (**Invoice / Reference No**),
+  its own **Due Date**, and the party's currency with its rate and the amount in it (the debit or
+  credit is worked out), so opening balances entered the old way age by their real due dates and
+  are settled in their own currency.
+- **Transfers.** A payment entry of type **Internal Transfer** moves money between two of the
+  company's bank and cash accounts, with no party, a date and a reference. Between two currencies,
+  each side is in its account's currency; a rate not given is worked out from the two amounts, and
+  given both, what the sides differ by is an exchange gain or loss as on any payment. It is cancelled
+  like any payment; Finance reconciles it on both accounts' statements.
+
+Refused, in words: a line without an item that does not say what it is or has no account to go to,
+and any line booked to a group, receivable, payable, bank, cash or stock account (naming the line);
+an opening invoice of zero, in another currency without its rate, a number already carried in for
+that party, dated after its opening date, or already in these books as a submitted invoice (a sale's
+number, a supplier's invoice number); cancelling one while payments are allocated to it; another
+currency on a journal entry line without a party or a rate; a transfer to the same account, to an
+account that is not a bank or cash account of the company, or with allocations or deductions.
+
+For data already there: nothing posted changes. Journal entries' party lines made before age on
+their entry's day under its number, as before; payment entries made before, and those other apps
+make with a type and a party, are Receive or Pay as before. On selling lines the price is now
+entered on a line without an item; on a line with one it still comes from the price list, but a new
+line sent through the API with its own price keeps it (the form shows it read-only). India's
+HSN/SAC on a sales invoice line is now copied from the item when the invoice is saved rather than
+fetched, so an invoice keeps the code it was made with. The new fields and the Opening Invoice
+entity reach an upgrading workspace with its next schema update: there is no SQL migration, and the
+opening account is the company's Opening Balance Account, which the standard chart has (Create
+Standard Chart of Accounts sets it on a company without one). Finance 0.4.0 needs ERP 0.16.0: its
+reconciliation reads a transfer's receiving side, and its dunning lists opening invoices. The
+interface is not rebuilt; its names in Arabic and Hindi gain the new fields' (640 each), translated
+by the model, to be reviewed by native speakers.
+
 ## ERP 0.15.0: returns, credit and debit notes, and refunds
 
 - **Create Return** on a submitted delivery note and purchase receipt, and **Create Debit Note** on

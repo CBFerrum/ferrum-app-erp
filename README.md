@@ -50,9 +50,9 @@ and CRM build on its engine.
 
 | | Module | What it does | Reports |
 |---|---|---|---|
-| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, period close | trial balance, general ledger, profit and loss, balance sheet, cash flow, receivables, payables, and for a group of companies a consolidated trial balance and statements, with non-controlling interests |
-| 🧾 | **Selling** | sales orders, delivery notes and invoices with exact tax maths, pricing rules, receivables; returns, credit notes (of goods or of price alone), debit notes and refunds | receivables, sales register |
-| 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts; returns, debit notes and refunds | payables, purchase register |
+| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, transfers between the company's own bank and cash accounts, opening invoices carried in from the books before (imported from a spreadsheet, in their own currencies and due dates), period close | trial balance, general ledger, profit and loss, balance sheet, cash flow, receivables, payables, and for a group of companies a consolidated trial balance and statements, with non-controlling interests |
+| 🧾 | **Selling** | sales orders, delivery notes and invoices with exact tax maths, pricing rules, receivables, lines that are no item booked straight to an account; returns, credit notes (of goods or of price alone), debit notes and refunds | receivables, sales register |
+| 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts, bills booked straight to an expense account (rent, electricity, a consultant's fee); returns, debit notes and refunds | payables, purchase register |
 | 📦 | **Inventory** | warehouses and stock entries on an append-only stock ledger with moving-average and FIFO cost layers | stock balance, stock ledger |
 | 🏭 | **Manufacturing** | multi-level bills of materials with revisions, work orders with actual costing, an MRP run that proposes purchases and production | stock balance |
 
@@ -297,7 +297,7 @@ and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in erp erp_contract erp_returns eu de eu_members gb ca us countries finance finance_books procurement stock_ops mfg_ops; do
+for db in erp erp_contract erp_returns erp_switching eu de eu_members gb ca us countries finance finance_books procurement stock_ops mfg_ops; do
   createdb -O ferrum ferrum_${db}_test
 done
 cargo test --workspace
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.16.0** | No entry barrier for a company switching books: invoice and order lines without an item, booked to an account; opening invoices from the old books in one import, aged by their own due dates and settled like any invoice; a journal entry's party line with its own number, due date and currency; transfers between the company's own bank and cash accounts. |
 | **0.15.0** | Returns, credit and debit notes, and refunds: returns from deliveries, receipts and invoices limited to what is left, credits of price alone, notes without an original, goods back at their original cost, debit notes to customers, and refunds of a party's credit. |
 | **0.14.13** | Its reports' names in Arabic and Hindi. |
 | **0.14.12** | Its names in Arabic and Hindi; the last English sentences translated. |
