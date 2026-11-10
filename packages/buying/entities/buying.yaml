@@ -86,6 +86,8 @@
     - {name: purchase_order, type: link, to: PurchaseOrder, read_only: true}
     - {name: po_line, type: data, read_only: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: returned_qty, type: decimal, read_only: true, no_copy: true, label: Returned Qty, description: What the returns against this receipt sent back}
+    - {name: return_line, type: data, read_only: true, hidden: true, no_copy: true, label: Original Line}
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
@@ -128,6 +130,7 @@
     - {name: status, type: select, options: [Draft, To Bill, Completed, Return, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
   actions:
     - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
+    - {name: make_purchase_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: PurchaseInvoiceItem
@@ -161,6 +164,9 @@
     - {name: po_line, type: data, read_only: true}
     - {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true}
     - {name: pr_line, type: data, read_only: true}
+    - {name: returned_qty, type: decimal, read_only: true, no_copy: true, label: Returned Qty, description: What the debit notes against this invoice sent back}
+    - {name: credited_amount, type: currency, currency: parent.currency, read_only: true, no_copy: true, label: Debited, description: "What the debit notes against this invoice took back on the line, before tax"}
+    - {name: return_line, type: data, read_only: true, hidden: true, no_copy: true, label: Original Line}
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
@@ -186,6 +192,10 @@
     - {name: due_date, type: date, in_list: true}
     - {name: is_return, type: check, label: Is Return (Debit Note), in_filter: true}
     - {name: return_against, type: link, to: PurchaseInvoice, visible_if: "doc.is_return"}
+    - {name: price_only, type: check, label: Price Only (no goods go back), visible_if: "doc.is_return",
+       description: "A debit of price alone: a lower price agreed after the purchase, a rebate. Nothing leaves stock"}
+    - {name: return_reason, type: data, label: Reason, visible_if: "doc.is_return",
+       description: "Why it is debited: needed for a debit note without its original invoice (a rebate, a correction from before these books)"}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
     - {name: update_stock, type: check, description: Receive stock with this invoice}
@@ -218,6 +228,12 @@
     # An invoice made from an order or a receipt holds a draft's place with PENDING-<its number>.
     - {name: suppliers_own_number, check: "!doc.bill_no.startsWith('PENDING-')", on: submit,
        message: "Enter the supplier's own invoice number in Supplier Invoice No; the one filled in only held the draft's place"}
+    - {name: return_needs_source, check: "!doc.is_return || doc.return_against != null || (doc.return_reason != null && doc.return_reason != '')", on: submit,
+       message: "A debit note without its original invoice needs a reason: a rebate, a correction from before these books"}
   actions:
     - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
+    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0"}
+    - {name: make_debit_note, label: Create Debit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
+       params: [{name: credit_percent, type: data, label: Debit of Price Only (%),
+                 description: "Empty: the goods go back, for what is still returnable. A figure (10): no goods go back, and that share of each line's price is debited"}]}
   list: {columns: [number, supplier_name, bill_no, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}

@@ -1,5 +1,55 @@
 # Changelog
 
+## ERP 0.15.0: returns, credit and debit notes, and refunds
+
+- **Create Return** on a submitted delivery note and purchase receipt, and **Create Debit Note** on
+  a submitted purchase invoice (until now its debit note was a box to tick by hand), beside the
+  sales invoice's **Create Credit Note**. Each makes a draft carrying the original's lines,
+  prices, taxes, currency and rate, for what is still returnable; a returned delivery or receipt
+  takes back what its order shows delivered or received.
+- Each line of a return counts against the original's line it gives back, and the original shows
+  per line what came back (**Returned Qty**) and, on invoices, what was given back before tax
+  (**Credited**, **Debited**). A return beyond what is left is refused, naming the item and what is
+  left; cancelling a return gives its quantity back. A return of a return, against a draft or a
+  cancelled original, or (of a delivery or receipt) of an item the original did not move, is
+  refused, and the original is not cancelled while returns stand against it. A note may still
+  credit, against an invoice, an item billed on another (a subscription's seats billed on a
+  supplementary invoice): that line counts against none of the invoice's.
+- A credit of price alone: **Create Credit Note** (or **Create Debit Note**) with a share of the
+  price makes a note that moves no goods, with its tax in proportion; what all the notes give back
+  on a line never exceeds what was billed on it. A fixed charge (Actual) is given back in the share
+  of the lines given back.
+- A credit note, or a supplier's debit note, without its original invoice is accepted with a
+  **Reason** (goodwill, a rebate, a correction from before these books): its taxes as entered, no
+  quantities checked, and goods come back only with Update Stock, at the line's **Cost of Goods
+  Returned** or their current valuation.
+- Goods come back at the cost they left at: a credit note's on an invoice whose goods left on a
+  delivery note at that delivery's cost (it took today's valuation), and a purchase return at the
+  receipt's cost (FIFO items leave by their layers, as any issue does). Serial numbers and batches
+  that come back must be ones the original moved.
+- **Create Debit Note** on a sales invoice: an invoice charging more on it (a price increase,
+  something charged short), linked to it, posted and counted against the credit limit as an
+  invoice, and shown on the original (**Debit Notes**), which is not cancelled while it stands.
+- Refunds: a payment entry with **Refund** ticked pays a customer, or receives from a supplier, and
+  gives back their open credit (a credit note's balance, an
+  overpayment, an advance), in part or in full, never more than is open and all of it allocated,
+  in the credit's currency with the exchange difference booked as payments do; cancelling it
+  restores the credit. **Refund** on a credit note or supplier's debit note with credit left makes
+  that payment. A customer's refund debits the receivable and credits the bank.
+- A full credit note mirrors its invoice to the cent (inclusive and compound taxes, a fixed charge,
+  per-line and document rounding, cash rounding), in the invoice's currency at the invoice's rate:
+  a return takes its original's currency and rate unless it names them, and one in another
+  currency is refused.
+
+For data already there: returns made before 0.15.0 are counted on their originals by the
+migrations `selling/sql/001_returns.sql` and `buying/sql/001_returns.sql`, each old return line
+tied to the first line of its original with its item. Payment entries made before, and those other apps
+make, are unticked: a customer's receipt or a payment to a supplier, as before. A payment to a
+customer without the tick is refused in words, never booked as a refund. Credit and debit notes have no menu entry of their
+own: a menu lists entities and reports only, and the invoice lists filter on Is Return and Debit
+Note. The interface is not rebuilt; its names in Arabic and Hindi gain the new fields' (594
+each), translated by the model, to be reviewed by native speakers.
+
 ## 0.14.13
 
 The reports it defines in code (their titles and parameters) have names in Arabic and Hindi too, with its models' and manifest's (558 each in ui/src/locales/names). Translated by the model, to be reviewed by native speakers.
