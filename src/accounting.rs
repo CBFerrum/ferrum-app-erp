@@ -28,7 +28,10 @@ impl DocHook for JournalEntryHook {
             let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
             let rate = d(l, "exchange_rate");
             if s(l, "party_type").is_none() {
-                errors.push(at("currency", format!("only a customer's or supplier's line is carried in another currency; book {code} to an account in the company's")));
+                errors.push(at(
+                    "currency",
+                    format!("only a customer's or supplier's line is carried in another currency; book {code} to an account in the company's"),
+                ));
             } else if rate <= Decimal::ZERO {
                 errors.push(at("exchange_rate", format!("the rate {code} is carried at is needed")));
             } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
@@ -347,7 +350,10 @@ async fn check_transfer(hc: &mut HookCtx<'_>, doc: &Doc, cid: Uuid) -> Result<()
         let Some(acc) = id(doc, f) else { return Err(Error::field(f, format!("choose the account {which}"))) };
         let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
         if id(&a, "company") != Some(cid) || !matches!(s(&a, "account_type"), Some("Bank" | "Cash")) {
-            return Err(Error::field(f, format!("{} is not a Bank or Cash account of this company: a transfer moves money between two of them", s(&a, "account_name").unwrap_or("it"))));
+            return Err(Error::field(
+                f,
+                format!("{} is not a Bank or Cash account of this company: a transfer moves money between two of them", s(&a, "account_name").unwrap_or("it")),
+            ));
         }
     }
     if id(doc, "bank_account") == id(doc, "paid_to") {

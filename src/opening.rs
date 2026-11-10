@@ -80,7 +80,9 @@ impl DocHook for OpeningInvoiceHook {
         {
             return Err(Error::field(
                 "invoice_date",
-                format!("{what} is dated {invoiced}, after the opening date {opening}: an invoice from after the books' start is entered as an invoice, not an opening balance"),
+                format!(
+                    "{what} is dated {invoiced}, after the opening date {opening}: an invoice from after the books' start is entered as an invoice, not an opening balance"
+                ),
             ));
         }
         let (field, ..) = side(doc);
@@ -138,7 +140,13 @@ impl DocHook for OpeningInvoiceHook {
         let sign = if customer.is_some() { Decimal::ONE } else { -Decimal::ONE };
         let mut entry = Entry::new(co.id, on, "OpeningInvoice", oid, number.clone());
         entry.memo = Some(format!("Opening balance: {}", named(doc)));
-        entry.lines.push(Line::new(account, sign * base, &co.currency_code).txn(sign * amount, &code, rate).customer(customer).supplier(supplier).against("OpeningInvoice", oid));
+        entry.lines.push(
+            Line::new(account, sign * base, &co.currency_code)
+                .txn(sign * amount, &code, rate)
+                .customer(customer)
+                .supplier(supplier)
+                .against("OpeningInvoice", oid),
+        );
         entry.lines.push(Line::new(opening, -sign * base, &co.currency_code).remarks("Opening balance"));
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         ledger::open_item(

@@ -229,7 +229,8 @@ async fn check_lines(hc: &mut HookCtx<'_>, doc: &Doc, account_field: Option<&str
         let Some(acc) = id(r, field) else {
             if free {
                 errors.push(
-                    FieldError::new(field, format!("{} has neither an item nor an account: choose the account it is booked to", line_label(i, r))).in_row("items", i),
+                    FieldError::new(field, format!("{} has neither an item nor an account: choose the account it is booked to", line_label(i, r)))
+                        .in_row("items", i),
                 );
             }
             continue;
