@@ -170,6 +170,28 @@ mod tests {
         }
     }
 
+    /// A person's typed price on an item line is dropped only where the line's definition makes the
+    /// price read-only on a condition the kernel cannot judge on a new row; a plainly editable price
+    /// (another app's own lines, buying's) is kept, a plainly read-only one never reaches the engine,
+    /// and the engine's own writes are never touched.
+    #[test]
+    fn typed_prices_are_dropped_only_where_the_definition_asks() {
+        use pricing::{Side, guards_typed_price};
+        let mut all = ferrum_domain::packages().expect("the shared packages");
+        all.extend(ferrum_meta::catalog::load_embedded(EMBEDDED).expect("ERP's packages"));
+        let catalog = ferrum_meta::Catalog::from_packages(all).expect("they validate together");
+        let names: Vec<String> = ferrum_meta::catalog::load_embedded(EMBEDDED).unwrap().iter().map(|p| p.name().to_string()).collect();
+        let schema = ferrum_meta::effective::build(&catalog, &names, &[], 1).unwrap();
+        let line = |e: &str| schema.entity(e).cloned();
+        let (conditional, editable, read_only) = (line("SalesInvoiceItem"), line("PurchaseInvoiceItem"), line("DeliveryNoteItem"));
+        assert!(guards_typed_price(conditional.as_deref(), Side::Selling, false), "read-only on a condition: dropped on a new item line");
+        assert!(guards_typed_price(line("SalesOrderItem").as_deref(), Side::Selling, false));
+        assert!(!guards_typed_price(editable.as_deref(), Side::Selling, false), "plainly editable: kept");
+        assert!(!guards_typed_price(read_only.as_deref(), Side::Selling, false), "plainly read-only: the kernel drops it");
+        assert!(!guards_typed_price(conditional.as_deref(), Side::Selling, true), "the engine's own writes: kept");
+        assert!(!guards_typed_price(conditional.as_deref(), Side::Buying, false));
+    }
+
     /// Clusters record each package SQL file they applied with its checksum, and refuse to start
     /// when an applied file changes: these are the files from before ERP had its own repository.
     #[test]

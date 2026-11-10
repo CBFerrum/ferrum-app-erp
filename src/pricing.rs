@@ -354,14 +354,24 @@ fn free_line(row: &mut Doc, doc: &Doc, co: &Company, side: Side, has_child: &dyn
     }
 }
 
-/// On a person's save of a selling document, each stored line's item by line id (empty for a new
-/// document): a line with an item takes its price from the price list or a pricing rule, so a
-/// price a person sends for a new item line, or one whose item changed, is dropped (the kernel
-/// already drops it on a stored line whose item stays, the field being read-only there). A line
-/// without an item keeps its typed price; the engine's own writes (elevated) keep theirs. `None`
-/// when nothing is dropped: buying, whose prices are typed, and the engine.
+/// Whether a person's typed price on a document's lines (of entity `line`) is dropped where the
+/// line has an item. Only where the line's definition makes `price_list_rate` read-only on a
+/// condition (`read_only_if`, as ERP's sales order and invoice lines do for lines with an item):
+/// the kernel judges such a condition on the stored row, so on a new row (or one whose item just
+/// changed) it lets a person's price through, and the engine stands in for it. A price that is
+/// plainly editable (a Point of Sale override) is the definition's choice and kept; a plainly
+/// read-only one never reaches here (the kernel drops it). The engine's own (elevated) writes and
+/// buying, whose prices are typed, are never touched.
+pub(crate) fn guards_typed_price(line: Option<&EffEntity>, side: Side, is_system: bool) -> bool {
+    side == Side::Selling && !is_system && line.and_then(|l| l.field("price_list_rate")).is_some_and(|f| !f.read_only && f.read_only_if.is_some())
+}
+
+/// Each stored line's item by line id (empty for a new document) when [`guards_typed_price`]
+/// holds, so that a typed price on a new item line, or one whose item changed, is dropped and the
+/// price list or a pricing rule fills it; a line without an item keeps its price. `None` otherwise.
 async fn typed_prices(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &Doc, side: Side) -> Result<Option<HashMap<String, Option<Uuid>>>> {
-    if side != Side::Selling || ctx.is_system {
+    let line = ent.field("items").and_then(|f| f.of.as_deref()).and_then(|c| ctx.schema.entity(c)).map(|e| &**e);
+    if !guards_typed_price(line, side, ctx.is_system) {
         return Ok(None);
     }
     let Some(doc_id) = id(doc, "id") else { return Ok(Some(HashMap::new())) };
