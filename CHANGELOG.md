@@ -1,6 +1,6 @@
 # Changelog
 
-## ERP 0.17.0: documents that print like documents
+## ERP 0.17.0, India 0.3.1: documents that print like documents
 
 - **A letterhead a company fills in once.** The company's form has three new sections:
   **Letterhead** (address lines, city, state or region, postal code, phone, e-mail, website and a
