@@ -8,6 +8,14 @@
     - {name: supplier, type: link, to: Supplier, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'", in_list: true}
     - {name: debit, type: currency, min: "0", default: 0, in_list: true}
     - {name: credit, type: currency, min: "0", default: 0, in_list: true}
+    - {name: reference_no, type: data, label: Invoice / Reference No, visible_if: "doc.party_type != null",
+       description: "The number the customer or supplier knows it by (an invoice from the books before): what payments and statements show; the entry's number when empty"}
+    - {name: due_date, type: date, visible_if: "doc.party_type != null", description: "When what the party owes falls due, for ageing and reminders; the entry's date when empty"}
+    - {name: currency, type: link, to: Currency, visible_if: "doc.party_type != null", label: Party Currency,
+       description: "Empty: the company's. Another currency carries what the party owes in it: give the rate and the amount in it, and the debit or credit is worked out"}
+    - {name: exchange_rate, type: decimal, min: "0", visible_if: "doc.currency != null", description: "Party currency → company currency"}
+    - {name: debit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Debit (Party Currency)}
+    - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
     - {name: project, type: link, to: Project}
     - {name: remarks, type: data}
