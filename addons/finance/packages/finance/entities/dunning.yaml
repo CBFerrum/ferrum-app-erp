@@ -32,6 +32,7 @@
   kind: child
   fields:
     - {name: sales_invoice, type: link, to: SalesInvoice, in_list: true}
+    - {name: opening_invoice, type: link, to: OpeningInvoice, in_list: true, description: An invoice carried in from the books before}
     - {name: invoice_number, type: data, in_list: true}
     - {name: installment, type: data, in_list: true}
     - {name: due_date, type: date, in_list: true}

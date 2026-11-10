@@ -112,6 +112,8 @@ impl DocHook for DunningTypeHook {
 #[derive(Debug, Clone)]
 struct Overdue {
     invoice: Uuid,
+    /// An opening invoice (carried in from the books before) rather than a sales invoice.
+    opening: bool,
     number: String,
     installment: String,
     due: NaiveDate,
@@ -121,11 +123,12 @@ struct Overdue {
 
 /// The customer's installments overdue on `on` in currency `code`, as of that day.
 async fn overdue(tx: &mut Tx, tenant: Uuid, company: Uuid, customer: Uuid, code: &str, on: NaiveDate) -> Result<Vec<Overdue>> {
-    let items: Vec<(Uuid, Option<String>, NaiveDate, Option<NaiveDate>, Decimal, Decimal)> = sqlx::query_as(
+    let items: Vec<(Uuid, Option<String>, NaiveDate, Option<NaiveDate>, Decimal, Decimal, String)> = sqlx::query_as(
         "select o.id, o.number, o.posting_date, o.due_date, o.amount, \
          o.amount - coalesce((select sum(x.amount) from allocation x where x.tenant_id = o.tenant_id and x.open_item_id = o.id and x.posting_date <= $5), 0) \
-         from open_item o where o.tenant_id = $1 and o.company_id = $2 and o.customer_id = $3 and trim(o.currency) = $4 and o.entity = 'SalesInvoice' \
-         and o.status <> 'cancelled' and o.posting_date <= $5 and o.amount > 0 order by coalesce(o.due_date, o.posting_date), o.posting_date, o.id",
+         , o.entity from open_item o where o.tenant_id = $1 and o.company_id = $2 and o.customer_id = $3 and trim(o.currency) = $4 \
+         and o.entity in ('SalesInvoice', 'OpeningInvoice') and o.status <> 'cancelled' and o.posting_date <= $5 and o.amount > 0 \
+         order by coalesce(o.due_date, o.posting_date), o.posting_date, o.id",
     )
     .bind(tenant)
     .bind(company)
@@ -138,11 +141,12 @@ async fn overdue(tx: &mut Tx, tenant: Uuid, company: Uuid, customer: Uuid, code:
     let ids: Vec<Uuid> = items.iter().map(|i| i.0).collect();
     let plans = schedules(tx, tenant, "e_sales_invoice", &ids).await?;
     let mut out = Vec::new();
-    for (inv, number, posted, due, amount, outstanding) in items {
+    for (inv, number, posted, due, amount, outstanding, entity) in items {
         for (inst, open) in open_installments(plans.get(&inv), amount, outstanding, due.unwrap_or(posted)) {
             if open > Decimal::ZERO && inst.due < on {
                 out.push(Overdue {
                     invoice: inv,
+                    opening: entity == "OpeningInvoice",
                     number: number.clone().unwrap_or_default(),
                     installment: inst.description,
                     due: inst.due,
@@ -220,7 +224,7 @@ impl DunningHook {
             total += o.outstanding;
             interest_total += interest;
             lines.push(
-                json!({"sales_invoice": o.invoice.to_string(), "invoice_number": o.number, "installment": o.installment,
+                json!({(if o.opening { "opening_invoice" } else { "sales_invoice" }): o.invoice.to_string(), "invoice_number": o.number, "installment": o.installment,
                 "due_date": o.due.to_string(), "overdue_days": o.days, "outstanding": money(o.outstanding), "interest": money(interest)})
                 .as_object()
                 .cloned()
@@ -401,14 +405,14 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
     sqlx::query(
         "update e_dunning d set status = 'Resolved', updated_at = now() where d.tenant_id = $1 and d.docstatus = 1 and d.status = 'Unresolved' \
          and not exists (select 1 from open_item o where o.tenant_id = d.tenant_id and o.id = d.id and o.status = 'open' and o.outstanding <> 0) \
-         and not exists (select 1 from e_dunning__overdue_payments r join open_item o on o.tenant_id = r.tenant_id and o.id = r.sales_invoice \
+         and not exists (select 1 from e_dunning__overdue_payments r join open_item o on o.tenant_id = r.tenant_id and o.id = coalesce(r.sales_invoice, r.opening_invoice) \
                          where r.tenant_id = d.tenant_id and r.parent_id = d.id and o.status = 'open' and o.outstanding > 0)",
     )
     .bind(ctx.tenant)
     .execute(&mut *tx)
     .await?;
     let candidates: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
-        "select distinct o.company_id, o.customer_id, trim(o.currency) from open_item o where o.tenant_id = $1 and o.entity = 'SalesInvoice' \
+        "select distinct o.company_id, o.customer_id, trim(o.currency) from open_item o where o.tenant_id = $1 and o.entity in ('SalesInvoice', 'OpeningInvoice') \
          and o.status = 'open' and o.outstanding > 0 and o.posting_date < $2 and (o.due_date < $2 or exists (select 1 from \
          e_sales_invoice__fin_payment_schedule s where s.tenant_id = o.tenant_id and s.parent_id = o.id and s.due_date < $2))",
     )
