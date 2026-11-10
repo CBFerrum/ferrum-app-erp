@@ -150,6 +150,16 @@ async fn scenario() {
     ledger::cancel_open_item(&mut tx, &ctx, invoice).await.unwrap();
     let cancelled = ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("10"), n("10")).await;
     assert!(cancelled.is_err(), "a cancelled item takes no payment");
+    // A credit (a credit note, an advance) is a negative item: it is given back, as a refund does,
+    // by negative allocations, never beyond it and never the other way.
+    let credit = OpenItem { id: Uuid::now_v7(), number: Some("CT-CN".into()), amount: n("-50"), base_amount: n("-50"), ..item.clone() };
+    ledger::open_item(&mut tx, &ctx, &credit).await.unwrap();
+    let wrong_way = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("20"), n("20")).await;
+    assert!(matches!(wrong_way, Err(Error::Invalid(_))), "{wrong_way:?}");
+    let beyond = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-60"), n("-60")).await;
+    assert!(matches!(beyond, Err(Error::Invalid(_))), "{beyond:?}");
+    ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-20"), n("-20")).await.unwrap();
+    assert_eq!(ledger::load_open_item(&mut tx, tenant, credit.id, false).await.unwrap().unwrap().outstanding, n("-30"));
     tx.commit().await.unwrap();
 
     // ── stock: never issued beyond what is there; reversed exactly, once ──
