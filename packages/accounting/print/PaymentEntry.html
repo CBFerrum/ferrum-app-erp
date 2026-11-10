@@ -1,0 +1,133 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }} {{ doc.number or "" }}</title>
+<style>
+ :root{--ink:#14171c;--muted:#5b6470;--line:#d3d8de;--soft:#f3f5f7;--accent:#1f3a5f}
+ *{box-sizing:border-box}
+ body{margin:0;padding:22px 28px;font:12px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans","Noto Sans Arabic","Noto Sans Devanagari",Arial,sans-serif;color:var(--ink);background:#fff}
+ h1{font-size:22px;line-height:1.2;margin:0;color:var(--accent)}
+ h2{font-size:10px;margin:0 0 4px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+ .muted{color:var(--muted)} .small{font-size:11px} .pre{white-space:pre-line} .strong{font-weight:600}
+ .head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:12px;border-bottom:2px solid var(--accent)}
+ .brand{display:flex;gap:14px;align-items:flex-start;min-width:0}
+ .logo{max-height:64px;max-width:160px;object-fit:contain}
+ .co-name{font-size:15px;font-weight:700}
+ .title{text-align:end;flex:none}
+ .mark{display:inline-block;margin-top:4px;padding:1px 9px;border:1px solid var(--muted);border-radius:10px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+ .cols{display:flex;gap:16px 28px;flex-wrap:wrap;margin:14px 0}
+ .cols>div{flex:1 1 200px;min-width:0}
+ .kv{display:grid;grid-template-columns:auto 1fr;gap:1px 12px}
+ .kv dt{color:var(--muted)} .kv dd{margin:0}
+ table{border-collapse:collapse;width:100%}
+ .lines{margin:8px 0}
+ .lines th,.lines td{padding:5px 7px;text-align:start;vertical-align:top;border-bottom:1px solid var(--line)}
+ .lines th{background:var(--soft);font-weight:600;border-top:1px solid var(--line)}
+ .lines .num{text-align:end;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .lines .n{width:2.2em;color:var(--muted)}
+ .after{display:flex;gap:16px 28px;flex-wrap:wrap;align-items:flex-start;margin:10px 0}
+ .after>.grow{flex:1 1 240px;min-width:0}
+ .after>.side{flex:0 1 300px;margin-inline-start:auto}
+ .totals td{padding:3px 7px;font-variant-numeric:tabular-nums} .totals td:last-child{text-align:end;white-space:nowrap}
+ .totals .due td{font-weight:700}
+ .totals .grand td{border-top:2px solid var(--ink);font-weight:700;font-size:13px}
+ .taxes{margin:0 0 8px} .taxes th,.taxes td{padding:3px 7px;text-align:start;border-bottom:1px solid var(--line)}
+ .taxes th{color:var(--muted);font-weight:600;font-size:10.5px} .taxes .num{text-align:end;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .box{border:1px solid var(--line);border-radius:4px;padding:8px 10px;margin:8px 0}
+ .sign{display:flex;gap:28px;margin-top:34px}
+ .sign>div{flex:1;border-top:1px solid var(--ink);padding-top:3px;color:var(--muted);font-size:10.5px}
+ .foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);text-align:center}
+ @page{margin:12mm}
+ @media print{
+  body{padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  thead{display:table-header-group} tfoot{display:table-footer-group}
+  tr,.keep{break-inside:avoid;page-break-inside:avoid}
+  h2{break-after:avoid}
+ }
+</style>
+</head><body>
+{% macro mo(v, neg, p) %}{{ (v|string|replace("-","") if neg else v)|money(p) }}{% endmacro %}
+{% macro qty(v, neg) %}{{ display({"name":"q","type":"decimal"}, {"q": (v|string|replace("-","") if neg else v)}) }}{% endmacro %}
+{% macro dec(v) %}{{ display({"name":"q","type":"decimal"}, {"q": v}) }}{% endmacro %}
+{% macro addr(a) %}{% for ln in [[a.address_line1, a.address_line2]|select|join("\n"), [[a.city, a.state]|select|join(", "), a.postal_code]|select|join(" "), a.country]|select %}<div class="pre" dir="auto">{{ ln }}</div>{% endfor %}{% if a.phone %}<div dir="auto">{{ a.phone }}</div>{% endif %}{% endmacro %}
+{% set co = links.company or {} %}{% set dt = doc._titles or {} %}
+{% set cur = dt.currency or "" %}{% set cu_rec = links.currency or {} %}
+{% set prec = cu_rec.precision if cu_rec.precision is not none else 2 %}
+{% set neg = false %}
+{% set transfer = doc.payment_type == "Internal Transfer" %}
+{% set title = "Transfer" if transfer else ("Refund" if doc.is_refund else ("Receipt" if doc.payment_type == "Receive" else "Payment Voucher")) %}
+{% set cu = links.customer or {} %}{% set su = links.supplier or {} %}{% set rc = links.received_currency or {} %}
+{% set party_rec = cu if doc.customer else su %}
+{% set inflow = doc.payment_type == "Receive" %}
+<div class="head">
+ <div class="brand">
+  {% if co.acc_logo %}<img class="logo" src="{{ co.acc_logo }}" alt="">{% endif %}
+  <div>
+   <div class="co-name" dir="auto">{{ co.company_name or dt.company }}</div>
+   {% set generic = [co.acc_address_line1, co.acc_address_line2, co.acc_city, co.acc_region, co.acc_postal_code]|select|list|length > 0 %}
+   {% set street = [co.acc_address_line1, co.acc_address_line2]|select|join("\n") if generic else co.in_address %}
+   {% set cityline = [[co.acc_city, co.acc_region]|select|join(", "), co.acc_postal_code]|select|join(" ") if generic else [co.in_city, co.in_pincode]|select|join(" ") %}
+   {% for ln in [street, cityline, co.country]|select %}<div class="pre" dir="auto">{{ ln }}</div>{% endfor %}
+   {% set contact = [co.acc_phone, co.acc_email, co.acc_website]|select|join(" · ") %}
+   {% if contact %}<div class="muted" dir="auto">{{ contact }}</div>{% endif %}
+   {% if co.tax_id %}<div><span class="muted">Tax ID</span> {{ co.tax_id }}</div>{% endif %}
+   {% if co.in_gstin and co.in_gstin != co.tax_id %}<div><span class="muted">GSTIN</span> {{ co.in_gstin }}</div>{% endif %}
+  </div>
+ </div>
+ <div class="title">
+  <h1>{{ title }}</h1>
+  {% if doc.number %}<div class="strong">{{ doc.number }}</div>{% endif %}
+  {% if doc.docstatus == 2 %}<div><span class="mark">Cancelled</span></div>{% elif doc.docstatus != 1 %}<div><span class="mark">Draft</span></div>{% endif %}
+  {% if doc.posting_date %}<div><span class="muted">Date</span> {{ doc.posting_date }}</div>{% endif %}
+ </div>
+</div>
+<div class="cols">
+ {% if not transfer %}<div>
+  <h2>{{ "Received from" if inflow else "Paid to" }}</h2>
+  <div class="strong" dir="auto">{{ party_rec.customer_name or party_rec.supplier_name or doc.party_name }}</div>
+  {% set paddr = party_rec.billing_address or party_rec.address %}{% if paddr %}<div class="pre" dir="auto">{{ paddr }}</div>{% endif %}
+  {% if party_rec.tax_id %}<div><span class="muted">Tax ID</span> {{ party_rec.tax_id }}</div>{% endif %}
+ </div>{% endif %}
+ <div><h2>Details</h2><dl class="kv">
+  {% if transfer %}<dt>From account</dt><dd dir="auto">{{ dt.bank_account }}</dd>
+  <dt>To account</dt><dd dir="auto">{{ dt.paid_to }}</dd>
+  {% else %}<dt>{{ "Paid into" if inflow else "Paid from" }}</dt><dd dir="auto">{{ dt.bank_account }}</dd>{% endif %}
+  {% if doc.reference_no %}<dt>Cheque / reference no</dt><dd dir="auto">{{ doc.reference_no }}</dd>{% endif %}
+  {% if doc.reference_date %}<dt>Reference date</dt><dd>{{ doc.reference_date }}</dd>{% endif %}
+  {% if doc.is_refund %}<dt>Type</dt><dd>Refund of credit</dd>{% endif %}
+ </dl></div>
+</div>
+
+<table class="totals keep" style="max-width:420px">
+ <tr class="grand"><td>{{ "Amount sent" if transfer else "Amount" }} {{ cur }}</td><td>{{ doc.paid_amount|money(prec) }}</td></tr>
+ {% if transfer and doc.received_amount and (dt.received_currency or "") != cur %}<tr><td>Amount received {{ dt.received_currency or "" }}</td><td>{{ doc.received_amount|money(rc.precision if rc.precision is not none else 2) }}</td></tr>
+ {% elif transfer and doc.received_amount and doc.received_amount|float != doc.paid_amount|float %}<tr><td>Amount received</td><td>{{ doc.received_amount|money(prec) }}</td></tr>{% endif %}
+</table>
+{% set co_cur = (links.company or {})._titles.default_currency if (links.company or {})._titles else none %}
+{% if doc.exchange_rate and doc.exchange_rate|float != 1 %}<div class="muted small">Exchange rate: 1 {{ cur }} = {{ dec(doc.exchange_rate) }} {{ co_cur or "" }}</div>{% endif %}
+{% if transfer and doc.target_exchange_rate and doc.target_exchange_rate|float != 1 %}<div class="muted small">Exchange rate of the receiving account: 1 {{ dt.received_currency or "" }} = {{ dec(doc.target_exchange_rate) }} {{ co_cur or "" }}</div>{% endif %}
+
+{% if doc.references %}
+<h2 style="margin-top:12px">{{ "Settles these invoices" if not doc.is_refund else "Settles" }}</h2>
+<table class="lines">
+ <thead><tr><th class="n">#</th><th>Document</th><th>Due</th><th class="num">Outstanding</th><th class="num">Settled</th></tr></thead>
+ <tbody>{% for r in doc.references %}<tr>
+  <td class="n">{{ loop.index }}</td>
+  <td dir="auto">{{ r.invoice_number or r.invoice }}{% if r.invoice_type %} <span class="muted small">({{ r.invoice_type }})</span>{% endif %}</td>
+  <td>{{ r.due_date or "" }}</td>
+  <td class="num">{{ r.outstanding|money(prec) }}</td>
+  <td class="num">{{ r.allocated_amount|money(prec) }}</td>
+ </tr>{% endfor %}</tbody>
+</table>
+{% endif %}
+{% if doc.deductions %}
+<h2 style="margin-top:12px">Deductions and charges</h2>
+<table class="lines">
+ <thead><tr><th>Account</th><th>Remarks</th><th class="num">Amount</th></tr></thead>
+ <tbody>{% for d in doc.deductions %}<tr><td dir="auto">{{ (d._titles or {}).account }}</td><td dir="auto">{{ d.remarks or "" }}</td><td class="num">{{ d.amount|money(prec) }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endif %}
+{% if doc.references and doc.unallocated_amount|float > 0 %}<div class="small">On account, not yet settled against an invoice: <b>{{ doc.unallocated_amount|money(prec) }} {{ cur }}</b></div>
+{% elif not doc.references and not transfer and doc.docstatus == 1 %}<div class="muted small">Not settled against an invoice: held on account.</div>{% endif %}
+{% if doc.remarks %}<div class="box keep"><h2>Remarks</h2><div class="pre small" dir="auto">{{ doc.remarks }}</div></div>{% endif %}
+<div class="sign keep"><div>Prepared by</div><div>{{ "Received by" if inflow and not transfer else "Authorised by" }}</div></div>
+<div class="foot small">{% if co.acc_print_footer %}<div class="pre" dir="auto">{{ co.acc_print_footer }}</div>{% endif %}<div class="muted">Printed {{ now }}</div></div>
+</body></html>
