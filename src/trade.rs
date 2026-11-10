@@ -202,6 +202,59 @@ async fn write_valuation(hc: &mut HookCtx<'_>, entity: &str, posted: &[Posted]) 
     Ok(())
 }
 
+// ─────────────────────────── lines without an item ───────────────────────────
+
+/// What a line is called in a refusal: "line 2 (Rent for May)".
+fn line_label(i: usize, r: &Doc) -> String {
+    match s(r, "item_name").or(s(r, "description")).filter(|x| !x.trim().is_empty()) {
+        Some(x) => format!("line {} ({})", i + 1, x.lines().next().unwrap_or(x).trim()),
+        None => format!("line {}", i + 1),
+    }
+}
+
+/// Every line says what it is: an item, or a description. On an invoice (`account_field` given),
+/// each line's account must be one a sale or purchase can be booked to: not a group, nor an
+/// account that only parties, money or stock move (a receivable or payable, a bank or cash
+/// account, stock), and a line without an item needs one.
+async fn check_lines(hc: &mut HookCtx<'_>, doc: &Doc, account_field: Option<&str>) -> Result<()> {
+    let company = id(doc, "company");
+    let mut errors = Vec::new();
+    for (i, r) in rows(doc, "items").iter().enumerate() {
+        let free = id(r, "item").is_none();
+        if free && s(r, "description").is_none_or(|x| x.trim().is_empty()) {
+            errors.push(FieldError::new("description", format!("{} has no item: say what it is in its description", line_label(i, r))).in_row("items", i));
+            continue;
+        }
+        let Some(field) = account_field else { continue };
+        let Some(acc) = id(r, field) else {
+            if free {
+                errors.push(
+                    FieldError::new(field, format!("{} has neither an item nor an account: choose the account it is booked to", line_label(i, r))).in_row("items", i),
+                );
+            }
+            continue;
+        };
+        let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
+        let name = s(&a, "account_name").unwrap_or("this account");
+        let why = if id(&a, "company") != company {
+            Some("it belongs to another company")
+        } else if b(&a, "is_group") {
+            Some("it is a group of accounts; choose one under it")
+        } else {
+            match s(&a, "account_type") {
+                Some("Receivable" | "Payable") => Some("what a party owes goes there through the invoice itself"),
+                Some("Bank" | "Cash") => Some("money goes there through a payment entry"),
+                Some("Stock") => Some("stock is valued there by its receipts and deliveries"),
+                _ => None,
+            }
+        };
+        if let Some(why) = why {
+            errors.push(FieldError::new(field, format!("{} cannot be booked to {name}: {why}", line_label(i, r))).in_row("items", i));
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
+}
+
 // ───────────────────────────── returns ─────────────────────────────
 //
 // A return (a delivery or receipt returned, a credit note, a supplier's debit note) names its
@@ -290,7 +343,19 @@ async fn link_return(hc: &mut HookCtx<'_>, side: Side, entity: &str, doc: &mut D
     let mut items = rows(doc, "items");
     let mut errors = Vec::new();
     for (i, r) in items.iter_mut().enumerate() {
-        let Some(item) = id(r, "item") else { continue };
+        let Some(item) = id(r, "item") else {
+            // A line without an item gives back one of the original's without one: the line it
+            // names, else the first with its description that has something left to give back.
+            let tied = id(r, "return_line").and_then(|l| lines.iter().find(|o| id(o, "id") == Some(l)));
+            if tied.is_some_and(|o| id(o, "item").is_none()) {
+                continue;
+            }
+            let what = s(r, "description").map(str::trim);
+            let same: Vec<&Doc> = lines.iter().filter(|o| id(o, "item").is_none() && s(o, "description").map(str::trim) == what).collect();
+            let line = same.iter().find(|o| d(o, "net_amount").abs() - d(o, "credited_amount") > Decimal::ZERO).or(same.first()).and_then(|o| s(o, "id"));
+            set(r, "return_line", line.map(|l| json!(l)).unwrap_or(Value::Null));
+            continue;
+        };
         let tied = id(r, "return_line").and_then(|l| lines.iter().find(|o| id(o, "id") == Some(l)));
         if tied.is_some_and(|o| id(o, "item") == Some(item)) {
             continue;
@@ -521,6 +586,10 @@ impl DocHook for OrderHook {
         Ok(())
     }
 
+    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        check_lines(hc, doc, None).await
+    }
+
     async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         crate::localization::check(hc, doc, self.0).await
     }
@@ -572,6 +641,15 @@ impl DocHook for OrderHook {
             &MapSpec { done_field: done, link_field: n.order_link, line_field: n.order_line, header: &header, line_fields: LINE_FIELDS },
             &extra,
         )?;
+        if target == n.shipment {
+            // A line without an item is a service: billed, never delivered or received.
+            if let Some(Value::Array(lines)) = input.get_mut("items") {
+                lines.retain(|l| l.get("item").is_some_and(|v| !v.is_null()));
+                if lines.is_empty() {
+                    return Err(Error::invalid("nothing on this order is delivered or received: its open lines have no item and are billed on an invoice"));
+                }
+            }
+        }
         if target == n.invoice && self.0 == Side::Buying {
             input.insert("bill_no".into(), json!(format!("PENDING-{}", s(doc, "number").unwrap_or_default())));
         }
@@ -763,7 +841,9 @@ async fn inter_company_invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value>
         supplier.ok_or_else(|| Error::invalid(format!("no supplier represents {seller_name}: make one, Represents Company {seller_name}, to buy from")))?;
     let lines: Vec<Value> = rows(doc, "items")
         .iter()
-        .map(|r| json!({"item": r.get("item"), "qty": r.get("qty"), "uom": r.get("uom"), "price_list_rate": r.get("rate"), "discount_percent": "0"}))
+        .map(|r| {
+            json!({"item": r.get("item"), "description": r.get("description"), "qty": r.get("qty"), "uom": r.get("uom"), "price_list_rate": r.get("rate"), "discount_percent": "0"})
+        })
         .collect();
     let mut input = Doc::new();
     for (k, v) in [
@@ -874,7 +954,7 @@ impl DocHook for InvoiceHook {
             if q.is_zero() || (ret && q > Decimal::ZERO) || (!ret && q < Decimal::ZERO) {
                 errors.push(FieldError::new("qty", if ret { "returns need negative quantities" } else { "quantity must be positive" }).in_row("items", i));
             }
-            if b(doc, "update_stock") && id(r, "warehouse").is_none() {
+            if b(doc, "update_stock") && id(r, "item").is_some() && id(r, "warehouse").is_none() {
                 errors.push(FieldError::new("warehouse", "is required when updating stock").in_row("items", i));
             }
         }
@@ -890,6 +970,7 @@ impl DocHook for InvoiceHook {
         if !errors.is_empty() {
             return Err(Error::Validation(errors));
         }
+        check_lines(hc, doc, Some(if self.0 == Side::Selling { "income_account" } else { "expense_account" })).await?;
         if self.0 == Side::Buying
             && let (Some(supplier), Some(bill)) = (id(doc, "supplier"), s(doc, "bill_no"))
         {

@@ -20,9 +20,14 @@ pub async fn refresh_order(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, doc
     let order = k.get_tx(&sctx, tx, entity, doc_id, false).await?;
     let lines = rows(&order, "items");
     let total: Decimal = lines.iter().map(|l| d(l, "qty")).sum();
-    let done: Decimal = lines.iter().map(|l| d(l, fulfil_field).min(d(l, "qty"))).sum();
+    // Lines without an item (services, fees) are billed, never delivered or received: an order of
+    // them alone has nothing to deliver.
+    let goods: Vec<&Doc> = lines.iter().filter(|l| l.get("item").is_some_and(|v| !v.is_null())).collect();
+    let to_move: Decimal = goods.iter().map(|l| d(l, "qty")).sum();
+    let done: Decimal = goods.iter().map(|l| d(l, fulfil_field).min(d(l, "qty"))).sum();
     let billed: Decimal = lines.iter().map(|l| d(l, "billed_qty").min(d(l, "qty"))).sum();
-    let (pf, pb) = (pct(done, total), pct(billed, total));
+    let pf = if goods.is_empty() { Decimal::ONE_HUNDRED } else { pct(done, to_move) };
+    let pb = pct(billed, total);
     let docstatus = d(&order, "docstatus");
     let current = s(&order, "status").unwrap_or_default();
     let (to_fulfil, both) = if fulfil_field == "delivered_qty" { ("To Deliver", "To Deliver and Bill") } else { ("To Receive", "To Receive and Bill") };
