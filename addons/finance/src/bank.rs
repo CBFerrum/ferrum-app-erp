@@ -321,9 +321,16 @@ pub async fn vouchers(hc: &mut HookCtx<'_>, bank: &Bank, from: NaiveDate, to: Na
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        "select p.id, p.number, p.posting_date, p.payment_type, p.paid_amount, p.base_paid_amount, c.code, p.party_name, p.reference_no, p.remarks \
-             from e_payment_entry p left join e_currency c on c.tenant_id = p.tenant_id and c.id = p.currency \
-             where p.tenant_id = $1 and p.company = $2 and p.docstatus = 1 and p.bank_account = $3 and p.posting_date between $4 and $5 \
+        // A transfer between the company's own accounts is money out of the one it leaves and money
+        // into the one it goes to, each in that account's currency.
+        "select p.id, p.number, p.posting_date, case when p.bank_account = $3 then p.payment_type else 'Receive' end, \
+             case when p.bank_account = $3 then p.paid_amount else p.received_amount end, \
+             case when p.bank_account = $3 then p.base_paid_amount else p.base_received_amount end, \
+             c.code, p.party_name, p.reference_no, p.remarks \
+             from e_payment_entry p left join e_currency c on c.tenant_id = p.tenant_id \
+             and c.id = case when p.bank_account = $3 then p.currency else p.received_currency end \
+             where p.tenant_id = $1 and p.company = $2 and p.docstatus = 1 \
+             and (p.bank_account = $3 or (p.payment_type = 'Internal Transfer' and p.paid_to = $3)) and p.posting_date between $4 and $5 \
              and ($6::uuid is null or p.id = $6)",
     )
     .bind(hc.ctx.tenant)
@@ -343,7 +350,7 @@ pub async fn vouchers(hc: &mut HookCtx<'_>, bank: &Bank, from: NaiveDate, to: Na
             None
         };
         let Some(amount) = amount.filter(|a| !a.is_zero()) else { continue };
-        let signed = if kind.as_deref() == Some("Pay") { -amount } else { amount };
+        let signed = if matches!(kind.as_deref(), Some("Pay" | "Internal Transfer")) { -amount } else { amount };
         out.push(Voucher { entity: "PaymentEntry", id: vid, number, date, amount: signed, party, reference, remark });
     }
     // Journal entries are booked in the company currency.
@@ -369,16 +376,19 @@ pub async fn vouchers(hc: &mut HookCtx<'_>, bank: &Bank, from: NaiveDate, to: Na
     Ok(out)
 }
 
-/// How much of each voucher submitted bank transactions have already cleared.
-async fn cleared(hc: &mut HookCtx<'_>, ids: &[Uuid]) -> Result<HashMap<Uuid, Decimal>> {
+/// How much of each voucher submitted bank transactions of `bank` have already cleared (a transfer
+/// is cleared once on each of its two accounts).
+async fn cleared(hc: &mut HookCtx<'_>, bank: &Bank, ids: &[Uuid]) -> Result<HashMap<Uuid, Decimal>> {
     let keys: Vec<String> = ids.iter().map(Uuid::to_string).collect();
     let rows: Vec<(String, Decimal)> = sqlx::query_as(
         "select a.payment_entry, sum(a.allocated_amount) from e_bank_transaction__allocations a \
          join e_bank_transaction t on t.tenant_id = a.tenant_id and t.id = a.parent_id \
-         where a.tenant_id = $1 and t.docstatus = 1 and a.payment_entry = any($2) group by a.payment_entry",
+         join e_bank_account b on b.tenant_id = t.tenant_id and b.id = t.bank_account \
+         where a.tenant_id = $1 and t.docstatus = 1 and a.payment_entry = any($2) and b.account = $3 group by a.payment_entry",
     )
     .bind(hc.ctx.tenant)
     .bind(&keys)
+    .bind(bank.gl)
     .fetch_all(&mut **hc.tx)
     .await?;
     Ok(rows.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect())
@@ -588,7 +598,7 @@ async fn suggestions(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<
     let bank = bank(hc, id(doc, "bank_account").unwrap_or_default()).await?;
     let candidates = vouchers(hc, &bank, line.on - chrono::Duration::days(window), line.on + chrono::Duration::days(window), None).await?;
     let ids: Vec<Uuid> = candidates.iter().map(|v| v.id).collect();
-    let done = cleared(hc, &ids).await?;
+    let done = cleared(hc, &bank, &ids).await?;
     let ranked = rank(&line, &candidates, &done, window);
     Ok(json!({"unallocated_amount": money(line.open), "suggestions": ranked.iter().take(20).map(Candidate::json).collect::<Vec<_>>()}))
 }
@@ -654,7 +664,7 @@ async fn workbench(hc: &mut HookCtx<'_>, account: &Doc, params: &Value) -> Resul
     // candidates, and those with something left (up to the date) are what the bank has not cleared.
     let bank = bank(hc, ba).await?;
     let everything = vouchers(hc, &bank, ever().0, as_of + chrono::Duration::days(window), None).await?;
-    let done = cleared(hc, &everything.iter().map(|v| v.id).collect::<Vec<_>>()).await?;
+    let done = cleared(hc, &bank, &everything.iter().map(|v| v.id).collect::<Vec<_>>()).await?;
 
     let open: Vec<&(Uuid, Option<String>, NaiveDate, Option<String>, Option<String>, Decimal, Decimal, Decimal, Decimal, Option<String>, i64, Decimal)> =
         lines.iter().filter(|l| l.8 > Decimal::ZERO).collect();
@@ -837,7 +847,7 @@ async fn reconcile(hc: &mut HookCtx<'_>, doc: &Doc, wanted: Vec<(&'static str, U
             let what = if direction > Decimal::ZERO { "a deposit cannot clear a payment out" } else { "a withdrawal cannot clear money received" };
             return Err(Error::Validation(vec![FieldError::new("payment_entry", what).in_row("vouchers", i)]));
         }
-        let before = cleared(hc, &[vid]).await?.get(&vid).copied().unwrap_or_default();
+        let before = cleared(hc, &bank, &[vid]).await?.get(&vid).copied().unwrap_or_default();
         let remaining = v.amount.abs() - before;
         let take = amount.unwrap_or_else(|| remaining.min(left));
         if take <= Decimal::ZERO || take > remaining {
