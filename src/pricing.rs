@@ -354,6 +354,25 @@ fn free_line(row: &mut Doc, doc: &Doc, co: &Company, side: Side, has_child: &dyn
     }
 }
 
+/// On a person's save of a selling document, each stored line's item by line id (empty for a new
+/// document): a line with an item takes its price from the price list or a pricing rule, so a
+/// price a person sends for a new item line, or one whose item changed, is dropped (the kernel
+/// already drops it on a stored line whose item stays, the field being read-only there). A line
+/// without an item keeps its typed price; the engine's own writes (elevated) keep theirs. `None`
+/// when nothing is dropped: buying, whose prices are typed, and the engine.
+async fn typed_prices(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &Doc, side: Side) -> Result<Option<HashMap<String, Option<Uuid>>>> {
+    if side != Side::Selling || ctx.is_system {
+        return Ok(None);
+    }
+    let Some(doc_id) = id(doc, "id") else { return Ok(Some(HashMap::new())) };
+    let stored = match k.get_tx(&crate::util::sys(ctx), tx, &ent.def.name, doc_id, false).await {
+        Ok(d) => d,
+        Err(Error::NotFound(_)) => return Ok(Some(HashMap::new())),
+        Err(e) => return Err(e),
+    };
+    Ok(Some(rows(&stored, "items").iter().filter_map(|r| Some((s(r, "id")?.to_string(), id(r, "item")))).collect()))
+}
+
 /// Fills prices, discounts, item tax rates, taxes and totals. Returns the company for reuse.
 pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<Company> {
     // The addresses the countries' rules read, then their rules (India: the GST template for the
@@ -405,6 +424,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let child_ent = ent.field("items").and_then(|f| f.of.clone()).and_then(|c| ctx.schema.entity(&c).cloned());
     let has_child = |f: &str| child_ent.as_ref().is_some_and(|c| c.field(f).is_some());
     let mut item_cache: HashMap<Uuid, Doc> = HashMap::new();
+    let typed = typed_prices(k, ctx, tx, ent, doc, side).await?;
     let mut items = rows(doc, "items");
     // Each line's item tax rates (by tax account), for the tax breakdown's categories.
     let mut line_rates: Vec<Vec<Doc>> = Vec::with_capacity(items.len());
@@ -420,6 +440,10 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             e.insert(get(k, ctx, tx, "Item", item_id).await?);
         }
         let item = item_cache[&item_id].clone();
+        if typed.as_ref().is_some_and(|stored| stored.get(s(row, "id").unwrap_or_default()) != Some(&Some(item_id))) {
+            // A person's price on a new item line, or one whose item changed, is not theirs to give.
+            set(row, "price_list_rate", money(Decimal::ZERO));
+        }
         line_rates.push(rows(&item, "tax_rates"));
         let qty = d(row, "qty");
         // Units: quantities and prices are per the line's unit; stock moves count stock units.
