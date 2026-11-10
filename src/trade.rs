@@ -3,7 +3,7 @@
 //! (SalesInvoice / PurchaseInvoice), including stock, ledger postings, open items, returns and
 //! the "create next document" actions.
 
-use crate::flow::{self, MapSpec, add_progress_in, create_for_user, created, refresh_billing, refresh_order, sync_invoice_outstanding};
+use crate::flow::{self, MapSpec, QTY_TOLERANCE, add_progress_in, create_for_user, created, refresh_billing, refresh_order, sync_invoice_outstanding};
 use crate::ledger::{self, Entry, Line, OpenItem};
 use crate::pricing::{Side, breakup, calculate};
 use crate::stock::{self, MoveIn, Posted, parse_serials};
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 struct Names {
@@ -123,7 +123,12 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
     let doc_id = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
     let rate = d(doc, "conversion_rate");
     let rate = if rate.is_zero() { Decimal::ONE } else { rate };
-    let sales_return = b(doc, "is_return") && matches!(entity, "DeliveryNote" | "SalesInvoice");
+    let ret = b(doc, "is_return");
+    let sales_return = ret && matches!(entity, "DeliveryNote" | "SalesInvoice");
+    let original = match id(doc, "return_against").filter(|_| ret) {
+        Some(orig) => Some(get(hc.kernel, hc.ctx, hc.tx, entity, orig).await?),
+        None => None,
+    };
     let mut cache = HashMap::new();
     let mut moves = Vec::new();
     for (i, r) in rows(doc, "items").iter().enumerate() {
@@ -136,13 +141,26 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
         if qty.is_zero() {
             continue;
         }
+        // A return moves what its original moved, at the cost it moved at: goods come back at the
+        // cost they left at (never at the selling price), and go back to a supplier at the cost
+        // they came in at. Without an original, at the cost the line states, else today's.
+        let back = match (&original, id(r, "return_line")) {
+            (Some(o), Some(line)) => Some(original_moves(hc, o, entity, line, sales_return, i, r).await?),
+            _ => None,
+        };
+        let mut exact = None;
         let incoming = if qty <= Decimal::ZERO {
+            if let Some(cost) = back.flatten().filter(|_| ret)
+                && !is_fifo(hc, item).await?
+            {
+                exact = Some(round(cost * qty.abs(), co.precision));
+            }
             None
         } else if sales_return {
-            // Goods come back at the cost they left at, never at the selling price.
-            match id(doc, "return_against") {
-                Some(orig) => returned_cost(hc, entity, orig, item).await?,
-                None => None,
+            match (back.flatten(), &original) {
+                (Some(cost), _) => Some(cost),
+                (None, Some(o)) => returned_cost(hc, entity, id(o, "id").unwrap_or_default(), item).await?,
+                (None, None) => Some(d(r, "incoming_rate")).filter(|c| *c > Decimal::ZERO),
             }
         } else {
             let net = if r.get("base_net_amount").is_some_and(|v| !v.is_null()) { d(r, "base_net_amount") } else { d(r, "net_amount") * rate };
@@ -154,6 +172,7 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
             warehouse: wh,
             qty,
             rate: incoming,
+            exact_value: exact,
             batch_no: s(r, "batch_no").map(str::to_string),
             serials: parse_serials(s(r, "serial_no")),
             source_line: id(r, "id"),
@@ -181,6 +200,311 @@ async fn write_valuation(hc: &mut HookCtx<'_>, entity: &str, posted: &[Posted]) 
         }
     }
     Ok(())
+}
+
+// ───────────────────────────── returns ─────────────────────────────
+//
+// A return (a delivery or receipt returned, a credit note, a supplier's debit note) names its
+// original in `return_against`; each of its lines counts against one of the original's lines
+// (`return_line`), which keeps what came back (`returned_qty`) and, on invoices, what was given
+// back before tax (`credited_amount`). A return without an original is a correction with a reason:
+// nothing to count against.
+
+async fn is_fifo(hc: &mut HookCtx<'_>, item: Uuid) -> Result<bool> {
+    let it = get(hc.kernel, hc.ctx, hc.tx, "Item", item).await?;
+    Ok(s(&it, "valuation_method") == Some("FIFO"))
+}
+
+/// The shipment an invoice line was made from, if any: (entity, document, line).
+fn shipment_of(entity: &str, line: &Doc) -> Option<(&'static str, Uuid, Uuid)> {
+    let side = if entity.starts_with("Sales") { &SELLING } else { &BUYING };
+    if entity != side.invoice {
+        return None;
+    }
+    Some((side.shipment, id(line, side.shipment_link)?, s(line, side.shipment_line)?.parse().ok()?))
+}
+
+/// What the original's line moved (issued when `issued`, else received): checks that a return
+/// line's serial numbers and batch are among them, and returns their unit cost (None when the line
+/// moved nothing: the stock went on another document the engine cannot see).
+async fn original_moves(hc: &mut HookCtx<'_>, original: &Doc, entity: &str, line: Uuid, issued: bool, i: usize, r: &Doc) -> Result<Option<Decimal>> {
+    let orig = id(original, "id").unwrap_or_default();
+    // The original's own moves, else (an invoice made from a delivery or receipt) that shipment's.
+    let mut sources = vec![("", orig, line)];
+    if let Some(o) = rows(original, "items").iter().find(|o| id(o, "id") == Some(line))
+        && let Some(sh) = shipment_of(entity, o)
+    {
+        sources.push(sh);
+    }
+    let mut moved: Vec<(Decimal, Decimal, Option<String>, Option<String>)> = Vec::new();
+    for (source, doc, line) in sources {
+        moved = sqlx::query_as(
+            "select qty, value, batch_no, serial_no from stock_move where tenant_id = $1 and source_entity = $2 and source_id = $3 \
+             and source_line_id = $4 and reversal_of is null and (qty < 0) = $5",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(if source.is_empty() { entity } else { source })
+        .bind(doc)
+        .bind(line)
+        .bind(issued)
+        .fetch_all(&mut **hc.tx)
+        .await?;
+        if !moved.is_empty() {
+            break;
+        }
+    }
+    if moved.is_empty() {
+        return Ok(None);
+    }
+    let number = s(original, "number").unwrap_or_default();
+    let what = s(r, "item_name").unwrap_or("this item");
+    let verb = if issued { "left on" } else { "came in on" };
+    let serials: Vec<String> = moved.iter().flat_map(|m| parse_serials(m.3.as_deref())).collect();
+    if let Some(sn) = parse_serials(s(r, "serial_no")).into_iter().find(|sn| !serials.contains(sn)) {
+        return Err(Error::Validation(vec![
+            FieldError::new("serial_no", format!("serial {sn} of {what} never {verb} {number}: only what it moved can be returned")).in_row("items", i),
+        ]));
+    }
+    if let Some(batch) = s(r, "batch_no").filter(|x| !x.is_empty())
+        && moved.iter().any(|m| m.2.is_some())
+        && !moved.iter().any(|m| m.2.as_deref() == Some(batch))
+    {
+        return Err(Error::Validation(vec![
+            FieldError::new("batch_no", format!("batch {batch} of {what} never {verb} {number}: only what it moved can be returned")).in_row("items", i),
+        ]));
+    }
+    let (qty, value) = moved.iter().fold((Decimal::ZERO, Decimal::ZERO), |(q, v), m| (q + m.0, v + m.1));
+    Ok((!qty.is_zero()).then(|| (value / qty).abs().round_dp(12)))
+}
+
+/// On saving a return against an original: the original must be a submitted document of the same
+/// party that is not itself a return, the return takes its currency and rate unless it names
+/// them, and each line is tied to the original's line it gives back (the first with its item that
+/// has something left, when the line does not say). An item the original does not have is refused
+/// on a delivery or receipt returned; on a credit or debit note it counts against no line.
+async fn link_return(hc: &mut HookCtx<'_>, side: Side, entity: &str, doc: &mut Doc) -> Result<()> {
+    let Some(orig) = id(doc, "return_against").filter(|_| b(doc, "is_return")) else { return Ok(()) };
+    let original = original_of(hc, side, entity, doc, "return_against", orig).await?;
+    let number = s(&original, "number").unwrap_or("this document").to_string();
+    let lines = rows(&original, "items");
+    let mut items = rows(doc, "items");
+    let mut errors = Vec::new();
+    for (i, r) in items.iter_mut().enumerate() {
+        let Some(item) = id(r, "item") else { continue };
+        let tied = id(r, "return_line").and_then(|l| lines.iter().find(|o| id(o, "id") == Some(l)));
+        if tied.is_some_and(|o| id(o, "item") == Some(item)) {
+            continue;
+        }
+        let same: Vec<&Doc> = lines.iter().filter(|o| id(o, "item") == Some(item)).collect();
+        match same.iter().find(|o| d(o, "qty") - d(o, "returned_qty") > QTY_TOLERANCE).or(same.first()).and_then(|o| s(o, "id")) {
+            Some(line) => set(r, "return_line", line.to_string()),
+            // A note may credit, against an invoice, what was billed on another (a subscription's
+            // seats billed on a supplementary invoice, credited against the period's): it counts
+            // against no line. Goods never come back on a delivery or receipt that did not move them.
+            None if entity == names(side).invoice => set(r, "return_line", Value::Null),
+            None => {
+                let what = s(r, "item_name").unwrap_or("this item").to_string();
+                errors.push(FieldError::new("item", format!("{what} is not on {number}: a return gives back what its original has")).in_row("items", i));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(Error::Validation(errors));
+    }
+    set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
+    Ok(())
+}
+
+/// The original a return or a debit note (`field`) is made against: a submitted document of the same
+/// party that is not itself a return. The new one takes its currency and rate unless it names them.
+async fn original_of(hc: &mut HookCtx<'_>, side: Side, entity: &str, doc: &mut Doc, field: &str, orig: Uuid) -> Result<Doc> {
+    let original = get(hc.kernel, hc.ctx, hc.tx, entity, orig).await?;
+    let label = hc.kernel.entity(hc.ctx, entity)?.def.label.clone();
+    let number = s(&original, "number").unwrap_or("this document").to_string();
+    let what = if field == "return_against" { "a return" } else { "a debit note" };
+    let refuse = |m: String| Err(Error::field(field, m));
+    match d(&original, "docstatus") {
+        x if x == Decimal::ONE => {}
+        x if x.is_zero() => return refuse(format!("{label} {number} is a draft: {what} is made against a submitted one")),
+        _ => return refuse(format!("{label} {number} is cancelled: {what} cannot be made against it")),
+    }
+    if b(&original, "is_return") {
+        return refuse(format!("{number} is itself a return: make {what} against the original"));
+    }
+    let party = names(side).party;
+    if id(&original, party) != id(doc, party) {
+        return Err(Error::field(party, format!("{number} is another {party}'s: {what} is for the same {party}")));
+    }
+    match id(doc, "currency") {
+        None => {
+            for f in ["currency", "conversion_rate"] {
+                set(doc, f, original.get(f).cloned().unwrap_or(Value::Null));
+            }
+        }
+        Some(c) if Some(c) != id(&original, "currency") => return Err(Error::field("currency", format!("{what} is in the currency of {number}"))),
+        Some(_) => {}
+    }
+    Ok(original)
+}
+
+/// Adds a customer's debit note to what its original shows charged on top (`sign` 1), or takes a
+/// cancelled one off (-1).
+async fn count_debit_note(hc: &mut HookCtx<'_>, doc: &Doc, sign: Decimal) -> Result<()> {
+    let Some(orig) = id(doc, "debit_note_against").filter(|_| b(doc, "is_debit_note")) else { return Ok(()) };
+    let original = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", orig, true).await?;
+    let mut v = Doc::new();
+    v.insert("debit_noted".into(), money((d(&original, "debit_noted") + sign * d(doc, "rounded_total")).max(Decimal::ZERO)));
+    hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", orig, v).await
+}
+
+/// Counts a submitted return on its original's lines (`sign` 1), or takes a cancelled one off
+/// (`sign` -1). Refused when a line would take back more than its original has left: quantity
+/// for goods, and on invoices the amount before tax (exactly for a credit of price alone; one
+/// cent over is let through for goods, so that several partial returns' rounding adds up).
+async fn count_return(hc: &mut HookCtx<'_>, entity: &str, doc: &Doc, sign: Decimal) -> Result<()> {
+    let Some(orig) = id(doc, "return_against").filter(|_| b(doc, "is_return")) else { return Ok(()) };
+    let invoice = matches!(entity, "SalesInvoice" | "PurchaseInvoice");
+    let price_only = b(doc, "price_only");
+    let original = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, entity, orig, true).await?;
+    let number = s(&original, "number").unwrap_or_default().to_string();
+    let lines = rows(&original, "items");
+    let co = company(hc.kernel, hc.ctx, hc.tx, id(&original, "company").unwrap_or_default()).await?;
+    let (_, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(&original, "currency").unwrap_or(co.currency_id)).await?;
+    let mut taken: BTreeMap<Uuid, (Decimal, Decimal)> = BTreeMap::new();
+    for r in rows(doc, "items") {
+        let Some(line) = id(&r, "return_line") else { continue };
+        let Some(o) = lines.iter().find(|o| id(o, "id") == Some(line)) else { continue };
+        // In the original line's unit: a box of 12 returned against a line in pieces is 12.
+        let q = (d(&r, "qty").abs() * unit_factor(&r) / unit_factor(o)).round_dp(9);
+        let t = taken.entry(line).or_default();
+        t.0 += q;
+        t.1 += d(&r, "net_amount").abs();
+    }
+    for (line, (q, amount)) in taken {
+        let Some(o) = lines.iter().find(|o| id(o, "id") == Some(line)) else { continue };
+        let what = s(o, "item_name").unwrap_or("item");
+        let mut v = Doc::new();
+        if !price_only {
+            let (had, done) = (d(o, "qty"), d(o, "returned_qty"));
+            let mut now = done + sign * q;
+            if (now - had).abs() <= QTY_TOLERANCE {
+                now = had;
+            }
+            if sign > Decimal::ZERO && now > had {
+                let left = (had - done).max(Decimal::ZERO);
+                return Err(Error::invalid(format!(
+                    "{what}: {} of the {} on {number} can still be returned, and this return has {}",
+                    left.normalize(),
+                    had.normalize(),
+                    q.normalize()
+                )));
+            }
+            v.insert("returned_qty".into(), money(now.max(Decimal::ZERO)));
+        }
+        if invoice {
+            let (had, done) = (d(o, "net_amount").abs(), d(o, "credited_amount"));
+            let now = done + sign * amount;
+            let slack = if price_only { Decimal::ZERO } else { Decimal::new(1, precision) };
+            if sign > Decimal::ZERO && now > had + slack {
+                let left = (had - done).max(Decimal::ZERO);
+                return Err(Error::invalid(format!(
+                    "{what}: {} of the {} billed on {number} can still be given back, and this note gives back {}",
+                    left.normalize(),
+                    had.normalize(),
+                    amount.normalize()
+                )));
+            }
+            v.insert("credited_amount".into(), money(now.max(Decimal::ZERO)));
+        }
+        hc.kernel.set_child_values_tx(&sys(hc.ctx), hc.tx, entity, "items", line, v).await?;
+    }
+    Ok(())
+}
+
+/// An original with returns counted against it stays until they are cancelled.
+fn has_returns(doc: &Doc) -> Result<()> {
+    if rows(doc, "items").iter().any(|r| d(r, "returned_qty") > Decimal::ZERO || d(r, "credited_amount") > Decimal::ZERO) {
+        return Err(Error::invalid("returns are made against this document; cancel those returns first"));
+    }
+    Ok(())
+}
+
+/// The draft return of an original: its lines, prices, taxes, currency and rate, for what is still
+/// returnable. With `percent`, a credit (or debit) of price alone: that share of each line's price
+/// for the quantity the party still holds, and no goods move.
+fn return_input(hc: &HookCtx<'_>, side: Side, entity: &str, doc: &Doc, percent: Option<Decimal>) -> Result<Doc> {
+    let n = names(side);
+    let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let invoice = entity == n.invoice;
+    let mut header = header_fields(side);
+    if invoice {
+        header.push("update_stock");
+    }
+    let mut line_fields = LINE_FIELDS.to_vec();
+    if !invoice {
+        // A returned delivery or receipt takes back what its order shows delivered or received.
+        line_fields.extend([n.order_link, n.order_line]);
+    }
+    let extra = flow::shared_line_fields(&hc.ctx.schema, entity, entity);
+    let mut input = flow::map_document_with(
+        doc,
+        &MapSpec { done_field: "returned_qty", link_field: "return_against", line_field: "return_line", header: &header, line_fields: &line_fields },
+        &extra,
+    )
+    .map_err(|_| Error::invalid(format!("everything on {} has already been returned", s(doc, "number").unwrap_or("it"))))?;
+    let originals = rows(doc, "items");
+    let mut share_num = Decimal::ZERO;
+    if let Some(Value::Array(lines)) = input.get_mut("items") {
+        for l in lines.iter_mut() {
+            let Value::Object(m) = l else { continue };
+            m.remove("return_against");
+            let o = originals.iter().find(|o| s(o, "id") == s(m, "return_line")).cloned().unwrap_or_default();
+            let q = d(m, "qty");
+            if !d(&o, "qty").is_zero() {
+                share_num += d(&o, "net_amount") * q / d(&o, "qty");
+            }
+            if let Some(p) = percent {
+                m.insert("price_list_rate".into(), money((d(&o, "price_list_rate") * p / Decimal::ONE_HUNDRED).round_dp(9)));
+            }
+            if invoice {
+                m.insert("qty".into(), money(-q));
+            }
+        }
+    }
+    // A fixed (Actual) charge is given back in the share of the lines given back, the other way.
+    let net = d(doc, "net_total");
+    let mut share = if net.is_zero() { Decimal::ONE } else { (share_num / net).min(Decimal::ONE) };
+    if let Some(p) = percent {
+        share *= p / Decimal::ONE_HUNDRED;
+    }
+    if let Some(Value::Array(taxes)) = input.get_mut("taxes") {
+        for t in taxes.iter_mut().filter_map(Value::as_object_mut) {
+            if s(t, "charge_type") == Some("Actual") {
+                let amount = (-d(t, "amount") * share).round_dp(9);
+                t.insert("amount".into(), money(amount));
+            }
+        }
+    }
+    input.insert("is_return".into(), json!(true));
+    input.insert("return_against".into(), json!(oid.to_string()));
+    if percent.is_some() {
+        input.insert("price_only".into(), json!(true));
+        input.insert("update_stock".into(), json!(false));
+    }
+    Ok(input)
+}
+
+/// A percentage given to an action (`credit_percent`), when one is: above 0 and at most 100.
+fn percent_param(params: &Value, name: &str) -> Result<Option<Decimal>> {
+    let raw = match params.get(name) {
+        Some(Value::String(x)) if !x.trim().is_empty() => x.trim().to_string(),
+        Some(Value::Number(x)) => x.to_string(),
+        _ => return Ok(None),
+    };
+    match raw.trim_end_matches('%').trim().parse::<Decimal>() {
+        Ok(p) if p > Decimal::ZERO && p <= Decimal::ONE_HUNDRED => Ok(Some(p)),
+        _ => Err(Error::field(name, "a share of the price above 0 and at most 100")),
+    }
 }
 
 // ───────────────────────────── orders ─────────────────────────────
@@ -263,6 +587,7 @@ pub struct ShipmentHook(pub Side);
 #[async_trait]
 impl DocHook for ShipmentHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+        link_return(hc, self.0, names(self.0).shipment, doc).await?;
         calculate(hc.kernel, hc.ctx, hc.tx, hc.entity, doc, self.0).await?;
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
@@ -287,6 +612,7 @@ impl DocHook for ShipmentHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        count_return(hc, n.shipment, doc, Decimal::ONE).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let ret = b(doc, "is_return");
         // Selling issues stock (returns receive it back); buying receives (returns issue).
@@ -328,7 +654,7 @@ impl DocHook for ShipmentHook {
         if rows(doc, "items").iter().any(|r| d(r, "billed_qty") > Decimal::ZERO) {
             return Err(Error::invalid("cancel the invoices made against this document first"));
         }
-        Ok(())
+        has_returns(doc)
     }
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -336,6 +662,7 @@ impl DocHook for ShipmentHook {
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        count_return(hc, n.shipment, doc, -Decimal::ONE).await?;
         stock::reverse_moves(hc.tx, hc.ctx, &co, n.shipment, sid, on, ts).await?;
         ledger::reverse(hc.tx, hc.ctx, n.shipment, sid, on, co.precision).await?;
         let sign = if b(doc, "is_return") { Decimal::ONE } else { -Decimal::ONE };
@@ -356,6 +683,14 @@ impl DocHook for ShipmentHook {
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
         let n = names(self.0);
+        if matches!(name, "make_sales_return" | "make_purchase_return") {
+            if b(doc, "is_return") {
+                return Err(Error::invalid("this is itself a return: make the return against the original"));
+            }
+            let input = return_input(hc, self.0, n.shipment, doc, None)?;
+            let made = create_for_user(hc, n.shipment, input).await?;
+            return Ok(Some(created(n.shipment, &made)));
+        }
         if name != n.make_invoice {
             return Ok(None);
         }
@@ -448,6 +783,44 @@ async fn inter_company_invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value>
     Ok(created("PurchaseInvoice", &made))
 }
 
+// ─────────────────────────── a customer's debit note ───────────────────────────
+
+/// A debit note to a customer: an invoice charging more on a submitted one (a price increase,
+/// something charged short), linked to it. Its lines are the original's, at `percent` of their
+/// prices when given (a fixed charge in the same share), else as invoiced for the user to change.
+async fn debit_note(hc: &mut HookCtx<'_>, doc: &Doc, percent: Option<Decimal>) -> Result<Value> {
+    if b(doc, "is_return") {
+        return Err(Error::invalid("a credit note takes no debit note: make it against the original invoice"));
+    }
+    let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let extra = flow::shared_line_fields(&hc.ctx.schema, "SalesInvoice", "SalesInvoice");
+    let spec =
+        MapSpec { done_field: "__none__", link_field: "__against", line_field: "__line", header: &header_fields(Side::Selling), line_fields: LINE_FIELDS };
+    let mut input = flow::map_document_with(doc, &spec, &extra)?;
+    let share = percent.map(|p| p / Decimal::ONE_HUNDRED);
+    if let Some(Value::Array(lines)) = input.get_mut("items") {
+        for m in lines.iter_mut().filter_map(Value::as_object_mut) {
+            m.remove("__against");
+            m.remove("__line");
+            if let Some(f) = share {
+                m.insert("price_list_rate".into(), money((d(m, "price_list_rate") * f).round_dp(9)));
+            }
+        }
+    }
+    if let Some(Value::Array(taxes)) = input.get_mut("taxes") {
+        for t in taxes.iter_mut().filter_map(Value::as_object_mut) {
+            if s(t, "charge_type") == Some("Actual") {
+                let amount = (d(t, "amount") * share.unwrap_or_default()).round_dp(9);
+                t.insert("amount".into(), money(amount));
+            }
+        }
+    }
+    input.insert("is_debit_note".into(), json!(true));
+    input.insert("debit_note_against".into(), json!(oid.to_string()));
+    let made = create_for_user(hc, "SalesInvoice", input).await?;
+    Ok(created("SalesInvoice", &made))
+}
+
 // ─────────────────────────── invoices ───────────────────────────
 
 pub struct InvoiceHook(pub Side);
@@ -465,6 +838,12 @@ impl InvoiceHook {
 impl DocHook for InvoiceHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let n = names(self.0);
+        link_return(hc, self.0, n.invoice, doc).await?;
+        if b(doc, "is_debit_note")
+            && let Some(orig) = id(doc, "debit_note_against")
+        {
+            original_of(hc, self.0, n.invoice, doc, "debit_note_against", orig).await?;
+        }
         let co = calculate(hc.kernel, hc.ctx, hc.tx, hc.entity, doc, self.0).await?;
         if let Some(pid) = id(doc, n.party) {
             let p = get(hc.kernel, hc.ctx, hc.tx, n.party_entity, pid).await?;
@@ -501,6 +880,12 @@ impl DocHook for InvoiceHook {
         }
         if id(doc, self.party_account_field()).is_none() {
             errors.push(FieldError::new(self.party_account_field(), "no receivable/payable account found; set the company defaults"));
+        }
+        if b(doc, "price_only") && !ret {
+            errors.push(FieldError::new("price_only", "only a credit or debit note gives back price alone"));
+        }
+        if b(doc, "price_only") && b(doc, "update_stock") {
+            errors.push(FieldError::new("update_stock", "a note for price alone moves no goods: untick Update Stock"));
         }
         if !errors.is_empty() {
             return Err(Error::Validation(errors));
@@ -577,6 +962,8 @@ impl DocHook for InvoiceHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        count_return(hc, n.invoice, doc, Decimal::ONE).await?;
+        count_debit_note(hc, doc, Decimal::ONE).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let on = date(doc, "posting_date")?;
         let number = s(doc, "number").map(str::to_string);
@@ -619,7 +1006,10 @@ impl DocHook for InvoiceHook {
                     // Valued by the stock moves below; nothing to book here.
                     continue;
                 }
-                if stock {
+                if stock && b(doc, "price_only") {
+                    // A lower price for goods kept: a price variance, as on a receipt's bill.
+                    account = Some(co.require("stock_adjustment_account", "stock adjustment account")?);
+                } else if stock {
                     if let (Some(pr), Some(pr_line)) = (id(r, "purchase_receipt"), id(r, "pr_line")) {
                         // Clear SRBNB at the receipt's value; the difference is a price variance.
                         let received: Option<(Decimal, Decimal)> = sqlx::query_as(
@@ -797,6 +1187,10 @@ impl DocHook for InvoiceHook {
         if payments > 0 {
             return Err(Error::invalid("payments are allocated to this invoice; cancel those payments first"));
         }
+        has_returns(doc)?;
+        if d(doc, "debit_noted") > Decimal::ZERO {
+            return Err(Error::invalid("debit notes are made against this invoice; cancel those debit notes first"));
+        }
         if self.0 == Side::Selling
             && let Some((number, buyer)) = mirrored(hc, doc, true).await?
         {
@@ -810,6 +1204,8 @@ impl DocHook for InvoiceHook {
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        count_return(hc, n.invoice, doc, -Decimal::ONE).await?;
+        count_debit_note(hc, doc, -Decimal::ONE).await?;
         let touched = ledger::unallocate(hc.tx, hc.ctx, n.invoice, iid, on).await?;
         ledger::cancel_open_item(hc.tx, hc.ctx, iid).await?;
         if b(doc, "update_stock") {
@@ -851,9 +1247,48 @@ impl DocHook for InvoiceHook {
         Ok(())
     }
 
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        match (self.0, name) {
+            // A credit note to a customer; a supplier's debit note (named either way).
+            (Side::Selling, "make_credit_note") | (Side::Buying, "make_debit_note" | "make_credit_note") => {
+                if b(doc, "is_return") {
+                    return Err(Error::invalid("this is itself a return: make the return against the original"));
+                }
+                let percent = percent_param(params, "credit_percent")?;
+                let mut input = return_input(hc, self.0, n.invoice, doc, percent)?;
+                if self.0 == Side::Buying {
+                    // The supplier's credit note number, or the company's own debit note's, replaces it.
+                    let place = Uuid::now_v7().simple().to_string();
+                    input.insert("bill_no".into(), json!(format!("PENDING-{}-{}", s(doc, "number").unwrap_or_default(), &place[place.len() - 6..])));
+                }
+                let c = create_for_user(hc, n.invoice, input).await?;
+                return Ok(Some(created(n.invoice, &c)));
+            }
+            (Side::Selling, "make_debit_note") => return debit_note(hc, doc, percent_param(params, "charge_percent")?).await.map(Some),
+            (_, "make_refund") => {
+                let credit = -d(doc, "outstanding_amount");
+                if !b(doc, "is_return") || credit <= Decimal::ZERO {
+                    return Err(Error::invalid("nothing is left to give back on this note"));
+                }
+                let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+                let mut input = Doc::new();
+                input.insert("company".into(), json!(co.id.to_string()));
+                input.insert("payment_type".into(), json!(if self.0 == Side::Selling { "Pay" } else { "Receive" }));
+                input.insert("party_type".into(), json!(n.party_entity));
+                input.insert(n.party.into(), doc.get(n.party).cloned().unwrap_or(Value::Null));
+                input.insert("currency".into(), doc.get("currency").cloned().unwrap_or(Value::Null));
+                input.insert("paid_amount".into(), money(credit));
+                if let Some(bank) = co.account("default_bank_account") {
+                    input.insert("bank_account".into(), json!(bank.to_string()));
+                }
+                input.insert("references".into(), json!([{"invoice": iid.to_string(), "allocated_amount": credit.to_string()}]));
+                let p = create_for_user(hc, "PaymentEntry", input).await?;
+                return Ok(Some(created("PaymentEntry", &p)));
+            }
+            _ => {}
+        }
         match name {
             "make_payment" => {
                 let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
@@ -871,34 +1306,6 @@ impl DocHook for InvoiceHook {
                 input.insert("references".into(), json!([{"invoice_type": kind, "invoice": iid.to_string(), "allocated_amount": outstanding.to_string()}]));
                 let p = create_for_user(hc, "PaymentEntry", input).await?;
                 Ok(Some(created("PaymentEntry", &p)))
-            }
-            "make_credit_note" => {
-                let extra = flow::shared_line_fields(&hc.ctx.schema, n.invoice, n.invoice);
-                let mut input = flow::map_document_with(
-                    doc,
-                    &MapSpec {
-                        done_field: "__none__",
-                        link_field: n.order_link,
-                        line_field: n.order_line,
-                        header: &header_fields(self.0),
-                        line_fields: LINE_FIELDS,
-                    },
-                    &extra,
-                )?;
-                if let Some(Value::Array(lines)) = input.get_mut("items") {
-                    for l in lines.iter_mut() {
-                        if let Value::Object(m) = l {
-                            let q = d(m, "qty");
-                            m.insert("qty".into(), money(-q));
-                            m.remove(n.order_link);
-                            m.remove(n.order_line);
-                        }
-                    }
-                }
-                input.insert("is_return".into(), json!(true));
-                input.insert("return_against".into(), json!(iid.to_string()));
-                let c = create_for_user(hc, n.invoice, input).await?;
-                Ok(Some(created(n.invoice, &c)))
             }
             "make_inter_company_invoice" if self.0 == Side::Selling => inter_company_invoice(hc, doc).await.map(Some),
             _ => Ok(None),

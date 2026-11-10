@@ -111,6 +111,8 @@
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: returned_qty, type: decimal, read_only: true, no_copy: true, label: Returned Qty, description: What the returns against this delivery took back}
+    - {name: return_line, type: data, read_only: true, hidden: true, no_copy: true, label: Original Line}
     - {name: valuation_rate, type: currency, read_only: true, no_copy: true}
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
@@ -156,6 +158,7 @@
     - {name: vehicle_no, type: data}
   actions:
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
+    - {name: make_sales_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: SalesInvoiceItem
@@ -190,6 +193,11 @@
     - {name: so_line, type: data, read_only: true}
     - {name: delivery_note, type: link, to: DeliveryNote, read_only: true}
     - {name: dn_line, type: data, read_only: true}
+    - {name: returned_qty, type: decimal, read_only: true, no_copy: true, label: Returned Qty, description: What the credit notes against this invoice took back}
+    - {name: credited_amount, type: currency, currency: parent.currency, read_only: true, no_copy: true, label: Credited, description: "What the credit notes against this invoice gave back on the line, before tax"}
+    - {name: return_line, type: data, read_only: true, hidden: true, no_copy: true, label: Original Line}
+    - {name: incoming_rate, type: currency, min: "0", no_copy: true, label: Cost of Goods Returned,
+       description: "Per stock unit, for goods a credit note without an original invoice takes back into stock; their current valuation when empty"}
     - {name: valuation_rate, type: currency, read_only: true, no_copy: true}
     - {name: batch_no, type: data}
     - {name: serial_no, type: text}
@@ -216,6 +224,13 @@
     - {name: due_date, type: date, in_list: true}
     - {name: is_return, type: check, label: Is Return (Credit Note), in_filter: true}
     - {name: return_against, type: link, to: SalesInvoice, visible_if: "doc.is_return"}
+    - {name: price_only, type: check, label: Price Only (no goods come back), visible_if: "doc.is_return",
+       description: "A credit of price alone: a lower price agreed after the sale, a rebate. Nothing comes back into stock"}
+    - {name: return_reason, type: data, label: Reason, visible_if: "doc.is_return || doc.is_debit_note",
+       description: "Why it is credited or charged: needed for a credit note without its original invoice (goodwill, a rebate, a correction from before these books)"}
+    - {name: is_debit_note, type: check, label: Debit Note (supplementary invoice), in_filter: true, no_copy: true,
+       description: "Charges more on an earlier invoice: a price increase, something charged short"}
+    - {name: debit_note_against, type: link, to: SalesInvoice, label: Against Invoice, visible_if: "doc.is_debit_note", no_copy: true}
     - {name: customer_address, type: link, to: Address, label: Billing Address, description: "The customer's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: "Where the goods go: the customer's primary shipping address when empty. Countries' tax rules read its country and region"}
     - {name: update_stock, type: check, description: Deliver stock with this invoice}
@@ -239,6 +254,7 @@
     - {name: base_grand_total, type: currency, read_only: true}
     - {name: base_rounded_total, type: currency, read_only: true}
     - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
+    - {name: debit_noted, type: currency, currency: currency, read_only: true, no_copy: true, label: Debit Notes, description: What the debit notes against this invoice charged on top}
     - {name: debit_to, type: link, to: Account, read_only: true, label: Receivable Account}
     - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Return, Credit Note Issued, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: po_no, type: data, label: Customer PO No}
@@ -247,18 +263,27 @@
     - {name: terms, type: text}
     - {name: remarks, type: text}
   form:
-    - {label: Invoice, fields: [company, customer, customer_name, posting_date, posting_time, due_date, po_no, is_return, return_against]}
+    - {label: Invoice, fields: [company, customer, customer_name, posting_date, posting_time, due_date, po_no, is_return, return_against, price_only, is_debit_note, debit_note_against, return_reason]}
     - {label: Addresses, collapsible: true, fields: [customer_address, ship_to]}
     - {label: Currency & Price, collapsible: true, fields: [currency, conversion_rate, price_list, update_stock, set_warehouse]}
     - {label: Items, fields: [items]}
     - {label: Taxes, fields: [tax_template, taxes, tax_breakdown, discount_percent]}
-    - {label: Totals, fields: [total, discount_amount, net_total, total_taxes, grand_total, rounding_adjustment, rounded_total, outstanding_amount, status]}
+    - {label: Totals, fields: [total, discount_amount, net_total, total_taxes, grand_total, rounding_adjustment, rounded_total, outstanding_amount, debit_noted, status]}
     - {label: More, collapsible: true, fields: [debit_to, base_net_total, base_grand_total, base_rounded_total, project, cost_center, terms, remarks]}
   rules:
     - {name: due_after_posting, check: "doc.due_date == null || doc.due_date >= doc.posting_date", message: "Due date cannot be before the posting date"}
-    - {name: return_needs_source, check: "!doc.is_return || doc.return_against != null", message: "A credit note must reference the original invoice", on: submit}
+    - {name: return_needs_source, check: "!doc.is_return || doc.return_against != null || (doc.return_reason != null && doc.return_reason != '')", on: submit,
+       message: "A credit note without its original invoice needs a reason: goodwill, a rebate, a correction from before these books"}
+    - {name: debit_note_needs_source, check: "!doc.is_debit_note || (doc.debit_note_against != null && !doc.is_return)", on: submit,
+       message: "A debit note names the invoice it charges more on, and is not a credit note"}
   actions:
     - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
-    - {name: make_credit_note, label: Create Credit Note, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0"}
+    - {name: make_credit_note, label: Create Credit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
+       params: [{name: credit_percent, type: data, label: Credit of Price Only (%),
+                 description: "Empty: the goods come back, for what is still returnable. A figure (10): no goods come back, and that share of each line's price is credited"}]}
+    - {name: make_debit_note, label: Create Debit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
+       params: [{name: charge_percent, type: data, label: Charge on the Price (%),
+                 description: "Empty: the lines as invoiced, to change to what was charged short. A figure (5): that share of each line's price is charged on top"}]}
     - {name: make_inter_company_invoice, label: Create Purchase Invoice in the Group Company, docstatus: [1], permission: read, condition: "doc.customer_company != null && !doc.is_return"}
   list: {columns: [number, customer_name, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}

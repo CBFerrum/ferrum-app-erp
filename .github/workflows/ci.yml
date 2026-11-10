@@ -41,6 +41,7 @@ jobs:
           create role ferrum login password 'ferrum';
           create database ferrum_erp_test owner ferrum;
           create database ferrum_erp_contract_test owner ferrum;
+          create database ferrum_erp_returns_test owner ferrum;
           create database ferrum_finance_test owner ferrum;
           create database ferrum_finance_books_test owner ferrum;
           create database ferrum_procurement_test owner ferrum;
