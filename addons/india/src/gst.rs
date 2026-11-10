@@ -310,7 +310,8 @@ impl Localization for India {
         if !indian(&company) || s(&company, "in_gstin").is_none() {
             return Ok(());
         }
-        let lines_carry = hc.entity.field("items").and_then(|f| f.of.as_deref()).and_then(|c| hc.ctx.schema.entity(c)).is_some_and(|c| c.field("in_hsn_code").is_some());
+        let lines_carry =
+            hc.entity.field("items").and_then(|f| f.of.as_deref()).and_then(|c| hc.ctx.schema.entity(c)).is_some_and(|c| c.field("in_hsn_code").is_some());
         let mut missing = Vec::new();
         let mut lines = Vec::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {

@@ -1115,11 +1115,17 @@ async fn scenario() {
         )
         .await);
     let out = uid(&t
-        .make(&am, "BankTransaction", json!({"bank_account": ba_id.to_string(), "date": "2026-03-20", "withdrawal": "300", "description": "To till", "reference_number": "TILL-1"}))
+        .make(
+            &am,
+            "BankTransaction",
+            json!({"bank_account": ba_id.to_string(), "date": "2026-03-20", "withdrawal": "300", "description": "To till", "reference_number": "TILL-1"}),
+        )
         .await);
     let sug = t.action(&au, "BankTransaction", out, "get_suggestions", json!({})).await;
     assert!(sug["suggestions"].as_array().unwrap().iter().any(|s| s["payment_entry"] == json!(to_till.to_string()) && dec(&s["amount"]) == n("300")), "{sug}");
-    let r = t.action(&au, "BankTransaction", out, "reconcile", json!({"vouchers": [{"payment_document": "PaymentEntry", "payment_entry": to_till.to_string()}]})).await;
+    let r = t
+        .action(&au, "BankTransaction", out, "reconcile", json!({"vouchers": [{"payment_document": "PaymentEntry", "payment_entry": to_till.to_string()}]}))
+        .await;
     assert_eq!(r["status"], json!("Reconciled"));
     t.books_balance().await;
 }

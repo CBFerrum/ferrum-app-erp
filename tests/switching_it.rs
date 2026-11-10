@@ -246,7 +246,10 @@ async fn scenario() {
     // A rule that would discount anything Globex buys, unless the line says its own discount.
     t.insert("PricingRule", json!({"title": "Globex 5%", "apply_on": "All Items", "customer": globex, "discount_percent": "5"})).await;
     let se = t
-        .insert("StockEntry", json!({"company": c, "purpose": "Material Receipt", "items": [{"item": widget, "qty": "10", "basic_rate": "100", "target_warehouse": stores}]}))
+        .insert(
+            "StockEntry",
+            json!({"company": c, "purpose": "Material Receipt", "items": [{"item": widget, "qty": "10", "basic_rate": "100", "target_warehouse": stores}]}),
+        )
         .await;
     t.submit("StockEntry", uid(&se)).await;
 
@@ -389,7 +392,8 @@ async fn scenario() {
     assert_eq!(t.posted(si2).await, map(&[("Debtors", "500"), ("Sales", "-500")]));
     assert_eq!(t.get("SalesOrder", so_id).await["status"], json!("Completed"));
     // An order of a service alone has nothing to receive, and is billed.
-    let po = t.make("PurchaseOrder", json!({"company": c, "supplier": acme, "items": [{"description": "Audit fee", "qty": "1", "price_list_rate": "20000"}]})).await;
+    let po =
+        t.make("PurchaseOrder", json!({"company": c, "supplier": acme, "items": [{"description": "Audit fee", "qty": "1", "price_list_rate": "20000"}]})).await;
     assert_eq!((po["status"].clone(), dec(&po["per_received"])), (json!("To Bill"), n("100")));
     refused(t.k.run_action(&t.ctx, "PurchaseOrder", uid(&po), "make_purchase_receipt", json!({})).await, "not available");
     let pi = t.action("PurchaseOrder", uid(&po), "make_purchase_invoice", json!({})).await;
@@ -402,7 +406,9 @@ async fn scenario() {
     let sub = uid(&t.insert("Company", json!({"company_name": "Sub Co", "abbr": "SUB", "default_currency": inr["id"]})).await);
     let to_sub = party("Customer", "Sub Co", json!({"represents_company": sub.to_string()})).await;
     party("Supplier", "Switching Co", json!({"represents_company": c})).await;
-    let fee = t.make("SalesInvoice", json!({"company": c, "customer": to_sub, "items": [{"description": "Management fee", "qty": "1", "price_list_rate": "1000"}]})).await;
+    let fee = t
+        .make("SalesInvoice", json!({"company": c, "customer": to_sub, "items": [{"description": "Management fee", "qty": "1", "price_list_rate": "1000"}]}))
+        .await;
     let mirror = t.action("SalesInvoice", uid(&fee), "make_inter_company_invoice", json!({})).await;
     let mirror = t.get("PurchaseInvoice", mirror).await;
     let sub_admin = t.find_one("Account", json!({"account_name": "Administrative Expenses", "company": sub.to_string()})).await["id"].clone();
@@ -453,7 +459,11 @@ async fn scenario() {
     let (ob_h01, ob_h10, ob_credit, ob_i01) = (ob[0], ob[9], ob[10], ob[11]);
     // A draft that becomes a double entry before posting: all are refused together, none posted.
     let late = t.insert("OpeningInvoice", json!({"company": c, "party_type": "Supplier", "supplier": acme, "invoice_no": "ACME-77", "invoice_date": day(-3), "posting_date": day(0), "amount": "50"})).await;
-    t.make("PurchaseInvoice", json!({"company": c, "supplier": acme, "bill_no": "ACME-77", "items": [{"description": "Courier", "qty": "1", "price_list_rate": "50"}]})).await;
+    t.make(
+        "PurchaseInvoice",
+        json!({"company": c, "supplier": acme, "bill_no": "ACME-77", "items": [{"description": "Courier", "qty": "1", "price_list_rate": "50"}]}),
+    )
+    .await;
     refused(
         t.k.run_action(&t.ctx, "Company", cid, "post_opening_invoices", json!({})).await,
         "Opening invoice ACME-77 of Acme was refused, so none was posted: Opening invoice ACME-77 of Acme is already in these books as PINV-",
@@ -529,7 +539,10 @@ async fn scenario() {
     // ───────────── a journal entry's party line: its own number, due date and currency ─────────────
     let je = |accounts: Value| json!({"company": c, "entry_type": "Opening Entry", "accounts": accounts});
     let old_way = t
-        .make("JournalEntry", je(json!([{"account": debtors, "party_type": "Customer", "customer": globex, "debit": "300"}, {"account": obe, "credit": "300"}])))
+        .make(
+            "JournalEntry",
+            je(json!([{"account": debtors, "party_type": "Customer", "customer": globex, "debit": "300"}, {"account": obe, "credit": "300"}])),
+        )
         .await;
     let line_id = |doc: &Doc| doc["accounts"][0]["id"].as_str().unwrap().parse::<Uuid>().unwrap();
     assert_eq!(
@@ -563,19 +576,30 @@ async fn scenario() {
         .await;
     assert_eq!(t.posted(uid(&settle)).await, map(&[("Primary Bank", "4200"), ("Debtors", "-4200")]), "at the rate it was carried at: no difference");
     refused(
-        t.k.insert(&t.ctx, "JournalEntry", obj(je(json!([{"account": debtors, "party_type": "Customer", "customer": initech, "currency": usd["id"], "debit_in_currency": "50"},
-                                                         {"account": obe, "credit": "4200"}])))).await,
+        t.k.insert(
+            &t.ctx,
+            "JournalEntry",
+            obj(je(json!([{"account": debtors, "party_type": "Customer", "customer": initech, "currency": usd["id"], "debit_in_currency": "50"},
+                                                         {"account": obe, "credit": "4200"}]))),
+        )
+        .await,
         "the rate USD is carried at is needed",
     );
     refused(
-        t.k.insert(&t.ctx, "JournalEntry", obj(je(json!([{"account": cash, "currency": usd["id"], "exchange_rate": "84", "debit_in_currency": "50"},
-                                                         {"account": obe, "credit": "4200"}])))).await,
+        t.k.insert(
+            &t.ctx,
+            "JournalEntry",
+            obj(je(json!([{"account": cash, "currency": usd["id"], "exchange_rate": "84", "debit_in_currency": "50"},
+                                                         {"account": obe, "credit": "4200"}]))),
+        )
+        .await,
         "only a customer's or supplier's line is carried in another currency",
     );
 
     // ───────────── money moved between the company's own accounts ─────────────
     let transfer = |more: Value| {
-        let mut v = json!({"company": c, "payment_type": "Internal Transfer", "bank_account": bank, "paid_to": cash, "paid_amount": "1000", "reference_no": "CHQ-1"});
+        let mut v =
+            json!({"company": c, "payment_type": "Internal Transfer", "bank_account": bank, "paid_to": cash, "paid_amount": "1000", "reference_no": "CHQ-1"});
         v.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap());
         v
     };
@@ -593,8 +617,12 @@ async fn scenario() {
         .await)
     .to_string();
     // Rupees bought dollars at 84, booked at the day's 83: a loss of 100.
-    let buy = t.make("PaymentEntry", transfer(json!({"paid_to": usd_bank, "paid_amount": "8400", "received_amount": "100", "target_exchange_rate": "83"}))).await;
-    assert_eq!((buy["received_currency"].clone(), dec(&buy["base_received_amount"]), dec(&buy["exchange_difference"])), (usd["id"].clone(), n("8300"), n("-100")));
+    let buy =
+        t.make("PaymentEntry", transfer(json!({"paid_to": usd_bank, "paid_amount": "8400", "received_amount": "100", "target_exchange_rate": "83"}))).await;
+    assert_eq!(
+        (buy["received_currency"].clone(), dec(&buy["base_received_amount"]), dec(&buy["exchange_difference"])),
+        (usd["id"].clone(), n("8300"), n("-100"))
+    );
     assert_eq!(t.posted(uid(&buy)).await, map(&[("Primary Bank", "-8400"), ("USD Bank", "8300"), ("Exchange Gain or Loss", "100")]));
     {
         let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
@@ -614,7 +642,12 @@ async fn scenario() {
     let plain = t.make("PaymentEntry", transfer(json!({"paid_to": usd_bank, "paid_amount": "830", "received_amount": "10"}))).await;
     assert_eq!(t.posted(uid(&plain)).await, map(&[("Primary Bank", "-830"), ("USD Bank", "830")]));
     // Dollars back at 84 (the dollar account's currency is the payment's), 4 250 rupees received.
-    let back = t.make("PaymentEntry", transfer(json!({"bank_account": usd_bank, "paid_to": bank, "exchange_rate": "84", "paid_amount": "50", "received_amount": "4250"}))).await;
+    let back = t
+        .make(
+            "PaymentEntry",
+            transfer(json!({"bank_account": usd_bank, "paid_to": bank, "exchange_rate": "84", "paid_amount": "50", "received_amount": "4250"})),
+        )
+        .await;
     assert_eq!(back["currency"], usd["id"]);
     assert_eq!(t.posted(uid(&back)).await, map(&[("USD Bank", "-4200"), ("Primary Bank", "4250"), ("Exchange Gain or Loss", "-50")]));
     refused(t.k.insert(&t.ctx, "PaymentEntry", obj(transfer(json!({"paid_to": bank})))).await, "choose another account to send it to");
