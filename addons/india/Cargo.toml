@@ -27,5 +27,9 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rsa = { version = "0.9", default-features = false, features = ["std", "pem"] }
 
+[dev-dependencies]
+sqlx = { workspace = true }
+tokio = { workspace = true }
+
 [lints]
 workspace = true
