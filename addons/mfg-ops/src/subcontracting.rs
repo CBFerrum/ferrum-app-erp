@@ -478,12 +478,13 @@ pub(crate) async fn book_transfer(hc: &mut HookCtx<'_>, entry: &Doc, sign: Decim
 pub struct SubcontractingReceiptHook;
 
 /// The service charge is credited to the account the service purchase invoice debits (the
-/// service item's expense account, else the company default), so it moves into stock.
+/// service item's expense account, its group's, else the company default), so it moves into stock.
 async fn service_account(hc: &mut HookCtx<'_>, co: &Company, service_item: Option<Uuid>) -> Result<Uuid> {
-    if let Some(item) = service_item
-        && let Some(a) = id(&get(hc.kernel, hc.ctx, hc.tx, "Item", item).await?, "expense_account")
-    {
-        return Ok(a);
+    if let Some(item) = service_item {
+        let it = get(hc.kernel, hc.ctx, hc.tx, "Item", item).await?;
+        if let Some(a) = ferrum_app_erp::pricing::item_account(hc.ctx, hc.tx, co, &it, ferrum_app_erp::pricing::Side::Buying).await? {
+            return Ok(a);
+        }
     }
     co.require("default_expense_account", "default expense account")
 }

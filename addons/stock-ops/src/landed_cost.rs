@@ -229,7 +229,16 @@ async fn revalue(
     }
     let issues = parts
         .iter()
-        .map(|p| MoveIn { item: info.id, warehouse: wh, qty: -p.qty, batch_no: p.batch.clone(), serials: p.serials.clone(), ..Default::default() })
+        .map(|p| MoveIn {
+            item: info.id,
+            warehouse: wh,
+            qty: -p.qty,
+            batch_no: p.batch.clone(),
+            serials: p.serials.clone(),
+            // Revalued where it lies: nothing leaves.
+            unusable_batch_ok: true,
+            ..Default::default()
+        })
         .collect();
     let issued = stock::post_moves(hc.tx, hc.ctx, co, ENTITY, voucher, on, ts, issues, "consumed").await?;
     let out_value: Decimal = issued.iter().map(|m| -m.value).sum();
