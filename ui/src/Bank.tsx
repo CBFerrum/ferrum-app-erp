@@ -10,7 +10,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
+import { Badge, Button, Dialog, Field, Icon, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle, placed, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 import { can, LinkInput, useMetaIndex } from "@ferrum/records";
 import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
 import { cmp, isZero } from "./decimal";
@@ -238,7 +239,7 @@ function MatchTab({ wb, line, books, busy, onReconcile }: { wb: Workbench; line:
         </div>
       )}
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not look for matches")} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not look for matches")} />
       ) : q.isPending ? (
         <Spinner label={tr("Looking for matches")} />
       ) : (
@@ -666,22 +667,27 @@ export function Bank() {
   const showList = !narrow || !selected;
 
   let body;
-  if (accounts.error) body = <ErrorState error={accounts.error} onRetry={() => void accounts.refetch()} />;
-  else if (accounts.isPending) body = <PageLoading label={tr("Loading your bank accounts")} />;
+  if (accounts.error) body = <LoadFailed error={accounts.error} onRetry={() => void accounts.refetch()} />;
+  else if (accounts.isPending) body = <Loading label={tr("Loading your bank accounts")} />;
   else if (!account) {
     body = (
-      <EmptyState title={tr("No bank accounts yet")} icon="file">
-        <p className="muted">{tr("Add the account at your bank, tied to its account in the books, and bring its statement in here.")}</p>
-        {can(meta?.entities.find((e) => e.name === "BankAccount")?.permissions, "create") && (
-          <Link className="btn btn-primary btn-md" to="/e/BankAccount/new">
-            <Icon name="plus" />
-            {tr("Add a bank account")}
-          </Link>
-        )}
-      </EmptyState>
+      <StatePanel
+        kind="empty"
+        title={tr("No bank accounts yet")}
+        action={
+          can(meta?.entities.find((e) => e.name === "BankAccount")?.permissions, "create") && (
+            <Link className="btn btn-primary btn-md" to="/e/BankAccount/new">
+              <Icon name="plus" />
+              {tr("Add a bank account")}
+            </Link>
+          )
+        }
+      >
+        {tr("Add the account at your bank, tied to its account in the books, and bring its statement in here.")}
+      </StatePanel>
     );
-  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the workbench")} />;
-  else if (!wb) body = <PageLoading label={tr("Loading the statement")} />;
+  } else if (q.error) body = <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the workbench")} />;
+  else if (!wb) body = <Loading label={tr("Loading the statement")} />;
   else {
     body = (
       <>
@@ -711,14 +717,19 @@ export function Bank() {
           </div>
         )}
         {wb.lines.length === 0 ? (
-          <EmptyState title={tr("All caught up")} icon="check">
-            <p className="muted">{placed(tr("Every statement line up to {p1} is matched. Bring in the next statement when you have it."), { p1: isolate(formatDate(wb.as_of)) })}</p>
-            {canImport && (
-              <Button variant="primary" icon="upload" onClick={() => setImporting(true)}>
-                {tr("Import a statement")}
-              </Button>
-            )}
-          </EmptyState>
+          <StatePanel
+            kind="empty"
+            title={tr("All caught up")}
+            action={
+              canImport && (
+                <Button variant="primary" icon="upload" onClick={() => setImporting(true)}>
+                  {tr("Import a statement")}
+                </Button>
+              )
+            }
+          >
+            {placed(tr("Every statement line up to {p1} is matched. Bring in the next statement when you have it."), { p1: isolate(formatDate(wb.as_of)) })}
+          </StatePanel>
         ) : (
           <div className="erp-bench" data-narrow={narrow || undefined}>
             {showList && (
@@ -734,9 +745,7 @@ export function Bank() {
               (selected ? (
                 <Panel key={`${selected.id}-${selected.version}`} wb={wb} line={selected} narrow={narrow} onBack={() => select(null)} busy={busy} act={act} />
               ) : (
-                <EmptyState title={tr("Choose a line")} icon="list">
-                  <p className="muted">{tr("Pick a statement line to see what the books have for it.")}</p>
-                </EmptyState>
+                <StatePanel kind="empty" title={tr("Choose a line")}>{tr("Pick a statement line to see what the books have for it.")}</StatePanel>
               ))}
           </div>
         )}
@@ -752,6 +761,8 @@ export function Bank() {
           <AccountsTabs />
           <p className="page-sub">{tr("Match what the bank says with what the books say.")}</p>
         </div>
+        {/* Nothing to pick or date until there is an account: an empty, unlabelled select is not a control. */}
+        {(accounts.isPending || !!accounts.data?.length) && (
         <div className="erp-tools">
           <label className="erp-pick">
             <span className="sr-only">{tr("Bank account")}</span>
@@ -774,6 +785,7 @@ export function Bank() {
             </Button>
           )}
         </div>
+        )}
       </header>
       {body}
       {importing && account && (

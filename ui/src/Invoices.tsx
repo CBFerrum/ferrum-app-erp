@@ -7,9 +7,20 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, statusTone, toast, useShellTitle, type Tone, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 
 const BASE = "/api/app/selling/portal/invoices";
+
+/** The colour of each stored status of a sales invoice (the options of its `status` field in packages/accounting). */
+export const INVOICE_TONES: Readonly<Record<string, Tone>> = {
+  "Draft": "neutral",
+  "Unpaid": "amber",
+  "Partly Paid": "amber",
+  "Paid": "green",
+  "Credit": "neutral",
+  "Cancelled": "red",
+};
 
 export interface PortalInvoice {
   id: string;
@@ -76,13 +87,11 @@ export function PortalInvoices() {
         </div>
       </div>
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} />
       ) : !q.data ? (
-        <PageLoading />
+        <Loading />
       ) : !invoices.length ? (
-        <EmptyState title={tr("No invoices yet")} icon="receipt">
-          <p className="muted">{tr("Invoices made out to you appear here once they are issued.")}</p>
-        </EmptyState>
+        <StatePanel kind="empty" title={tr("No invoices yet")}>{tr("Invoices made out to you appear here once they are issued.")}</StatePanel>
       ) : (
         <div className="table-wrap" data-ferrum-nocard>
           <table className="table">
@@ -107,7 +116,7 @@ export function PortalInvoices() {
                   </td>
                   <td>{isolate(formatDate(inv.date))}</td>
                   <td>
-                    <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{isolate(dueLabel(inv))}</Badge>
+                    <Badge tone={inv.overdue ? "red" : statusTone(inv.status, INVOICE_TONES)}>{isolate(dueLabel(inv))}</Badge>
                   </td>
                   <td className="num">{isolate(amount(inv.total, inv.currency))}</td>
                   <td className="num">{Number(inv.outstanding) > 0 ? amount(inv.outstanding, inv.currency) : "—"}</td>
@@ -131,8 +140,8 @@ export function PortalInvoice() {
   const q = useQuery({ queryKey: ["erp", "portal", "invoice", id], queryFn: ({ signal }) => api.get<PortalInvoiceDetail>(`${BASE}/${encodeURIComponent(id)}`, {}, signal) });
   const [busy, setBusy] = useState<"print" | "pdf" | null>(null);
   useShellTitle(q.data?.number ?? tr("Invoice"));
-  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (!q.data) return <PageLoading />;
+  if (q.error) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
+  if (!q.data) return <Loading shape="reader" />;
   const inv = q.data;
   const run = async (what: "print" | "pdf") => {
     setBusy(what);
@@ -169,7 +178,7 @@ export function PortalInvoice() {
         </div>
       </div>
       <p>
-        <Badge tone={inv.overdue ? "red" : statusTone(inv.status)}>{isolate(dueLabel(inv))}</Badge>{isolate(" ")}
+        <Badge tone={inv.overdue ? "red" : statusTone(inv.status, INVOICE_TONES)}>{isolate(dueLabel(inv))}</Badge>{isolate(" ")}
         {Number(inv.outstanding) > 0 && <strong>{isolate(amount(inv.outstanding, inv.currency))} {tr("to pay")}</strong>}
       </p>
       <div className="table-wrap" data-ferrum-nocard>

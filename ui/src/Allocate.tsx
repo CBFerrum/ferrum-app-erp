@@ -9,7 +9,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, EmptyState, ErrorState, Field, Icon, PageLoading, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, Dialog, Field, Icon, toast, useLiveEntity, useShellTitle, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 import { LinkInput, useMe } from "@ferrum/records";
 import { currencies, documentBody, dueWords, fill, fromReport, kindLabel, type Open, pairOff, postingDate, ready, split, type Tally, tally } from "./allocation";
 import { cmp, min, sub, sum } from "./decimal";
@@ -299,19 +300,22 @@ function Body({ items, company, partyType, party, onApplied }: { items: Open[]; 
 
   if (!credits.length || !invoices.length) {
     return (
-      <EmptyState title={!credits.length ? tr("No money waiting to be applied") : tr("No open invoices to apply it to")} icon="check">
-        <p className="muted">
-          {!credits.length
-            ? tr("{value}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.", { value: items.length ? tr("Everything this party owes is still to be paid") : tr("Nothing is open for this party") })
-            : tr("The money is waiting, with nothing yet to apply it to.")}
-        </p>
-        {!credits.length && (
-          <Link className="btn btn-default btn-md" to="/e/PaymentEntry/new">
-            <Icon name="plus" />
-            {tr("Record a payment")}
-          </Link>
-        )}
-      </EmptyState>
+      <StatePanel
+        kind="empty"
+        title={!credits.length ? tr("No money waiting to be applied") : tr("No open invoices to apply it to")}
+        action={
+          !credits.length && (
+            <Link className="btn btn-default btn-md" to="/e/PaymentEntry/new">
+              <Icon name="plus" />
+              {tr("Record a payment")}
+            </Link>
+          )
+        }
+      >
+        {!credits.length
+          ? tr("{value}. A payment received without an invoice named, a credit note or a journal credit shows here once it is recorded.", { value: items.length ? tr("Everything this party owes is still to be paid") : tr("Nothing is open for this party") })
+          : tr("The money is waiting, with nothing yet to apply it to.")}
+      </StatePanel>
     );
   }
   return (
@@ -415,18 +419,14 @@ export function Allocate() {
   let body;
   if (!party) {
     body = (
-      <EmptyState title={tr("Choose a {partyType}", { partyType: partyType.toLowerCase() })} icon="user">
-        <p className="muted">{tr("Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.")}</p>
-      </EmptyState>
+      <StatePanel kind="empty" title={tr("Choose a {partyType}", { partyType: partyType.toLowerCase() })}>{tr("Their payments, credit notes and journal credits that are not applied yet appear here beside what they owe, to be matched in one go.")}</StatePanel>
     );
   } else if (!company) {
     body = (
-      <EmptyState title={tr("Choose a company")} icon="home">
-        <p className="muted">{tr("What is open is kept for one company at a time.")}</p>
-      </EmptyState>
+      <StatePanel kind="empty" title={tr("Choose a company")}>{tr("What is open is kept for one company at a time.")}</StatePanel>
     );
-  } else if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load what is open")} />;
-  else if (!q.data) body = <PageLoading label={tr("Loading what is open")} />;
+  } else if (q.error) body = <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load what is open")} />;
+  else if (!q.data) body = <Loading label={tr("Loading what is open")} />;
   else body = <Body key={`${partyType}-${party}`} items={items} company={company} partyType={partyType} party={party} onApplied={refresh} />;
 
   return (
