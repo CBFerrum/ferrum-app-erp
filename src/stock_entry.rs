@@ -146,6 +146,8 @@ impl DocHook for StockEntryHook {
                     batch_no: s(r, "batch_no").map(str::to_string),
                     serials: parse_serials(s(r, "serial_no")),
                     source_line: id(r, "id"),
+                    // Written off or moved within the company; manufacture consumes it.
+                    unusable_batch_ok: p == ISSUE || p == TRANSFER,
                     ..Default::default()
                 })
             })
