@@ -139,10 +139,38 @@ pub async fn check(hc: &mut HookCtx<'_>, doc: &Doc, side: Side) -> Result<()> {
 }
 
 /// Where a document's goods go, as countries' rules read it (`country_code`, `state`,
-/// `postal_code`, `city` of an Address): its ship-to, else the party's address on it.
+/// `postal_code`, `city` of an Address): its ship-to; else, without one, its delivery country and
+/// region (a document can state them without an Address record: a cart, a counter sale), as an
+/// address with only `country_code` and `state`; else the party's address on it.
 pub async fn ship_to(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Option<Doc>> {
-    let Some(address) = ["ship_to", "customer_address", "supplier_address"].into_iter().find_map(|f| id(doc, f)) else { return Ok(None) };
+    if let Some(address) = id(doc, "ship_to") {
+        return address_of(k, ctx, tx, address).await;
+    }
+    let (country, region) = (s(doc, "delivery_country"), s(doc, "delivery_region"));
+    if country.is_some() || region.is_some() {
+        let code = country.map(|c| ferrum_domain::countries::code_for(c).unwrap_or(c));
+        return Ok(Some(json!({"country_code": code, "state": region}).as_object().cloned().unwrap_or_default()));
+    }
+    let Some(address) = ["customer_address", "supplier_address"].into_iter().find_map(|f| id(doc, f)) else { return Ok(None) };
     address_of(k, ctx, tx, address).await
+}
+
+/// A draft's delivery country and region: its ship-to's when it has one, so they always say where
+/// the goods go; without one, the country as typed becomes its ISO code. Any document with the two
+/// fields gets them, another app's cart as much as ERP's orders.
+pub(crate) async fn fill_delivery(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc) -> Result<()> {
+    if ent.field("delivery_country").is_none() || doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        return Ok(());
+    }
+    if let Some(address) = id(doc, "ship_to") {
+        if let Some(a) = address_of(k, ctx, tx, address).await? {
+            set(doc, "delivery_country", a.get("country_code").cloned().unwrap_or(Value::Null));
+            set(doc, "delivery_region", a.get("state").cloned().unwrap_or(Value::Null));
+        }
+    } else if let Some(code) = s(doc, "delivery_country").and_then(|c| ferrum_domain::countries::code_for(c.trim())) {
+        set(doc, "delivery_country", code);
+    }
+    Ok(())
 }
 
 async fn address_of(k: &Kernel, ctx: &Ctx, tx: &mut Tx, address: Uuid) -> Result<Option<Doc>> {

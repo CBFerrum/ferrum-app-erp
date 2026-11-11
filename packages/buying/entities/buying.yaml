@@ -40,6 +40,8 @@
     - {name: schedule_date, type: date, label: Required By}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
@@ -125,6 +127,8 @@
     - {name: return_against, type: link, to: PurchaseReceipt, visible_if: "doc.is_return"}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
@@ -212,6 +216,8 @@
        description: "Why it is debited: needed for a debit note without its original invoice (a rebate, a correction from before these books)"}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: update_stock, type: check, description: Receive stock with this invoice}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.update_stock"}
     - {name: currency, type: link, to: Currency}

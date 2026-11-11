@@ -423,6 +423,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     // The addresses the countries' rules read, then their rules (India: the GST template for the
     // place of supply), so the taxes calculated below are the ones they chose.
     crate::localization::fill_addresses(k, ctx, tx, ent, doc, side).await?;
+    crate::localization::fill_delivery(k, ctx, tx, ent, doc).await?;
     crate::localization::determine(k, ctx, tx, ent, doc, side).await?;
     let company_id = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
     let co = company(k, ctx, tx, company_id).await?;

@@ -136,7 +136,7 @@ async fn plan(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, side: Side) -> Resu
     let (goods, services, resale) = match side {
         Side::Selling => {
             let billing = address(k, ctx, tx, id(doc, "customer_address")).await?;
-            let ship = address(k, ctx, tx, id(doc, "ship_to")).await?.or(billing.clone());
+            let ship = ferrum_app_erp::localization::ship_to(k, ctx, tx, doc).await?;
             let resale = match id(doc, "customer") {
                 Some(c) => b(&get(k, ctx, tx, "Customer", c).await?, "ca_pst_exempt"),
                 None => false,
