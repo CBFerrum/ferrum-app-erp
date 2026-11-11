@@ -15,6 +15,7 @@ import { LinkInput, useMe } from "@ferrum/records";
 import { currencies, documentBody, dueWords, fill, fromReport, kindLabel, type Open, pairOff, postingDate, ready, split, type Tally, tally } from "./allocation";
 import { cmp, min, sub, sum } from "./decimal";
 import { show } from "./money";
+import { Ctl, Meta, PageHead } from "./chrome";
 import { AccountsTabs } from "./Tabs";
 
 type PartyType = "Customer" | "Supplier";
@@ -431,27 +432,26 @@ export function Allocate() {
 
   return (
     <div className="erp-page erp-allocate">
-      <header className="erp-head">
-        <div>
-          <AccountsTabs />
-          <p className="page-sub">{tr("Apply payments, credit notes and journal credits to open invoices.")}</p>
+      <PageHead
+        title={tr("Apply payments")}
+        meta={<Meta items={[tr("Apply payments, credit notes and journal credits to open invoices.")]} />}
+      />
+      <AccountsTabs />
+      <div className="erp-bar">
+        <div className="segmented" role="group" aria-label={tr("Whose")}>
+          {(["Customer", "Supplier"] as const).map((k) => (
+            <button key={k} type="button" aria-pressed={partyType === k} onClick={() => put({ type: k === "Customer" ? null : k, party: null, currency: null })}>
+              {k === "Customer" ? tr("Customers") : tr("Suppliers")}
+            </button>
+          ))}
         </div>
-        <div className="erp-tools">
-          <div className="segmented" role="group" aria-label={tr("Whose")}>
-            {(["Customer", "Supplier"] as const).map((k) => (
-              <button key={k} type="button" aria-pressed={partyType === k} onClick={() => put({ type: k === "Customer" ? null : k, party: null, currency: null })}>
-                {k === "Customer" ? tr("Customers") : tr("Suppliers")}
-              </button>
-            ))}
-          </div>
-          <div className="erp-pick erp-pick-wide">
-            <LinkInput to={partyType} id="al-party" label={partyType} placeholder={tr("Find a {partyType}…", { partyType: partyType.toLowerCase() })} value={party} onChange={(id) => put({ party: id, currency: null })} />
-          </div>
-          <div className="erp-pick">
-            <LinkInput to="Company" id="al-company" label={tr("Company")} value={company} onChange={(id) => put({ company: id })} />
-          </div>
-        </div>
-      </header>
+        <Ctl label={partyType === "Customer" ? tr("Customer") : tr("Supplier")} htmlFor="al-party">
+          <LinkInput to={partyType} id="al-party" placeholder={tr("Find a {partyType}…", { partyType: partyType.toLowerCase() })} value={party} onChange={(id) => put({ party: id, currency: null })} />
+        </Ctl>
+        <Ctl label={tr("Company")} htmlFor="al-company">
+          <LinkInput to="Company" id="al-company" value={company} onChange={(id) => put({ company: id })} />
+        </Ctl>
+      </div>
       {body}
     </div>
   );

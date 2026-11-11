@@ -39,7 +39,7 @@ export interface Statement {
   columns: Column[];
   rows: Row[];
   totals?: Record<string, string>;
-  meta: { periods: PeriodInfo[]; balanced?: boolean; reconciled?: boolean; difference?: string };
+  meta: { company?: string; currency?: string; periods: PeriodInfo[]; balanced?: boolean; reconciled?: boolean; difference?: string };
 }
 
 // ── dates ──

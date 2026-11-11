@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { destination, monthName, needing, type Overview, plural, row, say } from "./attention";
+import { destination, listOf, monthName, needing, type Overview, plural, row, say, toneOf } from "./attention";
 
 const overview: Overview = {
   meta: { as_of: "2026-11-01" },
@@ -42,5 +42,18 @@ describe("what needs attention", () => {
     expect(destination(row(overview, "overdue_payables")!, null, "2026-11-01")).toBe("/r/payables?as_of=2026-11-01&run=1");
     expect(destination(row(overview, "unreconciled_lines")!, "co", "2026-11-01")).toBe("/r/bank_reconciliation");
     expect(destination(row(overview, "drafts")!, "co", "2026-11-01")).toBeNull();
+  });
+});
+
+describe("the strip on the home", () => {
+  it("is toned by what a row is, never by its words", () => {
+    expect(needing(overview).map(toneOf)).toEqual(["danger", "warning", "warning", "neutral"]);
+  });
+
+  it("leads each count to its list", () => {
+    expect(listOf(row(overview, "overdue_receivables")!, "co", "2026-11-01")).toBe("/r/receivables?company=co&as_of=2026-11-01&run=1");
+    expect(listOf(row(overview, "drafts")!, "co", "2026-11-01")).toBe("/e/SalesInvoice?f.docstatus=0");
+    expect(listOf({ key: "drafts", item: "x", count: 2, detail: [{ entity: "A" }, { entity: "B" }] }, "co", "2026-11-01")).toBe("/r/finance_overview");
+    expect(listOf({ key: "open_months", item: "x", count: 2 }, "co", "2026-11-01")).toBe("/r/finance_overview");
   });
 });

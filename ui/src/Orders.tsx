@@ -139,7 +139,7 @@ export function PortalOrders() {
   const orderRows = orders.data?.pages.flatMap((p) => p.orders) ?? [];
   const billRows = bills.data?.pages.flatMap((p) => p.bills) ?? [];
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <div className="page-head">
         <div>
           <h1 className="page-title">{tr("Your orders")}</h1>
@@ -149,14 +149,14 @@ export function PortalOrders() {
       {waiting.length > 0 && (
         <section className="stack" aria-label={tr("Requests for quotation")}>
           <h2 className="section-title">{tr("Waiting for your quotation")}</h2>
-          <ul className="stack">
+          <ul className="erp-rfqs">
             {waiting.map((r) => (
-              <li key={`${r.id}-${r.answer ?? ""}`} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <li key={`${r.id}-${r.answer ?? ""}`}>
                 <span>
                   <strong>{isolate(r.number ?? "")}</strong> · {isolate(asked(r))}
                   {r.due_by && <span className="faint"> {tr("· due by")} {isolate(formatDate(r.due_by))}</span>}
                 </span>
-                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{placed(tr("Ask {p1} for a new link"), { p1: r.company ?? tr("them") })}</span>}
+                {r.answer ? <a className="btn btn-primary btn-sm" href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{placed(tr("Ask {p1} for a new link"), { p1: r.company ?? tr("them") })}</span>}
               </li>
             ))}
           </ul>
@@ -240,7 +240,7 @@ export function PortalOrders() {
                       <Badge tone={b.overdue ? "red" : statusTone(b.status, BILL_TONES)}>{isolate(owedLabel(b))}</Badge>
                     </td>
                     <td className="num">{isolate(amount(b.total, b.currency))}</td>
-                    <td className="num">{Number(b.owed) > 0 ? amount(b.owed, b.currency) : "—"}</td>
+                    <td className={`num${b.overdue && Number(b.owed) > 0 ? " erp-due" : ""}`}>{Number(b.owed) > 0 ? amount(b.owed, b.currency) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -277,7 +277,7 @@ export function PortalOrderPage() {
     }
   };
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <p className="crumbs">
         <Link to="/">{tr("Your orders")}</Link>
       </p>
@@ -288,7 +288,7 @@ export function PortalOrderPage() {
             {isolate([o.company, formatDate(o.date), o.required_by ? tr("required by {required_by}", { required_by: formatDate(o.required_by) }) : null].filter(Boolean).join(" · "))}
           </p>
         </div>
-        <div className="row">
+        <div className="page-actions">
           <Button loading={busy === "print"} onClick={() => void run("print")}>
             {tr("Print")}
           </Button>

@@ -8,28 +8,45 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, todayIso, t, isolate } from "@ferrum/client";
-import { Button, confirmDialog, Icon, toast, useLiveEntity, useShellTitle, placed, StatePanel } from "@ferrum/kit";
+import { Button, confirmDialog, toast, useLiveEntity, useShellTitle, placed, StatePanel } from "@ferrum/kit";
 import { Loading, LoadFailed } from "./states";
 import { LinkInput, useMe } from "@ferrum/records";
 import { destination, draftsPath, monthName, needing, type Overview, plural, row } from "./attention";
 import { show } from "./money";
+import { Meta, PageHead } from "./chrome";
 import { AccountsTabs } from "./Tabs";
 
 const ROOT = ["erp", "overview"] as const;
 
-function Card({ title, calm, children, to, link }: { title: string; calm: boolean; children: ReactNode; to?: string | null; link?: string }) {
+type Tone = "danger" | "warning" | "neutral" | "calm";
+
+/** A group of queue rows under one quiet heading. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="erp-attn" data-calm={calm || undefined} aria-label={title}>
-      <h2>
-        <Icon name={calm ? "check" : "alert"} size={15} />
-        {isolate(title)}
-      </h2>
-      {children}
+    <section className="erp-group-block" aria-label={title}>
+      <h2 className="erp-group">{isolate(title)}</h2>
+      <div className="erp-queue">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One thing to do: what it is and how much (the figure, in the tone of what it is), what the oldest of it is,
+ * and the one place that deals with it. Detail (bank accounts, kinds of draft, months) hangs beneath.
+ */
+function Row({ title, tone, amount, sub, extra, to, link, children }: { title: string; tone: Tone; amount?: ReactNode; sub: ReactNode; extra?: ReactNode; to?: string | null; link?: string; children?: ReactNode }) {
+  return (
+    <section className="erp-q" data-tone={tone} aria-label={title}>
+      <h3 className="erp-q-title">{isolate(title)}</h3>
+      {amount && <p className="erp-q-amount">{amount}</p>}
+      <p className="erp-q-sub muted">{sub}</p>
       {to && link && (
-        <Link className="erp-attn-link" to={to}>
+        <Link className="btn btn-default btn-sm erp-q-act" to={to}>
           {isolate(link)}
         </Link>
       )}
+      {extra && <p className="erp-q-extra">{extra}</p>}
+      {children}
     </section>
   );
 }
@@ -95,124 +112,132 @@ export function Today() {
       if (bills) return n === 1 ? (oldest ? t("1 bill, due {oldest}", { oldest }) : t("1 bill")) : oldest ? t("{n} bills, the oldest due {oldest}", { n, oldest }) : t("{n} bills", { n });
       return n === 1 ? (oldest ? t("1 invoice, due {oldest}", { oldest }) : t("1 invoice")) : oldest ? t("{n} invoices, the oldest due {oldest}", { n, oldest }) : t("{n} invoices", { n });
     };
+    const calmLate = (late?.count ?? 0) === 0;
+    const calmOwed = (owed?.count ?? 0) === 0;
     body = (
       <>
-        <p className="page-sub" aria-live="polite">
+        <p className="muted" aria-live="polite">
           {pressing === 0 ? t("Everything is in hand.") : t("{pressing} to look at.", { pressing: plural(pressing, "thing") })}
         </p>
         <div className="erp-today-grid">
-          <Card title={t("Owed to you")} calm={(late?.count ?? 0) === 0} to={destination(late ?? soon!, company, asOf)} link={t("Open the receivables")}>
-            {(late?.count ?? 0) > 0 ? (
-              <>
-                <p className="erp-figure-big erp-negative">{isolate(show(late!.amount))}</p>
-                <p className="muted">{t("overdue: {late}", { late: parts(late) })}</p>
-              </>
-            ) : (
-              <p className="muted">{t("Nothing is overdue.")}</p>
-            )}
-            {(soon?.count ?? 0) > 0 && (
-              <p>
-                <strong>{isolate(show(soon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(soon!.count!, "invoice") })}</span>
-              </p>
-            )}
-          </Card>
-          <Card title={t("Owed by you")} calm={(owed?.count ?? 0) === 0} to={destination(owed ?? owedSoon!, company, asOf)} link={t("Open the payables")}>
-            {(owed?.count ?? 0) > 0 ? (
-              <>
-                <p className="erp-figure-big erp-negative">{isolate(show(owed!.amount))}</p>
-                <p className="muted">{t("overdue: {owed}", { owed: parts(owed, true) })}</p>
-              </>
-            ) : (
-              <p className="muted">{t("Nothing is overdue.")}</p>
-            )}
-            {(owedSoon?.count ?? 0) > 0 && (
-              <p>
-                <strong>{isolate(show(owedSoon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(owedSoon!.count!, "bill") })}</span>
-              </p>
-            )}
-          </Card>
-          {lines && (
-            <Card title={t("Bank")} calm={(lines.count ?? 0) === 0} to={destination(lines, company, asOf)} link="Reconcile">
-              {(lines.count ?? 0) > 0 ? (
-                <>
-                  <p className="erp-figure-big">{isolate(plural(lines.count!, "line"))}</p>
-                  <p className="muted">{(lines.oldest ? t("of the bank statements are not reconciled, the oldest from {value}", { value: formatDate(lines.oldest) }) : t("of the bank statements are not reconciled"))}.</p>
-                  <ul className="erp-attn-list">
-                    {(lines.detail ?? [])
-                      .filter((d) => (d.count ?? 0) > 0)
-                      .map((d) => (
-                        <li key={d.id}>
-                          <Link to={`/r/bank_reconciliation?account=${d.id}`}>{isolate(d.name ?? "")}</Link>
-                          <span className="faint">{d.count}</span>
-                        </li>
-                      ))}
-                  </ul>
-                </>
-              ) : (
-                <p className="muted">{t("Every statement line is reconciled.")}</p>
+          <div className="erp-today-queue">
+            <Group title={t("Collect and pay")}>
+              <Row
+                title={t("Owed to you")}
+                tone={calmLate ? "calm" : "danger"}
+                amount={!calmLate && <span className="erp-neg">{isolate(show(late!.amount))}</span>}
+                sub={!calmLate ? t("overdue: {late}", { late: parts(late) }) : t("Nothing is overdue.")}
+                extra={(soon?.count ?? 0) > 0 && (
+                  <>
+                    <strong>{isolate(show(soon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(soon!.count!, "invoice") })}</span>
+                  </>
+                )}
+                to={destination(late ?? soon!, company, asOf)}
+                link={t("Open the receivables")}
+              />
+              <Row
+                title={t("Owed by you")}
+                tone={calmOwed ? "calm" : "danger"}
+                amount={!calmOwed && <span className="erp-neg">{isolate(show(owed!.amount))}</span>}
+                sub={!calmOwed ? t("overdue: {owed}", { owed: parts(owed, true) }) : t("Nothing is overdue.")}
+                extra={(owedSoon?.count ?? 0) > 0 && (
+                  <>
+                    <strong>{isolate(show(owedSoon!.amount))}</strong> <span className="muted">{t("falls due this week ({value})", { value: plural(owedSoon!.count!, "bill") })}</span>
+                  </>
+                )}
+                to={destination(owed ?? owedSoon!, company, asOf)}
+                link={t("Open the payables")}
+              />
+            </Group>
+            <Group title={t("To clear")}>
+              {lines && (
+                <Row
+                  title={t("Bank")}
+                  tone={(lines.count ?? 0) === 0 ? "calm" : "warning"}
+                  amount={(lines.count ?? 0) > 0 && isolate(plural(lines.count!, "line"))}
+                  sub={(lines.count ?? 0) > 0 ? <>{(lines.oldest ? t("of the bank statements are not reconciled, the oldest from {value}", { value: formatDate(lines.oldest) }) : t("of the bank statements are not reconciled"))}.</> : t("Every statement line is reconciled.")}
+                  to={destination(lines, company, asOf)}
+                  link={t("Reconcile")}
+                >
+                  {(lines.count ?? 0) > 0 && (
+                    <ul className="erp-attn-list">
+                      {(lines.detail ?? [])
+                        .filter((d) => (d.count ?? 0) > 0)
+                        .map((d) => (
+                          <li key={d.id}>
+                            <Link to={`/r/bank_reconciliation?account=${d.id}`}>{isolate(d.name ?? "")}</Link>
+                            <span className="faint num">{d.count}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </Row>
               )}
-            </Card>
-          )}
-          <Card title={t("Drafts")} calm={(drafts?.count ?? 0) === 0}>
-            {(drafts?.count ?? 0) > 0 ? (
-              <>
-                <p className="erp-figure-big">{isolate(plural(drafts!.count!, "draft"))}</p>
-                <p className="muted">{(drafts!.oldest ? t("waiting to be submitted, the oldest dated {value}", { value: formatDate(drafts!.oldest) }) : t("waiting to be submitted"))}.</p>
-                <ul className="erp-attn-list">
-                  {(drafts!.detail ?? []).map((d) => (
-                    <li key={d.entity}>
-                      <Link to={draftsPath(d.entity!)}>{isolate(d.label ?? "")}</Link>
-                      <span className="faint">{d.count}</span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="muted">{t("Nothing is waiting to be submitted.")}</p>
-            )}
-          </Card>
-          <Card title={t("Closing the books")} calm={(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0}>
-            {(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0 && <p className="muted">{t("Every month that has ended is closed.")}</p>}
-            {(months?.count ?? 0) > 0 && (
-              <>
-                <p className="erp-figure-big">{isolate(plural(months!.count!, "month"))}</p>
-                <p className="muted">
-                  {placed(t("ended and not closed{p1}. The latest:"), { p1: months!.oldest ? t(", back to {value}", { value: monthName(months!.oldest) }) : "" })}
-                </p>
-                <ul className="erp-attn-list">
-                  {(months!.detail ?? []).slice(0, 3).map((d) => (
-                    <li key={d.start}>
-                      <span>{isolate(monthName(d.start!))}</span>
-                      {manager && d.fiscal_year ? (
-                        <Button size="sm" onClick={() => void close(d.fiscal_year!, d.start!)}>
-                          {t("Close")}
-                        </Button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {(years?.count ?? 0) > 0 && (
-              <ul className="erp-attn-list">
-                {years!.detail!.map((y) => (
-                  <li key={y.id}>
-                    <span>
-                      {t("Fiscal year {name} ended", { name: y.name ?? "" })} {y.end ? formatDate(y.end) : ""}
-                    </span>
-                    {manager && (
-                      <Link className="btn btn-default btn-sm" to={`/e/PeriodClosingVoucher/new?fiscal_year=${y.id}`}>
-                        {t("Close the year")}
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+              <Row
+                title={t("Drafts")}
+                tone={(drafts?.count ?? 0) === 0 ? "calm" : "warning"}
+                amount={(drafts?.count ?? 0) > 0 && isolate(plural(drafts!.count!, "draft"))}
+                sub={(drafts?.count ?? 0) > 0 ? <>{(drafts!.oldest ? t("waiting to be submitted, the oldest dated {value}", { value: formatDate(drafts!.oldest) }) : t("waiting to be submitted"))}.</> : t("Nothing is waiting to be submitted.")}
+              >
+                {(drafts?.count ?? 0) > 0 && (
+                  <ul className="erp-attn-list">
+                    {(drafts!.detail ?? []).map((d) => (
+                      <li key={d.entity}>
+                        <Link to={draftsPath(d.entity!)}>{isolate(d.label ?? "")}</Link>
+                        <span className="faint num">{d.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Row>
+            </Group>
+            <Group title={t("Closing the books")}>
+              {(months?.count ?? 0) === 0 && (years?.count ?? 0) === 0 && <Row title={t("Months")} tone="calm" sub={t("Every month that has ended is closed.")} />}
+              {(months?.count ?? 0) > 0 && (
+                <Row
+                  title={t("Months")}
+                  tone="neutral"
+                  amount={isolate(plural(months!.count!, "month"))}
+                  sub={placed(t("ended and not closed{p1}. The latest:"), { p1: months!.oldest ? t(", back to {value}", { value: monthName(months!.oldest) }) : "" })}
+                >
+                  <ul className="erp-attn-list">
+                    {(months!.detail ?? []).slice(0, 3).map((d) => (
+                      <li key={d.start}>
+                        <span>{isolate(monthName(d.start!))}</span>
+                        {manager && d.fiscal_year ? (
+                          <Button size="sm" onClick={() => void close(d.fiscal_year!, d.start!)}>
+                            {t("Close")}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Row>
+              )}
+              {(years?.count ?? 0) > 0 && (
+                <Row title={t("Fiscal years")} tone="neutral" amount={isolate(plural(years!.count!, "year"))} sub={t("ended and not closed")}>
+                  <ul className="erp-attn-list">
+                    {years!.detail!.map((y) => (
+                      <li key={y.id}>
+                        <span>
+                          {t("Fiscal year {name} ended", { name: y.name ?? "" })} {y.end ? formatDate(y.end) : ""}
+                        </span>
+                        {manager && (
+                          <Link className="btn btn-default btn-sm" to={`/e/PeriodClosingVoucher/new?fiscal_year=${y.id}`}>
+                            {t("Close the year")}
+                          </Link>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </Row>
+              )}
+            </Group>
+          </div>
           {cash && (
-            <Card title={t("Cash and bank")} calm>
-              <p className="erp-figure-big">{isolate(show(cash.amount))}</p>
+            <section className="erp-cash" aria-label={t("Cash and bank")}>
+              <h2 className="erp-group">{isolate(t("Cash and bank"))}</h2>
+              <p className="erp-q-amount">{isolate(show(cash.amount))}</p>
               <ul className="erp-attn-list">
                 {(cash.detail ?? []).map((d) => (
                   <li key={d.id}>
@@ -221,7 +246,7 @@ export function Today() {
                   </li>
                 ))}
               </ul>
-            </Card>
+            </section>
           )}
         </div>
       </>
@@ -230,21 +255,22 @@ export function Today() {
 
   return (
     <div className="erp-page erp-today">
-      <header className="erp-head">
-        <div>
-          <AccountsTabs />
-          <p className="page-sub">{isolate(new Date(`${asOf}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))}</p>
-        </div>
-        <div className="erp-tools">
-          <div className="erp-pick">
-            <LinkInput to="Company" id="td-company" label={t("Company")} value={company} onChange={(id) => put({ company: id })} />
-          </div>
-          <label className="erp-pick">
-            <span className="sr-only">{t("Look as of")}</span>
-            <input className="input" type="date" value={asOf} onChange={(e) => put({ as_of: e.target.value || null })} />
-          </label>
-        </div>
-      </header>
+      <PageHead
+        title={t("Accounts today")}
+        meta={<Meta items={[isolate(new Date(`${asOf}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))]} />}
+        actions={
+          <>
+            <div className="erp-pick">
+              <LinkInput to="Company" id="td-company" label={t("Company")} value={company} onChange={(id) => put({ company: id })} />
+            </div>
+            <label className="erp-pick">
+              <span className="sr-only">{t("Look as of")}</span>
+              <input className="input" type="date" value={asOf} onChange={(e) => put({ as_of: e.target.value || null })} />
+            </label>
+          </>
+        }
+      />
+      <AccountsTabs />
       {!company && me ? (
         <StatePanel kind="empty" title={t("Choose a company")}>{t("The overview is for one company at a time.")}</StatePanel>
       ) : (
