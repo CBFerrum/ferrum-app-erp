@@ -85,7 +85,7 @@ modules:
     icon: book
     order: 20
     items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
-            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account]
+            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary]
   - name: setup
     label: Setup
     icon: settings
