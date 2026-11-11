@@ -18,8 +18,9 @@
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: schedule_date, type: date, label: Required By}
-    - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "Above the quantity when more was received, within the over-receipt allowance"}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: closed_qty, type: decimal, read_only: true, no_copy: true, label: Closed Short, description: "What was still open on the line when the order was closed: never received or billed"}
     - {name: item_tax_rates, type: json, read_only: true}
     - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
@@ -61,7 +62,18 @@
   actions:
     - {name: make_purchase_receipt, label: Create Purchase Receipt, docstatus: [1], permission: read, condition: "doc.per_received < 100.0 && doc.status != 'Closed'"}
     - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'"}
-    - {name: close, label: Close, docstatus: [1], permission: submit}
+    - name: update_items
+      label: Update Items
+      docstatus: [1]
+      permission: submit
+      params:
+        - {name: line, type: int, label: Line, description: "The line to change, as numbered on the order. Empty to add a line"}
+        - {name: item, type: link, to: Item, label: Item, description: "For a line added: the item, or empty for a line described below"}
+        - {name: description, type: text, label: Description, description: "For a line added without an item: what it is"}
+        - {name: qty, type: data, label: Quantity, description: "The line's new quantity, never below what was received or billed on it. 0 removes a line with nothing received or billed"}
+        - {name: price, type: data, label: Price, description: "The line's new agreed price, for what is not yet billed"}
+        - {name: schedule_date, type: date, label: Required By, description: "Moves the order's required-by date, or the line's when a line is given"}
+    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
     - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 

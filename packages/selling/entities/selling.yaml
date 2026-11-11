@@ -42,8 +42,9 @@
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: delivery_date, type: date}
-    - {name: delivered_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
+    - {name: delivered_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "Above the quantity when more was delivered, within the over-delivery allowance"}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
+    - {name: closed_qty, type: decimal, read_only: true, no_copy: true, label: Closed Short, description: "What was still open on the line when the order was closed: never delivered or billed"}
     - {name: item_tax_rates, type: json, read_only: true}
     - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
 
@@ -86,10 +87,23 @@
     - {name: terms, type: text}
     - {name: print_as_proforma, type: check, label: Print as Pro Forma Invoice, no_copy: true,
        description: "The printed order is titled Pro Forma Invoice and carries the bank details: for a customer who pays in advance or needs it for customs or a bank"}
+    - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
+       description: "Lets this order through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   actions:
     - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'"}
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'"}
-    - {name: close, label: Close, docstatus: [1], permission: submit}
+    - name: update_items
+      label: Update Items
+      docstatus: [1]
+      permission: submit
+      params:
+        - {name: line, type: int, label: Line, description: "The line to change, as numbered on the order. Empty to add a line"}
+        - {name: item, type: link, to: Item, label: Item, description: "For a line added: the item, or empty for a line described below"}
+        - {name: description, type: text, label: Description, description: "For a line added without an item: what it is"}
+        - {name: qty, type: data, label: Quantity, description: "The line's new quantity, never below what was delivered or billed on it. 0 removes a line with nothing delivered or billed"}
+        - {name: price, type: data, label: Price, description: "For a line without an item: its new price, for what is not yet billed. Items take theirs from the price list and pricing rules"}
+        - {name: delivery_date, type: date, label: Delivery Date, description: "Moves the order's delivery date, or the line's when a line is given"}
+    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
     - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}
 
@@ -161,6 +175,8 @@
     - {name: vehicle_no, type: data}
     - {name: print_prices, type: check, label: Show Prices on the Print, no_copy: true,
        description: "A delivery note prints without prices, as it travels with the goods; tick to print rates and amounts on it"}
+    - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
+       description: "Lets this delivery through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   actions:
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
     - {name: make_sales_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
@@ -267,6 +283,8 @@
     - {name: cost_center, type: link, to: CostCenter}
     - {name: terms, type: text}
     - {name: remarks, type: text}
+    - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
+       description: "Lets this invoice through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   form:
     - {label: Invoice, fields: [company, customer, customer_name, posting_date, posting_time, due_date, po_no, is_return, return_against, price_only, is_debit_note, debit_note_against, return_reason]}
     - {label: Addresses, collapsible: true, fields: [customer_address, ship_to]}
@@ -274,7 +292,7 @@
     - {label: Items, fields: [items]}
     - {label: Taxes, fields: [tax_template, taxes, tax_breakdown, discount_percent]}
     - {label: Totals, fields: [total, discount_amount, net_total, total_taxes, grand_total, rounding_adjustment, rounded_total, outstanding_amount, debit_noted, status]}
-    - {label: More, collapsible: true, fields: [debit_to, base_net_total, base_grand_total, base_rounded_total, project, cost_center, terms, remarks]}
+    - {label: More, collapsible: true, fields: [debit_to, base_net_total, base_grand_total, base_rounded_total, project, cost_center, terms, remarks, credit_release_reason]}
   rules:
     - {name: due_after_posting, check: "doc.due_date == null || doc.due_date >= doc.posting_date", message: "Due date cannot be before the posting date"}
     - {name: return_needs_source, check: "!doc.is_return || doc.return_against != null || (doc.return_reason != null && doc.return_reason != '')", on: submit,

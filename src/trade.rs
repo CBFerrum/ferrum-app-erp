@@ -3,6 +3,7 @@
 //! (SalesInvoice / PurchaseInvoice), including stock, ledger postings, open items, returns and
 //! the "create next document" actions.
 
+use crate::credit;
 use crate::flow::{self, MapSpec, QTY_TOLERANCE, add_progress_in, create_for_user, created, refresh_billing, refresh_order, sync_invoice_outstanding};
 use crate::ledger::{self, Entry, Line, OpenItem};
 use crate::pricing::{Side, breakup, calculate};
@@ -205,7 +206,7 @@ async fn write_valuation(hc: &mut HookCtx<'_>, entity: &str, posted: &[Posted]) 
 // ─────────────────────────── lines without an item ───────────────────────────
 
 /// What a line is called in a refusal: "line 2 (Rent for May)".
-fn line_label(i: usize, r: &Doc) -> String {
+pub(crate) fn line_label(i: usize, r: &Doc) -> String {
     match s(r, "item_name").or(s(r, "description")).filter(|x| !x.trim().is_empty()) {
         Some(x) => format!("line {} ({})", i + 1, x.lines().next().unwrap_or(x).trim()),
         None => format!("line {}", i + 1),
@@ -592,12 +593,19 @@ impl DocHook for OrderHook {
     }
 
     async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        crate::localization::check(hc, doc, self.0).await
+        crate::localization::check(hc, doc, self.0).await?;
+        // A change to a submitted order (Update Items) is judged by what it adds, after it is made.
+        if self.0 == Side::Selling && d(doc, "docstatus").is_zero() {
+            credit::hold(hc, doc, "orders").await?;
+        }
+        Ok(())
     }
 
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
-        refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await
+        let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
+        refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
+        credit::check(hc, credit, "this order", credit::released(doc)).await
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -613,20 +621,44 @@ impl DocHook for OrderHook {
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await
     }
 
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let n = names(self.0);
         let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        if name == "update_items" {
+            return crate::change::update_items(hc, self.0, doc, params).await.map(Some);
+        }
         if name == "close" || name == "reopen" {
+            let number = s(doc, "number").unwrap_or_default();
+            // What each line still had open: never delivered or received, and never billed.
+            let open = |r: &Doc| {
+                let done = if id(r, "item").is_some() { d(r, n.fulfil_field).max(d(r, "billed_qty")) } else { d(r, "billed_qty") };
+                (d(r, "qty") - done).max(Decimal::ZERO)
+            };
+            let lines = rows(doc, "items");
+            let closing = name == "close";
+            if closing && s(doc, "status") == Some("Closed") {
+                return Err(Error::invalid(format!("{number} is already closed")));
+            }
+            let settled = |r: &Doc| d(r, "billed_qty") >= d(r, "qty") && (id(r, "item").is_none() || d(r, n.fulfil_field) >= d(r, "qty"));
+            if !closing && lines.iter().all(settled) {
+                return Err(Error::invalid(format!("everything on {number} was delivered or received and billed: there is nothing to re-open")));
+            }
+            for r in &lines {
+                let Some(line) = id(r, "id") else { continue };
+                let mut v = Doc::new();
+                v.insert("closed_qty".into(), money(if closing { open(r) } else { Decimal::ZERO }));
+                hc.kernel.set_child_values_tx(&sys(hc.ctx), hc.tx, n.order, "items", line, v).await?;
+            }
             let mut v = Doc::new();
-            v.insert("status".into(), json!(if name == "close" { "Closed" } else { "To Bill" }));
+            v.insert("status".into(), json!(if closing { "Closed" } else { "To Bill" }));
             hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, n.order, oid, v).await?;
-            if name == "reopen" {
+            if !closing {
                 refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, oid, n.fulfil_field, n.fulfil_pct).await?;
             } else if n.order == "SalesOrder" {
                 // A closed order no longer holds stock.
                 crate::reservation::refresh_for_order(hc.tx, hc.ctx.tenant, oid).await?;
             }
-            return Ok(Some(json!({"status": if name == "close" { "Closed" } else { "reopened" }})));
+            return Ok(Some(json!({"status": if closing { "Closed" } else { "reopened" }})));
         }
         let header = header_fields(self.0);
         let (target, done) = if name == n.make_shipment {
@@ -675,7 +707,11 @@ impl DocHook for ShipmentHook {
     }
 
     async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        crate::localization::check(hc, doc, self.0).await
+        crate::localization::check(hc, doc, self.0).await?;
+        if self.0 == Side::Selling {
+            credit::hold(hc, doc, "deliveries").await?;
+        }
+        Ok(())
     }
 
     async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -691,6 +727,7 @@ impl DocHook for ShipmentHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         count_return(hc, n.shipment, doc, Decimal::ONE).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let ret = b(doc, "is_return");
@@ -726,7 +763,8 @@ impl DocHook for ShipmentHook {
         for o in orders {
             refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, o, n.fulfil_field, n.fulfil_pct).await?;
         }
-        refresh_billing(hc.kernel, hc.ctx, hc.tx, n.shipment, sid).await
+        refresh_billing(hc.kernel, hc.ctx, hc.tx, n.shipment, sid).await?;
+        credit::check(hc, credit, "this delivery", credit::released(doc)).await
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -1011,39 +1049,13 @@ impl DocHook for InvoiceHook {
                 return Err(Error::Validation(missing));
             }
         }
-        if self.0 != Side::Selling || b(doc, "is_return") {
-            return Ok(());
-        }
-        let Some(cust) = id(doc, "customer") else { return Ok(()) };
-        let c = get(hc.kernel, hc.ctx, hc.tx, "Customer", cust).await?;
-        let limit = d(&c, "credit_limit");
-        if limit <= Decimal::ZERO {
-            return Ok(());
-        }
-        let exposure: Decimal = sqlx::query_scalar(
-            "select coalesce(sum(base_outstanding), 0) from open_item where tenant_id = $1 and customer_id = $2 and company_id = $3 and status = 'open'",
-        )
-        .bind(hc.ctx.tenant)
-        .bind(cust)
-        .bind(id(doc, "company"))
-        .fetch_one(&mut **hc.tx)
-        .await?;
-        let this = d(doc, "base_rounded_total");
-        if exposure + this > limit {
-            return Err(Error::invalid(format!(
-                "credit limit exceeded for {}: outstanding {} + this invoice {} > limit {}",
-                s(&c, "customer_name").unwrap_or_default(),
-                exposure.normalize(),
-                this.normalize(),
-                limit.normalize()
-            )));
-        }
         Ok(())
     }
 
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         count_return(hc, n.invoice, doc, Decimal::ONE).await?;
         count_debit_note(hc, doc, Decimal::ONE).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
@@ -1253,7 +1265,7 @@ impl DocHook for InvoiceHook {
                 }
             }
         }
-        Ok(())
+        credit::check(hc, credit, "this invoice", credit::released(doc)).await
     }
 
     async fn before_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
