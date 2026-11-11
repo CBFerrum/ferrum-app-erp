@@ -68,10 +68,10 @@ and CRM build on its engine.
 | 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.0` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | `0.2.2` | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
-| 💰 | **Finance** | `0.4.1` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
+| 💰 | **Finance** | `0.4.2` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | `0.1.4` | material requests, requests for quotation, supplier quotations and scorecards |
-| 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
-| ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
+| 🏷️ | **Stock Operations** | `0.1.2` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
+| ⚙️ | **Manufacturing Operations** | `0.1.2` | workstations, operations, routings, job cards, production planning and subcontracting |
 | 🏭 | **Warehouse Management** | `0.2.2` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
 | 🛠️ | **Manufacturing Execution** | `0.2.2` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
 | ✅ | **Quality** | `0.1.0` | holds that stop stock everywhere it could go, nonconformances and corrective action |
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.18.2, Finance 0.4.2, Stock Operations 0.1.2, Manufacturing Operations 0.1.2** | Item groups' accounts are read, and expired or disabled batches no longer leave for use. |
 | **0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
 | **0.18.0, Finance 0.4.1, Procurement 0.1.4** | Orders that change and credit that holds: Update Items on submitted sales and purchase orders (quantities, lines added and removed, dates, prices of what is not yet billed) under every app's rules; closing shows what was closed short; over-delivery, over-receipt and over-billing allowances; credit limits on orders, deliveries and invoices without counting twice, released with a reason, and a credit hold; a statement of account with ageing. |
 | **0.17.0** | Documents that print like documents: a letterhead the company fills in once (address, contact, logo, bank details, default terms and a footer), and print layouts for sales and purchase invoices (credit and debit notes among them), sales orders and pro formas, delivery notes, purchase orders and receipts, payment receipts, vouchers, refunds and transfers, journal vouchers and stock entries. |
