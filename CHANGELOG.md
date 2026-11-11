@@ -1,5 +1,9 @@
 # Changelog
 
+## ERP 0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2: the redesigned interface
+
+The interface follows the upgraded design system, rebuilt with Ferrum-Frontend 0a47157. Text uses the kit's type roles (nothing under 12px) and controls its height tokens; loading shows skeletons shaped like what is coming; empty, no matches, denied, offline and failed are told apart; status colours come from stored state ids. The interface check now runs the UI lint against an empty baseline. ERP's own pages are recomposed: the home strip is linked counts by urgency, Accounts today is a prioritised queue, and statements name their company, period and currency and mark groups and totals with weight and rules; a negative no longer flips its sign right to left. Warehouse and Shop Floor are rebuilt on the kit's frame, tabs, page heads and states (they had been built before the redesign); scan and confirm buttons are 44px on touch; a failed queue says so.
+
 ## ERP 0.18.0, Finance 0.4.1, Procurement 0.1.4: orders that change, and credit that holds
 
 - **Update Items** on a submitted sales or purchase order (a person who may submit it): a line's
