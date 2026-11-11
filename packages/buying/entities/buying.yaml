@@ -226,6 +226,9 @@
     - {name: items, type: table, of: PurchaseInvoiceItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: tax_breakdown, type: table, of: TaxBreakdown, read_only: true, label: Tax Breakdown}
+    - {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, description: "Over every line's own: empty, each line takes its item's, else the supplier's"}
+    - {name: withholdings, type: table, of: WithholdingLine, read_only: true, label: Withholding}
+    - {name: withholding_amount, type: currency, currency: currency, read_only: true, label: Withheld, description: "Deducted from what the supplier is owed and booked to the category's account"}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}
