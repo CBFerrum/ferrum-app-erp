@@ -102,7 +102,7 @@
         - {name: description, type: text, label: Description, description: "For a line added without an item: what it is"}
         - {name: qty, type: data, label: Quantity, description: "The line's new quantity, never below what was delivered or billed on it. 0 removes a line with nothing delivered or billed"}
         - {name: price, type: data, label: Price, description: "For a line without an item: its new price, for what is not yet billed. Items take theirs from the price list and pricing rules"}
-        - {name: delivery_date, type: date, label: Delivery Date, description: "Moves the order's delivery date, or the line's when a line is given"}
+        - {name: delivery_date, type: date, label: Delivery Date, description: "Moves the order's delivery date, and its lines' that had it"}
     - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
     - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}

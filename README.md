@@ -50,9 +50,9 @@ and CRM build on its engine.
 
 | | Module | What it does | Reports |
 |---|---|---|---|
-| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, transfers between the company's own bank and cash accounts, opening invoices carried in from the books before (imported from a spreadsheet, in their own currencies and due dates), period close, and a company letterhead (address, contact, logo, bank details, default terms and footer) that every printed document carries | trial balance, general ledger, profit and loss, balance sheet, cash flow, receivables, payables, and for a group of companies a consolidated trial balance and statements, with non-controlling interests |
-| 🧾 | **Selling** | sales orders, delivery notes and invoices with exact tax maths, pricing rules, receivables, lines that are no item booked straight to an account; returns, credit notes (of goods or of price alone), debit notes and refunds; printable orders, pro formas, delivery notes and invoices | receivables, sales register |
-| 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts, bills booked straight to an expense account (rent, electricity, a consultant's fee); returns, debit notes and refunds; printable orders, receipts and bills | payables, purchase register |
+| 📒 | **Accounting** | the universal journal (append-only, balanced in the database), fiscal years, cost centers, accounts and tax templates, journal and payment entries with open-item allocation, transfers between the company's own bank and cash accounts, opening invoices carried in from the books before (imported from a spreadsheet, in their own currencies and due dates), period close, and a company letterhead (address, contact, logo, bank details, default terms and footer) that every printed document carries | trial balance, general ledger, profit and loss, balance sheet, cash flow, receivables, payables, statements of account with ageing, and for a group of companies a consolidated trial balance and statements, with non-controlling interests |
+| 🧾 | **Selling** | sales orders, delivery notes and invoices with exact tax maths, pricing rules, receivables, orders changed after submission (Update Items), over-delivery and over-billing allowances, credit limits on orders, deliveries and invoices with a release and a hold, lines that are no item booked straight to an account; returns, credit notes (of goods or of price alone), debit notes and refunds; printable orders, pro formas, delivery notes and invoices | receivables, sales register |
+| 🛒 | **Buying** | purchase orders, receipts and supplier invoices with three-way matching against orders and receipts, orders changed after submission (Update Items) and over-receipt allowances, bills booked straight to an expense account (rent, electricity, a consultant's fee); returns, debit notes and refunds; printable orders, receipts and bills | payables, purchase register |
 | 📦 | **Inventory** | warehouses and stock entries on an append-only stock ledger with moving-average and FIFO cost layers | stock balance, stock ledger |
 | 🏭 | **Manufacturing** | multi-level bills of materials with revisions, work orders with actual costing, an MRP run that proposes purchases and production | stock balance |
 
@@ -68,8 +68,8 @@ and CRM build on its engine.
 | 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.0` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
 | 🇮🇳 | **India** (`ferrum-india`) | `0.2.2` | GSTIN validation, place of supply, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
-| 💰 | **Finance** | `0.3.2` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
-| 📋 | **Procurement** | `0.1.3` | material requests, requests for quotation, supplier quotations and scorecards |
+| 💰 | **Finance** | `0.4.1` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
+| 📋 | **Procurement** | `0.1.4` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
 | 🏭 | **Warehouse Management** | `0.2.1` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
@@ -297,7 +297,7 @@ and a database for ERP's and each add-on's (they reset it first):
 
 ```bash
 createuser ferrum --pwprompt
-for db in erp erp_contract erp_returns erp_switching eu de eu_members gb ca us countries finance finance_books procurement stock_ops mfg_ops; do
+for db in erp erp_contract erp_returns erp_switching erp_orders eu de eu_members gb ca us countries finance finance_books procurement stock_ops mfg_ops; do
   createdb -O ferrum ferrum_${db}_test
 done
 cargo test --workspace
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.18.0** | Orders that change and credit that holds: Update Items on submitted sales and purchase orders (quantities, lines added and removed, dates, prices of what is not yet billed) under every app's rules; closing shows what was closed short; over-delivery, over-receipt and over-billing allowances; credit limits on orders, deliveries and invoices without counting twice, released with a reason, and a credit hold; a statement of account with ageing. |
 | **0.17.0** | Documents that print like documents: a letterhead the company fills in once (address, contact, logo, bank details, default terms and a footer), and print layouts for sales and purchase invoices (credit and debit notes among them), sales orders and pro formas, delivery notes, purchase orders and receipts, payment receipts, vouchers, refunds and transfers, journal vouchers and stock entries. |
 | **0.16.0** | No entry barrier for a company switching books: invoice and order lines without an item, booked to an account; opening invoices from the old books in one import, aged by their own due dates and settled like any invoice; a journal entry's party line with its own number, due date and currency; transfers between the company's own bank and cash accounts. |
 | **0.15.0** | Returns, credit and debit notes, and refunds: returns from deliveries, receipts and invoices limited to what is left, credits of price alone, notes without an original, goods back at their original cost, debit notes to customers, and refunds of a party's credit. |
