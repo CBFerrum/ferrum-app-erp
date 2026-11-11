@@ -1,5 +1,28 @@
 # Changelog
 
+## ERP 0.19.0, India 0.4.0, Canada 0.1.1: delivery region, tax summary and withholding
+
+- **Where the goods go, without an address.** Sales orders, deliveries and invoices, and purchase
+  orders, receipts and invoices, have a delivery country and region. Countries' rules read one
+  thing, `localization::ship_to`: the ship-to address, else those two fields, else the party's
+  address. A draft's delivery fields follow its ship-to address, and a typed country becomes its
+  ISO code, on any document priced through `calculate`. Canada reads it; India's place of supply on
+  a sale is the state the goods are delivered to when the document states a delivery, then the
+  place typed on the invoice, then the customer's registration as before.
+- **Tax summary.** A report for any period of the tax each submitted sales and purchase invoice
+  stored in its tax breakdown, by tax account, category, rate and reverse charge, output and
+  input: the taxable base and the tax in company currency, credit notes netting, cancelled
+  invoices left out, each group opening on its invoices. In the Accounting menu.
+- **Withholding by category.** Withholding categories (deducted on the bill, deducted on payment,
+  or collected on a sale; on the net or the grand total; dated rates with per-document and yearly
+  thresholds; the whole year's base or only the part above the threshold once it is crossed;
+  rounding to whole units; an account per company) and withholding certificates (a lower rate or
+  none, for a period, up to a limit). Suppliers, customers and items name a category and an
+  invoice or payment can name its own. Bills deduct, payments deduct in proportion to what they
+  settle and on what they advance (a later bill is withheld only on the rest), sales invoices
+  collect; returns take back their share and cancellations reverse. A Withholding report lists
+  every document's rows. No category is seeded: a country's are its add-on's to add.
+
 ## ERP 0.18.2, Finance 0.4.2, Stock Operations 0.1.2, Manufacturing Operations 0.1.2: item group accounts and batch expiry
 
 - **Item groups' accounts are read.** A line that names no income or expense account takes the
