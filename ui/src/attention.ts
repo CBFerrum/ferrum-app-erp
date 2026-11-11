@@ -95,3 +95,16 @@ export function destination(r: OverviewRow, company: string | null, asOf: string
 
 /** The list a draft kind opens. */
 export const draftsPath = (entity: string): string => `/e/${entity}`;
+
+/** How pressing a row is, by what it is (never by its words): overdue money is danger, work waiting is a warning, the rest informs. */
+export type NeedTone = "danger" | "warning" | "neutral";
+const TONES: Record<string, NeedTone> = { overdue_receivables: "danger", overdue_payables: "danger", unreconciled_lines: "warning", drafts: "warning" };
+export const toneOf = (r: OverviewRow): NeedTone => TONES[r.key] ?? "neutral";
+
+/** The list a row counts: the receivables or payables report, the bank workbench, the drafts of the one kind that has any, the fiscal years; else the overview, where the rest is dealt with. */
+export function listOf(r: OverviewRow, company: string | null, asOf: string): string {
+  const to = destination(r, company, asOf);
+  if (to) return to;
+  if (r.key === "drafts" && r.detail?.length === 1 && r.detail[0].entity) return `${draftsPath(r.detail[0].entity)}?f.docstatus=0`;
+  return "/r/finance_overview";
+}

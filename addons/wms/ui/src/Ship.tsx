@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, docPath, formatDecimal, refusal } from "@ferrum/client";
-import { Alert, Badge, Button, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, Field, LoadFailed, PageHeader, PageLoading, StatusBadge, toast } from "@ferrum/kit";
 import { post } from "./data";
-import { readyToGo, type ShipLine, unverified } from "./logic";
+import { readyToGo, SHIPMENT_TONES, type ShipLine, unverified } from "./logic";
 import { ScanBox } from "./Scan";
+import { Page } from "./Warehouse";
 
 interface ShipmentDoc {
   id: string;
@@ -25,7 +26,6 @@ export function Ship() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["wms", "shipment", id], queryFn: () => api.get<ShipmentDoc>(docPath("Shipment", id), { titles: true }) });
-  useShellTitle("Packing");
   const box = useId();
   const blank = { carrier: "", tracking: "", label: "", weighed_kg: "" };
   const [form, setForm] = useState(blank);
@@ -48,19 +48,14 @@ export function Ship() {
     onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
   const s = q.data;
   const left = unverified(s.items);
   const ready = readyToGo(s.items);
   const done = s.status === "Handed Over" || s.status === "Cancelled";
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
   return (
-    <div className="wms-page wms-narrow">
-      <Link to="/" className="faint">
-        Back to the floor
-      </Link>
-      <h1 className="wms-title">{s.reference ?? "Shipment"}</h1>
-      <Badge>{s.status}</Badge>
+    <Page narrow header={<PageHeader eyebrow={<Link to="/">Back to the floor</Link>} title={s.reference ?? "Shipment"} description={<StatusBadge value={s.status} tones={SHIPMENT_TONES} />} />}>
       {!done && left.length > 0 ? (
         <section className="card card-pad stack">
           <Field label="How many" htmlFor={`${box}-q`}>
@@ -69,15 +64,17 @@ export function Ship() {
           <ScanBox label="Scan the item" onScan={(code) => verify.mutate(code)} busy={verify.isPending} />
         </section>
       ) : null}
-      <ul className="wms-list card card-pad">
+      <ul className="wms-list card">
         {s.items.map((l) => (
           <li key={l.id} className="wms-line">
             <span>
               {l._titles?.item ?? l.item} {l.lot ? <span className="faint">{l.lot}</span> : null}
             </span>
-            <span>
-              {formatDecimal(l.verified_qty ?? 0)} of {formatDecimal(l.qty)}
-              {Number(l.handed_over_qty ?? 0) > 0 ? <span className="faint"> · {formatDecimal(l.handed_over_qty ?? 0)} gone</span> : null}
+            <span className="wms-line-end">
+              {Number(l.handed_over_qty ?? 0) > 0 ? <span className="faint">{formatDecimal(l.handed_over_qty ?? 0)} gone</span> : null}
+              <span className="num">
+                {formatDecimal(l.verified_qty ?? 0)} of {formatDecimal(l.qty)}
+              </span>
             </span>
           </li>
         ))}
@@ -90,7 +87,7 @@ export function Ship() {
         ) : null
       ) : (
         <section className="card card-pad stack">
-          <h2>The door</h2>
+          <h2 className="text-base font-semibold">The door</h2>
           {left.length > 0 && ready.length > 0 ? <Alert tone="warning">Not everything is verified. Only what is verified will go.</Alert> : null}
           {ready.length === 0 ? <p className="muted">Nothing is verified and waiting to go.</p> : null}
           <Field label="Carrier" htmlFor={`${box}-c`} required>
@@ -112,6 +109,6 @@ export function Ship() {
           </div>
         </section>
       )}
-    </div>
+    </Page>
   );
 }

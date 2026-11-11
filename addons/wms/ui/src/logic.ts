@@ -113,3 +113,11 @@ export interface ShipLine {
 export const readyToGo = (lines: ShipLine[]) => lines.filter((l) => Number(l.verified_qty ?? 0) > Number(l.handed_over_qty ?? 0));
 
 export const unverified = (lines: ShipLine[]) => lines.filter((l) => Number(l.verified_qty ?? 0) < Number(l.qty));
+
+// Badge tones by the stored state id (the options in packages/wms/entities/*.yaml), never by the words shown.
+export const INBOUND_TONES: Record<string, Tone> = { Expected: "blue", Receiving: "blue", Received: "green", Discrepancy: "amber" };
+export const SHIPMENT_TONES: Record<string, Tone> = { Picking: "blue", Packed: "blue", "Handed Over": "green", "Partially Handed Over": "amber", Cancelled: "neutral" };
+export const COUNT_TONES: Record<string, Tone> = { Draft: "neutral", Counting: "blue", Review: "amber", Applied: "green", Cancelled: "neutral" };
+export const BIN_TONES: Record<string, Tone> = { Open: "green", Blocked: "red" };
+/** What a position's stock is: only Available can be allocated. */
+export const STOCK_TONES: Record<string, Tone> = { Available: "green", Inspection: "amber", Quarantine: "amber" };

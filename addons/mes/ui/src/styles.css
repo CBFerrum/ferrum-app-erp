@@ -1,40 +1,22 @@
 /* Ferrum-Frontend's stylesheet (the kit's look and Tailwind), with the classes of the kit's
-   components and of this app's files. */
+   components and of this app's files. Only what is the shop floor's own is here: the run list, the
+   operator's terminal and its big buttons. Frame, page head, tabs, cards, badges and states are the kit's. */
 @import "../../../../../ferrum/web/src/index.css";
 @source "../../../../../ferrum/web/src";
 @source ".";
 
+/* One column of cards under the page head: 24px between them. */
 .mes-page {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 24px;
   min-width: 0;
 }
 
+/* The operator's terminal for one run: a single column, left-aligned with the page head. */
 .mes-narrow {
   max-width: 36rem;
   width: 100%;
-  margin: 0 auto;
-}
-
-.mes-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.1rem;
-}
-
-.mes-tabs a {
-  padding-bottom: 0.15rem;
-  border-bottom: 2px solid transparent;
-  color: var(--muted-foreground);
-  font-size: 20px;
-  font-weight: 650;
-  text-decoration: none;
-}
-
-.mes-tabs a.active {
-  border-color: var(--primary);
-  color: var(--text);
 }
 
 .mes-list {
@@ -47,8 +29,8 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
+  gap: 8px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -64,76 +46,93 @@
   overflow-wrap: anywhere;
 }
 
-.mes-title {
-  font-size: 20px;
-  font-weight: 650;
+.mes-row-qty {
+  white-space: nowrap;
 }
 
+/* A run's four figures. */
 .mes-counts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.5rem;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .mes-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.mes-counts > div {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .mes-counts dt {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .mes-counts dd {
-  font-size: 24px;
-  font-weight: 650;
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--text-2xl--line-height);
+  font-variant-numeric: tabular-nums;
 }
 
+/* Press buttons: a little taller than a control, which is the touch height (44px) on a handheld or a panel. */
 .mes-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 8px;
+}
+
+.mes-buttons .btn,
+.mes-reasons .btn {
+  min-height: calc(var(--control-h) + 4px);
 }
 
 .mes-buttons .btn {
-  min-height: 48px;
-  padding-inline: 1rem;
+  padding-inline: 16px;
 }
 
 .mes-reasons {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
-  gap: 0.4rem;
-}
-
-.mes-reasons .btn {
-  min-height: 48px;
+  gap: 8px;
 }
 
 .mes-story {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
+  gap: 12px;
 }
 
 .mes-filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
-  gap: 0.6rem;
+  gap: 16px;
   align-items: end;
 }
 
 .mes-trace-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 8px;
 }
 
 .mes-figures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.5rem;
+  gap: 12px;
 }
 
 .mes-figures strong {
   display: block;
-  font-size: 26px;
-  font-weight: 650;
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--text-2xl--line-height);
+  font-variant-numeric: tabular-nums;
 }

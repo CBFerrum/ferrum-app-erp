@@ -9,11 +9,34 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, download, errorMessage, formatDate, formatDecimal, openPrint, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, PageLoading, statusTone, toast, useShellTitle, placed } from "@ferrum/kit";
+import { Badge, Button, statusTone, toast, useShellTitle, placed, type Tone, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 import { amount } from "./Invoices";
 
 const BASE = "/api/app/buying/portal";
 const RFQS = "/api/app/procurement/portal/rfqs";
+
+/** The colour of each stored status of a purchase order (the options of its `status` field in packages/buying). */
+const ORDER_TONES: Readonly<Record<string, Tone>> = {
+  "Draft": "neutral",
+  "To Receive and Bill": "amber",
+  "To Receive": "amber",
+  "To Bill": "blue",
+  "Completed": "green",
+  "Closed": "green",
+  "Cancelled": "red",
+};
+
+/** The same for a purchase invoice (a supplier's bill). */
+const BILL_TONES: Readonly<Record<string, Tone>> = {
+  "Draft": "neutral",
+  "Unpaid": "amber",
+  "Partly Paid": "amber",
+  "Paid": "green",
+  "Return": "neutral",
+  "Debit Note Issued": "neutral",
+  "Cancelled": "red",
+};
 
 export interface PortalRfq {
   id: string;
@@ -116,7 +139,7 @@ export function PortalOrders() {
   const orderRows = orders.data?.pages.flatMap((p) => p.orders) ?? [];
   const billRows = bills.data?.pages.flatMap((p) => p.bills) ?? [];
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <div className="page-head">
         <div>
           <h1 className="page-title">{tr("Your orders")}</h1>
@@ -126,27 +149,25 @@ export function PortalOrders() {
       {waiting.length > 0 && (
         <section className="stack" aria-label={tr("Requests for quotation")}>
           <h2 className="section-title">{tr("Waiting for your quotation")}</h2>
-          <ul className="stack">
+          <ul className="erp-rfqs">
             {waiting.map((r) => (
-              <li key={`${r.id}-${r.answer ?? ""}`} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <li key={`${r.id}-${r.answer ?? ""}`}>
                 <span>
                   <strong>{isolate(r.number ?? "")}</strong> · {isolate(asked(r))}
                   {r.due_by && <span className="faint"> {tr("· due by")} {isolate(formatDate(r.due_by))}</span>}
                 </span>
-                {r.answer ? <a href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{placed(tr("Ask {p1} for a new link"), { p1: r.company ?? tr("them") })}</span>}
+                {r.answer ? <a className="btn btn-primary btn-sm" href={r.answer}>{tr("Answer it")}</a> : <span className="faint">{placed(tr("Ask {p1} for a new link"), { p1: r.company ?? tr("them") })}</span>}
               </li>
             ))}
           </ul>
         </section>
       )}
       {orders.error ? (
-        <ErrorState error={orders.error} onRetry={() => void orders.refetch()} />
+        <LoadFailed error={orders.error} onRetry={() => void orders.refetch()} />
       ) : !orders.data ? (
-        <PageLoading />
+        <Loading />
       ) : !orderRows.length ? (
-        <EmptyState title={tr("No orders yet")} icon="receipt">
-          <p className="muted">{tr("Orders placed with you appear here once they are sent.")}</p>
-        </EmptyState>
+        <StatePanel kind="empty" title={tr("No orders yet")}>{tr("Orders placed with you appear here once they are sent.")}</StatePanel>
       ) : (
         <section className="stack" aria-label={tr("Orders")}>
           <div className="table-wrap" data-ferrum-nocard>
@@ -171,7 +192,7 @@ export function PortalOrders() {
                     <td>{isolate(formatDate(o.date))}</td>
                     <td>{o.required_by ? formatDate(o.required_by) : "—"}</td>
                     <td>
-                      <Badge tone={statusTone(o.status)}>{isolate(progress(o))}</Badge>
+                      <Badge tone={statusTone(o.status, ORDER_TONES)}>{isolate(progress(o))}</Badge>
                     </td>
                     <td className="num">{isolate(amount(o.total, o.currency))}</td>
                   </tr>
@@ -188,9 +209,9 @@ export function PortalOrders() {
       )}
       <h2 className="section-title">{tr("Your bills")}</h2>
       {bills.error ? (
-        <ErrorState error={bills.error} onRetry={() => void bills.refetch()} />
+        <LoadFailed error={bills.error} onRetry={() => void bills.refetch()} />
       ) : !bills.data ? (
-        <PageLoading />
+        <Loading />
       ) : !billRows.length ? (
         <p className="muted">{tr("No bills of yours are recorded yet.")}</p>
       ) : (
@@ -216,10 +237,10 @@ export function PortalOrders() {
                     <td>{isolate(b.bill_no ?? "")}</td>
                     <td>{isolate(formatDate(b.bill_date))}</td>
                     <td>
-                      <Badge tone={b.overdue ? "red" : statusTone(b.status)}>{isolate(owedLabel(b))}</Badge>
+                      <Badge tone={b.overdue ? "red" : statusTone(b.status, BILL_TONES)}>{isolate(owedLabel(b))}</Badge>
                     </td>
                     <td className="num">{isolate(amount(b.total, b.currency))}</td>
-                    <td className="num">{Number(b.owed) > 0 ? amount(b.owed, b.currency) : "—"}</td>
+                    <td className={`num${b.overdue && Number(b.owed) > 0 ? " erp-due" : ""}`}>{Number(b.owed) > 0 ? amount(b.owed, b.currency) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -241,8 +262,8 @@ export function PortalOrderPage() {
   const q = useQuery({ queryKey: ["erp", "portal", "order", id], queryFn: ({ signal }) => api.get<PortalOrderDetail>(`${BASE}/orders/${encodeURIComponent(id)}`, {}, signal) });
   const [busy, setBusy] = useState<"print" | "pdf" | null>(null);
   useShellTitle(q.data?.number ?? tr("Order"));
-  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (!q.data) return <PageLoading />;
+  if (q.error) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
+  if (!q.data) return <Loading shape="reader" />;
   const o = q.data;
   const run = async (what: "print" | "pdf") => {
     setBusy(what);
@@ -256,7 +277,7 @@ export function PortalOrderPage() {
     }
   };
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <p className="crumbs">
         <Link to="/">{tr("Your orders")}</Link>
       </p>
@@ -267,7 +288,7 @@ export function PortalOrderPage() {
             {isolate([o.company, formatDate(o.date), o.required_by ? tr("required by {required_by}", { required_by: formatDate(o.required_by) }) : null].filter(Boolean).join(" · "))}
           </p>
         </div>
-        <div className="row">
+        <div className="page-actions">
           <Button loading={busy === "print"} onClick={() => void run("print")}>
             {tr("Print")}
           </Button>
@@ -279,7 +300,7 @@ export function PortalOrderPage() {
         </div>
       </div>
       <p>
-        <Badge tone={statusTone(o.status)}>{isolate(progress(o))}</Badge>
+        <Badge tone={statusTone(o.status, ORDER_TONES)}>{isolate(progress(o))}</Badge>
       </p>
       <div className="table-wrap" data-ferrum-nocard>
         <table className="table">
