@@ -47,13 +47,13 @@ fn refused<T: std::fmt::Debug>(r: Result<T>, words: &str) {
 }
 
 /// A hook of the kind another app registers on sales orders (CRM's "an order keeps what was
-/// quoted"): it refuses, at submission, more than 50 of anything.
+/// quoted"): on orders under quote Q-50, it refuses at submission more than 50 of anything.
 struct Quoted;
 
 #[async_trait]
 impl DocHook for Quoted {
     async fn before_submit(&self, _hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        if doc["items"].as_array().unwrap().iter().any(|l| dec(&l["qty"]) > n("50")) {
+        if doc.get("po_no") == Some(&json!("Q-50")) && doc["items"].as_array().unwrap().iter().any(|l| dec(&l["qty"]) > n("50")) {
             return Err(Error::invalid("more than the 50 quoted"));
         }
         Ok(())
@@ -221,7 +221,7 @@ async fn scenario() {
     refused(t.change("SalesOrder", so, json!({"line": 1, "qty": "6"})).await, "is completed");
 
     // Another app's rule holds after a change as at submission.
-    let quoted = uid(&t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "items": [{"item": widget.to_string(), "qty": "40"}]})).await);
+    let quoted = uid(&t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "po_no": "Q-50", "items": [{"item": widget.to_string(), "qty": "40"}]})).await);
     t.submit("SalesOrder", quoted).await;
     refused(t.change("SalesOrder", quoted, json!({"line": 1, "qty": "60"})).await, "more than the 50 quoted");
     assert_eq!(dec(&line(&t.get("SalesOrder", quoted).await, 0)["qty"]), n("40"), "nothing changed");
@@ -245,4 +245,34 @@ async fn scenario() {
     assert_eq!((dec(&line(&pi2_doc, 0)["qty"]), dec(&pi2_doc["grand_total"])), (n("6"), n("72")), "the rest at the new price");
     assert_eq!(t.get("PurchaseOrder", po).await["status"], json!("To Receive"));
     refused(t.change("PurchaseOrder", po, json!({"line": 1, "price": "13"})).await, "is fully billed");
+
+    // ───────────── 5% more delivered within the allowance, beyond it refused, the excess returned ─────────────
+    t.update("Company", cid, json!({"over_delivery_allowance": "5"})).await;
+    let big = uid(&t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "items": [{"item": widget.to_string(), "qty": "100"}]})).await);
+    t.submit("SalesOrder", big).await;
+    let over = vid(&t.action("SalesOrder", big, "make_delivery_note", json!({})).await);
+    let over_line = line(&t.get("DeliveryNote", over).await, 0);
+    t.update("DeliveryNote", over, json!({"items": [{"id": over_line["id"], "qty": "106"}]})).await;
+    refused(t.k.submit(&t.ctx, "DeliveryNote", over, None).await, "ordered 100, allows 105 with its 5% allowance, and this would bring what is delivered to 106");
+    t.update("DeliveryNote", over, json!({"items": [{"id": over_line["id"], "qty": "105"}]})).await;
+    t.submit("DeliveryNote", over).await;
+    let cogs = t
+        .scalar("select sum(l.debit) from journal_line l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id where l.tenant_id = $1 and e.source_id = $2", over)
+        .await;
+    assert_eq!(cogs, n("4200"), "105 at 40 left stock");
+    let order = t.get("SalesOrder", big).await;
+    assert_eq!((dec(&line(&order, 0)["delivered_qty"]), dec(&order["per_delivered"]), order["status"].clone()), (n("105"), n("100"), json!("To Bill")), "the excess shows");
+    let back = vid(&t.action("DeliveryNote", over, "make_sales_return", json!({})).await);
+    let back_line = line(&t.get("DeliveryNote", back).await, 0);
+    t.update("DeliveryNote", back, json!({"items": [{"id": back_line["id"], "qty": "5"}]})).await;
+    t.submit("DeliveryNote", back).await;
+    assert_eq!(dec(&line(&t.get("SalesOrder", big).await, 0)["delivered_qty"]), n("100"), "the excess came back");
+    // No billing allowance: billing beyond the order is refused.
+    let bill = vid(&t.action("SalesOrder", big, "make_sales_invoice", json!({})).await);
+    let bill_line = line(&t.get("SalesInvoice", bill).await, 0);
+    t.update("SalesInvoice", bill, json!({"items": [{"id": bill_line["id"], "qty": "101"}]})).await;
+    refused(t.k.submit(&t.ctx, "SalesInvoice", bill, None).await, "ordered 100, allows no more, and this would bring what is billed to 101");
+    t.update("SalesInvoice", bill, json!({"items": [{"id": bill_line["id"], "qty": "100"}]})).await;
+    t.submit("SalesInvoice", bill).await;
+    assert_eq!(t.get("SalesOrder", big).await["status"], json!("Completed"));
 }
