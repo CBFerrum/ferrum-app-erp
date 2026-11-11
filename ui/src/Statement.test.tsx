@@ -77,7 +77,21 @@ describe("the profit and loss", () => {
   it("makes each account's figures buttons that open the entries behind them", () => {
     const html = screen("profit_and_loss", pl, profit, plParams);
     expect(html).toContain("Show the entries behind this figure");
-    expect((html.match(/erp-fig/g) ?? []).length).toBe(4);
+    expect((html.match(/<button[^>]*erp-fig/g) ?? []).length).toBe(4);
+  });
+
+  it("tells headings, accounts, totals and the closing total apart, and marks the negative figures", () => {
+    const html = screen("profit_and_loss", pl, profit, plParams);
+    expect(html.match(/data-kind="section"/g)).toHaveLength(2);
+    expect(html.match(/data-kind="total"/g)).toHaveLength(2);
+    expect(html.match(/data-kind="grand"/g)).toHaveLength(1);
+    expect(html).toContain("erp-neg");
+  });
+
+  it("names the statement, then says in one line what it covers", () => {
+    const html = screen("profit_and_loss", pl, { ...profit, meta: { ...profit.meta, company: "Demo Industries", currency: "INR" } }, plParams);
+    expect(html).toContain('<h1 class="page-title">Profit and loss</h1>');
+    expect(text(html)).toContain("Demo Industries Feb 1, 2026 to Feb 28, 2026 INR");
   });
 
   it("can be told apart: statements, the period, what it is set beside", () => {

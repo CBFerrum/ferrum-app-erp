@@ -17,6 +17,7 @@ import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDepos
 import { cmp, isZero } from "./decimal";
 import ImportDialog from "./Import";
 import { useNarrow } from "./narrow";
+import { Meta, PageHead } from "./chrome";
 import { AccountsTabs } from "./Tabs";
 
 interface Account {
@@ -132,6 +133,7 @@ function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Wo
             key={l.id}
             id={`line-${l.id}`}
             data-line={l.id}
+            data-matched={isZero(l.unallocated) || undefined}
             role="option"
             aria-selected={l.id === selected}
             aria-label={`${formatDate(l.date)}, ${l.description || l.reference_number || "no description"}, ${money === "in" ? "money in" : "money out"} ${fmt(l.unallocated, wb.precision)}${l.match ? ", a match was found" : ""}`}
@@ -756,37 +758,38 @@ export function Bank() {
 
   return (
     <div className="erp-page erp-bank">
-      <header className="erp-head">
-        <div>
-          <AccountsTabs />
-          <p className="page-sub">{tr("Match what the bank says with what the books say.")}</p>
-        </div>
-        {/* Nothing to pick or date until there is an account: an empty, unlabelled select is not a control. */}
-        {(accounts.isPending || !!accounts.data?.length) && (
-        <div className="erp-tools">
-          <label className="erp-pick">
-            <span className="sr-only">{tr("Bank account")}</span>
-            <select className="select" value={account ?? ""} disabled={!accounts.data?.length} onChange={(e) => put({ account: e.target.value, line: null })}>
-              {(accounts.data ?? []).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {isolate(a.account_name)}
-                  {a.masked_number ? ` ${a.masked_number}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="erp-pick">
-            <span className="sr-only">{tr("Statement balance as of")}</span>
-            <input className="input" type="date" value={asOf} max={todayIso()} onChange={(e) => put({ as_of: e.target.value || null, line: null })} />
-          </label>
-          {canImport && account && (
-            <Button icon="upload" onClick={() => setImporting(true)}>
-              {tr("Import a statement")}
-            </Button>
-          )}
-        </div>
-        )}
-      </header>
+      <PageHead
+        title={tr("Bank reconciliation")}
+        meta={<Meta items={wb ? [isolate(wb.name ?? ""), `${tr("as of")} ${isolate(formatDate(wb.as_of))}`] : [tr("Match what the bank says with what the books say.")]} />}
+        actions={
+          /* Nothing to pick or date until there is an account: an empty, unlabelled select is not a control. */
+          (accounts.isPending || !!accounts.data?.length) && (
+            <>
+              <label className="erp-pick">
+                <span className="sr-only">{tr("Bank account")}</span>
+                <select className="select" value={account ?? ""} disabled={!accounts.data?.length} onChange={(e) => put({ account: e.target.value, line: null })}>
+                  {(accounts.data ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {isolate(a.account_name)}
+                      {a.masked_number ? ` ${a.masked_number}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="erp-pick">
+                <span className="sr-only">{tr("Statement balance as of")}</span>
+                <input className="input" type="date" value={asOf} max={todayIso()} onChange={(e) => put({ as_of: e.target.value || null, line: null })} />
+              </label>
+              {canImport && account && (
+                <Button icon="upload" onClick={() => setImporting(true)}>
+                  {tr("Import a statement")}
+                </Button>
+              )}
+            </>
+          )
+        }
+      />
+      <AccountsTabs />
       {body}
       {importing && account && (
         <ImportDialog

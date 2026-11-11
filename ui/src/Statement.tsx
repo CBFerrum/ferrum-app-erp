@@ -7,11 +7,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, formatDate, saveBlob, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, Field, useShellTitle, placed, StatePanel } from "@ferrum/kit";
+import { api, formatDate, formatMoment, saveBlob, todayIso, t as tr, isolate } from "@ferrum/client";
+import { Alert, Button, Dialog, useShellTitle, placed, StatePanel } from "@ferrum/kit";
 import { Loading, LoadFailed } from "./states";
-import { LinkInput, useMe, useMetaIndex } from "@ferrum/records";
-import { sub } from "./decimal";
+import { LinkInput, LinkTitle, useMe, useMetaIndex } from "@ferrum/records";
+import { Ctl, Meta, PageHead } from "./chrome";
+import { isZero, sub } from "./decimal";
 import { show } from "./money";
 import { amountColumns, days, type Drill, KINDS, type Kind, ledgerHref, ledgerQuery, moved, named, periodOf, type PeriodInfo, type Preset, presets, type Row, type Statement as Data, toCsv } from "./statements";
 import { AccountsTabs } from "./Tabs";
@@ -85,6 +86,22 @@ function Entries({ title, drill, onClose }: { title: string; drill: Drill; onClo
   );
 }
 
+/** A quiet class for a figure: negative ones are marked, zero is told apart from empty. The figure itself is the server's. */
+const cue = (v: string) => (String(v).startsWith("-") && !isZero(v) ? "erp-neg" : isZero(v) ? "erp-zero" : "");
+
+/** What each row is, from what it carries: a heading (nothing to add up), a group or leaf account (it has an id), or a total (bold, no id); the last total closes the statement. */
+function kindsOf(rows: Row[], names: string[]): string[] {
+  const out: string[] = rows.map((r) => {
+    const has = names.some((n) => r[n] !== undefined && r[n] !== null && r[n] !== "");
+    if (!has) return r._bold ? "section" : "leaf";
+    if (r.account_id) return r._bold ? "group" : "leaf";
+    return r._bold ? "total" : "leaf";
+  });
+  const last = out.lastIndexOf("total");
+  if (last >= 0 && last === out.length - 1) out[last] = "grand";
+  return out;
+}
+
 // ───────────────────────────── the screen ─────────────────────────────
 
 export function Statement({ kind }: { kind: Kind }) {
@@ -150,10 +167,12 @@ export function Statement({ kind }: { kind: Kind }) {
   const current = kind === "balance_sheet" ? named(points, asOf, asOf) : named(stretch, from, to);
   const columns = data ? amountColumns(data.columns) : [];
   const compared = columns.length > 1;
+  const shown = data ? data.columns.filter((c) => c.name !== "change_pct") : [];
+  const kinds = data ? kindsOf(data.rows, columns.map((c) => c.name)) : [];
 
   let body: ReactNode;
   if (q.error) body = <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not run the statement")} />;
-  else if (!data) body = <Loading label={tr("Running the statement")} />;
+  else if (!data) body = <Loading label={tr("Running the statement")} columns={compare ? 4 : 2} rows={10} />;
   else if (kind === "profit_and_loss" && data.rows.length <= 5) {
     body = (
       <StatePanel kind="empty" title={tr("Nothing was posted in this period")}>{tr("Pick another period, or check the company and the filters above.")}</StatePanel>
@@ -164,41 +183,40 @@ export function Statement({ kind }: { kind: Kind }) {
         {data.meta.balanced === false && <Alert tone="error">{placed(tr("The balance sheet is out of balance by {p1}. This should never happen: tell whoever looks after the books."), { p1: isolate(show(data.meta.difference)) })}</Alert>}
         {data.meta.reconciled === false && <Alert tone="error">{placed(tr("The cash flow ends {p1} away from the bank and cash accounts. This should never happen: tell whoever looks after the books."), { p1: isolate(show(data.meta.difference)) })}</Alert>}
         <Headlines kind={kind} data={data} />
-        <div className="table-wrap erp-statement">
+        <div className="table-wrap erp-statement" data-single={shown.length <= 2 || undefined}>
           <table className="table">
             <thead>
               <tr>
-                {data.columns
-                  .filter((c) => c.name !== "change_pct")
-                  .map((c, i) => (
-                    <th key={c.name} scope="col" className={i === 0 ? "erp-first" : "num"}>
-                      {isolate(c.label)}
-                    </th>
-                  ))}
+                {shown.map((c, i) => (
+                  <th key={c.name} scope="col" className={i === 0 ? "erp-first" : c.name === "change" ? "num erp-var" : "num"}>
+                    {isolate(c.label)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {data.rows.map((r, i) => (
-                <tr key={i} className={r._bold ? "bold" : undefined}>
-                  {data.columns.filter((c) => c.name !== "change_pct").map((c, ci) => {
+                <tr key={i} className={r._bold ? "bold" : undefined} data-kind={kinds[i]}>
+                  {shown.map((c, ci) => {
                     if (ci === 0) {
                       return (
-                        <th key={c.name} scope="row" className="erp-first erp-account" style={{ paddingLeft: `${0.75 + (r._indent ?? 0) * 1.1}rem` }}>
+                        <th key={c.name} scope="row" className="erp-first erp-account" style={{ paddingInlineStart: `${0.75 + (r._indent ?? 0) * 1.25}rem` }}>
                           {isolate(String(r[c.name] ?? ""))}
                         </th>
                       );
                     }
                     const v = r[c.name];
-                    if (c.name === "change") return <td key={c.name} className="num">{isolate(moved(r.change as string, r.change_pct as string | null, show))}</td>;
-                    if (v === undefined || v === null || v === "") return <td key={c.name} />;
+                    const cls = `num${c.name === "change" ? " erp-var" : ""}${ci > 1 && c.name !== "change" ? " erp-before" : ""}`;
+                    if (c.name === "change") return <td key={c.name} className={cls}>{v === undefined || v === null || v === "" ? null : <span className={cue(r.change as string)}>{isolate(moved(r.change as string, r.change_pct as string | null, show))}</span>}</td>;
+                    if (v === undefined || v === null || v === "") return <td key={c.name} className={cls} />;
                     return (
-                      <td key={c.name} className="num">
+                      <td key={c.name} className={cls}>
                         {r.account_id ? (
-                          <button type="button" className="erp-fig" title={tr("Show the entries behind this figure")} onClick={() => open(r, c.name)}>
+                          <button type="button" className={`erp-fig ${cue(v as string)}`} title={tr("Show the entries behind this figure")} onClick={() => open(r, c.name)}>
                             {isolate(show(v))}
                           </button>
                         ) : (
-                          show(v)
+                          <span className={`erp-fig ${cue(v as string)}`}>{show(v)}</span>
                         )}
                       </td>
                     );
@@ -219,30 +237,41 @@ export function Statement({ kind }: { kind: Kind }) {
     );
   }
 
-  const save = () => data && saveBlob(new Blob([`﻿${toCsv(data)}`], { type: "text/csv;charset=utf-8" }), `${kind}-${kind === "balance_sheet" ? asOf : to}.csv`);
+  const save = () => data && saveBlob(new Blob([`\ufeff${toCsv(data)}`], { type: "text/csv;charset=utf-8" }), `${kind}-${kind === "balance_sheet" ? asOf : to}.csv`);
+  const covers = kind === "balance_sheet" ? tr("As of {asOf}", { asOf: formatDate(asOf) }) : tr("{from} to {to}", { from: formatDate(from), to: formatDate(to) });
   return (
     <div className="erp-page erp-statements">
-      <header className="erp-head">
-        <div>
-          <AccountsTabs />
-          <p className="page-sub">{kind === "balance_sheet" ? tr("As of {asOf}", { asOf: formatDate(asOf) }) : tr("{from} to {to}", { from: formatDate(from), to: formatDate(to) })}</p>
-        </div>
-        <div className="erp-tools">
-          <div className="segmented" role="group" aria-label={tr("Statement")}>
-            {KINDS.map((k) => (
-              <Link key={k.id} to={{ pathname: k.path, search: sp.toString() }} aria-current={k.id === kind ? "page" : undefined} className="erp-seg" data-on={k.id === kind || undefined}>
-                {isolate(k.label)}
-              </Link>
-            ))}
-          </div>
-          <Button icon="download" onClick={save} disabled={!data}>
+      <PageHead
+        title={info.label}
+        meta={
+          <Meta
+            items={[
+              data?.meta.company ? isolate(data.meta.company) : false,
+              isolate(covers),
+              data?.meta.currency ? isolate(data.meta.currency) : false,
+              costCenter && <LinkTitle to="CostCenter" id={costCenter} />,
+              project && <LinkTitle to="Project" id={project} />,
+              data && q.dataUpdatedAt ? tr("Run at {time}", { time: formatMoment(q.dataUpdatedAt, { hour: "2-digit", minute: "2-digit" }) }) : false,
+            ]}
+          />
+        }
+        actions={
+          <Button variant="ghost" icon="download" onClick={save} disabled={!data}>
             {tr("Download CSV")}
           </Button>
-        </div>
-      </header>
+        }
+      />
+      <AccountsTabs />
 
-      <form className="erp-filters" onSubmit={(e) => e.preventDefault()} aria-label={tr("What the statement covers")}>
-        <Field label={kind === "balance_sheet" ? tr("As of") : tr("Period")} htmlFor="st-period">
+      <form className="erp-bar" onSubmit={(e) => e.preventDefault()} aria-label={tr("What the statement covers")}>
+        <div className="segmented" role="group" aria-label={tr("Statement")}>
+          {KINDS.map((k) => (
+            <Link key={k.id} to={{ pathname: k.path, search: sp.toString() }} aria-current={k.id === kind ? "page" : undefined} className="erp-seg" data-on={k.id === kind || undefined}>
+              {isolate(k.label)}
+            </Link>
+          ))}
+        </div>
+        <Ctl label={kind === "balance_sheet" ? tr("As of") : tr("Period")} htmlFor="st-period">
           <select
             id="st-period"
             className="select"
@@ -259,48 +288,48 @@ export function Statement({ kind }: { kind: Kind }) {
             ))}
             <option value="custom">{tr("Choose dates…")}</option>
           </select>
-        </Field>
+        </Ctl>
         {kind === "balance_sheet" ? (
-          <Field label={tr("Date")} htmlFor="st-as-of">
+          <Ctl label={tr("Date")} htmlFor="st-as-of">
             <input id="st-as-of" className="input" type="date" value={asOf} onChange={(e) => put({ as_of: e.target.value || null })} />
-          </Field>
+          </Ctl>
         ) : (
           <>
-            <Field label={tr("From")} htmlFor="st-from">
+            <Ctl label={tr("From")} htmlFor="st-from">
               <input id="st-from" className="input" type="date" value={from} max={to} onChange={(e) => put({ from_date: e.target.value || null })} />
-            </Field>
-            <Field label={tr("To")} htmlFor="st-to">
+            </Ctl>
+            <Ctl label={tr("To")} htmlFor="st-to">
               <input id="st-to" className="input" type="date" value={to} min={from} onChange={(e) => put({ to_date: e.target.value || null })} />
-            </Field>
+            </Ctl>
           </>
         )}
-        <Field label={tr("Compare with")} htmlFor="st-compare">
+        <Ctl label={tr("Compare with")} htmlFor="st-compare">
           <select id="st-compare" className="select" value={compare} onChange={(e) => put({ compare: e.target.value || null, periods: null })}>
             <option value="">{tr("Nothing")}</option>
             <option value="Previous period">{tr("The period before")}</option>
             <option value="Previous year">{tr("The same period a year before")}</option>
           </select>
-        </Field>
+        </Ctl>
         {compare && (
-          <Field label={tr("How many")} htmlFor="st-many">
+          <Ctl label={tr("How many")} htmlFor="st-many">
             <select id="st-many" className="select" value={many} onChange={(e) => put({ periods: e.target.value === "1" ? null : e.target.value })}>
               {["1", "2", "3"].map((n) => (
                 <option key={n}>{isolate(n)}</option>
               ))}
             </select>
-          </Field>
+          </Ctl>
         )}
-        <Field label={tr("Company")} htmlFor="st-company">
+        <Ctl label={tr("Company")} htmlFor="st-company">
           <LinkInput to="Company" id="st-company" value={company} onChange={(id) => put({ company: id })} />
-        </Field>
+        </Ctl>
         {kind === "profit_and_loss" && (
           <>
-            <Field label={tr("Cost centre")} htmlFor="st-cc" hint={tr("With the ones below it.")}>
+            <Ctl label={tr("Cost centre")} htmlFor="st-cc" title={tr("With the ones below it.")}>
               <LinkInput to="CostCenter" id="st-cc" value={costCenter} placeholder={tr("All")} onChange={(id) => put({ cost_center: id })} />
-            </Field>
-            <Field label={tr("Project")} htmlFor="st-project">
+            </Ctl>
+            <Ctl label={tr("Project")} htmlFor="st-project">
               <LinkInput to="Project" id="st-project" value={project} placeholder={tr("All")} onChange={(id) => put({ project: id })} />
-            </Field>
+            </Ctl>
           </>
         )}
       </form>
@@ -323,7 +352,7 @@ function Headlines({ kind, data }: { kind: Kind; data: Data }) {
         return (
           <div key={key} className="erp-headline">
             <dt>{isolate(label)}</dt>
-            <dd>{isolate(show(v))}</dd>
+            <dd className={cue(v)}>{isolate(show(v))}</dd>
             {was !== undefined && <dd className="faint">{tr("{value} from {label}", { value: moved(sub(v, was), null, show), label: before!.label })}</dd>}
           </div>
         );

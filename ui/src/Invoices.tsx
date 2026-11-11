@@ -79,7 +79,7 @@ export function PortalInvoices() {
   });
   const invoices = q.data?.pages.flatMap((p) => p.invoices) ?? [];
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <div className="page-head">
         <div>
           <h1 className="page-title">{tr("Your invoices")}</h1>
@@ -119,7 +119,7 @@ export function PortalInvoices() {
                     <Badge tone={inv.overdue ? "red" : statusTone(inv.status, INVOICE_TONES)}>{isolate(dueLabel(inv))}</Badge>
                   </td>
                   <td className="num">{isolate(amount(inv.total, inv.currency))}</td>
-                  <td className="num">{Number(inv.outstanding) > 0 ? amount(inv.outstanding, inv.currency) : "—"}</td>
+                  <td className={`num${inv.overdue && Number(inv.outstanding) > 0 ? " erp-due" : ""}`}>{Number(inv.outstanding) > 0 ? amount(inv.outstanding, inv.currency) : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -155,7 +155,7 @@ export function PortalInvoice() {
     }
   };
   return (
-    <div className="stack">
+    <div className="stack erp-portal">
       <p className="crumbs">
         <Link to="/">{tr("Your invoices")}</Link>
       </p>
@@ -166,7 +166,7 @@ export function PortalInvoice() {
             {isolate([inv.company, formatDate(inv.date)].filter(Boolean).join(" · "))}
           </p>
         </div>
-        <div className="row">
+        <div className="page-actions">
           <Button loading={busy === "print"} onClick={() => void run("print")}>
             {tr("Print")}
           </Button>
@@ -177,10 +177,14 @@ export function PortalInvoice() {
           )}
         </div>
       </div>
-      <p>
-        <Badge tone={inv.overdue ? "red" : statusTone(inv.status, INVOICE_TONES)}>{isolate(dueLabel(inv))}</Badge>{isolate(" ")}
-        {Number(inv.outstanding) > 0 && <strong>{isolate(amount(inv.outstanding, inv.currency))} {tr("to pay")}</strong>}
-      </p>
+      <div className="erp-owed">
+        {Number(inv.outstanding) > 0 && (
+          <p className="erp-owed-amount">
+            {isolate(amount(inv.outstanding, inv.currency))} <span>{tr("to pay")}</span>
+          </p>
+        )}
+        <Badge tone={inv.overdue ? "red" : statusTone(inv.status, INVOICE_TONES)}>{isolate(dueLabel(inv))}</Badge>
+      </div>
       <div className="table-wrap" data-ferrum-nocard>
         <table className="table">
           <thead>
