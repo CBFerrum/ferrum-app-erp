@@ -29,6 +29,9 @@ pub struct MoveIn {
     pub batch_no: Option<String>,
     pub serials: Vec<String>,
     pub source_line: Option<Uuid>,
+    /// The move may take a disabled or expired batch: it writes stock off, sends it back to the
+    /// supplier, moves it within the company or revalues it. See [`check_batches`].
+    pub unusable_batch_ok: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +67,41 @@ struct Bal {
 
 pub fn parse_serials(raw: Option<&str>) -> Vec<String> {
     raw.unwrap_or_default().split(['\n', ',']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+/// Stock that leaves for use (sold, delivered, consumed in production) may not come from a
+/// disabled batch or one past its expiry on the posting date; writing it off (a material issue),
+/// sending it back to the supplier, moving it to another warehouse (quarantine, scrap), counting or
+/// revaluing it, cancelling a posting and anything coming in stay allowed. Batches are the
+/// stock-ops add-on's: without it there is nothing to check.
+async fn check_batches(tx: &mut Tx, ctx: &Ctx, on: NaiveDate, moves: &[MoveIn], items: &HashMap<Uuid, ItemInfo>) -> Result<()> {
+    let (ki, kb): (Vec<Uuid>, Vec<String>) = moves
+        .iter()
+        .filter(|m| m.qty < Decimal::ZERO && m.reversal_of.is_none() && !m.unusable_batch_ok)
+        .filter_map(|m| Some((m.item, m.batch_no.clone().filter(|b| !b.is_empty())?)))
+        .unzip();
+    let Some(batch) = ctx.schema.entity("Batch").filter(|_| !ki.is_empty()) else { return Ok(()) };
+    let bad: Option<(Uuid, String, Option<NaiveDate>, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select item, batch_id, expiry_date, coalesce(disabled, false) from {} where tenant_id = $1 \
+         and (item, batch_id) in (select * from unnest($2::uuid[], $3::text[])) and (coalesce(disabled, false) or expiry_date < $4) \
+         order by batch_id limit 1",
+        ferrum_kernel::ddl::q(&batch.table)
+    )))
+    .bind(ctx.tenant)
+    .bind(&ki)
+    .bind(&kb)
+    .bind(on)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((item, b, expiry, disabled)) = bad else { return Ok(()) };
+    let code = items.get(&item).map_or("the item", |i| i.item_code.as_str());
+    Err(Error::invalid(match (disabled, expiry) {
+        (true, _) => format!("batch {b} of {code} is disabled; write it off, return it or move it to another warehouse instead"),
+        (false, e) => format!(
+            "batch {b} of {code} expired on {}; write it off, return it or move it to another warehouse instead",
+            e.map(|e| e.to_string()).unwrap_or_default()
+        ),
+    }))
 }
 
 /// Locks the balance rows of `keys` in a deterministic order (creating missing ones), so
@@ -155,6 +193,8 @@ pub async fn post_moves(
             return Err(Error::invalid(format!("{} is batch-tracked: a batch number is required", item.item_code)));
         }
     }
+
+    check_batches(tx, ctx, posting_date, &moves, &items).await?;
 
     let keys: Vec<(Uuid, Uuid)> = moves.iter().map(|m| (m.item, m.warehouse)).collect();
     let mut bal = lock_balances(tx, ctx.tenant, company.id, &keys).await?;
@@ -416,6 +456,8 @@ pub async fn reverse_moves(
             batch_no: r.batch_no,
             serials: parse_serials(r.serial_no.as_deref()),
             source_line: r.source_line_id,
+            // Cancelling puts back what was posted, expired or not.
+            unusable_batch_ok: true,
         })
         .collect();
     // Reversed issues put serials back in stock; reversed receipts take them out.
