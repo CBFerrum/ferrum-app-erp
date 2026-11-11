@@ -18,7 +18,7 @@ modules:
     label: Selling
     icon: shopping-cart
     order: 40
-    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, report:receivables, report:sales_register]
+    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, report:receivables, report:statement_of_account, report:sales_register]
 
 roles:
   - name: Sales User

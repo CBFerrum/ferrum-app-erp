@@ -314,4 +314,47 @@ async fn scenario() {
     assert_eq!(dec(&t.get("SalesInvoice", si1).await["outstanding_amount"]), Decimal::ZERO);
     t.update("Customer", hooli, json!({"credit_hold": false})).await;
     t.submit("SalesOrder", so4).await;
+
+    // ───────────── a statement in dollars: an opening invoice, a part payment, credit notes, a refund ─────────────
+    let usd = t.find_one("Currency", json!({"code": "USD"})).await;
+    let bank = t.get("Company", cid).await["default_bank_account"].clone();
+    t.insert("ExchangeRate", json!({"from_currency": usd["id"], "to_currency": inr["id"], "rate": "83", "valid_from": "2000-01-01"})).await;
+    let initech = uid(&t.insert("Customer", json!({"customer_name": "Initech", "default_currency": usd["id"]})).await);
+    let i = initech.to_string();
+    t.insert("OpeningInvoice", json!({"company": c, "customer": i, "invoice_no": "OB-1", "invoice_date": "2026-08-01", "due_date": "2026-08-31",
+        "posting_date": "2026-09-30", "currency": usd["id"], "conversion_rate": "78", "amount": "100"})).await;
+    t.action("Company", cid, "post_opening_invoices", json!({})).await;
+    let usd_si = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "80", "posting_date": "2026-10-01",
+        "due_date": "2026-10-31", "items": [{"description": "Consulting", "qty": "1", "price_list_rate": "500"}]})).await);
+    t.submit("SalesInvoice", usd_si).await;
+    let pay = uid(&t.insert("PaymentEntry", json!({"company": c, "payment_type": "Receive", "customer": i, "currency": usd["id"], "exchange_rate": "81",
+        "posting_date": "2026-10-15", "paid_amount": "200", "bank_account": bank, "references": [{"invoice": usd_si.to_string(), "allocated_amount": "200"}]})).await);
+    t.submit("PaymentEntry", pay).await;
+    let cn = vid(&t.action("SalesInvoice", usd_si, "make_credit_note", json!({"credit_percent": "10"})).await);
+    t.update("SalesInvoice", cn, json!({"posting_date": "2026-10-20"})).await;
+    t.submit("SalesInvoice", cn).await;
+    let goodwill = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "82", "posting_date": "2026-10-25",
+        "is_return": true, "return_reason": "Goodwill", "items": [{"description": "Goodwill", "qty": "-1", "price_list_rate": "30"}]})).await);
+    t.submit("SalesInvoice", goodwill).await;
+    let refund = vid(&t.action("SalesInvoice", goodwill, "make_refund", json!({})).await);
+    t.update("PaymentEntry", refund, json!({"posting_date": "2026-11-05", "exchange_rate": "83"})).await;
+    t.submit("PaymentEntry", refund).await;
+    let st = t.report("statement_of_account", &[("company", c.clone()), ("customer", i.clone()), ("from_date", "2026-10-01".into()), ("to_date", "2026-11-30".into())]).await;
+    let kinds: Vec<String> = st["rows"].as_array().unwrap().iter().map(|r| r["voucher_type"].as_str().unwrap().to_string()).collect();
+    assert_eq!(kinds, ["Opening Balance", "Invoice", "Payment", "Credit Note", "Credit Note", "Refund", "Closing Balance"]);
+    let bal: Vec<Decimal> = st["rows"].as_array().unwrap().iter().map(|r| dec(&r["balance"])).collect();
+    assert_eq!(bal, [n("100"), n("600"), n("400"), n("350"), n("320"), n("350"), n("350")], "in dollars, running");
+    assert_eq!(st["meta"]["party_currency"], json!("USD"));
+    let tot = &st["totals"];
+    assert_eq!((dec(&tot["d90_plus"]), dec(&tot["d1_30"]), dec(&tot["current"])), (n("100"), n("250"), Decimal::ZERO), "OB-1 is 91 days due, the invoice 30");
+    // It agrees with the open items in dollars and the general ledger in rupees.
+    let open = t.scalar("select sum(outstanding) from open_item where tenant_id = $1 and customer_id = $2 and status <> 'cancelled'", initech).await;
+    assert_eq!(open, n("350"));
+    let gl = t.scalar("select sum(debit - credit) from journal_line where tenant_id = $1 and customer_id = $2", initech).await;
+    assert_eq!(dec(&tot["closing_base"]), gl);
+    assert_eq!(gl, n("7800") + n("40000") - n("16000") - n("4000") - n("2460") + n("2460"), "each at the rate it was booked at");
+    // Month-end: every customer with a balance.
+    let all = t.report("statement_of_account", &[("company", c.clone()), ("from_date", "2026-10-01".into()), ("to_date", "2026-11-30".into())]).await;
+    let row = all["rows"].as_array().unwrap().iter().find(|r| r["party"] == json!("Initech")).cloned().unwrap();
+    assert_eq!((dec(&row["opening"]), dec(&row["closing"]), dec(&row["d90_plus"])), (n("100"), n("350"), n("100")));
 }
