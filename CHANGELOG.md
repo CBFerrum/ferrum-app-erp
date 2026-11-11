@@ -1,5 +1,53 @@
 # Changelog
 
+## ERP 0.18.0, Finance 0.4.1, Procurement 0.1.4: orders that change, and credit that holds
+
+- **Update Items** on a submitted sales or purchase order (a person who may submit it): a line's
+  quantity up or down, never below what was delivered, received or billed on it; a line added (an
+  item, priced by the price list and pricing rules on a sale, or a description with its price); a
+  line with nothing delivered, received or billed removed (quantity 0); the order's delivery or
+  required-by date moved, with the lines that had it; and the price of what is not yet billed on a
+  purchase order, or on a sales line without an item. Totals, taxes, status, percentages and
+  reserved stock follow. Each change is one audit event (`update_items`) saying what changed from
+  what to what. The changed order runs every app's checks as at submission (CRM's "an order keeps
+  what was quoted", the countries', Finance's budget commitments, Procurement's requests and
+  quotations).
+- **Closing an order** keeps, on each line, what was still open (**Closed Short**) until it is
+  re-opened; re-opening an order with nothing open is refused.
+- **Allowances**: **Over-Delivery and Receipt Allowance (%)** and **Over-Billing Allowance (%)** on
+  the item, else the company's. Within them a delivery, receipt or invoice goes through and the
+  order line shows the excess; beyond them the refusal says what was ordered, what is allowed and
+  what is asked. Returns give back what was actually delivered, excess included.
+- **Credit control**: a customer's **Credit Limit** is checked on a sales order, a delivery note and
+  an invoice, against open orders not yet billed, deliveries not yet billed and what is
+  outstanding, each counted once (a delivery or invoice made from an order adds nothing). Over it,
+  the document is refused, saying the limit, what is committed and what it adds; an Accounts
+  Manager can fill in its **Credit Release Reason**, which is kept on it. **On Credit Hold**, with a
+  reason, stops new orders, deliveries and orders growing; payments, credit notes and billing what
+  was delivered go on.
+- **Statement of Account** (report): a customer's or supplier's, in their currency, over a period:
+  opening balance, each invoice, note, payment, refund, opening invoice and journal entry with a
+  running balance, the closing balance and its ageing (current, 1-30, 31-60, 61-90, over 90); its
+  company-currency closing agrees with the general ledger. Without a party, every customer with a
+  balance. Price lists and item prices are in the Selling menu.
+
+Refused, in words: a change to a closed, completed, cancelled or fully billed order; a quantity
+below what was fulfilled or billed; removing a line with anything fulfilled or billed; a typed price
+on a sales line with an item; a price change on a fully billed line; a change another app refuses.
+
+Not done: a statement is not printed with the letterhead (the platform prints documents, not
+reports); a change cannot be released over the credit limit; CRM counts what was ordered of a
+quotation on submit and cancel only, so it does not follow a change until it implements
+`after_save` (docs/contracts.md).
+
+For data already there: nothing changes until someone sets an allowance, a credit limit or a hold.
+The credit limit, checked on invoices before, now also counts open orders and unbilled deliveries,
+and is checked on orders and deliveries. The new fields (`over_delivery_allowance`,
+`over_billing_allowance` on items and companies; `credit_hold`, `credit_hold_reason` on customers;
+`credit_release_reason` on orders, deliveries and invoices; `closed_qty` on order lines) reach a
+workspace with its next schema update: no SQL migration. The interface is not rebuilt; its names in
+Arabic and Hindi gain the new fields', translated by the model, to be reviewed by native speakers.
+
 ## ERP 0.17.0, India 0.3.1: documents that print like documents
 
 - **A letterhead a company fills in once.** The company's form has three new sections:

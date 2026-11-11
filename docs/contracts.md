@@ -37,6 +37,17 @@ carried in from the books before, its `number` the old one), and a `JournalEntry
 item carries the line's `reference_no`, `due_date` and `currency` when given;
 `flow::sync_invoice_outstanding` also mirrors an `OpeningInvoice`.
 
+Since 0.18.0: a submitted `SalesOrder` or `PurchaseOrder` may change through its `update_items`
+action. The changed order runs every hook registered on the entity as at submission
+(`before_validate`, `validate`, `validate_change` with the order as it was, `before_submit`; refusing
+there refuses the change), is stored, and then runs `after_save` with the order as it was (both
+submitted). An app that counts an order's lines in `on_submit` and `on_cancel` moves its counts in
+`after_save` when the old order is submitted, as Procurement does; one that does not keeps the counts
+of the order as submitted. A closed order's lines carry `closed_qty`. Progress on an order line
+(`delivered_qty`, `received_qty`, `billed_qty`) may pass its `qty` within the item's or company's
+allowance. Submitting a `SalesOrder`, `DeliveryNote` or `SalesInvoice` may be refused for the
+customer's credit (limit or hold) unless it carries a `credit_release_reason`.
+
 ## Through the engine
 
 Apps that post their own documents' effects (Point of Sale's sales, Commerce's orders, Assets'

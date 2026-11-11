@@ -616,8 +616,24 @@ impl DocHook for PurchaseOrderLinks {
                 ),
             ));
         }
+        if d(doc, "docstatus") == Decimal::ONE {
+            // A submitted order changed (ERP's Update Items): its old quantities are still counted
+            // on the requests and quotations, so it is counted again, and checked, in after_save.
+            return Ok(());
+        }
         apply(hc, linked(doc, stock_qty), Fulfil::Order, Decimal::ONE, false).await?;
         crate::quotation::check_order(hc, doc).await
+    }
+
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
+        let Some(old) = old.filter(|o| d(o, "docstatus") == Decimal::ONE && d(doc, "docstatus") == Decimal::ONE) else { return Ok(()) };
+        if !installed(hc.ctx) {
+            return Ok(());
+        }
+        apply(hc, linked(old, stock_qty), Fulfil::Order, -Decimal::ONE, true).await?;
+        crate::quotation::order_progress(hc, old, -Decimal::ONE).await?;
+        apply(hc, linked(doc, stock_qty), Fulfil::Order, Decimal::ONE, true).await?;
+        crate::quotation::order_progress(hc, doc, Decimal::ONE).await
     }
 
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {

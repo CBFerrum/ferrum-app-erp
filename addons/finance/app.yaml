@@ -1,6 +1,6 @@
 id: finance
 name: Finance
-version: 0.4.0
+version: 0.4.1
 publisher: cbferrum
 summary: Budgets, bank reconciliation, payment allocation, exchange revaluation, period closing, dunning, subscriptions and payment terms
 description: README.md
