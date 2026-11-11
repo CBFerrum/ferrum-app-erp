@@ -157,3 +157,81 @@
     - {name: at_most_100, check: "doc.rate <= 100.0", message: "A rate is at most 100%"}
     - {name: ends_after_start, check: "doc.valid_to == null || doc.valid_to >= doc.valid_from", message: "A rate cannot end before it starts"}
   list: {columns: [country, region, category, rate, valid_from, valid_to], sort: valid_from desc}
+
+# Withholding by category (FN-28): what is withheld or collected, where it books, its dated rates
+# and thresholds. A country's categories are records its add-on seeds; the engine knows none.
+- name: WithholdingRate
+  label: Withholding Rate
+  kind: child
+  fields:
+    - {name: valid_from, type: date, required: true, in_list: true}
+    - {name: rate, type: percent, required: true, min: "0", max: "100", in_list: true}
+    - {name: single_threshold, type: currency, min: "0", in_list: true, label: Per Document Threshold,
+       description: "A document whose base is above it is withheld on, whatever the year so far. Empty: none"}
+    - {name: yearly_threshold, type: currency, min: "0", in_list: true, label: Yearly Threshold,
+       description: "Once the party's base in the category this fiscal year goes above it, withholding starts. Empty: none"}
+
+- name: WithholdingAccount
+  label: Withholding Account
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true,
+       description: "Where the company books what it withholds or collects: a liability it pays over"}
+
+- name: WithholdingCategory
+  label: Withholding Category
+  label_plural: Withholding Categories
+  kind: master
+  module: accounting
+  title_field: category_name
+  description: "Tax a company withholds from what it pays a supplier, or collects on top of what it sells, by category: when it applies, on what, at which dated rates and above which thresholds."
+  fields:
+    - {name: category_name, type: data, required: true, unique: true, in_list: true}
+    - {name: applies, type: select, options: [On Bill, On Payment, On Sale], required: true, default: On Bill, in_list: true, in_filter: true,
+       description: "On Bill: deducted from a supplier's bill when it is booked (and from an advance paid before it). On Payment: deducted from what is paid against a bill, in proportion to the part paid, and from an advance. On Sale: collected from the customer on top of a sales invoice"}
+    - {name: base, type: select, options: [Net Total, Grand Total], required: true, default: Net Total, in_list: true, label: Withheld On,
+       description: "The lines' amount before taxes, or with their taxes"}
+    - {name: cumulative_base, type: select, options: [Whole Year, Above Threshold], required: true, default: Whole Year, label: Once the Yearly Threshold Is Crossed,
+       description: "Whole Year: the document that crosses it is withheld on its own base and on the year's earlier base that was not withheld on. Above Threshold: only on the part of the year's base above the threshold"}
+    - {name: round_to_unit, type: check, label: Round to Whole Units, description: "Each amount withheld to a whole unit of the company's currency; to its smallest unit when not ticked"}
+    - {name: rates, type: table, of: WithholdingRate, required: true}
+    - {name: accounts, type: table, of: WithholdingAccount, label: Accounts, description: "One per company that withholds in this category"}
+    - {name: description, type: text, description: "The law or section it comes from"}
+  list: {columns: [category_name, applies, base], sort: category_name asc}
+
+- name: WithholdingCertificate
+  label: Withholding Certificate
+  kind: master
+  module: accounting
+  title_field: certificate_no
+  description: "A party's exemption or lower rate in a category, for a period and up to a limit of base: within it the certificate's rate applies, beyond it the category's."
+  fields:
+    - {name: certificate_no, type: data, required: true, in_list: true}
+    - {name: category, type: link, to: WithholdingCategory, required: true, in_list: true, in_filter: true}
+    - {name: party_type, type: select, options: [Supplier, Customer], required: true, default: Supplier, in_list: true}
+    - {name: supplier, type: link, to: Supplier, in_filter: true, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'"}
+    - {name: customer, type: link, to: Customer, in_filter: true, visible_if: "doc.party_type == 'Customer'", required_if: "doc.party_type == 'Customer'"}
+    - {name: valid_from, type: date, required: true, in_list: true}
+    - {name: valid_to, type: date, in_list: true}
+    - {name: rate, type: percent, required: true, min: "0", max: "100", in_list: true, description: "0 for an exemption"}
+    - {name: limit, type: currency, min: "0", in_list: true, label: Limit, description: "The base it covers in all; empty: no limit"}
+  unique: [[category, certificate_no]]
+  rules:
+    - {name: ends_after_start, check: "doc.valid_to == null || doc.valid_to >= doc.valid_from", message: "A certificate cannot end before it starts"}
+  list: {columns: [certificate_no, category, party_type, rate, valid_from, valid_to], sort: valid_from desc}
+
+# What a document withheld or collected in a category: filled by the engine, read by the report.
+- name: WithholdingLine
+  label: Withholding
+  kind: child
+  fields:
+    - {name: category, type: link, to: WithholdingCategory, read_only: true, in_list: true}
+    - {name: certificate, type: link, to: WithholdingCertificate, read_only: true, in_list: true}
+    - {name: against, type: data, read_only: true, label: Against Invoice, description: "On a payment, the bill paid; empty for an advance"}
+    - {name: against_number, type: data, read_only: true, in_list: true, label: Invoice}
+    - {name: base, type: currency, read_only: true, in_list: true, description: "What this document adds to the party's base in the category, in company currency"}
+    - {name: advance_base, type: currency, read_only: true, description: "On a bill, the part of its base already withheld on when advances were paid"}
+    - {name: taxable, type: currency, read_only: true, in_list: true, label: Withheld On}
+    - {name: rate, type: percent, read_only: true, in_list: true}
+    - {name: amount, type: currency, read_only: true, in_list: true, description: "In company currency"}

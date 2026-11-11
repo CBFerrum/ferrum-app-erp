@@ -2,7 +2,7 @@
 # where the company is registered, and the GST/HST return. Ferrum localization.md L5.
 id: ca
 name: Canada
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: GST/HST, PST and QST by province for ERP in Canada
 categories: [finance]

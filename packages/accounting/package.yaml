@@ -62,11 +62,13 @@ overlays:
       - {op: add_field, column: true, after: default_price_list, field: {name: receivable_account, type: link, to: Account, link_filters: {account_type: Receivable, is_group: false}, description: Overrides the company default}}
       - {op: add_field, column: true, after: receivable_account, field: {name: represents_company, type: link, to: Company, label: Represents Company,
           description: "This customer is one of the group's companies: what it owes and is owed cancels out when the group's books are added up"}}
+      - {op: add_field, column: true, after: represents_company, field: {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, description: "What is collected on sales to this customer, unless an item or the invoice says otherwise"}}
   - entity: Supplier
     ops:
       - {op: add_field, column: true, after: default_price_list, field: {name: payable_account, type: link, to: Account, link_filters: {account_type: Payable, is_group: false}}}
       - {op: add_field, column: true, after: payable_account, field: {name: represents_company, type: link, to: Company, label: Represents Company,
           description: "This supplier is one of the group's companies: what it owes and is owed cancels out when the group's books are added up"}}
+      - {op: add_field, column: true, after: represents_company, field: {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, description: "What is withheld from this supplier, unless an item or the document says otherwise"}}
   - entity: ItemGroup
     ops:
       - {op: add_field, column: true, after: is_group, field: {name: default_income_account, type: link, to: Account, link_filters: {is_group: false}}}
@@ -78,14 +80,15 @@ overlays:
       - {op: add_field, column: true, after: expense_account, field: {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Sold for a service period: its income is recognised day by day over it, on lines that give the period"}}
       - {op: add_field, column: true, after: enable_deferred_revenue, field: {name: enable_deferred_expense, type: check, label: Deferred Expense, description: "Bought for a service period: its expense is recognised day by day over it, on lines that give the period"}}
       - {op: add_field, column: true, after: uoms, field: {name: tax_rates, type: table, of: ItemTaxRate, label: Item Tax Rates}}
+      - {op: add_field, column: true, after: enable_deferred_expense, field: {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, description: "Its lines' withholding category, over the party's; a document's own category is over both"}}
 
 modules:
   - name: accounting
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
-            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account]
+    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
+            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding]
   - name: setup
     label: Setup
     icon: settings
@@ -114,6 +117,8 @@ roles:
       - {entity: ExchangeRate, read: true, write: true, create: true, delete: true, import: true}
       - {entity: TaxTemplate, read: true, write: true, create: true, delete: true}
       - {entity: TaxRate, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: WithholdingCategory, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: WithholdingCertificate, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: Customer, read: true, write: true, create: true, delete: true, export: true, import: true, read_groups: [credit], write_groups: [credit]}
       - {entity: CustomerGroup, read: true, write: true, create: true, delete: true}
       - {entity: Supplier, read: true, write: true, create: true, delete: true, export: true, import: true}
@@ -130,6 +135,7 @@ roles:
       - {entity: JournalEntry, read: true, write: true, create: true, delete: true, if_owner: false}
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: Account, read: true}
+      - {entity: WithholdingCategory, read: true}
       - {entity: Company, read: true}
       - {entity: Customer, read: true}
       - {entity: Supplier, read: true}

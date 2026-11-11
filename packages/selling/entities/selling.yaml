@@ -65,6 +65,8 @@
     - {name: po_no, type: data, label: Customer PO No}
     - {name: customer_address, type: link, to: Address, label: Billing Address, description: "The customer's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: "Where the goods go: the customer's primary shipping address when empty. Countries' tax rules read its country and region"}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods go when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods go, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: price_list, type: link, to: PriceList}
@@ -154,6 +156,8 @@
     - {name: return_against, type: link, to: DeliveryNote, visible_if: "doc.is_return"}
     - {name: customer_address, type: link, to: Address, label: Billing Address, description: "The customer's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: "Where the goods go: the customer's primary shipping address when empty. Countries' tax rules read its country and region"}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods go when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods go, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: price_list, type: link, to: PriceList}
@@ -254,6 +258,8 @@
     - {name: debit_note_against, type: link, to: SalesInvoice, label: Against Invoice, visible_if: "doc.is_debit_note", no_copy: true}
     - {name: customer_address, type: link, to: Address, label: Billing Address, description: "The customer's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: "Where the goods go: the customer's primary shipping address when empty. Countries' tax rules read its country and region"}
+    - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods go when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
+    - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods go, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: update_stock, type: check, description: Deliver stock with this invoice}
     - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.update_stock"}
     - {name: currency, type: link, to: Currency}
@@ -263,6 +269,9 @@
     - {name: items, type: table, of: SalesInvoiceItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: tax_breakdown, type: table, of: TaxBreakdown, read_only: true, label: Tax Breakdown}
+    - {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, description: "Over every line's own: empty, each line takes its item's, else the customer's"}
+    - {name: withholdings, type: table, of: WithholdingLine, read_only: true, label: Withholding}
+    - {name: withholding_amount, type: currency, currency: currency, read_only: true, label: Collected, description: "Added to what the customer owes and booked to the category's account"}
     - {name: discount_percent, type: percent, min: "0", max: "100", label: Additional Discount %}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}
@@ -287,10 +296,10 @@
        description: "Lets this invoice through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   form:
     - {label: Invoice, fields: [company, customer, customer_name, posting_date, posting_time, due_date, po_no, is_return, return_against, price_only, is_debit_note, debit_note_against, return_reason]}
-    - {label: Addresses, collapsible: true, fields: [customer_address, ship_to]}
+    - {label: Addresses, collapsible: true, fields: [customer_address, ship_to, delivery_country, delivery_region]}
     - {label: Currency & Price, collapsible: true, fields: [currency, conversion_rate, price_list, update_stock, set_warehouse]}
     - {label: Items, fields: [items]}
-    - {label: Taxes, fields: [tax_template, taxes, tax_breakdown, discount_percent]}
+    - {label: Taxes, fields: [tax_template, taxes, tax_breakdown, discount_percent, withholding_category, withholdings, withholding_amount]}
     - {label: Totals, fields: [total, discount_amount, net_total, total_taxes, grand_total, rounding_adjustment, rounded_total, outstanding_amount, debit_noted, status]}
     - {label: More, collapsible: true, fields: [debit_to, base_net_total, base_grand_total, base_rounded_total, project, cost_center, terms, remarks, credit_release_reason]}
   rules:
