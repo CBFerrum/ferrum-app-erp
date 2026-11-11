@@ -1130,6 +1130,13 @@ impl DocHook for InvoiceHook {
                     account = account.or(co.account("srbnb_account"));
                 }
             }
+            if deferred.is_none()
+                && account.is_none()
+                && let Some(item) = id(r, "item")
+            {
+                let it = get(hc.kernel, hc.ctx, hc.tx, "Item", item).await?;
+                account = crate::pricing::item_account(hc.ctx, hc.tx, &co, &it, self.0).await?;
+            }
             let account = match deferred.or(account) {
                 Some(a) => a,
                 None => match self.0 {
