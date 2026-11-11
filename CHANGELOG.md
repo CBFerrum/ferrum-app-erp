@@ -1,5 +1,18 @@
 # Changelog
 
+## ERP 0.18.2, Finance 0.4.2, Stock Operations 0.1.2, Manufacturing Operations 0.1.2: item group accounts and batch expiry
+
+- **Item groups' accounts are read.** A line that names no income or expense account takes the
+  item's, then its item group's or the nearest parent group's, then the company default. Invoice
+  and return lines, the posting of a line that still has none, Finance's purchase order budget
+  dimensions and material request commitments, and the subcontracting receipt's service charge all
+  pick it the same way. A stock item bought still waits on stock received but not billed.
+- **Expired and disabled batches no longer leave for use.** A delivery, a sale that updates stock,
+  a product bundle's delivery or a production consumption is refused a disabled batch or one past
+  its expiry on the posting date, naming the batch and its expiry. Writing it off (a material
+  issue), moving it to another warehouse, sending it back to the supplier, counting or revaluing it,
+  cancelling an earlier posting and a customer's return still work.
+
 ## ERP 0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2: the redesigned interface
 
 The interface follows the upgraded design system, rebuilt with Ferrum-Frontend 0a47157. Text uses the kit's type roles (nothing under 12px) and controls its height tokens; loading shows skeletons shaped like what is coming; empty, no matches, denied, offline and failed are told apart; status colours come from stored state ids. The interface check now runs the UI lint against an empty baseline. ERP's own pages are recomposed: the home strip is linked counts by urgency, Accounts today is a prioritised queue, and statements name their company, period and currency and mark groups and totals with weight and rules; a negative no longer flips its sign right to left. Warehouse and Shop Floor are rebuilt on the kit's frame, tabs, page heads and states (they had been built before the redesign); scan and confirm buttons are 44px on touch; a failed queue says so.
