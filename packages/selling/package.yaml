@@ -8,21 +8,25 @@ overlays:
   - entity: Customer
     ops:
       - {op: add_field, column: true, after: payment_terms_days, field: {name: credit_limit, type: currency, min: "0", perm_group: credit, description: 0 = no limit}}
+      - {op: add_field, column: true, after: credit_limit, field: {name: credit_hold, type: check, perm_group: credit, label: On Credit Hold, in_filter: true,
+          description: "No new orders or deliveries for this customer until it is unticked; payments and credit notes are still taken"}}
+      - {op: add_field, column: true, after: credit_hold, field: {name: credit_hold_reason, type: data, perm_group: credit, label: Credit Hold Reason,
+          visible_if: "doc.credit_hold", required_if: "doc.credit_hold"}}
 
 modules:
   - name: selling
     label: Selling
     icon: shopping-cart
     order: 40
-    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PricingRule, report:receivables, report:sales_register]
+    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, report:receivables, report:statement_of_account, report:sales_register]
 
 roles:
   - name: Sales User
     description: Day-to-day selling.
     permissions:
-      - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
-      - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true}
-      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
+      - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, read_groups: [credit]}
+      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true, read_groups: [credit]}
       - {entity: PricingRule, read: true}
       - {entity: Customer, read: true, write: true, create: true}
       - {entity: Address, read: true}
@@ -42,12 +46,13 @@ roles:
       - {entity: Account, read: true}
   - name: Sales Manager
     permissions:
-      - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
-      - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
-      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
+      - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
+      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: PricingRule, read: true, write: true, create: true, delete: true}
   - name: Accounts Manager
     permissions:
-      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
-      - {entity: SalesOrder, read: true}
-      - {entity: DeliveryNote, read: true}
+      # Releasing a document over a customer's credit limit (its Credit Release Reason) is theirs.
+      - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit], write_groups: [credit]}
+      - {entity: SalesOrder, read: true, write: true, read_groups: [credit], write_groups: [credit]}
+      - {entity: DeliveryNote, read: true, write: true, read_groups: [credit], write_groups: [credit]}

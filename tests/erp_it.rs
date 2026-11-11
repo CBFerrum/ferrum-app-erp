@@ -955,6 +955,8 @@ async fn scenario() {
     assert_eq!(dec(&big["grand_total"]), n("1770"), "intra-state CGST+SGST");
     let over = t.k.submit(&t.ctx, "SalesInvoice", uid(&big), None).await;
     assert!(matches!(over, Err(Error::Invalid(ref m)) if m.contains("credit limit")), "{over:?}");
+    // Since 0.18.0 orders and deliveries count against the limit too: lifted for what follows.
+    t.k.update(&t.ctx, "Customer", local, obj(json!({"credit_limit": "0"})), None).await.expect("no limit");
 
     // ───────────── manufacturing ─────────────
     let bom = t

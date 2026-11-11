@@ -73,6 +73,13 @@ const DEFS: &[Def] = &[
         entity: "JournalEntry",
         params: &["company", "deferred", "as_of"],
     },
+    Def {
+        name: "statement_of_account",
+        label: "Statement of Account",
+        module: "accounting",
+        entity: "JournalEntry",
+        params: &["company", "from_date", "to_date", "customer", "supplier", "currency"],
+    },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
     Def { name: "stock_balance", label: "Stock Balance", module: "inventory", entity: "StockEntry", params: &["company", "as_of", "warehouse", "item"] },
@@ -108,6 +115,7 @@ fn param(name: &str) -> Value {
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
         "deferred" => json!({"name": name, "label": "Deferred", "type": "select", "options": ["Revenue", "Expense"], "default": "Revenue"}),
+        "currency" => json!({"name": name, "label": "Currency", "type": "link", "to": "Currency", "description": "The party's own currency when empty"}),
         "consolidated" => json!({"name": name, "label": "Consolidated", "type": "check",
             "description": "The company and every company under it, in its currency, with their business with each other taken out"}),
         "finance_book" => {
@@ -157,6 +165,7 @@ impl ReportSource for ErpReports {
             "balance_sheet" => balance_sheet(k, &mut tx, ctx, &co, &p).await?,
             "cash_flow" => cash_flow(k, &mut tx, ctx, &co, &p).await?,
             "deferred_revenue_and_expense" => deferred_lines(&mut tx, ctx, &co, &p).await?,
+            "statement_of_account" => statement(&mut tx, ctx, &co, &p).await?,
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
             "stock_balance" => stock_balance(&mut tx, ctx, &co, &p).await?,
@@ -1588,6 +1597,234 @@ async fn ageing(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, kind
         "rows": rows,
         "totals": total_obj,
         "meta": {"as_of": as_of, "truncated": truncated},
+    }))
+}
+
+// ───────────────────────────── statement of account ─────────────────────────────
+
+const BUCKETS: [&str; 5] = ["current", "d1_30", "d31_60", "d61_90", "d90_plus"];
+
+fn bucket(days: i64) -> usize {
+    match days {
+        d if d <= 0 => 0,
+        1..=30 => 1,
+        31..=60 => 2,
+        61..=90 => 3,
+        _ => 4,
+    }
+}
+
+/// What each of a kind's parties still had open on `on`, by party and currency: each open item's
+/// outstanding then (its amount less what was allocated to it by that day), in its age bucket.
+async fn open_on(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    kind: &str,
+    parties: Option<&[Uuid]>,
+    on: NaiveDate,
+) -> Result<HashMap<(Uuid, String), [Decimal; 5]>> {
+    #[allow(clippy::type_complexity)]
+    let items: Vec<(Uuid, String, Decimal, NaiveDate)> = sqlx::query_as(
+        "select coalesce(o.customer_id, o.supplier_id), o.currency, \
+         o.amount - coalesce((select sum(x.amount) from allocation x where x.tenant_id = o.tenant_id and x.open_item_id = o.id and x.posting_date <= $3), 0), \
+         coalesce(o.due_date, o.posting_date) \
+         from open_item o where o.tenant_id = $1 and o.company_id = $2 and o.party_kind = $4 and o.posting_date <= $3 and o.status <> 'cancelled' \
+         and ($5::uuid[] is null or coalesce(o.customer_id, o.supplier_id) = any($5))",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(on)
+    .bind(kind)
+    .bind(parties)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut out: HashMap<(Uuid, String), [Decimal; 5]> = HashMap::new();
+    for (party, currency, outstanding, due) in items {
+        out.entry((party, currency)).or_default()[bucket((on - due).num_days())] += outstanding;
+    }
+    Ok(out)
+}
+
+fn ageing_json(a: &[Decimal; 5]) -> serde_json::Map<String, Value> {
+    BUCKETS.iter().zip(a).map(|(k, v)| (k.to_string(), money(*v))).collect()
+}
+
+/// A customer's or a supplier's statement over a period, in their currency: the opening balance,
+/// each document that moved what they owe or are owed (invoices, debit and credit notes,
+/// payments, refunds, opening invoices, journal entries) with a running balance, the closing
+/// balance and its ageing on the closing day. Positive is what the customer owes, or what is owed
+/// to the supplier. Without a party: every customer with a balance, for month-end.
+async fn statement(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let (kind, party) = match (p.uuid("customer")?, p.uuid("supplier")?) {
+        (Some(c), _) => ("customer", Some(c)),
+        (None, Some(s)) => ("supplier", Some(s)),
+        _ => ("customer", None),
+    };
+    let sign = if kind == "customer" { Decimal::ONE } else { -Decimal::ONE };
+    let (table, name_col, entity) = if kind == "customer" { ("e_customer", "customer_name", "Customer") } else { ("e_supplier", "supplier_name", "Supplier") };
+    let Some(party) = party else { return statement_summary(tx, ctx, co, from, to).await };
+    let ids = ferrum_kernel::merge::merged_ids(tx, ctx.tenant, entity, party).await?;
+    let (name, own): (String, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select p.{name_col}, cu.code from {table} p left join e_currency cu on cu.tenant_id = p.tenant_id and cu.id = p.default_currency where p.tenant_id = $1 and p.id = $2"
+    )))
+    .bind(ctx.tenant)
+    .bind(party)
+    .fetch_one(&mut **tx)
+    .await?;
+    let asked: Option<String> = match p.uuid("currency")? {
+        Some(c) => {
+            sqlx::query_scalar("select code from e_currency where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(c).fetch_optional(&mut **tx).await?
+        }
+        None => None,
+    };
+    let currency = asked.or(own).unwrap_or_else(|| co.currency.clone());
+    let party_col = format!("{kind}_id");
+    let (opening, closing_base): (Decimal, Decimal) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select coalesce(sum(l.debit_txn - l.credit_txn) filter (where l.posting_date < $4), 0), coalesce(sum(l.debit - l.credit), 0) \
+         from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 and l.{party_col} = any($3) and l.currency = $5 and l.posting_date <= $6"
+    )))
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(&ids)
+    .bind(from)
+    .bind(&currency)
+    .bind(to)
+    .fetch_one(&mut **tx)
+    .await?;
+    #[allow(clippy::type_complexity)]
+    let moved: Vec<(NaiveDate, String, Option<String>, Uuid, bool, Decimal, Option<NaiveDate>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select e.posting_date, e.source_entity, e.source_number, e.source_id, e.reversal_of is not null, sum(l.debit_txn - l.credit_txn), \
+         (select o.due_date from open_item o where o.tenant_id = e.tenant_id and o.id = e.source_id) \
+         from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
+         where l.tenant_id = $1 and l.company_id = $2 and l.{party_col} = any($3) and l.currency = $4 and l.posting_date between $5 and $6 \
+         group by e.tenant_id, e.id, e.posting_date, e.source_entity, e.source_number, e.source_id, e.reversal_of, e.created_at \
+         having sum(l.debit_txn - l.credit_txn) <> 0 order by e.posting_date, e.created_at, e.id limit $7"
+    )))
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(&ids)
+    .bind(&currency)
+    .bind(from)
+    .bind(to)
+    .bind(MAX_ROWS + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    let truncated = moved.len() as i64 > MAX_ROWS;
+    // What each document is to the party: an invoice, a credit or debit note, a payment, a refund.
+    let sources: Vec<Uuid> = moved.iter().map(|m| m.3).collect();
+    let mut kinds: HashMap<Uuid, &'static str> = HashMap::new();
+    if ctx.schema.entity("SalesInvoice").is_some() {
+        let r: Vec<(Uuid, Option<bool>, Option<bool>)> =
+            sqlx::query_as("select id, is_return, is_debit_note from e_sales_invoice where tenant_id = $1 and id = any($2)")
+                .bind(ctx.tenant)
+                .bind(&sources)
+                .fetch_all(&mut **tx)
+                .await?;
+        kinds.extend(r.into_iter().map(|(i, ret, dn)| {
+            (
+                i,
+                if ret == Some(true) {
+                    "Credit Note"
+                } else if dn == Some(true) {
+                    "Debit Note"
+                } else {
+                    "Invoice"
+                },
+            )
+        }));
+    }
+    if ctx.schema.entity("PurchaseInvoice").is_some() {
+        let r: Vec<(Uuid, Option<bool>)> = sqlx::query_as("select id, is_return from e_purchase_invoice where tenant_id = $1 and id = any($2)")
+            .bind(ctx.tenant)
+            .bind(&sources)
+            .fetch_all(&mut **tx)
+            .await?;
+        kinds.extend(r.into_iter().map(|(i, ret)| (i, if ret == Some(true) { "Debit Note" } else { "Bill" })));
+    }
+    let r: Vec<(Uuid, Option<bool>)> = sqlx::query_as("select id, is_refund from e_payment_entry where tenant_id = $1 and id = any($2)")
+        .bind(ctx.tenant)
+        .bind(&sources)
+        .fetch_all(&mut **tx)
+        .await?;
+    kinds.extend(r.into_iter().map(|(i, refund)| (i, if refund == Some(true) { "Refund" } else { "Payment" })));
+    let mut balance = sign * opening;
+    let mut rows = vec![json!({"posting_date": from, "voucher_type": "Opening Balance", "balance": money(balance), "_bold": true})];
+    for (day, source, number, sid, reversal, amount, due) in moved.into_iter().take(MAX_ROWS as usize) {
+        balance += sign * amount;
+        let what = match (kinds.get(&sid), source.as_str()) {
+            (Some(k), _) => k.to_string(),
+            (None, "OpeningInvoice") => "Opening Invoice".to_string(),
+            (None, "JournalEntry") => "Journal Entry".to_string(),
+            (None, other) => other.to_string(),
+        };
+        let what = if reversal { format!("{what} (cancelled)") } else { what };
+        rows.push(json!({"posting_date": day, "voucher_type": what, "voucher_no": number, "voucher_id": sid, "due_date": if reversal { None } else { due },
+            "debit": money(amount.max(Decimal::ZERO)), "credit": money((-amount).max(Decimal::ZERO)), "balance": money(balance)}));
+    }
+    rows.push(json!({"voucher_type": "Closing Balance", "balance": money(balance), "_bold": true}));
+    let ageing = open_on(tx, ctx, co, kind, Some(&ids), to).await?;
+    let mut buckets = [Decimal::ZERO; 5];
+    for ((_, cur), a) in &ageing {
+        if *cur == currency {
+            for (b, v) in buckets.iter_mut().zip(a) {
+                *b += *v;
+            }
+        }
+    }
+    let mut totals = ageing_json(&buckets);
+    totals.insert("opening".into(), money(sign * opening));
+    totals.insert("closing".into(), money(balance));
+    totals.insert("closing_base".into(), money(sign * closing_base));
+    Ok(json!({
+        "columns": [col("posting_date", "Date", "date"), col("voucher_type", "Document", "data"), col("voucher_no", "Number", "data"),
+            col("due_date", "Due Date", "date"), col("debit", "Debit", "currency"), col("credit", "Credit", "currency"), col("balance", "Balance", "currency")],
+        "rows": rows,
+        "totals": totals,
+        "meta": {"from_date": from, "to_date": to, "party": name, "party_type": entity, "party_currency": currency, "truncated": truncated,
+            "ageing": ["Current", "1-30", "31-60", "61-90", "Over 90"]},
+    }))
+}
+
+/// Every customer with a balance on the closing day, in each of their currencies: opening,
+/// debits, credits, closing, and its ageing.
+async fn statement_summary(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: NaiveDate, to: NaiveDate) -> Result<Value> {
+    #[allow(clippy::type_complexity)]
+    let parties: Vec<(Uuid, String, String, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(
+        "select c.id, c.customer_name, l.currency, coalesce(sum(l.debit_txn - l.credit_txn) filter (where l.posting_date < $3), 0), \
+         coalesce(sum(l.debit_txn) filter (where l.posting_date >= $3), 0), coalesce(sum(l.credit_txn) filter (where l.posting_date >= $3), 0), \
+         sum(l.debit_txn - l.credit_txn) \
+         from journal_line_in_book l join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
+         where l.tenant_id = $1 and l.company_id = $2 and l.posting_date <= $4 group by c.id, c.customer_name, l.currency \
+         having sum(l.debit_txn - l.credit_txn) <> 0 order by c.customer_name, l.currency limit $5",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(from)
+    .bind(to)
+    .bind(MAX_ROWS + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    let truncated = parties.len() as i64 > MAX_ROWS;
+    let ageing = open_on(tx, ctx, co, "customer", None, to).await?;
+    let rows: Vec<Value> = parties
+        .into_iter()
+        .take(MAX_ROWS as usize)
+        .map(|(id, name, currency, opening, dr, cr, closing)| {
+            let mut row = json!({"party": name, "party_id": id, "currency": currency, "opening": money(opening), "debit": money(dr), "credit": money(cr), "closing": money(closing)});
+            if let (Value::Object(m), Some(a)) = (&mut row, ageing.get(&(id, currency))) {
+                m.extend(ageing_json(a));
+            }
+            row
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("party", "Customer", "data"), col("currency", "Currency", "data"), col("opening", "Opening", "currency"), col("debit", "Debit", "currency"),
+            col("credit", "Credit", "currency"), col("closing", "Closing", "currency"), col("current", "Current", "currency"), col("d1_30", "1-30", "currency"),
+            col("d31_60", "31-60", "currency"), col("d61_90", "61-90", "currency"), col("d90_plus", "Over 90", "currency")],
+        "rows": rows,
+        "meta": {"from_date": from, "to_date": to, "truncated": truncated},
     }))
 }
 

@@ -4,11 +4,91 @@
 
 pub(crate) use ferrum_domain::flow::*;
 
-use crate::util::{d, money, rows, s, sys};
-use ferrum_kernel::{Ctx, Doc, Kernel, Result, Tx};
+use crate::util::{d, id, money, rows, s, sys, unit_factor};
+use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::json;
 use uuid::Uuid;
+
+/// How far past an order line's quantity `field` may go, in percent: the item's allowance when it
+/// sets one (an empty field follows the company), else the company's; none unless one is set.
+/// Delivered and received quantities take the over-delivery allowance, billed ones the over-billing.
+pub async fn allowance(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Option<Uuid>, item: Option<Uuid>, field: &str) -> Result<Decimal> {
+    let key = if field == "billed_qty" { "over_billing_allowance" } else { "over_delivery_allowance" };
+    let given = |doc: &Doc| doc.get(key).filter(|v| !v.is_null() && v.as_str() != Some("")).map(|_| d(doc, key));
+    if let Some(item) = item {
+        let it = crate::util::get(k, ctx, tx, "Item", item).await?;
+        if let Some(p) = given(&it) {
+            return Ok(p.max(Decimal::ZERO));
+        }
+    }
+    match company {
+        Some(c) => Ok(given(&crate::util::get(k, ctx, tx, "Company", c).await?).unwrap_or_default().max(Decimal::ZERO)),
+        None => Ok(Decimal::ZERO),
+    }
+}
+
+/// Adds `delta` (counted on a line whose unit holds `factor` stock units) to a progress field of
+/// one order line: ferrum-domain's counter, with the allowance of [`allowance`]. Within it the
+/// line shows the excess (a delivered quantity above the ordered); beyond it the refusal says what
+/// was ordered, what is allowed and what this would bring it to.
+#[allow(clippy::too_many_arguments)]
+pub async fn add_progress_in(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    entity: &str,
+    doc_id: Uuid,
+    line_id: Uuid,
+    field: &str,
+    delta: Decimal,
+    factor: Option<Decimal>,
+) -> Result<()> {
+    let sctx = sys(ctx);
+    let order = k.get_tx(&sctx, tx, entity, doc_id, true).await?;
+    let number = s(&order, "number").unwrap_or_default();
+    if d(&order, "docstatus") != Decimal::ONE {
+        return Err(Error::invalid(format!("{entity} {number} is not submitted")));
+    }
+    let line = rows(&order, "items").into_iter().find(|r| id(r, "id") == Some(line_id)).ok_or_else(|| Error::invalid(format!("line not found on {entity}")))?;
+    let own = unit_factor(&line);
+    let delta = match factor {
+        Some(f) if f > Decimal::ZERO && f != own => (delta * f / own).round_dp(9),
+        _ => delta,
+    };
+    let qty = d(&line, "qty");
+    let mut new = d(&line, field) + delta;
+    if (new - qty).abs() <= QTY_TOLERANCE {
+        new = qty;
+    } else if new.abs() <= QTY_TOLERANCE {
+        new = Decimal::ZERO;
+    }
+    if new > qty && delta > Decimal::ZERO {
+        let pct = allowance(k, ctx, tx, id(&order, "company"), id(&line, "item"), field).await?;
+        let allowed = (qty * (Decimal::ONE_HUNDRED + pct) / Decimal::ONE_HUNDRED).round_dp(9);
+        if new > allowed + QTY_TOLERANCE {
+            let what = s(&line, "item_name").or(s(&line, "description")).unwrap_or("item");
+            let verb = match field {
+                "billed_qty" => "billed",
+                "received_qty" => "received",
+                _ => "delivered",
+            };
+            let room = if pct.is_zero() { "no more".to_string() } else { format!("{} with its {}% allowance", allowed.normalize(), pct.normalize()) };
+            let label = k.entity(ctx, entity).map(|e| e.def.label.clone()).unwrap_or_else(|_| entity.to_string());
+            return Err(Error::invalid(format!(
+                "{what}: {label} {number} ordered {}, allows {room}, and this would bring what is {verb} to {}",
+                qty.normalize(),
+                new.normalize()
+            )));
+        }
+    }
+    if new < Decimal::ZERO {
+        return Err(Error::internal(format!("{field} would become negative on {entity} line {line_id}")));
+    }
+    let mut v = Doc::new();
+    v.insert(field.into(), money(new));
+    k.set_child_values_tx(&sctx, tx, entity, "items", line_id, v).await
+}
 
 fn pct(done: Decimal, total: Decimal) -> Decimal {
     if total.is_zero() { Decimal::ZERO } else { (done / total * Decimal::ONE_HUNDRED).round_dp(2).min(Decimal::ONE_HUNDRED) }
