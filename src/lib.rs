@@ -11,6 +11,8 @@
 //! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
 
 pub mod accounting;
+pub mod change;
+pub mod credit;
 pub mod deferred;
 pub mod flow;
 pub mod ledger;

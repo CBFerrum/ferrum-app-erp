@@ -663,6 +663,14 @@ impl DocHook for PurchaseOrderHook {
             sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(hc.ctx.tenant).bind(po).bind(co.precision as i32).fetch_all(&mut **hc.tx).await?;
         check(hc, cid, Kind::PurchaseOrder, effects, Some(po)).await
     }
+
+    /// A submitted order changed (ERP's Update Items): its commitment is checked again as it now stands.
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
+        if old.is_some_and(|o| d(o, "docstatus") == Decimal::ONE) && d(doc, "docstatus") == Decimal::ONE {
+            return self.on_submit(hc, doc).await;
+        }
+        Ok(())
+    }
 }
 
 /// Material requests (procurement package): the commitment check at submit.

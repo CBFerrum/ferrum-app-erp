@@ -28,6 +28,16 @@ pub async fn refresh_for_order(tx: &mut Tx, tenant: Uuid, order: Uuid) -> Result
     Ok(())
 }
 
+/// Refreshes the reservations of `pairs` (item, warehouse) of `company`: lines an order no longer has.
+pub async fn refresh_pairs(tx: &mut Tx, tenant: Uuid, company: Uuid, mut pairs: Vec<(Uuid, Uuid)>) -> Result<()> {
+    pairs.sort();
+    pairs.dedup();
+    for (item, warehouse) in pairs {
+        refresh(tx, tenant, item, warehouse, company).await?;
+    }
+    Ok(())
+}
+
 async fn refresh(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid, company: Uuid) -> Result<()> {
     // The balance must exist to be locked; a concurrent first insert waits for this one.
     sqlx::query(
