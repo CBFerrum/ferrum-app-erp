@@ -3,17 +3,17 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { Alert, EmptyState, ErrorState, Field, PageLoading, useShellTitle } from "@ferrum/kit";
+import { ChartColumnIcon } from "lucide-react";
+import { Alert, Field, LoadFailed, PageLoading, StatePanel } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { get, type OeeAnswer } from "./data";
-import { Tabs } from "./Home";
 import { coverageNote, cycleWarning, percent } from "./logic";
+import { Screen } from "./Tabs";
 
 const toLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 const hours = (secs: number) => (secs / 3600).toFixed(1);
 
 export function Oee() {
-  useShellTitle("OEE");
   const box = useId();
   const [station, setStation] = useState<string | null>(null);
   const [from, setFrom] = useState(() => toLocal(new Date(Date.now() - 8 * 3600_000)));
@@ -26,8 +26,7 @@ export function Oee() {
   const f = q.data?.figures;
   const notes = [coverageNote(f?.coverage), cycleWarning(f?.performance)].filter(Boolean);
   return (
-    <div className="mes-page">
-      <Tabs />
+    <Screen section="oee">
       <section className="card card-pad mes-filters">
         <Field label="Workstation" htmlFor={`${box}-w`}>
           <LinkInput to="Workstation" id={`${box}-w`} value={station} onChange={setStation} />
@@ -40,11 +39,13 @@ export function Oee() {
         </Field>
       </section>
       {!station ? (
-        <EmptyState title="Choose a workstation" icon="chart" />
+        <StatePanel kind="empty" icon={ChartColumnIcon} title="Choose a workstation">
+          Pick a workstation and a period to see its figures.
+        </StatePanel>
       ) : q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} />
       ) : (
         <>
           <section className="mes-figures" aria-label="Figures">
@@ -55,7 +56,7 @@ export function Oee() {
               ["Quality", f?.quality],
             ].map(([label, v]) => (
               <div key={label as string} className="card card-pad">
-                <span className="faint">{label as string}</span>
+                <span className="muted">{label as string}</span>
                 <strong>{percent(v as number | null)}</strong>
               </div>
             ))}
@@ -70,6 +71,6 @@ export function Oee() {
           </p>
         </>
       )}
-    </div>
+    </Screen>
   );
 }

@@ -42,4 +42,13 @@ describe("a run", () => {
   it("calls a pause what it is", () => {
     expect(runWords("Paused").label).toBe("Stopped");
   });
+
+  it("takes its colour from the stored state, and a state it does not know is neutral", () => {
+    expect(runWords("Running").tone).toBe("green");
+    expect(runWords("Paused").tone).toBe("amber");
+    expect(runWords("Released", "At Station").tone).toBe("blue");
+    expect(runWords("Planned").tone).toBe("neutral");
+    expect(runWords("Completed").tone).toBe("neutral");
+    expect(runWords("Not running").tone).toBe("neutral");
+  });
 });
