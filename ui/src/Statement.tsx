@@ -8,7 +8,8 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, formatDate, saveBlob, todayIso, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, EmptyState, ErrorState, Field, PageLoading, useShellTitle, placed } from "@ferrum/kit";
+import { Alert, Button, Dialog, Field, useShellTitle, placed, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 import { LinkInput, useMe, useMetaIndex } from "@ferrum/records";
 import { sub } from "./decimal";
 import { show } from "./money";
@@ -39,11 +40,11 @@ function Entries({ title, drill, onClose }: { title: string; drill: Drill; onClo
   return (
     <Dialog open wide onClose={onClose} title={title} footer={<Link className="btn btn-default btn-md" to={ledgerHref(drill)}>{tr("Open in the general ledger")}</Link>}>
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the entries")} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not load the entries")} />
       ) : !q.data ? (
-        <PageLoading label={tr("Loading the entries")} />
+        <Loading label={tr("Loading the entries")} />
       ) : q.data.rows.length <= 2 ? (
-        <EmptyState title={tr("No entries in this period")} icon="list" />
+        <StatePanel kind="empty" title={tr("No entries in this period")} />
       ) : (
         <div className="table-wrap erp-entries-table">
           <table className="table">
@@ -151,13 +152,11 @@ export function Statement({ kind }: { kind: Kind }) {
   const compared = columns.length > 1;
 
   let body: ReactNode;
-  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={tr("Could not run the statement")} />;
-  else if (!data) body = <PageLoading label={tr("Running the statement")} />;
+  if (q.error) body = <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={tr("Could not run the statement")} />;
+  else if (!data) body = <Loading label={tr("Running the statement")} />;
   else if (kind === "profit_and_loss" && data.rows.length <= 5) {
     body = (
-      <EmptyState title={tr("Nothing was posted in this period")} icon="chart">
-        <p className="muted">{tr("Pick another period, or check the company and the filters above.")}</p>
-      </EmptyState>
+      <StatePanel kind="empty" title={tr("Nothing was posted in this period")}>{tr("Pick another period, or check the company and the filters above.")}</StatePanel>
     );
   } else {
     body = (

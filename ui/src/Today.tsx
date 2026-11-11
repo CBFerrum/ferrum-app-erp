@@ -8,7 +8,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, todayIso, t, isolate } from "@ferrum/client";
-import { Button, confirmDialog, EmptyState, ErrorState, Icon, PageLoading, toast, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
+import { Button, confirmDialog, Icon, toast, useLiveEntity, useShellTitle, placed, StatePanel } from "@ferrum/kit";
+import { Loading, LoadFailed } from "./states";
 import { LinkInput, useMe } from "@ferrum/records";
 import { destination, draftsPath, monthName, needing, type Overview, plural, row } from "./attention";
 import { show } from "./money";
@@ -75,8 +76,8 @@ export function Today() {
   };
 
   let body: ReactNode;
-  if (q.error) body = <ErrorState error={q.error} onRetry={() => void q.refetch()} title={t("Could not load the overview")} />;
-  else if (!q.data) body = <PageLoading label={t("Looking at the books")} />;
+  if (q.error) body = <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={t("Could not load the overview")} />;
+  else if (!q.data) body = <Loading label={t("Looking at the books")} />;
   else {
     const o = q.data;
     const get = (key: string) => row(o, key);
@@ -245,9 +246,7 @@ export function Today() {
         </div>
       </header>
       {!company && me ? (
-        <EmptyState title={t("Choose a company")} icon="home">
-          <p className="muted">{t("The overview is for one company at a time.")}</p>
-        </EmptyState>
+        <StatePanel kind="empty" title={t("Choose a company")}>{t("The overview is for one company at a time.")}</StatePanel>
       ) : (
         body
       )}
