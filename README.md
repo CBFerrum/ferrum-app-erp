@@ -72,8 +72,8 @@ and CRM build on its engine.
 | 📋 | **Procurement** | `0.1.4` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.1` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.1` | workstations, operations, routings, job cards, production planning and subcontracting |
-| 🏭 | **Warehouse Management** | `0.2.1` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
-| 🛠️ | **Manufacturing Execution** | `0.2.1` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
+| 🏭 | **Warehouse Management** | `0.2.2` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
+| 🛠️ | **Manufacturing Execution** | `0.2.2` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
 | ✅ | **Quality** | `0.1.0` | holds that stop stock everywhere it could go, nonconformances and corrective action |
 
 <details>
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
 | **0.18.0, Finance 0.4.1, Procurement 0.1.4** | Orders that change and credit that holds: Update Items on submitted sales and purchase orders (quantities, lines added and removed, dates, prices of what is not yet billed) under every app's rules; closing shows what was closed short; over-delivery, over-receipt and over-billing allowances; credit limits on orders, deliveries and invoices without counting twice, released with a reason, and a credit hold; a statement of account with ageing. |
 | **0.17.0** | Documents that print like documents: a letterhead the company fills in once (address, contact, logo, bank details, default terms and a footer), and print layouts for sales and purchase invoices (credit and debit notes among them), sales orders and pro formas, delivery notes, purchase orders and receipts, payment receipts, vouchers, refunds and transfers, journal vouchers and stock entries. |
 | **0.16.0** | No entry barrier for a company switching books: invoice and order lines without an item, booked to an account; opening invoices from the old books in one import, aged by their own due dates and settled like any invoice; a journal entry's party line with its own number, due date and currency; transfers between the company's own bank and cash accounts. |
