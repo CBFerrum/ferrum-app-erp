@@ -80,6 +80,7 @@ const DEFS: &[Def] = &[
         entity: "JournalEntry",
         params: &["company", "from_date", "to_date", "customer", "supplier", "currency"],
     },
+    Def { name: "withholding", label: "Withholding", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
     Def { name: "tax_summary", label: "Tax Summary", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
@@ -174,6 +175,7 @@ impl ReportSource for ErpReports {
             "sales_register" => register(&mut tx, ctx, &co, &p, "customer").await?,
             "purchase_register" => register(&mut tx, ctx, &co, &p, "supplier").await?,
             "tax_summary" => tax_summary(&mut tx, ctx, &co, &p).await?,
+            "withholding" => withholding(&mut tx, ctx, &co, &p).await?,
             _ => return Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;
@@ -2020,6 +2022,68 @@ async fn tax_summary(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>)
             col("taxable", "Taxable Base", "currency"), col("tax", "Tax", "currency")],
         "rows": rows,
         "totals": {"output_tax": money(output), "input_tax": money(input), "net_tax": money(output - input)},
+        "meta": {"from_date": from, "to_date": to, "truncated": truncated},
+    }))
+}
+
+// ───────────────────────────── withholding ─────────────────────────────
+
+/// What the company's submitted bills, payments and sales invoices of the period withheld or
+/// collected, by category, party and document: the base each added, what was withheld on, the
+/// rate, the amount and the certificate, in company currency. A country's return or certificate
+/// is these rows grouped its way.
+async fn withholding(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let (Some(cats), Some(certs)) = (ctx.schema.entity("WithholdingCategory"), ctx.schema.entity("WithholdingCertificate")) else {
+        return Err(Error::NotFound("withholding categories".into()));
+    };
+    #[allow(clippy::type_complexity)]
+    let mut data: Vec<(String, Option<String>, NaiveDate, Option<String>, &str, Uuid, Option<String>, Option<String>, Decimal, Decimal, Decimal, Decimal)> =
+        Vec::new();
+    for (entity, _, party) in crate::withholding::KEEPERS {
+        let Some(ent) = ctx.schema.entity(entity) else { continue };
+        let Some(lines) = ent.children.get("withholdings") else { continue };
+        let rows: Vec<(String, Option<String>, NaiveDate, Option<String>, Uuid, Option<String>, Option<String>, Decimal, Decimal, Decimal, Decimal)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "select c.category_name, i.{party}, i.posting_date, i.number, i.id, w.against_number, x.certificate_no, \
+                 coalesce(w.base, 0), coalesce(w.taxable, 0), coalesce(w.rate, 0), coalesce(w.amount, 0) \
+                 from {invoices} i join {lines} w on w.tenant_id = i.tenant_id and w.parent_id = i.id \
+                 join {cats} c on c.tenant_id = w.tenant_id and c.id = w.category left join {certs} x on x.tenant_id = w.tenant_id and x.id = w.certificate \
+                 where i.tenant_id = $1 and i.company = $2 and i.docstatus = 1 and i.posting_date between $3 and $4 limit $5",
+                invoices = ferrum_kernel::ddl::q(&ent.table),
+                lines = ferrum_kernel::ddl::q(&lines.table),
+                cats = ferrum_kernel::ddl::q(&cats.table),
+                certs = ferrum_kernel::ddl::q(&certs.table),
+            )))
+            .bind(ctx.tenant)
+            .bind(co.id)
+            .bind(from)
+            .bind(to)
+            .bind(MAX_ROWS + 1)
+            .fetch_all(&mut **tx)
+            .await?;
+        data.extend(rows.into_iter().map(|(c, n, day, num, iid, against, cert, base, taxable, rate, amount)| {
+            (c, n, day, num, *entity, iid, against, cert, base, taxable, rate, amount)
+        }));
+    }
+    let truncated = data.len() as i64 > MAX_ROWS;
+    data.sort_by(|a, b| (&a.0, &a.1, a.2, &a.3).cmp(&(&b.0, &b.1, b.2, &b.3)));
+    let mut total = Decimal::ZERO;
+    let rows: Vec<Value> = data
+        .into_iter()
+        .take(MAX_ROWS as usize)
+        .map(|(cat, party, day, number, entity, iid, against, cert, base, taxable, rate, amount)| {
+            total += amount;
+            json!({"category": cat, "party": party, "posting_date": day, "voucher_type": entity, "voucher_no": number, "voucher_id": iid, "against": against,
+                "certificate": cert, "base": money(base), "taxable": money(taxable), "rate": money(rate), "amount": money(amount)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("category", "Category", "data"), col("party", "Party", "data"), col("posting_date", "Date", "date"), col("voucher_type", "Document", "data"),
+            col("voucher_no", "Number", "data"), col("against", "Against Invoice", "data"), col("certificate", "Certificate", "data"), col("base", "Base", "currency"),
+            col("taxable", "Withheld On", "currency"), col("rate", "Rate", "decimal"), col("amount", "Amount", "currency")],
+        "rows": rows,
+        "totals": {"amount": money(total)},
         "meta": {"from_date": from, "to_date": to, "truncated": truncated},
     }))
 }
