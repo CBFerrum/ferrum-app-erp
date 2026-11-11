@@ -177,6 +177,8 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
             batch_no: s(r, "batch_no").map(str::to_string),
             serials: parse_serials(s(r, "serial_no")),
             source_line: id(r, "id"),
+            // Goods leaving a purchase go back to the supplier.
+            unusable_batch_ok: entity.starts_with("Purchase"),
             ..Default::default()
         });
     }

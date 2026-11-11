@@ -54,6 +54,8 @@ pub(crate) fn plan(
         batch_no: batch.map(str::to_string),
         serials,
         source_line: line,
+        // A count settles what is there, expired or not.
+        unusable_batch_ok: true,
         ..Default::default()
     };
     let no_rate = || format!("{} has no valuation rate in this warehouse yet: give the valuation rate of the counted stock", info.code);
