@@ -275,4 +275,43 @@ async fn scenario() {
     t.update("SalesInvoice", bill, json!({"items": [{"id": bill_line["id"], "qty": "100"}]})).await;
     t.submit("SalesInvoice", bill).await;
     assert_eq!(t.get("SalesOrder", big).await["status"], json!("Completed"));
+
+    // ───────────── the credit limit across an order, a delivery and an invoice, an override, a hold ─────────────
+    let hooli = uid(&t.insert("Customer", json!({"customer_name": "Hooli", "credit_limit": "1000"})).await);
+    let h = hooli.to_string();
+    let widgets = |q: &str| json!([{"item": widget.to_string(), "qty": q}]);
+    let so1 = uid(&t.insert("SalesOrder", json!({"company": c, "customer": h, "set_warehouse": wh, "items": widgets("6")})).await);
+    t.submit("SalesOrder", so1).await;
+    let dn1 = vid(&t.action("SalesOrder", so1, "make_delivery_note", json!({})).await);
+    t.submit("DeliveryNote", dn1).await;
+    let si1 = vid(&t.action("DeliveryNote", dn1, "make_sales_invoice", json!({})).await);
+    t.submit("SalesInvoice", si1).await;
+    let so2 = uid(&t.insert("SalesOrder", json!({"company": c, "customer": h, "set_warehouse": wh, "items": widgets("5")})).await);
+    refused(
+        t.k.submit(&t.ctx, "SalesOrder", so2, None).await,
+        "credit limit exceeded for Hooli: the limit is 1000, 600 is already committed (open orders, deliveries not billed and what is outstanding), and this order adds 500",
+    );
+    let dn2 = uid(&t.insert("DeliveryNote", json!({"company": c, "customer": h, "items": [{"item": widget.to_string(), "qty": "5", "warehouse": wh}]})).await);
+    refused(t.k.submit(&t.ctx, "DeliveryNote", dn2, None).await, "600 is already committed (open orders, deliveries not billed and what is outstanding), and this delivery adds 500");
+    let si2 = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": h, "items": widgets("5")})).await);
+    refused(t.k.submit(&t.ctx, "SalesInvoice", si2, None).await, "and this invoice adds 500");
+    // Released, with its reason kept: then it counts.
+    t.update("SalesOrder", so2, json!({"credit_release_reason": "Paid in advance by cheque 1182"})).await;
+    let released = t.submit("SalesOrder", so2).await;
+    assert_eq!(released["credit_release_reason"], json!("Paid in advance by cheque 1182"));
+    let so4 = uid(&t.insert("SalesOrder", json!({"company": c, "customer": h, "set_warehouse": wh, "items": widgets("1")})).await);
+    refused(t.k.submit(&t.ctx, "SalesOrder", so4, None).await, "1100 is already committed");
+    refused(t.change("SalesOrder", so2, json!({"line": 1, "qty": "6"})).await, "1100 is already committed (open orders, deliveries not billed and what is outstanding), and this change adds 100");
+    t.change("SalesOrder", so2, json!({"line": 1, "qty": "4"})).await.unwrap();
+    // On hold: no new orders or deliveries; a credit note and a payment are still taken.
+    t.update("Customer", hooli, json!({"credit_limit": "0", "credit_hold": true, "credit_hold_reason": "Cheque bounced"})).await;
+    refused(t.k.submit(&t.ctx, "SalesOrder", so4, None).await, "Hooli is on credit hold (Cheque bounced): no new orders");
+    refused(t.k.submit(&t.ctx, "DeliveryNote", dn2, None).await, "no new deliveries");
+    let cn = vid(&t.action("SalesInvoice", si1, "make_credit_note", json!({"credit_percent": "10"})).await);
+    t.submit("SalesInvoice", cn).await;
+    let pay = vid(&t.action("SalesInvoice", si1, "make_payment", json!({})).await);
+    t.submit("PaymentEntry", pay).await;
+    assert_eq!(dec(&t.get("SalesInvoice", si1).await["outstanding_amount"]), Decimal::ZERO);
+    t.update("Customer", hooli, json!({"credit_hold": false})).await;
+    t.submit("SalesOrder", so4).await;
 }
