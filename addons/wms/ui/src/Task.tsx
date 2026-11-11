@@ -6,11 +6,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, docPath, formatDecimal, newKey, refusal } from "@ferrum/client";
-import { Alert, Badge, Button, confirmDialog, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, confirmDialog, Dialog, Field, LoadFailed, PageHeader, PageLoading, toast } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { post } from "./data";
 import { custodyWords, evidenceWords, loadScans, shortOf, taskWords } from "./logic";
 import { ScanBox } from "./Scan";
+import { Page } from "./Warehouse";
 
 interface TaskDoc {
   id: string;
@@ -87,7 +88,7 @@ function Release({ t }: { t: TaskDoc }) {
   });
   return (
     <section className="card card-pad stack">
-      <h2>Who does this?</h2>
+      <h2 className="text-base font-semibold">Who does this?</h2>
       <Field label="Robot" htmlFor={`${id}-robot`} hint="Leave empty for a person.">
         <LinkInput to="Device" id={`${id}-robot`} value={robot} linkFilters={{ kind: "Robot" }} onChange={setRobot} />
       </Field>
@@ -134,7 +135,7 @@ function Confirm({ t }: { t: TaskDoc }) {
         <>
           <ScanBox label={next.label} onScan={(code) => setLoad((l) => ({ ...l, [next.key]: code }))} />
           <div>
-            <button type="button" className="link" onClick={() => setUnreadable(true)}>
+            <button type="button" className="link-btn" onClick={() => setUnreadable(true)}>
               It cannot be scanned
             </button>
           </div>
@@ -144,7 +145,7 @@ function Confirm({ t }: { t: TaskDoc }) {
           {!robot ? (
             <p className="muted">
               Took it from {from}.{" "}
-              <button type="button" className="link" onClick={() => setFrom(null)}>
+              <button type="button" className="link-btn" onClick={() => setFrom(null)}>
                 Not right?
               </button>
             </p>
@@ -173,7 +174,6 @@ export function TaskPage() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["wms", "task", id], queryFn: () => api.get<TaskDoc>(docPath("WarehouseTask", id), { titles: true }), refetchInterval: 10_000 });
-  useShellTitle("Task");
   const [recovering, setRecovering] = useState(false);
   const cancel = useMutation({
     mutationFn: () => post<{ status: string }>(`/tasks/${id}/cancel`, { reason: "Cancelled by a manager" }),
@@ -184,50 +184,54 @@ export function TaskPage() {
     onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
   const t = q.data;
   const word = taskWords(t.status);
   const open = ["Open", "Released", "Moving"].includes(t.status);
   const custody = custodyWords(t.custody ?? null, t.status);
   return (
-    <div className="wms-page wms-narrow">
-      <Link to="/" className="faint">
-        Back to the floor
-      </Link>
-      <header>
-        <h1 className="wms-title">
-          {t.kind} {formatDecimal(t.qty)} {t._titles?.item ?? ""}
-        </h1>
-        {t.lot ? <div className="faint">Lot {t.lot}</div> : null}
+    <Page
+      narrow
+      header={
+        <PageHeader
+          eyebrow={<Link to="/">Back to the floor</Link>}
+          title={`${t.kind} ${formatDecimal(t.qty)} ${t._titles?.item ?? ""}`}
+          description={t.lot ? `Lot ${t.lot}` : undefined}
+          actions={
+            <>
+              {t.status === "Exception" ? (
+                <Button variant="primary" onClick={() => setRecovering(true)}>
+                  I found it
+                </Button>
+              ) : null}
+              {open ? (
+                <Button
+                  loading={cancel.isPending}
+                  onClick={async () => {
+                    if (await confirmDialog({ title: "Cancel this task?", message: "A robot on its way can only be asked to stop.", confirmLabel: "Cancel the task" })) cancel.mutate();
+                  }}
+                >
+                  Cancel the task
+                </Button>
+              ) : null}
+            </>
+          }
+        />
+      }
+    >
+      <div>
         <div className="wms-route">
           <strong>{t._titles?.from_bin ?? "?"}</strong> → <strong>{t._titles?.to_bin ?? "somewhere to choose"}</strong>
         </div>
         <Badge tone={word.tone}>{word.label}</Badge> <span className="muted">{word.says}</span>
-      </header>
+      </div>
       {custody ? <Alert tone={t.custody === "Uncertain" ? "error" : "info"}>{custody}</Alert> : null}
       {t.reason ? <p className="muted">{t.reason}</p> : null}
       {evidenceWords(t.evidence_source) ? <p className="muted">{evidenceWords(t.evidence_source)}</p> : null}
       {t.status === "Open" && t.to_bin ? <Release t={t} /> : null}
       {t.status === "Open" && !t.to_bin ? <Alert tone="warning">No bin fits this. A manager has to choose one.</Alert> : null}
       {(t.status === "Open" && t.to_bin && !t.robot) || (t.status === "Released" && !t.command) || t.status === "Arrived" ? <Confirm t={t} /> : null}
-      {t.status === "Exception" ? (
-        <Button variant="primary" onClick={() => setRecovering(true)}>
-          I found it
-        </Button>
-      ) : null}
-      {open ? (
-        <div>
-          <Button
-            loading={cancel.isPending}
-            onClick={async () => {
-              if (await confirmDialog({ title: "Cancel this task?", message: "A robot on its way can only be asked to stop.", confirmLabel: "Cancel the task" })) cancel.mutate();
-            }}
-          >
-            Cancel the task
-          </Button>
-        </div>
-      ) : null}
       {recovering ? <Recover t={t} onClose={() => setRecovering(false)} /> : null}
-    </div>
+    </Page>
   );
 }

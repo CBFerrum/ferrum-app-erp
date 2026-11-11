@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { byUrgency, cleanScan, custodyWords, evidenceWords, lineProgress, loadScans, shortOf, type Task, taskWords, unverified } from "./logic";
+import { statusTone } from "@ferrum/kit";
+import { BIN_TONES, byUrgency, cleanScan, COUNT_TONES, custodyWords, evidenceWords, INBOUND_TONES, lineProgress, loadScans, SHIPMENT_TONES, shortOf, STOCK_TONES, type Task, taskWords, unverified } from "./logic";
 
 const task = (status: string, id = status): Task => ({ id, summary: "", kind: "Move", status, custody: null, qty: "1", reason: null, item: "X", lot: null, from_bin: null, to_bin: null, robot: null });
 
@@ -55,5 +56,24 @@ describe("quantities", () => {
 
   it("knows what is still to verify", () => {
     expect(unverified([{ id: "a", item: "x", qty: "2", verified_qty: "2" }, { id: "b", item: "y", qty: "2", verified_qty: "1" }]).map((l) => l.id)).toEqual(["b"]);
+  });
+});
+
+describe("the colour of a state", () => {
+  it("comes from the stored state id and says what the state means", () => {
+    expect(taskWords("Exception").tone).toBe("red");
+    expect(taskWords("Arrived").tone).toBe("amber");
+    expect(taskWords("Done").tone).toBe("green");
+    expect(INBOUND_TONES.Discrepancy).toBe("amber");
+    expect(INBOUND_TONES.Received).toBe("green");
+    expect(SHIPMENT_TONES["Partially Handed Over"]).toBe("amber");
+    expect(COUNT_TONES.Review).toBe("amber");
+    expect(BIN_TONES.Blocked).toBe("red");
+    expect(STOCK_TONES.Quarantine).toBe("amber");
+  });
+
+  it("is neutral for a state the map does not know, whatever its words", () => {
+    expect(statusTone("Something new", INBOUND_TONES)).toBe("neutral");
+    expect(statusTone("Not blocked", BIN_TONES)).toBe("neutral");
   });
 });

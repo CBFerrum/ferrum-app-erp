@@ -9,7 +9,8 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError, type RouteObject } from "react-router";
 import { addCatalogs, bootstrap, isolate, routeBase, shell, t, wordsReady } from "@ferrum/client";
-import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
+import { ConfirmHost, StatePanel, Toaster } from "@ferrum/kit";
+import { LoadFailed } from "./states";
 import { recordsRoutes, RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import "./styles.css";
 
@@ -27,14 +28,12 @@ const queryClient = new QueryClient({
 });
 
 function RouteError() {
-  return <ErrorState error={useRouteError()} onRetry={() => window.location.reload()} />;
+  return <LoadFailed error={useRouteError()} onRetry={() => window.location.reload()} />;
 }
 
 function NotFound({ back = t("Go to ERP's home") }: { back?: string }) {
   return (
-    <EmptyState title={t("Page not found")}>
-      <Link to="/">{isolate(back)}</Link>
-    </EmptyState>
+    <StatePanel kind="empty" title={t("Page not found")} action={<Link to="/">{isolate(back)}</Link>} />
   );
 }
 

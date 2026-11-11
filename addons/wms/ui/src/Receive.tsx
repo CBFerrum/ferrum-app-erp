@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, docPath, formatDecimal, newKey, refusal } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, ErrorState, Field, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, Dialog, Field, LoadFailed, PageHeader, PageLoading, StatusBadge, toast } from "@ferrum/kit";
 import { post } from "./data";
-import { lineProgress, type ReceiveLine } from "./logic";
+import { INBOUND_TONES, lineProgress, type ReceiveLine } from "./logic";
 import { ScanBox } from "./Scan";
+import { Page } from "./Warehouse";
 
 interface Inbound {
   id: string;
@@ -87,7 +88,6 @@ export function Receive() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["wms", "inbound-doc", id], queryFn: () => api.get<Inbound>(docPath("InboundShipment", id), { titles: true }) });
-  useShellTitle("Receiving");
   const [qty, setQty] = useState("1");
   const [damaged, setDamaged] = useState(false);
   const [unknown, setUnknown] = useState(false);
@@ -119,18 +119,34 @@ export function Receive() {
     onError: (e) => toast(refusal(e), "error"),
   });
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
   const doc = q.data;
   const open = doc.status === "Expected" || doc.status === "Receiving";
   return (
-    <div className="wms-page wms-narrow">
-      <Link to="/" className="faint">
-        Back to the floor
-      </Link>
-      <h1 className="wms-title">{doc.number ?? "Inbound"}</h1>
-      <div>
-        <Badge>{doc.status}</Badge> {doc.reference ? <span className="faint">Their reference {doc.reference}</span> : null}
-      </div>
+    <Page
+      narrow
+      header={
+        <PageHeader
+          eyebrow={<Link to="/">Back to the floor</Link>}
+          title={doc.number ?? "Inbound"}
+          description={
+            <>
+              <StatusBadge value={doc.status} tones={INBOUND_TONES} /> {doc.reference ? <span>Their reference {doc.reference}</span> : null}
+            </>
+          }
+          actions={
+            open ? (
+              <>
+                <Button onClick={() => setUnknown(true)}>Something else came</Button>
+                <Button variant="primary" loading={close.isPending} onClick={() => close.mutate()}>
+                  Finish receiving
+                </Button>
+              </>
+            ) : null
+          }
+        />
+      }
+    >
       {doc.notes ? <Alert tone="warning">{doc.notes}</Alert> : null}
       {open ? (
         <section className="card card-pad stack">
@@ -147,7 +163,7 @@ export function Receive() {
           />
         </section>
       ) : null}
-      <ul className="wms-list card card-pad">
+      <ul className="wms-list card">
         {doc.items.map((l) => {
           const p = lineProgress(l);
           return (
@@ -155,24 +171,19 @@ export function Receive() {
               <span>
                 {l._titles?.item ?? l.item} {l.lot ? <span className="faint">{l.lot}</span> : null}
               </span>
-              <span>
-                {formatDecimal(p.got)} of {formatDecimal(l.expected_qty)} {p.over ? <Badge tone="amber">Over</Badge> : null}
+              <span className="wms-line-end">
+                {p.over ? <Badge tone="amber">Over</Badge> : null}
                 {Number(l.damaged_qty ?? 0) > 0 ? <Badge tone="red">{formatDecimal(l.damaged_qty ?? 0)} damaged</Badge> : null}
+                <span className="num">
+                  {formatDecimal(p.got)} of {formatDecimal(l.expected_qty)}
+                </span>
               </span>
             </li>
           );
         })}
       </ul>
-      {open ? (
-        <div className="wms-actions">
-          <Button onClick={() => setUnknown(true)}>Something else came</Button>
-          <Button variant="primary" loading={close.isPending} onClick={() => close.mutate()}>
-            Finish receiving
-          </Button>
-        </div>
-      ) : null}
       {doc.status === "Discrepancy" ? <Settle id={id} /> : null}
       {unknown ? <Unknown id={id} onClose={() => setUnknown(false)} /> : null}
-    </div>
+    </Page>
   );
 }

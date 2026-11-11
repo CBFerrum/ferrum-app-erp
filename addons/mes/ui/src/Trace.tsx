@@ -4,13 +4,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { formatDecimal } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, Field, PageLoading, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Field, LoadFailed, PageLoading, StatePanel } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
 import { get, type TraceStep } from "./data";
-import { Tabs } from "./Home";
+import { Screen } from "./Tabs";
 
 export function Trace() {
-  useShellTitle("Trace a lot");
   const box = useId();
   const [item, setItem] = useState<string | null>(null);
   const [lot, setLot] = useState("");
@@ -22,8 +21,7 @@ export function Trace() {
   });
   const ask = (forward: boolean) => item && lot && setAsked({ item, lot, forward });
   return (
-    <div className="mes-page">
-      <Tabs />
+    <Screen section="trace">
       <section className="card card-pad mes-filters">
         <Field label="Item" htmlFor={`${box}-i`}>
           <LinkInput to="Item" id={`${box}-i`} value={item} onChange={setItem} />
@@ -43,20 +41,21 @@ export function Trace() {
       {!asked ? null : q.isPending ? (
         <PageLoading />
       ) : q.isError ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} />
       ) : q.data.length === 0 ? (
-        <EmptyState title="No record of that lot in production" icon="search" />
+        <StatePanel kind="no-matches" title="No record of that lot in production" onClear={() => setAsked(null)} clearLabel="Clear the search" />
       ) : (
         <ul className="card mes-list">
           {q.data.map((s, i) => (
-            <li key={i} className="mes-row" style={{ paddingLeft: `${s.depth}rem` }}>
+            <li key={i} className="mes-row" style={{ paddingInlineStart: `calc(1rem + ${s.depth}rem)` }}>
               <span>
-                {formatDecimal(s.qty)} {s.item} {s.lot} → {s.scrapped ? <Badge tone="amber">Scrapped</Badge> : `${s.into_item} ${s.into_lot}`}
+                {s.item} {s.lot} → {s.scrapped ? <Badge tone="amber">Scrapped</Badge> : `${s.into_item} ${s.into_lot}`}
               </span>
+              <span className="num">{formatDecimal(s.qty)}</span>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </Screen>
   );
 }
