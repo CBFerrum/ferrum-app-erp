@@ -152,7 +152,8 @@ async fn scenario() {
     let wh = t.find_one("Warehouse", json!({"warehouse_name": "Stores", "company": c})).await["id"].as_str().unwrap().to_string();
     let products = t.find_one("ItemGroup", json!({"group_name": "Products"})).await;
     let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await;
-    let item = |code: &str, rate: &str| json!({"item_code": code, "item_name": code, "item_group": products["id"], "stock_uom": nos["id"], "standard_rate": rate});
+    let item =
+        |code: &str, rate: &str| json!({"item_code": code, "item_name": code, "item_group": products["id"], "stock_uom": nos["id"], "standard_rate": rate});
     let widget = uid(&t.insert("Item", item("Widget", "100")).await);
     let gadget = uid(&t.insert("Item", item("Gadget", "50")).await);
     let steel = uid(&t.insert("Item", item("Steel", "0")).await);
@@ -221,7 +222,12 @@ async fn scenario() {
     refused(t.change("SalesOrder", so, json!({"line": 1, "qty": "6"})).await, "is completed");
 
     // Another app's rule holds after a change as at submission.
-    let quoted = uid(&t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "po_no": "Q-50", "items": [{"item": widget.to_string(), "qty": "40"}]})).await);
+    let quoted = uid(&t
+        .insert(
+            "SalesOrder",
+            json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "po_no": "Q-50", "items": [{"item": widget.to_string(), "qty": "40"}]}),
+        )
+        .await);
     t.submit("SalesOrder", quoted).await;
     refused(t.change("SalesOrder", quoted, json!({"line": 1, "qty": "60"})).await, "more than the 50 quoted");
     assert_eq!(dec(&line(&t.get("SalesOrder", quoted).await, 0)["qty"]), n("40"), "nothing changed");
@@ -248,12 +254,17 @@ async fn scenario() {
 
     // ───────────── 5% more delivered within the allowance, beyond it refused, the excess returned ─────────────
     t.update("Company", cid, json!({"over_delivery_allowance": "5"})).await;
-    let big = uid(&t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "items": [{"item": widget.to_string(), "qty": "100"}]})).await);
+    let big = uid(&t
+        .insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "set_warehouse": wh, "items": [{"item": widget.to_string(), "qty": "100"}]}))
+        .await);
     t.submit("SalesOrder", big).await;
     let over = vid(&t.action("SalesOrder", big, "make_delivery_note", json!({})).await);
     let over_line = line(&t.get("DeliveryNote", over).await, 0);
     t.update("DeliveryNote", over, json!({"items": [{"id": over_line["id"], "qty": "106"}]})).await;
-    refused(t.k.submit(&t.ctx, "DeliveryNote", over, None).await, "ordered 100, allows 105 with its 5% allowance, and this would bring what is delivered to 106");
+    refused(
+        t.k.submit(&t.ctx, "DeliveryNote", over, None).await,
+        "ordered 100, allows 105 with its 5% allowance, and this would bring what is delivered to 106",
+    );
     t.update("DeliveryNote", over, json!({"items": [{"id": over_line["id"], "qty": "105"}]})).await;
     t.submit("DeliveryNote", over).await;
     let cogs = t
@@ -261,7 +272,11 @@ async fn scenario() {
         .await;
     assert_eq!(cogs, n("4200"), "105 at 40 left stock");
     let order = t.get("SalesOrder", big).await;
-    assert_eq!((dec(&line(&order, 0)["delivered_qty"]), dec(&order["per_delivered"]), order["status"].clone()), (n("105"), n("100"), json!("To Bill")), "the excess shows");
+    assert_eq!(
+        (dec(&line(&order, 0)["delivered_qty"]), dec(&order["per_delivered"]), order["status"].clone()),
+        (n("105"), n("100"), json!("To Bill")),
+        "the excess shows"
+    );
     let back = vid(&t.action("DeliveryNote", over, "make_sales_return", json!({})).await);
     let back_line = line(&t.get("DeliveryNote", back).await, 0);
     t.update("DeliveryNote", back, json!({"items": [{"id": back_line["id"], "qty": "5"}]})).await;
@@ -292,7 +307,10 @@ async fn scenario() {
         "credit limit exceeded for Hooli: the limit is 1000, 600 is already committed (open orders, deliveries not billed and what is outstanding), and this order adds 500",
     );
     let dn2 = uid(&t.insert("DeliveryNote", json!({"company": c, "customer": h, "items": [{"item": widget.to_string(), "qty": "5", "warehouse": wh}]})).await);
-    refused(t.k.submit(&t.ctx, "DeliveryNote", dn2, None).await, "600 is already committed (open orders, deliveries not billed and what is outstanding), and this delivery adds 500");
+    refused(
+        t.k.submit(&t.ctx, "DeliveryNote", dn2, None).await,
+        "600 is already committed (open orders, deliveries not billed and what is outstanding), and this delivery adds 500",
+    );
     let si2 = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": h, "items": widgets("5")})).await);
     refused(t.k.submit(&t.ctx, "SalesInvoice", si2, None).await, "and this invoice adds 500");
     // Released, with its reason kept: then it counts.
@@ -301,7 +319,10 @@ async fn scenario() {
     assert_eq!(released["credit_release_reason"], json!("Paid in advance by cheque 1182"));
     let so4 = uid(&t.insert("SalesOrder", json!({"company": c, "customer": h, "set_warehouse": wh, "items": widgets("1")})).await);
     refused(t.k.submit(&t.ctx, "SalesOrder", so4, None).await, "1100 is already committed");
-    refused(t.change("SalesOrder", so2, json!({"line": 1, "qty": "6"})).await, "1100 is already committed (open orders, deliveries not billed and what is outstanding), and this change adds 100");
+    refused(
+        t.change("SalesOrder", so2, json!({"line": 1, "qty": "6"})).await,
+        "1100 is already committed (open orders, deliveries not billed and what is outstanding), and this change adds 100",
+    );
     t.change("SalesOrder", so2, json!({"line": 1, "qty": "4"})).await.unwrap();
     // On hold: no new orders or deliveries; a credit note and a payment are still taken.
     t.update("Customer", hooli, json!({"credit_limit": "0", "credit_hold": true, "credit_hold_reason": "Cheque bounced"})).await;
@@ -321,25 +342,49 @@ async fn scenario() {
     t.insert("ExchangeRate", json!({"from_currency": usd["id"], "to_currency": inr["id"], "rate": "83", "valid_from": "2000-01-01"})).await;
     let initech = uid(&t.insert("Customer", json!({"customer_name": "Initech", "default_currency": usd["id"]})).await);
     let i = initech.to_string();
-    t.insert("OpeningInvoice", json!({"company": c, "customer": i, "invoice_no": "OB-1", "invoice_date": "2026-08-01", "due_date": "2026-08-31",
-        "posting_date": "2026-09-30", "currency": usd["id"], "conversion_rate": "78", "amount": "100"})).await;
+    t.insert(
+        "OpeningInvoice",
+        json!({"company": c, "customer": i, "invoice_no": "OB-1", "invoice_date": "2026-08-01", "due_date": "2026-08-31",
+        "posting_date": "2026-09-30", "currency": usd["id"], "conversion_rate": "78", "amount": "100"}),
+    )
+    .await;
     t.action("Company", cid, "post_opening_invoices", json!({})).await;
-    let usd_si = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "80", "posting_date": "2026-10-01",
-        "due_date": "2026-10-31", "items": [{"description": "Consulting", "qty": "1", "price_list_rate": "500"}]})).await);
+    let usd_si = uid(&t
+        .insert(
+            "SalesInvoice",
+            json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "80", "posting_date": "2026-10-01",
+        "due_date": "2026-10-31", "items": [{"description": "Consulting", "qty": "1", "price_list_rate": "500"}]}),
+        )
+        .await);
     t.submit("SalesInvoice", usd_si).await;
-    let pay = uid(&t.insert("PaymentEntry", json!({"company": c, "payment_type": "Receive", "customer": i, "currency": usd["id"], "exchange_rate": "81",
-        "posting_date": "2026-10-15", "paid_amount": "200", "bank_account": bank, "references": [{"invoice": usd_si.to_string(), "allocated_amount": "200"}]})).await);
+    let pay = uid(&t
+        .insert(
+            "PaymentEntry",
+            json!({"company": c, "payment_type": "Receive", "customer": i, "currency": usd["id"], "exchange_rate": "81",
+        "posting_date": "2026-10-15", "paid_amount": "200", "bank_account": bank, "references": [{"invoice": usd_si.to_string(), "allocated_amount": "200"}]}),
+        )
+        .await);
     t.submit("PaymentEntry", pay).await;
     let cn = vid(&t.action("SalesInvoice", usd_si, "make_credit_note", json!({"credit_percent": "10"})).await);
     t.update("SalesInvoice", cn, json!({"posting_date": "2026-10-20"})).await;
     t.submit("SalesInvoice", cn).await;
-    let goodwill = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "82", "posting_date": "2026-10-25",
-        "is_return": true, "return_reason": "Goodwill", "items": [{"description": "Goodwill", "qty": "-1", "price_list_rate": "30"}]})).await);
+    let goodwill = uid(&t
+        .insert(
+            "SalesInvoice",
+            json!({"company": c, "customer": i, "currency": usd["id"], "conversion_rate": "82", "posting_date": "2026-10-25",
+        "is_return": true, "return_reason": "Goodwill", "items": [{"description": "Goodwill", "qty": "-1", "price_list_rate": "30"}]}),
+        )
+        .await);
     t.submit("SalesInvoice", goodwill).await;
     let refund = vid(&t.action("SalesInvoice", goodwill, "make_refund", json!({})).await);
     t.update("PaymentEntry", refund, json!({"posting_date": "2026-11-05", "exchange_rate": "83"})).await;
     t.submit("PaymentEntry", refund).await;
-    let st = t.report("statement_of_account", &[("company", c.clone()), ("customer", i.clone()), ("from_date", "2026-10-01".into()), ("to_date", "2026-11-30".into())]).await;
+    let st = t
+        .report(
+            "statement_of_account",
+            &[("company", c.clone()), ("customer", i.clone()), ("from_date", "2026-10-01".into()), ("to_date", "2026-11-30".into())],
+        )
+        .await;
     let kinds: Vec<String> = st["rows"].as_array().unwrap().iter().map(|r| r["voucher_type"].as_str().unwrap().to_string()).collect();
     assert_eq!(kinds, ["Opening Balance", "Invoice", "Payment", "Credit Note", "Credit Note", "Refund", "Closing Balance"]);
     let bal: Vec<Decimal> = st["rows"].as_array().unwrap().iter().map(|r| dec(&r["balance"])).collect();
