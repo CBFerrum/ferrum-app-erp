@@ -5,8 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, docPath, formatDecimal, refusal } from "@ferrum/client";
-import { Alert, Badge, Button, ErrorState, PageLoading, toast, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, LoadFailed, PageHeader, PageLoading, StatusBadge, toast } from "@ferrum/kit";
 import { post } from "./data";
+import { COUNT_TONES } from "./logic";
+import { Page } from "./Warehouse";
 
 interface Line {
   id: string;
@@ -54,8 +56,8 @@ function Row({ id, line, recount }: { id: string; line: Line; recount: boolean }
         }}
       >
         {counted !== null && counted !== undefined ? <Badge tone="green">{formatDecimal(counted)}</Badge> : null}
-        <input className="input" inputMode="decimal" aria-label={`Count of ${line._titles?.item ?? "this line"}`} value={value} onChange={(e) => setValue(e.target.value)} />
-        <Button type="submit" size="sm" loading={send.isPending}>
+        <input className="input num wms-count-input" inputMode="decimal" aria-label={`Count of ${line._titles?.item ?? "this line"}`} value={value} onChange={(e) => setValue(e.target.value)} />
+        <Button type="submit" loading={send.isPending}>
           Save
         </Button>
       </form>
@@ -67,7 +69,6 @@ export function Count() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["wms", "count", id], queryFn: () => api.get<CountDoc>(docPath("CycleCount", id), { titles: true }) });
-  useShellTitle("Count");
   const step = (verb: string) => () => post(`/counts/${id}/${verb}`);
   const after = {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["wms"] }),
@@ -78,17 +79,23 @@ export function Count() {
   const approve = useMutation({ mutationFn: step("approve"), ...after });
   const [recount, setRecount] = useState(false);
   if (q.isPending) return <PageLoading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
   const c = q.data;
   return (
-    <div className="wms-page wms-narrow">
-      <Link to="/" className="faint">
-        Back to the floor
-      </Link>
-      <h1 className="wms-title">{c.reference ?? "Count"}</h1>
-      <div>
-        <Badge>{c.status}</Badge> {c.blind ? <span className="faint">Blind: you will not be told what to expect</span> : null}
-      </div>
+    <Page
+      narrow
+      header={
+        <PageHeader
+          eyebrow={<Link to="/">Back to the floor</Link>}
+          title={c.reference ?? "Count"}
+          description={
+            <>
+              <StatusBadge value={c.status} tones={COUNT_TONES} /> {c.blind ? <span>Blind: you will not be told what to expect</span> : null}
+            </>
+          }
+        />
+      }
+    >
       {c.status === "Draft" ? (
         <section className="card card-pad stack">
           <p className="muted">Starting freezes the bins: nothing goes in or out until the count is applied.</p>
@@ -104,7 +111,7 @@ export function Count() {
           <label className="wms-check">
             <input type="checkbox" checked={recount} onChange={(e) => setRecount(e.target.checked)} /> This is the second count
           </label>
-          <ul className="wms-list card card-pad">
+          <ul className="wms-list card">
             {c.lines.map((l) => (
               <Row key={l.id} id={id} line={l} recount={recount} />
             ))}
@@ -118,7 +125,7 @@ export function Count() {
       ) : null}
       {c.status === "Review" ? (
         <section className="card card-pad stack">
-          <h2>Differences</h2>
+          <h2 className="text-base font-semibold">Differences</h2>
           <ul className="wms-list">
             {c.lines
               .filter((l) => Number(l.variance ?? 0) !== 0)
@@ -127,7 +134,7 @@ export function Count() {
                   <span>
                     {l._titles?.bin ?? l.bin} {l._titles?.item ?? l.item}
                   </span>
-                  <span>{formatDecimal(l.variance ?? 0)}</span>
+                  <span className="num">{formatDecimal(l.variance ?? 0)}</span>
                 </li>
               ))}
           </ul>
@@ -140,6 +147,6 @@ export function Count() {
         </section>
       ) : null}
       {c.status === "Applied" ? <p className="muted">Applied. The bins are open again.</p> : null}
-    </div>
+    </Page>
   );
 }
