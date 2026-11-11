@@ -359,7 +359,11 @@ fn mr_shape(ctx: &Ctx) -> Option<MrShape> {
     let date = ["posting_date", "transaction_date", "schedule_date"].iter().find_map(|f| hf(f))?;
     let item = cf("item").or_else(|| cf("item_code"));
     let line_account = cf("expense_account");
-    let account = format!("coalesce({}, it.expense_account, co.default_expense_account)", line_account.clone().unwrap_or_else(|| "null::uuid".into()));
+    let account = format!(
+        "coalesce({}, it.expense_account, {}, co.default_expense_account)",
+        line_account.clone().unwrap_or_else(|| "null::uuid".into()),
+        ferrum_app_erp::pricing::group_account_sql("it.item_group", "default_expense_account")
+    );
     let cost_center = format!(
         "coalesce({}, {}, co.default_cost_center)",
         cf("cost_center").unwrap_or_else(|| "null::uuid".into()),
@@ -631,7 +635,7 @@ impl DocHook for PurchaseOrderHook {
                 let it = &cache[&item];
                 // Stock items are inventory: they reach expense only when consumed.
                 if !b(it, "is_stock_item")
-                    && let Some(acc) = id(it, "expense_account").or(co.account("default_expense_account"))
+                    && let Some(acc) = ferrum_app_erp::pricing::item_account(hc.ctx, hc.tx, &co, it, ferrum_app_erp::pricing::Side::Buying).await?
                 {
                     set(r, "fin_expense_account", acc.to_string());
                 }

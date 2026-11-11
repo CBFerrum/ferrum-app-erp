@@ -318,6 +318,41 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
     }
 }
 
+/// A scalar SQL subquery for the account in `column` (`default_income_account` or
+/// `default_expense_account`) on item group `group` (an SQL expression), else on its nearest parent
+/// group that has one; `$1` is the tenant. Shared with SQL that needs the same answer in a query.
+pub fn group_account_sql(group: &str, column: &str) -> String {
+    format!(
+        "(with recursive gw(parent, acc, depth) as (select g0.parent_group, g0.{column}, 0 from e_item_group g0 where g0.tenant_id = $1 and g0.id = {group} \
+         union all select gp.parent_group, gp.{column}, gw.depth + 1 from gw join e_item_group gp on gp.tenant_id = $1 and gp.id = gw.parent \
+         where gw.acc is null and gw.depth < 32) select acc from gw where acc is not null limit 1)"
+    )
+}
+
+/// The account a line of `item` books to when the line names none: the item's own, then its item
+/// group's (or the nearest parent group's), then the company default. Selling reads income
+/// accounts, buying expense accounts. Every line that picks one goes through here.
+pub async fn item_account(ctx: &Ctx, tx: &mut Tx, co: &Company, item: &Doc, side: Side) -> Result<Option<Uuid>> {
+    let (own, default) = match side {
+        Side::Selling => ("income_account", "default_income_account"),
+        Side::Buying => ("expense_account", "default_expense_account"),
+    };
+    if let Some(a) = id(item, own) {
+        return Ok(Some(a));
+    }
+    if let Some(g) = id(item, "item_group") {
+        let a: Option<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("select {}", group_account_sql("$2", default))))
+            .bind(ctx.tenant)
+            .bind(g)
+            .fetch_one(&mut **tx)
+            .await?;
+        if a.is_some() {
+            return Ok(a);
+        }
+    }
+    Ok(co.account(default))
+}
+
 /// A line without an item: named by its description, in no unit of an item (a quantity is its own,
 /// and per-unit taxes count it), booked to the company's default income or expense account unless
 /// it names one, with the document's or the company's cost centre.
@@ -501,17 +536,12 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         }
         match side {
             Side::Selling if has_child("income_account") && id(row, "income_account").is_none() => {
-                let acc = id(&item, "income_account").or(co.account("default_income_account"));
-                if let Some(a) = acc {
+                if let Some(a) = item_account(ctx, tx, &co, &item, side).await? {
                     set(row, "income_account", a.to_string());
                 }
             }
             Side::Buying if has_child("expense_account") && id(row, "expense_account").is_none() => {
-                let acc = if b(&item, "is_stock_item") {
-                    co.account("srbnb_account")
-                } else {
-                    id(&item, "expense_account").or(co.account("default_expense_account"))
-                };
+                let acc = if b(&item, "is_stock_item") { co.account("srbnb_account") } else { item_account(ctx, tx, &co, &item, side).await? };
                 if let Some(a) = acc {
                     set(row, "expense_account", a.to_string());
                 }
