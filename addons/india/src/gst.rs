@@ -2,7 +2,7 @@
 //! between intra-state (CGST+SGST), inter-state (IGST) and export templates, and HSN checks.
 
 use async_trait::async_trait;
-use ferrum_app_erp::localization::Localization;
+use ferrum_app_erp::localization::{Localization, ship_to};
 use ferrum_app_erp::pricing::Side;
 use ferrum_domain::util::{b, get, id, rows, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx};
@@ -155,6 +155,16 @@ fn state_of(doc: &Doc) -> Option<String> {
     s(doc, "in_state_code").map(str::to_string).or_else(|| s(doc, "in_gstin").filter(|g| g.len() >= 2).map(|g| g[..2].to_string()))
 }
 
+/// The GST state code of an address in India (its region as a state code or a state's name);
+/// none for an address abroad or a region the list does not know.
+fn state_of_address(a: &Doc) -> Option<String> {
+    if s(a, "country_code").is_some_and(|c| c != "IN") {
+        return None;
+    }
+    let region = s(a, "state")?.trim();
+    STATES.iter().find(|(c, n)| *c == region || n.eq_ignore_ascii_case(region)).map(|(c, _)| c.to_string())
+}
+
 fn party_of(side: Side) -> (&'static str, &'static str) {
     match side {
         Side::Selling => ("customer", "Customer"),
@@ -238,7 +248,16 @@ impl Localization for India {
         }
         let has_pos = ent.field("in_place_of_supply").is_some();
         let given = if has_pos { normalize(doc, "in_place_of_supply") } else { None };
-        let pos = match given {
+        // Goods sold go where the document says they are delivered (its ship-to, or its delivery
+        // region without one), read through ERP's seam like every country's rules; a party's
+        // billing address does not move the place of supply.
+        let delivered = match side {
+            Side::Selling if ["ship_to", "delivery_country", "delivery_region"].iter().any(|f| doc.get(*f).is_some_and(|v| !v.is_null())) => {
+                ship_to(k, ctx, tx, doc).await?.as_ref().and_then(state_of_address)
+            }
+            _ => None,
+        };
+        let pos = match delivered.or(given) {
             Some(p) => p,
             // Services from abroad are supplied where the company is.
             None if category == "Overseas" && rcm => home.clone(),

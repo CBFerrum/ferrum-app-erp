@@ -979,9 +979,12 @@ impl DocHook for InvoiceHook {
                 set(doc, "due_date", due.to_string());
             }
         }
+        crate::withholding::invoice(hc, doc, self.0, &co).await?;
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
-            set(doc, "outstanding_amount", money(d(doc, "rounded_total")));
+            // What is withheld comes off what the supplier is owed; what is collected is added to what the customer owes.
+            let withheld = if self.0 == Side::Selling { d(doc, "withholding_amount") } else { -d(doc, "withholding_amount") };
+            set(doc, "outstanding_amount", money(d(doc, "rounded_total") + withheld));
         }
         Ok(())
     }
@@ -1072,9 +1075,14 @@ impl DocHook for InvoiceHook {
             Side::Selling => Decimal::ONE,
             Side::Buying => -Decimal::ONE,
         };
-        let total_txn = d(doc, "rounded_total");
-        let total_base = d(doc, "base_rounded_total");
+        // What the party owes or is owed: the invoice's total less what is withheld from a supplier,
+        // or plus what is collected from a customer, booked to the categories' accounts.
+        let withheld = crate::withholding::lines(hc, doc, &co).await?;
+        let withheld_base: Decimal = -withheld.iter().map(|l| l.amount).sum::<Decimal>();
+        let total_txn = d(doc, "rounded_total") + sign * d(doc, "withholding_amount");
+        let total_base = d(doc, "base_rounded_total") + sign * withheld_base;
         let mut entry = Entry::new(co.id, on, n.invoice, iid, number.clone());
+        entry.lines.extend(withheld);
         entry.memo = s(doc, "remarks").map(str::to_string);
         let mut party_line = Line::new(party_account, sign * total_base, &co.currency_code).txn(sign * total_txn, &code, rate).against(n.invoice, iid);
         party_line = match self.0 {
@@ -1164,7 +1172,7 @@ impl DocHook for InvoiceHook {
             }
             entry.lines.push(Line::new(acc, -sign * *base, &co.currency_code).cost_center(id(t, "cost_center")).remarks(memo));
         }
-        let adj = total_base - d(doc, "base_grand_total");
+        let adj = d(doc, "base_rounded_total") - d(doc, "base_grand_total");
         if !adj.is_zero() {
             let ro = co.require("round_off_account", "round off account")?;
             entry.lines.push(Line::new(ro, -sign * adj, &co.currency_code).remarks("Rounding"));

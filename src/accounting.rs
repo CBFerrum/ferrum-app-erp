@@ -447,7 +447,9 @@ impl DocHook for PaymentEntryHook {
         set(doc, "references", Value::Array(refs.into_iter().map(Value::Object).collect()));
         let deductions: Decimal = rows(doc, "deductions").iter().map(|r| d(r, "amount")).sum();
         set(doc, "total_deductions", money(deductions));
-        set(doc, "unallocated_amount", money(settled(doc, receive) - allocated));
+        // Withheld from a supplier, it settles their bills on top of the money.
+        let withheld = crate::withholding::payment(hc, doc, &co, rate, settled(doc, receive), allocated).await?;
+        set(doc, "unallocated_amount", money(settled(doc, receive) + withheld - allocated));
         Ok(())
     }
 
@@ -633,6 +635,7 @@ impl DocHook for PaymentEntryHook {
                     .remarks(s(&r, "remarks").unwrap_or("Payment deduction")),
             );
         }
+        lines.extend(crate::withholding::lines(hc, doc, &co).await?);
         // What is left is the exchange difference between the invoices' booked rates and today's
         // rate: positive is a gain, credited; negative a loss, debited.
         let diff: Decimal = lines.iter().map(|l| l.amount).sum();

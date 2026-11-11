@@ -28,6 +28,7 @@ pub mod setup;
 pub mod stock;
 pub mod stock_entry;
 pub mod trade;
+pub mod withholding;
 
 pub(crate) use ferrum_domain::util;
 
