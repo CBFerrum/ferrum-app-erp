@@ -125,7 +125,8 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
     let mut items = rows(doc, "items");
     let mut removed: Vec<String> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
-    let child = hc.entity.children.get("items").and_then(|c| hc.ctx.schema.entity(&c.entity)).cloned().ok_or_else(|| Error::internal("an order without lines"))?;
+    let child =
+        hc.entity.children.get("items").and_then(|c| hc.ctx.schema.entity(&c.entity)).cloned().ok_or_else(|| Error::internal("an order without lines"))?;
     for a in asks {
         let Some(line) = a.line.clone() else {
             add_line(hc, side, doc, &child, &mut items, &mut notes, a).await?;
@@ -251,10 +252,7 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
             continue;
         }
         let Some(cent) = ent.children.get(k).and_then(|c| hc.ctx.schema.entity(&c.entity)).cloned() else { continue };
-        let table: Vec<Doc> = rows(&new, k)
-            .into_iter()
-            .map(|r| r.into_iter().filter(|(key, _)| key == "id" || cent.field(key).is_some()).collect())
-            .collect();
+        let table: Vec<Doc> = rows(&new, k).into_iter().map(|r| r.into_iter().filter(|(key, _)| key == "id" || cent.field(key).is_some()).collect()).collect();
         hc.kernel.set_child_rows_tx(&sctx, hc.tx, n.entity, k, oid, table).await?;
     }
     if !header.is_empty() {
@@ -289,7 +287,15 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
 /// A line added to a submitted order: an item (its price from the price list and pricing rules on
 /// a sale, as on any new line; typed or the usual source on a purchase), or a description with
 /// its price. It takes the order's date and warehouse.
-async fn add_line(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, child: &ferrum_meta::EffEntity, items: &mut Vec<Doc>, notes: &mut Vec<String>, a: Asked) -> Result<()> {
+async fn add_line(
+    hc: &mut HookCtx<'_>,
+    side: Side,
+    doc: &Doc,
+    child: &ferrum_meta::EffEntity,
+    items: &mut Vec<Doc>,
+    notes: &mut Vec<String>,
+    a: Asked,
+) -> Result<()> {
     let n = names(side);
     let q = a.qty.unwrap_or_default();
     if q <= Decimal::ZERO {

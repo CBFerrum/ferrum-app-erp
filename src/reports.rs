@@ -1616,7 +1616,14 @@ fn bucket(days: i64) -> usize {
 
 /// What each of a kind's parties still had open on `on`, by party and currency: each open item's
 /// outstanding then (its amount less what was allocated to it by that day), in its age bucket.
-async fn open_on(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, kind: &str, parties: Option<&[Uuid]>, on: NaiveDate) -> Result<HashMap<(Uuid, String), [Decimal; 5]>> {
+async fn open_on(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    kind: &str,
+    parties: Option<&[Uuid]>,
+    on: NaiveDate,
+) -> Result<HashMap<(Uuid, String), [Decimal; 5]>> {
     #[allow(clippy::type_complexity)]
     let items: Vec<(Uuid, String, Decimal, NaiveDate)> = sqlx::query_as(
         "select coalesce(o.customer_id, o.supplier_id), o.currency, \
@@ -1667,7 +1674,9 @@ async fn statement(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
     .fetch_one(&mut **tx)
     .await?;
     let asked: Option<String> = match p.uuid("currency")? {
-        Some(c) => sqlx::query_scalar("select code from e_currency where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(c).fetch_optional(&mut **tx).await?,
+        Some(c) => {
+            sqlx::query_scalar("select code from e_currency where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(c).fetch_optional(&mut **tx).await?
+        }
         None => None,
     };
     let currency = asked.or(own).unwrap_or_else(|| co.currency.clone());
@@ -1708,16 +1717,37 @@ async fn statement(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -
     let mut kinds: HashMap<Uuid, &'static str> = HashMap::new();
     if ctx.schema.entity("SalesInvoice").is_some() {
         let r: Vec<(Uuid, Option<bool>, Option<bool>)> =
-            sqlx::query_as("select id, is_return, is_debit_note from e_sales_invoice where tenant_id = $1 and id = any($2)").bind(ctx.tenant).bind(&sources).fetch_all(&mut **tx).await?;
-        kinds.extend(r.into_iter().map(|(i, ret, dn)| (i, if ret == Some(true) { "Credit Note" } else if dn == Some(true) { "Debit Note" } else { "Invoice" })));
+            sqlx::query_as("select id, is_return, is_debit_note from e_sales_invoice where tenant_id = $1 and id = any($2)")
+                .bind(ctx.tenant)
+                .bind(&sources)
+                .fetch_all(&mut **tx)
+                .await?;
+        kinds.extend(r.into_iter().map(|(i, ret, dn)| {
+            (
+                i,
+                if ret == Some(true) {
+                    "Credit Note"
+                } else if dn == Some(true) {
+                    "Debit Note"
+                } else {
+                    "Invoice"
+                },
+            )
+        }));
     }
     if ctx.schema.entity("PurchaseInvoice").is_some() {
-        let r: Vec<(Uuid, Option<bool>)> =
-            sqlx::query_as("select id, is_return from e_purchase_invoice where tenant_id = $1 and id = any($2)").bind(ctx.tenant).bind(&sources).fetch_all(&mut **tx).await?;
+        let r: Vec<(Uuid, Option<bool>)> = sqlx::query_as("select id, is_return from e_purchase_invoice where tenant_id = $1 and id = any($2)")
+            .bind(ctx.tenant)
+            .bind(&sources)
+            .fetch_all(&mut **tx)
+            .await?;
         kinds.extend(r.into_iter().map(|(i, ret)| (i, if ret == Some(true) { "Debit Note" } else { "Bill" })));
     }
-    let r: Vec<(Uuid, Option<bool>)> =
-        sqlx::query_as("select id, is_refund from e_payment_entry where tenant_id = $1 and id = any($2)").bind(ctx.tenant).bind(&sources).fetch_all(&mut **tx).await?;
+    let r: Vec<(Uuid, Option<bool>)> = sqlx::query_as("select id, is_refund from e_payment_entry where tenant_id = $1 and id = any($2)")
+        .bind(ctx.tenant)
+        .bind(&sources)
+        .fetch_all(&mut **tx)
+        .await?;
     kinds.extend(r.into_iter().map(|(i, refund)| (i, if refund == Some(true) { "Refund" } else { "Payment" })));
     let mut balance = sign * opening;
     let mut rows = vec![json!({"posting_date": from, "voucher_type": "Opening Balance", "balance": money(balance), "_bold": true})];
