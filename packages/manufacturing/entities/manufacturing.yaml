@@ -12,6 +12,19 @@
     - {name: source_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: reference_designators, type: text, description: "e.g. R1-R12, C3"}
 
+- name: BomOutput
+  label: Other Output
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true, description: Quantity per BOM quantity}
+    - {name: kind, type: select, options: [By-product, Co-product], required: true, default: By-product, in_list: true,
+       description: "By-product: valued first, at its value per unit or its share of cost (scrap with a recovery value is one). Co-product: shares what is left with the main item by the BOM's basis"}
+    - {name: rate, type: currency, min: "0", in_list: true, label: Value or Weight per Unit,
+       description: "By-product: its value per unit (empty: its share of cost below). Co-product: its ratio or standard value per unit, as the BOM's basis says"}
+    - {name: cost_share, type: percent, min: "0", max: "100", label: Share of Cost (%), visible_if: "doc.kind == 'By-product'"}
+
 - name: Bom
   label: Bill of Materials
   label_plural: Bills of Materials
@@ -32,6 +45,10 @@
     - {name: effective_from, type: date}
     - {name: items, type: table, of: BomItem, required: true}
     - {name: operating_cost, type: currency, default: 0, min: "0", description: Labour and overheads per BOM quantity}
+    - {name: outputs, type: table, of: BomOutput, label: By-products and Co-products}
+    - {name: co_product_basis, type: select, options: [Quantity, Ratio, Standard Value], default: Quantity, label: Co-products Share Cost By,
+       description: "Quantity: by how many. Ratio or Standard Value: by quantity times each one's ratio or standard value per unit (the main item's below)"}
+    - {name: main_weight, type: decimal, min: "0", label: Main Item's Ratio or Standard Value, visible_if: "doc.co_product_basis != 'Quantity'"}
     - {name: raw_material_cost, type: currency, read_only: true, no_copy: true}
     - {name: total_cost, type: currency, read_only: true, no_copy: true, in_list: true}
     - {name: change_note, type: text, description: Engineering change description for this revision}

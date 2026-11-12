@@ -115,6 +115,18 @@ impl DocHook for BomHook {
                 errors.push(FieldError::new("item", "a BOM cannot consume the item it produces").in_row("items", i));
             }
         }
+        let weighted = s(doc, "co_product_basis").is_some_and(|b| b != "Quantity");
+        if weighted && rows(doc, "outputs").iter().any(|r| s(r, "kind") == Some("Co-product")) && d(doc, "main_weight") <= Decimal::ZERO {
+            errors.push(FieldError::new("main_weight", "co-products share cost by a ratio or standard value: give the main item's"));
+        }
+        for (i, r) in rows(doc, "outputs").iter().enumerate() {
+            if id(r, "item") == Some(item) {
+                errors.push(FieldError::new("item", "is the BOM's main item").in_row("outputs", i));
+            }
+            if weighted && s(r, "kind") == Some("Co-product") && d(r, "rate") <= Decimal::ZERO {
+                errors.push(FieldError::new("rate", "give its ratio or standard value per unit").in_row("outputs", i));
+            }
+        }
         if !errors.is_empty() {
             return Err(Error::Validation(errors));
         }
@@ -352,6 +364,10 @@ impl DocHook for WorkOrderHook {
                     }));
                 }
                 items.push(json!({"item": doc.get("item"), "qty": qty.normalize().to_string(), "target_warehouse": doc.get("target_warehouse")}));
+                for o in outputs(hc.tx, hc.ctx, bom).await?.2 {
+                    let made = (o.per_unit * qty).round_dp(9);
+                    items.push(json!({"item": o.item.to_string(), "qty": made.normalize().to_string(), "target_warehouse": doc.get("target_warehouse")}));
+                }
                 let additional = round(d(&bdoc, "operating_cost") / per * qty, co.precision);
                 let mut input = Doc::new();
                 input.insert("company".into(), json!(cid.to_string()));
@@ -648,5 +664,155 @@ impl DocHook for MrpRunHook {
             "create_orders" => Ok(Some(self.create_orders(hc, doc).await?)),
             _ => Ok(None),
         }
+    }
+}
+
+// ───────────────────────────── by-products and co-products ─────────────────────────────
+
+/// One output beside the main item, per unit of the main item produced.
+#[derive(Debug, Clone)]
+pub struct Output {
+    pub item: Uuid,
+    pub per_unit: Decimal,
+    pub byproduct: bool,
+    pub rate: Decimal,
+    pub share: Decimal,
+}
+
+/// A BOM's other outputs and how co-products share cost: `(basis, main item's weight per unit, outputs)`.
+pub async fn outputs(tx: &mut ferrum_kernel::Tx, ctx: &ferrum_kernel::Ctx, bom: Uuid) -> Result<(String, Decimal, Vec<Output>)> {
+    let Some(table) = ctx.schema.entity("Bom").and_then(|e| e.children.get("outputs").map(|c| c.table.clone())) else {
+        return Ok(("Quantity".into(), Decimal::ONE, vec![]));
+    };
+    let (per, basis, main): (Decimal, Option<String>, Option<Decimal>) =
+        sqlx::query_as("select quantity, co_product_basis, main_weight from e_bom where tenant_id = $1 and id = $2")
+            .bind(ctx.tenant)
+            .bind(bom)
+            .fetch_one(&mut **tx)
+            .await?;
+    let per = if per.is_zero() { Decimal::ONE } else { per };
+    let rows: Vec<(Uuid, Decimal, Option<String>, Option<Decimal>, Option<Decimal>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select item, qty, kind, rate, cost_share from {} where tenant_id = $1 and parent_id = $2 order by idx",
+        q(&table)
+    )))
+    .bind(ctx.tenant)
+    .bind(bom)
+    .fetch_all(&mut **tx)
+    .await?;
+    let basis = basis.unwrap_or_else(|| "Quantity".into());
+    let main = if basis == "Quantity" { Decimal::ONE } else { main.unwrap_or_default() };
+    Ok((
+        basis,
+        main,
+        rows.into_iter()
+            .map(|(item, qty, kind, rate, share)| Output {
+                item,
+                per_unit: qty / per,
+                byproduct: kind.as_deref() != Some("Co-product"),
+                rate: rate.unwrap_or_default(),
+                share: share.unwrap_or_default(),
+            })
+            .collect(),
+    ))
+}
+
+/// Splits `total` (materials and operating cost) over what a production yields, to the cent: by-products first, at
+/// their value per unit or their share of `total`; what is left over the main item (`main_qty`, `main_weight` per
+/// unit) and the co-products by quantity times weight (1 for each under the Quantity basis). `outs` are each output's
+/// definition and quantity produced. Answers the main item's value and each output's.
+pub fn split_cost(
+    total: Decimal,
+    main_qty: Decimal,
+    main_weight: Decimal,
+    quantity_basis: bool,
+    outs: &[(&Output, Decimal)],
+    precision: u32,
+    rounding: ferrum_calc::Rounding,
+) -> Result<(Decimal, Vec<Decimal>)> {
+    let mut values = vec![Decimal::ZERO; outs.len()];
+    let mut left = total;
+    for (i, (o, qty)) in outs.iter().enumerate().filter(|(_, (o, _))| o.byproduct) {
+        let v = if o.rate > Decimal::ZERO { round(o.rate * qty, precision) } else { round(total * o.share / Decimal::ONE_HUNDRED, precision) };
+        values[i] = v;
+        left -= v;
+    }
+    if left < Decimal::ZERO {
+        return Err(Error::invalid(format!("the by-products are valued at more than the production cost of {total}")));
+    }
+    let shared: Vec<usize> = (0..outs.len()).filter(|i| !outs[*i].0.byproduct).collect();
+    let mut weights = vec![main_qty * if quantity_basis { Decimal::ONE } else { main_weight }];
+    weights.extend(shared.iter().map(|i| outs[*i].1 * if quantity_basis { Decimal::ONE } else { outs[*i].0.rate }));
+    if weights.iter().all(|w| w.is_zero()) {
+        return Err(Error::invalid("co-products share cost by a ratio or standard value: give the main item's and each co-product's"));
+    }
+    let shares = ferrum_calc::allocate(round(left, precision), &weights, precision, rounding).map_err(|e| Error::invalid(e.to_string()))?;
+    for (k, i) in shared.iter().enumerate() {
+        values[*i] = shares[k + 1];
+    }
+    Ok((shares[0], values))
+}
+
+/// What each output line of a work order's manufacture entry is valued at: the BOM's by-products and co-products
+/// as [`split_cost`] says, the main item's lines sharing its value by quantity; an output the BOM does not name is a
+/// co-product weighing as the main item. Without other outputs, by quantity as before.
+pub async fn output_shares(hc: &mut HookCtx<'_>, wo: Uuid, lines: &[&Doc], total: Decimal, co: &crate::util::Company) -> Result<Vec<Decimal>> {
+    let w = get(hc.kernel, hc.ctx, hc.tx, "WorkOrder", wo).await?;
+    let main_item = id(&w, "item");
+    let (basis, main_weight, defs) = match id(&w, "bom") {
+        Some(b) => outputs(hc.tx, hc.ctx, b).await?,
+        None => ("Quantity".into(), Decimal::ONE, vec![]),
+    };
+    let by_qty = |total: Decimal, ls: &[&Doc]| {
+        let weights: Vec<Decimal> = ls.iter().map(|r| d(r, "qty")).collect();
+        ferrum_calc::allocate(total, &weights, co.precision, co.rounding).map_err(|e| Error::invalid(e.to_string()))
+    };
+    if defs.is_empty() {
+        return by_qty(total, lines);
+    }
+    let main: Vec<usize> = (0..lines.len()).filter(|i| id(lines[*i], "item") == main_item).collect();
+    let main_qty: Decimal = main.iter().map(|i| d(lines[*i], "qty")).sum();
+    let other: Vec<usize> = (0..lines.len()).filter(|i| !main.contains(i)).collect();
+    let extra = Output { item: Uuid::nil(), per_unit: Decimal::ZERO, byproduct: false, rate: main_weight, share: Decimal::ZERO };
+    let outs: Vec<(&Output, Decimal)> =
+        other.iter().map(|i| (defs.iter().find(|o| Some(o.item) == id(lines[*i], "item")).unwrap_or(&extra), d(lines[*i], "qty"))).collect();
+    let (main_value, values) = split_cost(total, main_qty, main_weight, basis == "Quantity", &outs, co.precision, co.rounding)?;
+    let main_lines: Vec<&Doc> = main.iter().map(|i| lines[*i]).collect();
+    let main_shares = by_qty(main_value, &main_lines)?;
+    let mut out = vec![Decimal::ZERO; lines.len()];
+    for (k, i) in main.iter().enumerate() {
+        out[*i] = main_shares[k];
+    }
+    for (k, i) in other.iter().enumerate() {
+        out[*i] = values[k];
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    fn out(byproduct: bool, rate: &str, share: &str) -> Output {
+        Output { item: Uuid::nil(), per_unit: Decimal::ONE, byproduct, rate: rate.parse().unwrap(), share: share.parse().unwrap() }
+    }
+
+    #[test]
+    fn costs_sum_to_the_cent() {
+        let n = |s: &str| s.parse::<Decimal>().unwrap();
+        let scrap = out(true, "0.35", "0");
+        let shell = out(true, "0", "10");
+        let oil = out(false, "3", "0");
+        let outs = [(&scrap, n("3")), (&shell, n("1")), (&oil, n("7"))];
+        let (main, v) = split_cost(n("100.00"), n("3"), n("2"), false, &outs, 2, ferrum_calc::Rounding::default()).unwrap();
+        assert_eq!(v[0], n("1.05"), "scrap at its recovery value");
+        assert_eq!(v[1], n("10.00"), "a share of cost");
+        // 88.95 left over weights 3x2 = 6 and 7x3 = 21.
+        assert_eq!(main + v[2], n("88.95"));
+        assert_eq!(main + v.iter().sum::<Decimal>(), n("100.00"));
+        assert_eq!(main, n("19.77"));
+        let (main, v) = split_cost(n("10"), n("1"), Decimal::ZERO, true, &[(&oil, n("2"))], 2, ferrum_calc::Rounding::default()).unwrap();
+        assert_eq!((main, v[0]), (n("3.33"), n("6.67")), "by quantity");
+        let dear = out(true, "50", "0");
+        assert!(split_cost(n("10"), n("1"), Decimal::ONE, true, &[(&dear, n("1"))], 2, ferrum_calc::Rounding::default()).is_err());
     }
 }
