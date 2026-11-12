@@ -260,6 +260,50 @@ async fn scenario() {
     assert_eq!(t.k.list(&t.ctx, "SalesOrder", &ListQuery::default()).await.unwrap().rows.len(), orders_before);
     assert_eq!(t.used("PromotionCode", code).await, 1);
 
+    // The pricing crate prices as the server does: a snapshot of these records (a draft of one of each item priced by the
+    // server, the price list, the rules, the promotions without a code) and baskets priced both ways, line by line.
+    let one_each = json!([{"item": a, "qty": "1"}, {"item": b, "qty": "1"}, {"item": ship, "qty": "1"}, {"item": gift, "qty": "1"}]);
+    let draft = t.k.preview(&t.ctx, "SalesOrder", obj(order(one_each, json!({"channel": "Web Shop"})))).await.expect("a draft of each");
+    let today = chrono::NaiveDate::parse_from_str(draft["posting_date"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    let lines_of = |doc: &Doc| doc["items"].as_array().unwrap().iter().map(|l| obj(l.clone())).collect::<Vec<_>>();
+    let snap =
+        ferrum_app_erp::pricing::snapshot(&t.k, &t.ctx, &mut tx, &draft, &lines_of(&draft), today, today + chrono::Duration::days(14)).await.expect("snapshot");
+    tx.commit().await.unwrap();
+    assert_eq!((snap.items.len(), snap.promotions.len(), snap.rules.len(), snap.taxes.len()), (4, 2, 1, 1), "no promotion that needs a code");
+    for lines in [
+        json!([{"item": a, "qty": "2"}, {"item": b, "qty": "1"}, {"item": ship, "qty": "1"}]),
+        json!([{"item": a, "qty": "1"}, {"item": b, "qty": "3"}]),
+        json!([{"item": b, "qty": "5"}, {"item": ship, "qty": "2"}]),
+        json!([{"item": a, "qty": "3"}]),
+        json!([{"item": a, "qty": "1", "discount_percent": "5"}, {"item": b, "qty": "1", "discount_percent": "0"}, {"item": gift, "qty": "4"}]),
+    ] {
+        let server = t.k.preview(&t.ctx, "SalesOrder", obj(order(lines.clone(), json!({"channel": "Web Shop"})))).await.expect("priced by the server");
+        let basket = ferrum_erp_pricing::Basket { lines: serde_json::from_value(lines.clone()).unwrap(), at: format!("{today} 12:00"), ..Default::default() };
+        let priced = ferrum_erp_pricing::price_basket(&snap, &basket).expect("priced by the crate");
+        let mine: Vec<Decimal> = priced.totals.lines.iter().map(|l| l.amount).collect();
+        assert_eq!(mine, amounts(&server).into_iter().map(|(_, a)| a).collect::<Vec<_>>(), "{lines}");
+        let tot = &priced.totals;
+        assert_eq!(
+            (tot.net_total, tot.total_taxes, tot.grand_total, tot.rounded_total),
+            (dec(&server["net_total"]), dec(&server["total_taxes"]), dec(&server["grand_total"]), dec(&server["rounded_total"])),
+            "{lines}"
+        );
+        let given: Vec<Decimal> = server["applied_promotions"].as_array().unwrap().iter().map(|r| dec(&r["amount"])).collect();
+        assert_eq!(priced.applied.iter().map(|a| a.amount).collect::<Vec<_>>(), given, "{lines}");
+        let summary: Vec<(String, Decimal)> = priced.tax_summary.iter().map(|x| (x.category.clone(), x.tax_amount)).collect();
+        let kept: Vec<(String, Decimal)> = server
+            .get("tax_breakdown")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|x| (x["category"].as_str().unwrap().to_string(), dec(&x["tax_amount"])))
+            .collect();
+        if !kept.is_empty() {
+            assert_eq!(summary, kept, "{lines}");
+        }
+    }
+
     // Update Items on a submitted order prices its promotions again: the code it holds stays good
     // though used up, a promotion the change brings in is counted once, one it drops is given back.
     let edit = uid(&t.insert("PromotionCode", json!({"code": "EDIT-1", "promotion": save10.to_string(), "max_uses": 1})).await);

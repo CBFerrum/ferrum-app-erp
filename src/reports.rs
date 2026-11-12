@@ -2326,16 +2326,18 @@ async fn register(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, ki
 
 // ───────────────────────────── promotions ─────────────────────────────
 
-/// What promotions took off the company's submitted sales orders and invoices of the period, by
-/// promotion, month and channel, in company currency, as each document kept it when it was priced.
-/// An invoice made from an order keeps no promotions of its own (the order has them), so nothing
-/// counts twice; a credit note does not give its share back here.
+/// What promotions took off the company's submitted sales of the period (orders, invoices, and any other app's sale
+/// that keeps promotions applied, a till's), by promotion, month and channel, in company currency, as each document
+/// kept it when it was priced. An invoice made from an order keeps no promotions of its own (the order has them), so
+/// nothing counts twice; a credit note does not give its share back here.
 async fn promotions(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let (from, to) = period(p, co)?;
     let mut groups: BTreeMap<(String, String, String, Option<Uuid>), (Decimal, i64)> = BTreeMap::new();
-    for entity in ["SalesOrder", "SalesInvoice"] {
-        let Some(ent) = ctx.schema.entity(entity) else { continue };
+    for ent in ctx.schema.entities.values() {
         let Some(lines) = ent.children.get("applied_promotions") else { continue };
+        if ["company", "posting_date", "channel", "conversion_rate"].iter().any(|f| ent.field(f).is_none()) {
+            continue;
+        }
         let data: Vec<(Option<Uuid>, Option<String>, String, Option<String>, Decimal, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "select l.promotion, l.title, to_char(i.posting_date, 'YYYY-MM'), nullif(i.channel, ''), sum(coalesce(l.amount, 0) * coalesce(i.conversion_rate, 1)), count(distinct i.id) \
              from {docs} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \

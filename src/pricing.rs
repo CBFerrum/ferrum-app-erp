@@ -3,6 +3,7 @@
 
 use crate::util::{Company, b, company, d, date, exchange_rate, find, get, id, money, rows, s, set, to_stock};
 use ferrum_calc::{CalcInput, CalcOutput, ChargeType, DocDiscount, LineIn, TaxIn, TaxRounding};
+use ferrum_erp_pricing as pricing;
 use ferrum_kernel::{Ctx, Doc, Error, FieldError, Filter, Kernel, Op, Result, Tx};
 use ferrum_meta::{EffEntity, Expr, Scope};
 use rust_decimal::Decimal;
@@ -66,12 +67,25 @@ async fn item_price(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: &Doc, price_list: 
         20,
     )
     .await?;
-    let valid: Vec<&Doc> = prices.iter().filter(|p| s(p, "valid_upto").is_none_or(|u| u >= on)).collect();
-    if let Some(p) = valid.iter().find(|p| uom.is_some() && id(p, "uom") == uom) {
-        return Ok(Some(d(p, "rate")));
+    let prices: Vec<pricing::Price> = prices.iter().map(price_row).collect();
+    let text = |u: Option<Uuid>| u.map(|u| u.to_string());
+    Ok(pricing::list_price(&prices, &item_id.to_string(), on, text(uom).as_deref(), text(id(item, "stock_uom")).as_deref(), factor))
+}
+
+/// An `ItemPrice` as the pricing crate takes it.
+fn price_row(p: &Doc) -> pricing::Price {
+    pricing::Price {
+        item: id(p, "item").map(|u| u.to_string()).unwrap_or_default(),
+        uom: id(p, "uom").map(|u| u.to_string()),
+        rate: d(p, "rate"),
+        valid_from: s(p, "valid_from").map(str::to_string),
+        valid_upto: s(p, "valid_upto").map(str::to_string),
     }
-    let stock = id(item, "stock_uom");
-    Ok(valid.iter().find(|p| id(p, "uom").is_none() || id(p, "uom") == stock).map(|p| (d(p, "rate") * factor).round_dp(9)))
+}
+
+/// An item's units as the pricing crate takes them.
+fn units_of(item: &Doc) -> Vec<pricing::Unit> {
+    rows(item, "uoms").iter().filter_map(|u| Some(pricing::Unit { uom: id(u, "uom")?.to_string(), factor: d(u, "conversion_factor") })).collect()
 }
 
 /// The line's unit (its item's stock unit unless another is chosen) and how many stock units it
@@ -79,13 +93,9 @@ async fn item_price(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: &Doc, price_list: 
 /// chosen for the item the line had before (then the line goes back to the stock unit).
 fn line_unit(row: &mut Doc, item: &Doc, i: usize, item_changed: bool) -> Result<(Option<Uuid>, Decimal)> {
     let stock = id(item, "stock_uom");
-    let factor_of = |uom: Option<Uuid>| {
-        if uom == stock {
-            Some(Decimal::ONE)
-        } else {
-            rows(item, "uoms").iter().find(|u| uom.is_some() && id(u, "uom") == uom).map(|u| d(u, "conversion_factor")).filter(|f| *f > Decimal::ZERO)
-        }
-    };
+    let units = units_of(item);
+    let text = |u: Option<Uuid>| u.map(|u| u.to_string());
+    let factor_of = |uom: Option<Uuid>| pricing::unit_factor(text(stock).as_deref(), &units, text(uom).as_deref());
     let mut uom = id(row, "uom").or(stock);
     let factor = match factor_of(uom) {
         Some(f) => f,
@@ -144,49 +154,60 @@ async fn default_price_list(k: &Kernel, ctx: &Ctx, tx: &mut Tx, side: Side) -> R
     Ok(lists.first().and_then(|l| id(l, "id")))
 }
 
-struct Rule {
-    doc: Doc,
-    expr: Option<Expr>,
+/// The enabled pricing rules as the pricing crate takes them, each with its condition (compiled;
+/// one that does not compile is no condition).
+struct Rules {
+    rules: Vec<pricing::Rule>,
+    exprs: Vec<Option<Expr>>,
 }
 
-async fn pricing_rules(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Vec<Rule>> {
+/// A `PricingRule` as the pricing crate takes it.
+fn rule_of(doc: &Doc) -> pricing::Rule {
+    let text = |k: &str| id(doc, k).map(|u| u.to_string());
+    pricing::Rule {
+        id: s(doc, "id").unwrap_or_default().to_string(),
+        apply_on: s(doc, "apply_on").map(str::to_string),
+        item: text("item"),
+        item_group: text("item_group"),
+        customer: text("customer"),
+        customer_group: text("customer_group"),
+        min_qty: d(doc, "min_qty"),
+        max_qty: d(doc, "max_qty"),
+        valid_from: s(doc, "valid_from").map(str::to_string),
+        valid_upto: s(doc, "valid_upto").map(str::to_string),
+        priority: doc.get("priority").and_then(Value::as_i64),
+        discount_percent: d(doc, "discount_percent"),
+        rate: d(doc, "rate"),
+    }
+}
+
+async fn rule_docs(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Vec<Doc>> {
     if ctx.schema.entity("PricingRule").is_none() {
         return Ok(vec![]);
     }
-    let docs = find(k, ctx, tx, "PricingRule", vec![Filter::eq("disabled", false)], Some("created_at asc"), 2000).await?;
-    Ok(docs
-        .into_iter()
-        .map(|doc| {
-            let expr = s(&doc, "condition").and_then(|c| Expr::compile(c).ok());
-            Rule { doc, expr }
-        })
-        .collect())
+    find(k, ctx, tx, "PricingRule", vec![Filter::eq("disabled", false)], Some("created_at asc"), 2000).await
+}
+
+async fn pricing_rules(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Rules> {
+    let docs = rule_docs(k, ctx, tx).await?;
+    Ok(Rules { rules: docs.iter().map(rule_of).collect(), exprs: docs.iter().map(|doc| s(doc, "condition").and_then(|c| Expr::compile(c).ok())).collect() })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn best_rule<'a>(rules: &'a [Rule], item: &Doc, qty: Decimal, party: Option<&Doc>, on: &str, cel_doc: &Value, user: &Value) -> Option<&'a Doc> {
-    rules
-        .iter()
-        .filter(|r| {
-            let rd = &r.doc;
-            let applies = match s(rd, "apply_on") {
-                Some("Item") => id(rd, "item") == id(item, "id"),
-                Some("Item Group") => id(rd, "item_group").is_some() && id(rd, "item_group") == id(item, "item_group"),
-                _ => true,
-            };
-            let party_ok = id(rd, "customer").is_none_or(|c| party.and_then(|p| id(p, "id")) == Some(c))
-                && id(rd, "customer_group").is_none_or(|g| party.and_then(|p| id(p, "customer_group")) == Some(g));
-            let qty_ok = qty.abs() >= d(rd, "min_qty") && (d(rd, "max_qty").is_zero() || qty.abs() <= d(rd, "max_qty"));
-            let date_ok = s(rd, "valid_from").is_none_or(|f| f <= on) && s(rd, "valid_upto").is_none_or(|u| u >= on);
-            let cond_ok = r.expr.as_ref().is_none_or(|e| e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user }).unwrap_or(false));
-            applies && party_ok && qty_ok && date_ok && cond_ok
-        })
-        .max_by(|a, b| {
-            let pa = a.doc.get("priority").and_then(Value::as_i64).unwrap_or(1);
-            let pb = b.doc.get("priority").and_then(Value::as_i64).unwrap_or(1);
-            pa.cmp(&pb).then(d(&a.doc, "discount_percent").cmp(&d(&b.doc, "discount_percent")))
-        })
-        .map(|r| &r.doc)
+fn best_rule<'a>(rules: &'a Rules, item: &Doc, qty: Decimal, party: Option<&Doc>, on: &str, cel_doc: &Value, user: &Value) -> Option<&'a pricing::Rule> {
+    let text = |doc: Option<&Doc>, k: &str| doc.and_then(|x| id(x, k)).map(|u| u.to_string());
+    let (item_id, group, customer, customer_group) = (text(Some(item), "id"), text(Some(item), "item_group"), text(party, "id"), text(party, "customer_group"));
+    let ask = pricing::RuleAsk {
+        item: item_id.as_deref(),
+        item_group: group.as_deref(),
+        qty,
+        customer: customer.as_deref(),
+        customer_group: customer_group.as_deref(),
+        on,
+    };
+    pricing::best_rule(&rules.rules, ask, |i| {
+        rules.exprs[i].as_ref().is_none_or(|e| e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user }).unwrap_or(false))
+    })
 }
 
 /// Picks the default tax template for the company/kind whose condition matches the document.
@@ -274,14 +295,13 @@ fn tax_key(t: &Doc, i: usize) -> String {
 /// keyed like [`tax_in`].
 pub fn line_tax_rates(line: &Doc, taxes: &[Doc]) -> BTreeMap<String, Decimal> {
     let Some(m) = line.get("item_tax_rates").and_then(Value::as_object) else { return BTreeMap::new() };
-    taxes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, t)| {
-            let rate = m.get(s(t, "account")?)?.as_str()?.parse().ok()?;
-            Some((tax_key(t, i), rate))
-        })
-        .collect()
+    let by_account: BTreeMap<String, Decimal> = m.iter().filter_map(|(a, r)| Some((a.clone(), r.as_str()?.parse().ok()?))).collect();
+    pricing::line_tax_rates(&by_account, &tax_accounts(taxes))
+}
+
+/// Each tax row's key and account, as the pricing crate takes them.
+fn tax_accounts(taxes: &[Doc]) -> Vec<(String, Option<String>)> {
+    taxes.iter().enumerate().map(|(i, t)| (tax_key(t, i), s(t, "account").map(str::to_string))).collect()
 }
 
 /// The engine's input for a document's priced lines (prices, line discounts, item tax rates) and
@@ -465,7 +485,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         }
     }
     let price_list = id(doc, "price_list");
-    let rules = if side == Side::Selling { pricing_rules(k, ctx, tx).await? } else { vec![] };
+    let rules = if side == Side::Selling { pricing_rules(k, ctx, tx).await? } else { Rules { rules: vec![], exprs: vec![] } };
     let user = ctx.user_value();
     let cel_doc = ent.cel_view(&Value::Object(doc.clone()), &ctx.schema);
 
@@ -527,11 +547,11 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             && let Some(rule) = best_rule(&rules, &item, to_stock(qty, factor), party.as_ref(), &on, &cel_doc, &user)
         {
             // Rules speak of stock units: quantities and rates.
-            if d(rule, "rate") > Decimal::ZERO {
-                set(row, "price_list_rate", money((d(rule, "rate") * factor).round_dp(9)));
+            if rule.rate > Decimal::ZERO {
+                set(row, "price_list_rate", money((rule.rate * factor).round_dp(9)));
             }
-            if d(rule, "discount_percent") > Decimal::ZERO {
-                set(row, "discount_percent", money(d(rule, "discount_percent")));
+            if rule.discount_percent > Decimal::ZERO {
+                set(row, "discount_percent", money(rule.discount_percent));
             }
         }
         if has_child("stock_qty") {
@@ -673,74 +693,43 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     Ok(co)
 }
 
-/// The category a line falls in for a tax row: its item's for the row's account, else the row's
-/// (when the item keeps the row's rate), else what the rate says.
-fn category_of(row: &Doc, item_rate: Option<&Doc>, rate: Decimal) -> String {
-    let rows_own = s(row, "category").filter(|_| item_rate.is_none_or(|r| d(r, "rate") == d(row, "rate")));
-    match item_rate.and_then(|r| s(r, "category")).or(rows_own) {
-        Some(c) => c.to_string(),
-        None if b(row, "reverse_charge") => "Reverse Charge".into(),
-        None if rate > Decimal::ZERO => "Standard".into(),
-        None => "Zero Rated".into(),
-    }
+/// What a tax row says of itself, as the pricing crate takes it.
+pub fn tax_label(row: &Doc) -> pricing::TaxLabel {
+    let text = |k: &str| s(row, k).map(str::to_string);
+    pricing::TaxLabel { description: text("description"), account: text("account"), category: text("category"), exemption_reason: text("exemption_reason") }
+}
+
+/// An item's tax rate row (`tax_account`, `rate`, `category`, `exemption_reason`), as the pricing crate takes it.
+pub fn line_rate(r: &Doc) -> Option<pricing::LineRate> {
+    Some(pricing::LineRate {
+        tax_account: s(r, "tax_account")?.to_string(),
+        rate: d(r, "rate"),
+        category: s(r, "category").map(str::to_string),
+        exemption_reason: s(r, "exemption_reason").map(str::to_string),
+    })
 }
 
 /// What a document's taxes come to per tax row, category, rate and exemption reason (EN 16931's
-/// VAT breakdown, BG-23): the taxable amount (what the row is charged on: the lines' net amounts,
-/// or the earlier row's amounts or totals it refers to) and the tax, in the document's and the
-/// company's currency. Fixed (Actual) charges have no rate and are left out. `line_rates`: each
-/// line's item tax rates.
+/// VAT breakdown, BG-23), worked out by the pricing crate ([`pricing::tax_summary`]), as the
+/// document keeps it. `line_rates`: each line's item tax rates.
 pub fn tax_breakdown(input: &CalcInput, taxes: &[Doc], line_rates: &[Vec<Doc>], out: &CalcOutput) -> Vec<Doc> {
-    // Of a row's earlier rows, what each adds to a running total: nothing when reverse-charged.
-    let signed = |q: usize, v: Decimal| {
-        if b(&taxes[q], "reverse_charge") {
-            Decimal::ZERO
-        } else if b(&taxes[q], "deduct") {
-            -v
-        } else {
-            v
-        }
-    };
-    let mut groups: BTreeMap<(usize, String, Decimal, String), [Decimal; 4]> = BTreeMap::new();
-    for (k, (row, tin)) in taxes.iter().zip(&input.taxes).enumerate() {
-        if tin.charge_type == ChargeType::Actual {
-            continue;
-        }
-        let account = s(row, "account");
-        for (i, (line, lin)) in out.lines.iter().zip(&input.lines).enumerate() {
-            let rate = lin.tax_rates.get(&tin.key).copied().unwrap_or(tin.rate);
-            let item_rate = line_rates.get(i).and_then(|rs| rs.iter().find(|r| account.is_some() && s(r, "tax_account") == account));
-            let reason = item_rate.and_then(|r| s(r, "exemption_reason")).or_else(|| s(row, "exemption_reason")).unwrap_or_default().to_string();
-            let (taxable, base_taxable) = match (tin.charge_type, tin.row_ref) {
-                (ChargeType::OnPreviousRowAmount, Some(j)) => (line.taxes[j], line.base_taxes[j]),
-                (ChargeType::OnPreviousRowTotal, Some(j)) => {
-                    (0..=j).fold((line.net_amount, line.base_net_amount), |(t, bt), q| (t + signed(q, line.taxes[q]), bt + signed(q, line.base_taxes[q])))
-                }
-                _ => (line.net_amount, line.base_net_amount),
-            };
-            let g = groups.entry((k, category_of(row, item_rate, rate), rate.normalize(), reason)).or_default();
-            g[0] += taxable;
-            g[1] += line.taxes[k];
-            g[2] += base_taxable;
-            g[3] += line.base_taxes[k];
-        }
-    }
-    groups
+    let labels: Vec<pricing::TaxLabel> = taxes.iter().map(tax_label).collect();
+    let rates: Vec<Vec<pricing::LineRate>> = line_rates.iter().map(|rs| rs.iter().filter_map(line_rate).collect()).collect();
+    pricing::tax_summary(input, &labels, &rates, out)
         .into_iter()
-        .map(|((k, category, rate, reason), [taxable, tax, base_taxable, base_tax])| {
-            let row = &taxes[k];
+        .map(|x| {
             let mut g = Doc::new();
             g.insert("id".into(), json!(Uuid::now_v7().to_string()));
-            g.insert("description".into(), json!(s(row, "description")));
-            g.insert("account".into(), json!(s(row, "account")));
-            g.insert("category".into(), json!(category));
-            g.insert("rate".into(), money(rate));
-            g.insert("exemption_reason".into(), if reason.is_empty() { Value::Null } else { json!(reason) });
-            g.insert("reverse_charge".into(), json!(b(row, "reverse_charge")));
-            g.insert("taxable_amount".into(), money(taxable));
-            g.insert("tax_amount".into(), money(tax));
-            g.insert("base_taxable_amount".into(), money(base_taxable));
-            g.insert("base_tax_amount".into(), money(base_tax));
+            g.insert("description".into(), json!(x.description));
+            g.insert("account".into(), json!(x.account));
+            g.insert("category".into(), json!(x.category));
+            g.insert("rate".into(), money(x.rate));
+            g.insert("exemption_reason".into(), json!(x.exemption_reason));
+            g.insert("reverse_charge".into(), json!(x.reverse_charge));
+            g.insert("taxable_amount".into(), money(x.taxable_amount));
+            g.insert("tax_amount".into(), money(x.tax_amount));
+            g.insert("base_taxable_amount".into(), money(x.base_taxable_amount));
+            g.insert("base_tax_amount".into(), money(x.base_tax_amount));
             g
         })
         .collect()
@@ -772,4 +761,264 @@ pub fn breakup(doc: &Doc) -> Breakup {
         })
         .collect();
     Breakup { lines, taxes }
+}
+
+/// What a till keeps to price baskets offline ([`pricing::Snapshot`], read by [`pricing::price_basket`]) for the days
+/// `from` to `until`: from `sale`, a draft sale of the register priced by [`calculate`] (its company, currency, price
+/// list, customer, place, channel, tax rows and rounding), and `lines`, the lines of such drafts (each item's rates
+/// for the tax rows, as the countries' rules left them); the price list's prices of those items in force on some of
+/// the days, the pricing rules without a condition (a condition is the server's alone), and the promotions that could
+/// apply on some of the days without a code or a first order. Ordered by what it holds, so the same records are the
+/// same snapshot.
+pub async fn snapshot(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    sale: &Doc,
+    lines: &[Doc],
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+) -> Result<pricing::Snapshot> {
+    let company_id = id(sale, "company").ok_or_else(|| Error::field("company", "is required"))?;
+    let co = company(k, ctx, tx, company_id).await?;
+    let (code, precision) = crate::util::currency(k, ctx, tx, id(sale, "currency").unwrap_or(co.currency_id)).await?;
+    let rate = Some(d(sale, "conversion_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or(Decimal::ONE);
+    // Tax rows by position: the ids a preview gives them are new each time.
+    let taxes: Vec<Doc> = rows(sale, "taxes")
+        .into_iter()
+        .map(|mut t| {
+            t.remove("id");
+            t
+        })
+        .collect();
+    let document = calc_input(&[], &taxes, Decimal::ZERO, &co, precision, rate, true);
+    let mut items: Vec<pricing::Item> = Vec::new();
+    for line in lines.iter().filter(|r| s(r, "added_by_promotion").is_none()) {
+        let Some(item_id) = id(line, "item") else { continue };
+        if items.iter().any(|i| i.id == item_id.to_string()) {
+            continue;
+        }
+        let item = get(k, ctx, tx, "Item", item_id).await?;
+        let categories = line.get("tax_categories").and_then(Value::as_object);
+        let tax_rates = line
+            .get("item_tax_rates")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(account, r)| {
+                let c = categories.and_then(|c| c.get(account));
+                let text = |k: &str| c.and_then(|c| c.get(k)).and_then(Value::as_str).map(str::to_string);
+                Some(pricing::LineRate {
+                    tax_account: account.clone(),
+                    rate: r.as_str()?.parse().ok()?,
+                    category: text("category"),
+                    exemption_reason: text("exemption_reason"),
+                })
+            })
+            .collect();
+        items.push(pricing::Item {
+            id: item_id.to_string(),
+            item_group: id(&item, "item_group").map(|g| g.to_string()),
+            stock_uom: id(&item, "stock_uom").map(|u| u.to_string()),
+            units: units_of(&item),
+            standard_rate: d(&item, "standard_rate"),
+            delivery: b(&item, "is_delivery_charge"),
+            tax_rates,
+        });
+    }
+    items.sort_by(|a, b| a.id.cmp(&b.id));
+    let (first, last) = (from.format("%Y-%m-%d").to_string(), until.format("%Y-%m-%d").to_string());
+    let mut prices = Vec::new();
+    if let Some(list) = id(sale, "price_list").filter(|_| !items.is_empty()) {
+        let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+        let filters = vec![
+            Filter::eq("price_list", list.to_string()),
+            Filter { field: "item".into(), op: Op::In, value: json!(ids) },
+            Filter { field: "valid_from".into(), op: Op::Lte, value: json!(last) },
+        ];
+        prices = find(k, ctx, tx, "ItemPrice", filters, Some("created_at asc"), 100_000)
+            .await?
+            .iter()
+            .filter(|p| s(p, "valid_upto").is_none_or(|u| u >= first.as_str()))
+            .map(price_row)
+            .collect();
+        prices.sort_by(|a: &pricing::Price, b: &pricing::Price| a.item.cmp(&b.item).then(b.valid_from.cmp(&a.valid_from)));
+    }
+    let rules = rule_docs(k, ctx, tx)
+        .await?
+        .iter()
+        .filter(|r| s(r, "condition").is_none_or(|c| c.trim().is_empty()))
+        .filter(|r| s(r, "valid_from").is_none_or(|f| f <= last.as_str()) && s(r, "valid_upto").is_none_or(|u| u >= first.as_str()))
+        .map(rule_of)
+        .collect();
+    let mut found: BTreeMap<String, Doc> = BTreeMap::new();
+    let mut day = from;
+    while day <= until {
+        for p in crate::promotion::candidates(k, ctx, tx, company_id, &day.format("%Y-%m-%d").to_string()).await? {
+            if let Some(i) = s(&p, "id") {
+                found.entry(i.to_string()).or_insert(p);
+            }
+        }
+        day = day.succ_opt().unwrap_or(until + chrono::Duration::days(1));
+    }
+    let promotions = found.values().filter_map(|p| crate::promotion::to_engine(p, rate)).filter(|p| !p.requires_code && !p.first_order_only).collect();
+    let customer = id(sale, "customer");
+    let customer_group = match customer {
+        Some(c) => id(&get(k, ctx, tx, "Customer", c).await?, "customer_group").map(|g| g.to_string()),
+        None => None,
+    };
+    Ok(pricing::Snapshot {
+        schema: pricing::SCHEMA,
+        valid_from: first,
+        valid_until: last,
+        time_zone: s(&co.doc, "time_zone").map(str::to_string),
+        currency: Some(code),
+        precision,
+        base_precision: document.base_precision,
+        conversion_rate: rate,
+        rounding: document.rounding,
+        round_total_to: document.round_total_to,
+        tax_rounding: document.tax_rounding,
+        taxes: document.taxes.iter().zip(&taxes).map(|(calc, t)| pricing::Tax { calc: calc.clone(), label: tax_label(t) }).collect(),
+        items,
+        prices,
+        rules,
+        promotions,
+        customer: customer.map(|c| c.to_string()),
+        customer_group,
+        channel: s(sale, "channel").map(str::to_string),
+        place: s(sale, "set_warehouse").map(str::to_string),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ERP 0.25's tax breakdown, kept here only to hold the pricing crate's summary to it.
+    fn old_breakdown(input: &CalcInput, taxes: &[Doc], line_rates: &[Vec<Doc>], out: &CalcOutput) -> Vec<Doc> {
+        fn category_of(row: &Doc, item_rate: Option<&Doc>, rate: Decimal) -> String {
+            let rows_own = s(row, "category").filter(|_| item_rate.is_none_or(|r| d(r, "rate") == d(row, "rate")));
+            match item_rate.and_then(|r| s(r, "category")).or(rows_own) {
+                Some(c) => c.to_string(),
+                None if b(row, "reverse_charge") => "Reverse Charge".into(),
+                None if rate > Decimal::ZERO => "Standard".into(),
+                None => "Zero Rated".into(),
+            }
+        }
+        let signed = |q: usize, v: Decimal| {
+            if b(&taxes[q], "reverse_charge") {
+                Decimal::ZERO
+            } else if b(&taxes[q], "deduct") {
+                -v
+            } else {
+                v
+            }
+        };
+        let mut groups: BTreeMap<(usize, String, Decimal, String), [Decimal; 4]> = BTreeMap::new();
+        for (k, (row, tin)) in taxes.iter().zip(&input.taxes).enumerate() {
+            if tin.charge_type == ChargeType::Actual {
+                continue;
+            }
+            let account = s(row, "account");
+            for (i, (line, lin)) in out.lines.iter().zip(&input.lines).enumerate() {
+                let rate = lin.tax_rates.get(&tin.key).copied().unwrap_or(tin.rate);
+                let item_rate = line_rates.get(i).and_then(|rs| rs.iter().find(|r| account.is_some() && s(r, "tax_account") == account));
+                let reason = item_rate.and_then(|r| s(r, "exemption_reason")).or_else(|| s(row, "exemption_reason")).unwrap_or_default().to_string();
+                let (taxable, base_taxable) = match (tin.charge_type, tin.row_ref) {
+                    (ChargeType::OnPreviousRowAmount, Some(j)) => (line.taxes[j], line.base_taxes[j]),
+                    (ChargeType::OnPreviousRowTotal, Some(j)) => {
+                        (0..=j).fold((line.net_amount, line.base_net_amount), |(t, bt), q| (t + signed(q, line.taxes[q]), bt + signed(q, line.base_taxes[q])))
+                    }
+                    _ => (line.net_amount, line.base_net_amount),
+                };
+                let g = groups.entry((k, category_of(row, item_rate, rate), rate.normalize(), reason)).or_default();
+                g[0] += taxable;
+                g[1] += line.taxes[k];
+                g[2] += base_taxable;
+                g[3] += line.base_taxes[k];
+            }
+        }
+        groups
+            .into_iter()
+            .map(|((k, category, rate, reason), [taxable, tax, base_taxable, base_tax])| {
+                let row = &taxes[k];
+                json!({"description": s(row, "description"), "account": s(row, "account"), "category": category, "rate": money(rate),
+                       "exemption_reason": if reason.is_empty() { Value::Null } else { json!(reason) }, "reverse_charge": b(row, "reverse_charge"),
+                       "taxable_amount": money(taxable), "tax_amount": money(tax), "base_taxable_amount": money(base_taxable), "base_tax_amount": money(base_tax)})
+                .as_object()
+                .cloned()
+                .unwrap()
+            })
+            .collect()
+    }
+
+    /// On generated documents (charge kinds, inclusive rows, reverse charge, deductions, items' own rates, categories
+    /// and exemption reasons, another currency) the breakdown the pricing crate works out is ERP 0.25's.
+    #[test]
+    fn the_summary_is_the_old_breakdown() {
+        let mut seed: u64 = 11;
+        let mut next = |n: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        let kinds = ["On Net Total", "On Previous Row Amount", "On Previous Row Total", "Actual", "On Item Quantity"];
+        let cats = [Value::Null, json!("Standard"), json!("Exempt")];
+        for case in 0..300 {
+            let taxes: Vec<Doc> = (0..1 + next(3))
+                .map(|i| {
+                    let kind = if i == 0 { "On Net Total" } else { kinds[next(5) as usize] };
+                    json!({"id": format!("t{i}"), "charge_type": kind, "account": format!("a{}", next(3)), "description": format!("Tax {i}"), "rate": (5 * next(4)).to_string(),
+                           "amount": "3", "row_ref": if i > 0 { json!(i) } else { Value::Null }, "included_in_price": i == 0 && next(3) == 0,
+                           "deduct": i > 0 && next(4) == 0, "reverse_charge": next(5) == 0, "category": cats[next(3) as usize],
+                           "exemption_reason": if next(4) == 0 { json!("why") } else { Value::Null }})
+                    .as_object()
+                    .cloned()
+                    .unwrap()
+                })
+                .collect();
+            let mut line_rates = Vec::new();
+            let items: Vec<Doc> = (0..1 + next(4))
+                .map(|i| {
+                    let rates: Vec<Doc> = (0..next(3))
+                        .map(|_| {
+                            json!({"tax_account": format!("a{}", next(3)), "rate": (5 * next(3)).to_string(), "category": cats[next(3) as usize],
+                                   "exemption_reason": if next(3) == 0 { json!("item") } else { Value::Null }})
+                            .as_object()
+                            .cloned()
+                            .unwrap()
+                        })
+                        .collect();
+                    let own: Map<String, Value> = rates.iter().map(|r| (s(r, "tax_account").unwrap().to_string(), json!(d(r, "rate").to_string()))).collect();
+                    line_rates.push(rates);
+                    json!({"id": format!("l{i}"), "qty": (1 + next(5)).to_string(), "price_list_rate": format!("{}.{}", 1 + next(90), next(100)),
+                           "discount_percent": (next(3) * 5).to_string(), "item_tax_rates": own})
+                    .as_object()
+                    .cloned()
+                    .unwrap()
+                })
+                .collect();
+            let co = Company {
+                id: Uuid::nil(),
+                doc: Doc::new(),
+                currency_code: "XXX".into(),
+                currency_id: Uuid::nil(),
+                precision: 2,
+                rounding: Default::default(),
+                round_total_to: None,
+                allow_negative_stock: false,
+            };
+            let rate = if next(3) == 0 { Decimal::new(85, 2) } else { Decimal::ONE };
+            let input = calc_input(&items, &taxes, Decimal::new(next(2) as i64 * 5, 0), &co, 2, rate, false);
+            let Ok(out) = ferrum_calc::compute(&input) else { continue };
+            let new: Vec<Doc> = tax_breakdown(&input, &taxes, &line_rates, &out)
+                .into_iter()
+                .map(|mut g| {
+                    g.remove("id");
+                    g
+                })
+                .collect();
+            assert_eq!(new, old_breakdown(&input, &taxes, &line_rates, &out), "case {case}");
+        }
+    }
 }

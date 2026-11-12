@@ -81,6 +81,23 @@ async fn scenario() {
     let given = |r: &Value| r["rows"].as_array().unwrap().iter().filter(|x| x["promotion_id"] == json!(twenty)).map(|x| dec(&x["discount"])).sum::<Decimal>();
     assert_eq!((given(&report), report["rows"][0]["channel"].clone()), (n("40"), json!("Point of Sale")));
 
+    // An app may instead give each line's share as it priced it (`promotion_percent`, as ERP keeps it), at the list
+    // price: the line carries the discount as ERP's own pricing would, and the check is the same.
+    let shared = post(json!({"company": c, "customer": walk_in, "channel": "Point of Sale",
+        "items": [{"item": lamp, "qty": "2", "price_list_rate": "100", "promotion_percent": "20"}],
+        "given_promotions": {"snapshot": "v1", "source": "pos:share", "counted": true, "applied": line(&twenty, "40")}}))
+    .await;
+    assert_eq!((dec(&shared["items"][0]["amount"]), shared["items"][0]["promotion_percent"].clone()), (n("160"), json!("20")), "{shared:?}");
+    assert_eq!(dec(&shared["applied_promotions"][0]["amount"]), n("40"));
+    assert_eq!(used(&twenty).await, 1, "counted by the app");
+    t.k.cancel(&t.ctx, "SalesInvoice", uid(&shared), None).await.unwrap();
+    let over_share = try_post(json!({"company": c, "customer": walk_in, "channel": "Point of Sale",
+        "items": [{"item": lamp, "qty": "2", "price_list_rate": "100", "promotion_percent": "30"}],
+        "given_promotions": {"snapshot": "v1", "source": "pos:share-2", "counted": true, "applied": line(&twenty, "60")}}))
+    .await
+    .unwrap_err();
+    assert!(over_share.contains("the most it can there is 40"), "{over_share}");
+
     // The same sale on another document: refused, though the amounts are good.
     let again = try_post(sale("pos:1", line(&twenty, "40"), false)).await.unwrap_err();
     assert!(again.contains("already recorded"), "{again}");

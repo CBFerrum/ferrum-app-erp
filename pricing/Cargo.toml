@@ -1,0 +1,23 @@
+[package]
+name = "ferrum-erp-pricing"
+description = "A whole basket priced from data alone (price lists, units, pricing rules, promotions, taxes, rounding, totals, the tax summary): the server and a till's browser build run this one code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# A plain rlib, as ferrum-calc. For the browser: scripts/pricing-wasm.sh.
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen"]
+
+[dependencies]
+ferrum-calc = { workspace = true }
+ferrum-erp-promotions = { path = "../promotions" }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true, optional = true }
+
+[lints]
+workspace = true
