@@ -1,5 +1,5 @@
-//! Payment instruments (FN-34) against a real PostgreSQL (`FERRUM_ERP_INSTRUMENTS_TEST_DATABASE_URL`,
-//! default `postgres://ferrum:ferrum@localhost:5432/ferrum_erp_instruments_test`; reset first): a
+//! Payment instruments (FN-34) against a real PostgreSQL (`FERRUM_ERP_CHEQUES_TEST_DATABASE_URL`,
+//! default `postgres://ferrum:ferrum@localhost:5432/ferrum_erp_cheques_test`; reset first): a
 //! post-dated cheque waits in the cheques account and cannot clear before its date; a bounce takes the
 //! payment back (the invoice is owed again) and charges the customer; a cheque that cleared reaches
 //! the bank, cannot be cleared twice even at once, and its payment cannot just be cancelled; an issued
@@ -22,8 +22,8 @@ async fn balance(t: &T, account: &str) -> Decimal {
 }
 
 async fn scenario() {
-    let url = std::env::var("FERRUM_ERP_INSTRUMENTS_TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_erp_instruments_test".into());
+    let url =
+        std::env::var("FERRUM_ERP_CHEQUES_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_erp_cheques_test".into());
     let t = T::boot(url, |_, _| {}).await;
     let c = t.company.clone();
     let group = |name: &str| {

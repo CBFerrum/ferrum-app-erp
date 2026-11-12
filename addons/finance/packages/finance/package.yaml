@@ -12,7 +12,7 @@ modules:
     order: 25
     # report:bank_reconciliation is not a report of the server's: the ERP interface answers that address
     # with the reconciliation workbench, so it shows in the sidebar beside the bank's records.
-    items: [report:finance_overview, Budget, MonthlyDistribution, BankAccount, BankTransaction, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
+    items: [report:finance_overview, Budget, MonthlyDistribution, BankAccount, BankTransaction, PaymentRun, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
             DunningType, Dunning, SubscriptionPlan, Subscription, report:budget_variance, report:bank_reconciliation_statement, report:cash_flow_forecast,
             report:receivables_by_due_date, report:dunning_summary, report:subscription_metrics]
 
@@ -23,6 +23,7 @@ roles:
       - {entity: MonthlyDistribution, read: true, write: true, create: true, delete: true}
       - {entity: BankAccount, read: true, write: true, create: true, delete: true, export: true, read_groups: [bank_details], write_groups: [bank_details]}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, import: true}
+      - {entity: PaymentRun, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: ExchangeRevaluation, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PeriodClosingVoucher, read: true, write: true, create: true, delete: true, submit: true, cancel: true}
@@ -37,6 +38,7 @@ roles:
       - {entity: MonthlyDistribution, read: true}
       - {entity: BankAccount, read: true}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true}
+      - {entity: PaymentRun, read: true, write: true, create: true, delete: true}
       - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: ExchangeRevaluation, read: true}
       - {entity: PeriodClosingVoucher, read: true}
@@ -60,8 +62,16 @@ overlays:
     ops:
       - {op: add_field, after: due_date, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
       - {op: add_field, after: fin_payment_terms_template, field: {name: fin_payment_schedule, type: table, of: PaymentSchedule, label: Payment Schedule}}
+      - {op: add_field, column: true, after: fin_payment_schedule, field: {name: fin_payment_hold, type: check, read_only: true, no_copy: true, in_filter: true, label: Payment on Hold,
+          description: "Disputed, or a match exception: payment runs leave it out until it is released"}}
+      - {op: add_field, after: fin_payment_hold, field: {name: fin_hold_reason, type: text, read_only: true, no_copy: true, label: Why on Hold}}
       - op: add_action
         action: {name: allocate_advances, label: Allocate Advance Payments, docstatus: [1], permission: submit, condition: "doc.outstanding_amount > 0.0"}
+      - op: add_action
+        action: {name: fin_hold_payment, label: Hold Payment, docstatus: [1], permission: submit, condition: "!doc.fin_payment_hold",
+                 params: [{name: reason, label: Why, type: text, required: true}]}
+      - op: add_action
+        action: {name: fin_release_payment, label: Release Payment, docstatus: [1], permission: submit, condition: "doc.fin_payment_hold"}
   - entity: SalesOrder
     ops:
       - {op: add_field, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
@@ -88,3 +98,17 @@ overlays:
   - entity: Supplier
     ops:
       - {op: add_field, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
+
+messages:
+  - key: finance.remittance_advice
+    label: Remittance advice to a supplier
+    entity: PaymentEntry
+    values: [bills]
+    languages:
+      en:
+        email:
+          subject: "Payment {{ doc.number }} of {{ doc.paid_amount }}"
+          body: "<p>Dear {{ doc.party_name }},</p><p>We have paid you {{ doc.paid_amount }} on {{ doc.posting_date }} (our payment {{ doc.number }}). It settles: {{ values.bills }}.</p>"
+        inapp:
+          title: "Payment {{ doc.number }} of {{ doc.paid_amount }}"
+          text: "It settles: {{ values.bills }}"
