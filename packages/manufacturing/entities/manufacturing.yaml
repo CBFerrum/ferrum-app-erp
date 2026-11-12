@@ -1,3 +1,14 @@
+- name: ItemPlanning
+  label: Item Planning
+  kind: child
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true, description: "Empty: every warehouse without a row of its own"}
+    - {name: safety_stock, type: decimal, min: "0", in_list: true}
+    - {name: min_order_qty, type: decimal, min: "0", in_list: true, label: Minimum Order}
+    - {name: order_multiple, type: decimal, min: "0", in_list: true, label: Order Multiple}
+    - {name: max_order_qty, type: decimal, min: "0", in_list: true, label: Maximum Order, description: "Larger needs are split into several orders. Empty: no most"}
+    - {name: lead_time_days, type: int, min: "0", label: Lead Time (Days), description: "Empty: the item's"}
+
 - name: BomItem
   label: BOM Item
   kind: child
@@ -93,7 +104,9 @@
   fields:
     - {name: item, type: link, to: Item, in_list: true}
     - {name: item_name, type: data, read_only: true, in_list: true}
-    - {name: action, type: select, options: [Purchase, Manufacture], in_list: true}
+    - {name: action, type: select, options: [Purchase, Manufacture, Transfer], in_list: true}
+    - {name: source_warehouse, type: link, to: Warehouse, label: From Warehouse, description: "A transfer's: the warehouse with more than it needs"}
+    - {name: bucket_start, type: date, read_only: true, in_list: true, label: Needed In, description: "The first day of the period it is needed in"}
     - {name: gross_requirement, type: decimal, read_only: true}
     - {name: available, type: decimal, read_only: true}
     - {name: on_order, type: decimal, read_only: true}
@@ -104,6 +117,26 @@
     - {name: warehouse, type: link, to: Warehouse}
     - {name: required_by, type: date}
     - {name: created_document, type: data, read_only: true}
+
+- name: MrpWarehouse
+  label: Planning Warehouse
+  kind: child
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, in_list: true}
+
+- name: MrpMessage
+  label: Action Message
+  kind: child
+  fields:
+    - {name: message, type: select, options: [Bring Forward, Push Out, Cancel, Increase, Decrease], in_list: true}
+    - {name: document_type, type: data, read_only: true, in_list: true}
+    - {name: document, type: data, read_only: true, in_list: true, description: "The order's number and line"}
+    - {name: item, type: link, to: Item, read_only: true, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, read_only: true}
+    - {name: current_date, type: date, read_only: true}
+    - {name: current_qty, type: decimal, read_only: true}
+    - {name: suggested_date, type: date, read_only: true, in_list: true}
+    - {name: suggested_qty, type: decimal, read_only: true, in_list: true}
 
 - name: MrpRun
   label: MRP Run
@@ -116,7 +149,12 @@
     - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, description: Planning warehouse}
     - {name: include_sales_orders, type: check, default: true}
     - {name: demand_until, type: date, description: Sales orders with delivery dates up to this date}
+    - {name: bucket, type: select, options: [Day, Week, Month], label: Plan By,
+       description: "Empty: one total for the planning warehouse, as before. A period: demand and orders by period over the horizon, the warehouses below, transfers between them and action messages on the orders already there"}
+    - {name: horizon_days, type: int, min: "1", default: 90, label: Horizon (Days), visible_if: "doc.bucket != null"}
+    - {name: warehouses, type: table, of: MrpWarehouse, label: Plan Across, visible_if: "doc.bucket != null", description: "Empty: the planning warehouse"}
     - {name: lines, type: table, of: MrpLine}
+    - {name: messages, type: table, of: MrpMessage, label: Action Messages}
     - {name: status, type: select, options: [Draft, Planned, Orders Created], default: Draft, read_only: true, in_list: true}
   actions:
     - {name: run, label: Run MRP, docstatus: [0], permission: write}

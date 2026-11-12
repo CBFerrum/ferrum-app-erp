@@ -17,6 +17,8 @@ overlays:
   - entity: Item
     ops:
       - {op: add_field, column: true, after: is_purchased, field: {name: is_manufactured, type: check}}
+      - {op: add_field, after: is_manufactured, field: {name: mfg_planning, type: table, of: ItemPlanning, label: Planning by Warehouse,
+          description: "Safety stock and order quantities per warehouse (a row without one: every warehouse); the item's own safety stock and minimum order otherwise"}}
 
 modules:
   - name: manufacturing

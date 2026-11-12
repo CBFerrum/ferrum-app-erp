@@ -424,8 +424,14 @@ impl ProductionPlanHook {
         for (item, required) in &ex.raw {
             let it = cached(hc, &mut items, "Item", *item).await?;
             let (actual, proj) = stock.get(item).copied().unwrap_or_default();
-            let ss = if safety { d(&it, "safety_stock") } else { Decimal::ZERO };
-            let to_order = (*required + ss - proj).max(Decimal::ZERO);
+            // The requirements run's netting and lot sizing (ferrum_app_erp::planning), with the incoming and committed
+            // stock of the warehouses considered as what is coming.
+            let mut params = ferrum_app_erp::planning::params(hc.tx, hc.ctx, *item, Some(for_wh)).await?;
+            if !safety {
+                params.safety = Decimal::ZERO;
+            }
+            let ss = params.safety;
+            let to_order: Decimal = ferrum_app_erp::planning::net(*required, actual, proj - actual, &params).1.iter().sum();
             materials.push((
                 s(&it, "item_code").unwrap_or_default().to_string(),
                 Doc::from_iter([
