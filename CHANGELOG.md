@@ -1,5 +1,12 @@
 # Changelog
 
+## ERP 0.20.1: a card's code and PIN never come to rest
+
+The platform writes an action's parameters to the audit log and a capability's result to its receipt, so 0.20.0 logged the code, PIN and other card's code given to stored value's issue, redeem, refund and transfer and an account's New Code PIN, and kept codes made for new cards in the receipts.
+
+- **Prove, then act.** A code and PIN go only to the kind's new `prove` (`accounting.stored_value_kind.prove`, read only, never logged), which keeps their hashes and answers a proof for one operation on one kind, used once, gone after five minutes; a code it makes is answered there, once. `issue`, `redeem`, `refund` and `transfer` take the proof (`transfer` its other card's as `to_proof`) and refuse a code or PIN; their results no longer carry a code. Under the same effect key the same code gets the same proof, so retries still repeat. New Code takes a proof, or makes the code and, for a kind that needs one, a PIN, shown once. The public functions in `stored_value` keep their signatures and prove inside. **Callers of the capabilities change**: prove first, then pass the proof.
+- **Cleared.** On install, the codes and PINs 0.20.0 wrote are blanked in those operations' own audit events (the redaction recorded, the chain unbroken) and the made codes taken out of their receipts; nothing else is touched.
+
 ## ERP 0.20.0: stored value
 
 Gift cards, store credit and prepaid packages, built once beside the ledger so the till, the web shop and Bookings use the same thing (POS PS-34 to PS-37, Commerce CM-42, Bookings BK-27 and BK-29).

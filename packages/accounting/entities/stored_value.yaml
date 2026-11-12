@@ -62,7 +62,24 @@
     - {name: load_range, check: "doc.min_load == null || doc.max_load == null || doc.max_load >= doc.min_load", message: "The most loaded at once cannot be less than the least"}
   actions:
     # Contracted capabilities (accounting.stored_value_kind.<action>), for other apps and configuration.
-    # Codes and amounts are text; every change is done once per effect key.
+    # Codes and amounts are text; every change is done once per effect key. An action's parameters are
+    # logged and a change's result is kept as its receipt, so a code and PIN go only to prove (read
+    # only, not logged), and the changes take its proof.
+    - name: prove
+      label: Prove a Code
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: operation, label: For, type: select, options: [issue, redeem, refund, transfer, transfer_to, new_code], required: true,
+           description: "The one operation the proof is for; transfer_to is a transfer's other card"}
+        - {name: code, label: Code, description: "A card's own code; one is made, and answered once, when empty"}
+        - {name: pin, label: PIN}
+        - {name: key, label: Effect Key, description: "The key the operation runs under: proving the same code again under it gives the same proof, so a retry repeats"}
+      contract:
+        effect: query
+        returns: {type: object, properties: {proof: {type: string}, code: {type: [string, "null"]}, expires_in_minutes: {type: integer}}}
+        completion: "A proof of the code (and PIN) for one operation on this kind, used once, within minutes; only its hashes are kept"
     - name: balance
       label: Balance by Code
       permission: read
@@ -83,11 +100,10 @@
         - {name: amount, label: Amount or Units, required: true}
         - {name: reason, label: Reason, required: true}
         - {name: holder, label: Customer, type: link, to: Customer}
-        - {name: code, label: Code, description: "A card's own code; one is made when empty"}
-        - {name: pin, label: PIN}
+        - {name: proof, label: Proof, description: "From prove (issue): the new card's code and PIN; without one its code is shown to no one"}
       contract:
         effect: transactional_action
-        returns: {type: object, properties: {account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        returns: {type: object, properties: {account: {type: string, format: uuid}, entry: {type: string, format: uuid}, balance: {type: string}}}
         completion: "The account holds the value, booked against the kind's Adjustment Account, committed with this receipt"
         compensate_with: reverse
     - name: redeem
@@ -95,8 +111,7 @@
       permission: read
       hidden: true
       params:
-        - {name: code, label: Code, required: true}
-        - {name: pin, label: PIN}
+        - {name: proof, label: Proof, required: true, description: "From prove (redeem): the card's code and PIN"}
         - {name: invoice, label: Sales Invoice, type: link, to: SalesInvoice, required: true}
         - {name: amount, label: Amount, description: "Money taken; the invoice's outstanding amount, up to the balance, when empty"}
         - {name: units, label: Units, description: "For a kind that holds units"}
@@ -111,13 +126,12 @@
       hidden: true
       params:
         - {name: credit_note, label: Credit Note, type: link, to: SalesInvoice, required: true}
-        - {name: code, label: Code, description: "The account to load; a new account of this kind, held by the customer, when empty"}
-        - {name: pin, label: PIN, description: "A new card's PIN, for a kind that needs one"}
+        - {name: proof, label: Proof, description: "From prove (refund): the card to load, or a new card's code and PIN; a new account of this kind, held by the customer, when empty"}
         - {name: amount, label: Amount, description: "The credit note's credit left when empty"}
         - {name: units, label: Units, description: "For a kind that holds units"}
       contract:
         effect: transactional_action
-        returns: {type: object, properties: {payment: {type: string, format: uuid}, account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        returns: {type: object, properties: {payment: {type: string, format: uuid}, account: {type: string, format: uuid}, entry: {type: string, format: uuid}, balance: {type: string}}}
         completion: "A submitted refund puts the credit note's value onto the account, committed with this receipt"
         compensate_with: reverse
     - name: transfer
@@ -125,14 +139,13 @@
       permission: read
       hidden: true
       params:
-        - {name: code, label: From Code, required: true}
-        - {name: pin, label: PIN}
-        - {name: to_code, label: To Code, description: "A new bearer account (or the customer's) when empty"}
+        - {name: proof, label: Proof, required: true, description: "From prove (transfer): the card the value leaves, with its PIN"}
+        - {name: to_proof, label: To Proof, description: "From prove (transfer_to): a card of this kind, or a new card's code; a new account whose code nobody sees (the customer's, say) when empty"}
         - {name: holder, label: To Customer, type: link, to: Customer}
         - {name: amount, label: Amount or Units, description: "The whole balance when empty"}
       contract:
         effect: transactional_action
-        returns: {type: object, properties: {account: {type: string, format: uuid}, to_account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        returns: {type: object, properties: {account: {type: string, format: uuid}, to_account: {type: string, format: uuid}, entry: {type: string, format: uuid}, balance: {type: string}}}
         completion: "The value is on the other account, committed with this receipt"
         compensate_with: reverse
     - name: reverse
@@ -174,9 +187,9 @@
     - name: new_code
       label: New Code
       permission: write
-      confirm: "Give it a new code? The old code stops working; the new one is shown once."
+      confirm: "Give it a new code? The old code stops working; the new one (and a new PIN, for a kind that needs one) is shown once."
       params:
-        - {name: pin, label: New PIN, description: "For a kind that needs a PIN"}
+        - {name: proof, label: Proof, description: "From its kind's prove (new_code), for a code and PIN of the holder's choosing; both are made here when empty"}
     - name: adjust
       label: Adjust
       permission: write
