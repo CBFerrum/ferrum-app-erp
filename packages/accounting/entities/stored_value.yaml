@@ -112,6 +112,7 @@
       params:
         - {name: credit_note, label: Credit Note, type: link, to: SalesInvoice, required: true}
         - {name: code, label: Code, description: "The account to load; a new account of this kind, held by the customer, when empty"}
+        - {name: pin, label: PIN, description: "A new card's PIN, for a kind that needs one"}
         - {name: amount, label: Amount, description: "The credit note's credit left when empty"}
         - {name: units, label: Units, description: "For a kind that holds units"}
       contract:

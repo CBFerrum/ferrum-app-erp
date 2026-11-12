@@ -118,7 +118,9 @@ impl T {
         key: Option<&str>,
     ) -> ferrum_kernel::Result<Value> {
         let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
-        let out = stored_value::issue(&self.k, &self.ctx, &mut tx, kind.parse().unwrap(), n(amount), "goodwill", holder, code, pin, key).await?;
+        // Through the capability gate, once per key.
+        let key = key.map(str::to_string).unwrap_or_else(|| Uuid::new_v4().to_string());
+        let out = stored_value::issue(&self.k, &self.ctx, &mut tx, kind.parse().unwrap(), n(amount), "goodwill", holder, code, pin, &key).await?;
         tx.commit().await.unwrap();
         Ok(out)
     }
@@ -248,7 +250,7 @@ async fn scenario() {
     let once = t.issue(&gift, "50", None, None, None, Some("till-7:sale-1")).await.unwrap();
     let again = t.issue(&gift, "50", None, None, None, Some("till-7:sale-1")).await.unwrap();
     assert_eq!((again["account"].clone(), again["repeated"].clone()), (once["account"].clone(), json!(true)));
-    assert!(t.issue(&gift, "60", None, None, None, Some("till-7:sale-1")).await.unwrap_err().to_string().contains("another"));
+    assert!(t.issue(&gift, "60", None, None, None, Some("till-7:sale-1")).await.unwrap_err().to_string().contains("other input"));
 
     // A PIN: five wrong ones lock the card for a while, even to the right one.
     let customer = uid(&t.insert("Customer", json!({"customer_name": "Asha"})).await);
@@ -550,5 +552,87 @@ async fn scenario() {
     let last = st["rows"].as_array().unwrap().last().unwrap().clone();
     assert_eq!((dec(&last["balance"]), dec(&st["totals"]["balance"])), (n("450"), n("450")));
     assert_eq!(st["rows"][1]["entry_type"], json!("issue"));
+    t.agrees().await;
+    // ───────────── 7. for other apps and configuration: the contracted capabilities ─────────────
+    let catalog = t.k.catalog(&t.ctx);
+    let cap = |id: &str| catalog.iter().find(|c| c.id == id).cloned().unwrap_or_else(|| panic!("{id} in the catalog"));
+    assert_eq!(cap("accounting.stored_value_kind.redeem").compensate_with.as_deref(), Some("accounting.stored_value_kind.reverse"));
+    assert!(!cap("accounting.stored_value_kind.balance").effect.changes());
+    let gid: Uuid = gift.parse().unwrap();
+    let run = || {
+        let k = t.k.clone();
+        async move { k.db.tenant_tx(tenant).await.unwrap() }
+    };
+    let mut tx = run().await;
+    let bal = stored_value::balance(&t.k, &t.ctx, &mut tx, gid, "GIFT-0000-0000-0001", None).await.unwrap();
+    assert_eq!((bal["account"].clone(), dec(&bal["balance"]), bal["state"].clone()), (json!(a3.to_string()), n("450"), json!("Active")));
+    drop(tx);
+    // Redeemed once under a key, whatever the retries; then undone.
+    let i10 = t.post("SalesInvoice", bill(&walk_in, &work, "1")).await;
+    let mut tx = run().await;
+    let r = stored_value::redeem(&t.k, &t.ctx, &mut tx, gid, "GIFT-0000-0000-0001", None, uid(&i10), None, None, "shop:order-10").await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!((dec(&r["amount"]), dec(&r["balance"])), (n("100"), n("350")));
+    let mut tx = run().await;
+    let again = stored_value::redeem(&t.k, &t.ctx, &mut tx, gid, "GIFT-0000-0000-0001", None, uid(&i10), None, None, "shop:order-10").await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!((again["repeated"].clone(), t.account(a3).await.0), (json!(true), n("350")));
+    let mut tx = run().await;
+    stored_value::reverse(&t.k, &t.ctx, &mut tx, gid, vid(&r["entry"]), "shop:order-10:undo").await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(t.account(a3).await.0, n("450"));
+    assert_eq!(t.get("PaymentEntry", vid(&r["payment"])).await["docstatus"], json!(2), "undone by cancelling its payment");
+    // A return without its receipt onto new store credit: its code is handed back once.
+    let note = t
+        .post(
+            "SalesInvoice",
+            json!({"company": c, "customer": walk_in, "is_return": true, "return_reason": "no receipt", "items": [{"item": work, "qty": "-1"}]}),
+        )
+        .await;
+    let mut tx = run().await;
+    let back = stored_value::refund(&t.k, &t.ctx, &mut tx, vid(&exchange), uid(&note), None, None, None, "till-2:return-9").await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(dec(&back["balance"]), n("100"));
+    assert_eq!(t.find(exchange.as_str().unwrap(), back["code"].as_str().unwrap(), None).await.unwrap(), vid(&back["account"]));
+    // Transferred where the kind allows it, in part, to a new card; then undone. Cashed out.
+    let shared = t
+        .insert(
+            "StoredValueKind",
+            json!({"kind_name": "Shared", "company": c, "liability_account": liability, "adjustment_account": goodwill,
+            "can_transfer": true, "can_cash_out": true}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let sid: Uuid = shared.parse().unwrap();
+    t.issue(&shared, "100", None, Some("SHARED-CARD-0001"), None, None).await.unwrap();
+    let mut tx = run().await;
+    let e = stored_value::transfer(&t.k, &t.ctx, &mut tx, gid, "GIFT-0000-0000-0001", None, None, None, None, "x").await.unwrap_err();
+    assert!(e.to_string().contains("cannot be transferred"), "{e}");
+    drop(tx);
+    let mut tx = run().await;
+    let moved = stored_value::transfer(&t.k, &t.ctx, &mut tx, sid, "SHARED-CARD-0001", None, None, None, Some(n("40")), "gift-to-friend").await.unwrap();
+    tx.commit().await.unwrap();
+    let (s1, s2) = (vid(&moved["account"]), vid(&moved["to_account"]));
+    assert_eq!((t.account(s1).await.0, t.account(s2).await.0), (n("60"), n("40")));
+    assert_eq!(t.posted(vid(&moved["entry"])).await, map(&[]), "one liability on both sides: nothing posted");
+    let mut tx = run().await;
+    stored_value::reverse(&t.k, &t.ctx, &mut tx, sid, vid(&moved["entry"]), "gift-to-friend:undo").await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!((t.account(s1).await.0, t.account(s2).await.0), (n("100"), n("0")));
+    let cash = account("Cash").await;
+    let out = t.k.run_action(&t.ctx, "StoredValueAccount", s1, "cash_out", json!({"amount": "60", "paid_from": cash})).await.unwrap();
+    assert_eq!(t.posted(vid(&out["entry"])).await, map(&[("Gift Cards", "60"), ("Cash", "-60")]));
+    assert!(t.k.run_action(&t.ctx, "StoredValueAccount", a3, "cash_out", json!({"paid_from": cash})).await.unwrap_err().to_string().contains("not cashed out"));
+    // A card held by one customer does not pay another's invoice.
+    let other = t.insert("Customer", json!({"customer_name": "Ravi"})).await["id"].clone();
+    let i11 = t.post("SalesInvoice", bill(&other, &work, "1")).await;
+    let e = t.k.insert(&t.ctx, "PaymentEntry", obj(pay(&other, &i11, "50", json!({"stored_value_account": vid(&back["account"]).to_string()})))).await;
+    assert!(e.unwrap_err().to_string().contains("another customer"));
+    // A new code, shown once: the old one stops working.
+    let fresh = t.k.run_action(&t.ctx, "StoredValueAccount", s1, "new_code", json!({})).await.unwrap();
+    assert!(t.find(&shared, "SHARED-CARD-0001", None).await.is_err());
+    assert_eq!(t.find(&shared, fresh["code"].as_str().unwrap(), None).await.unwrap(), s1);
     t.agrees().await;
 }

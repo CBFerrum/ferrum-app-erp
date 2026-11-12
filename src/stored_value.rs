@@ -300,8 +300,6 @@ pub(crate) struct Move {
     pub journal: Option<Uuid>,
     pub reversal_of: Option<Uuid>,
     pub remarks: Option<String>,
-    /// The caller's key for doing it once, and a digest of what it asked.
-    pub key: Option<(String, String)>,
 }
 
 /// Appends one entry to a locked account and brings the account up to it: balance, value, last use,
@@ -314,11 +312,10 @@ pub(crate) async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, acc: &mut Account
     }
     let value = acc.value() + m.value;
     let entry = Uuid::now_v7();
-    let (key, digest) = m.key.map(|(k, d)| (Some(k), Some(d))).unwrap_or_default();
     sqlx::query(
         "insert into stored_value_entry (tenant_id, id, op_id, account_id, entry_type, amount, value, posting_date, source_entity, source_id, source_line, \
-         against_id, journal_entry_id, reversal_of, op_key, op_digest, remarks, created_by) \
-         values ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+         against_id, journal_entry_id, reversal_of, remarks, created_by) \
+         values ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(ctx.tenant)
     .bind(entry)
@@ -334,8 +331,6 @@ pub(crate) async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, acc: &mut Account
     .bind(m.against)
     .bind(m.journal)
     .bind(m.reversal_of)
-    .bind(key)
-    .bind(digest)
     .bind(m.remarks)
     .bind((!ctx.user.is_nil()).then_some(ctx.user))
     .execute(&mut **tx)
@@ -427,7 +422,7 @@ pub(crate) async fn open(
 /// and, for a wrong PIN, against the account.
 pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: &str, pin: Option<&str>) -> Result<Uuid> {
     let sec = secret(ctx.tenant, code, pin)?;
-    match lookup(k, ctx, tx, kind, &sec).await? {
+    match lookup(k, ctx, tx, kind, &sec, true).await? {
         Some(acc) => Ok(acc),
         None => {
             missed(k, ctx, None).await?;
@@ -438,7 +433,7 @@ pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: 
 
 /// The account a kept code names, with the guessing limits and its PIN checked; `None` when no
 /// account (of `kind`) has it, which the caller counts as a miss or not.
-async fn lookup(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, sec: &Secret) -> Result<Option<Uuid>> {
+async fn lookup(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, sec: &Secret, check_pin: bool) -> Result<Option<Uuid>> {
     let guesses: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "select count(*) from stored_value_attempt where tenant_id = $1 and user_id is not distinct from $2 and at > now() - interval '{GUESS_WINDOW_MINUTES} minutes'"
     )))
@@ -456,7 +451,7 @@ async fn lookup(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, sec: &Se
             .fetch_optional(&mut **tx)
             .await?;
     let Some((acc, _, pin_hash)) = found.filter(|(_, kd, _)| kind.is_none_or(|want| want == *kd)) else { return Ok(None) };
-    if let Some(want) = pin_hash {
+    if let Some(want) = pin_hash.filter(|_| check_pin) {
         let wrong: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "select count(*) from stored_value_attempt where tenant_id = $1 and account_id = $2 and at > now() - interval '{GUESS_WINDOW_MINUTES} minutes'"
         )))
@@ -496,34 +491,13 @@ async fn post(ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDate, op: Uuid, mem
     ledger::post(tx, ctx, e, co.precision).await
 }
 
-/// A caller's key used before: what was done then, or a refusal when it asked something else.
-async fn repeated(ctx: &Ctx, tx: &mut Tx, key: Option<&str>, digest: &str) -> Result<Option<Value>> {
-    let Some(key) = key else { return Ok(None) };
-    let was: Option<(Uuid, Uuid, Option<String>)> =
-        sqlx::query_as("select op_id, account_id, op_digest from stored_value_entry where tenant_id = $1 and op_key = $2")
-            .bind(ctx.tenant)
-            .bind(key)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let Some((op, account, was_digest)) = was else { return Ok(None) };
-    if was_digest.as_deref() != Some(digest) {
-        return Err(Error::Conflict(format!("the key {key} was used for another stored value request: use a new key for a new request")));
-    }
-    let acc = lock(ctx, tx, account).await?;
-    Ok(Some(json!({"account": account, "entry": op, "balance": money(acc.balance()), "repeated": true})))
-}
-
-fn digest(parts: &Value) -> String {
-    sha(&parts.to_string())
-}
-
 // ───────────────────────────── by hand ─────────────────────────────
 
 /// Value issued without a sale (goodwill, a prize), by someone the kind allows: money is booked
 /// against the kind's Adjustment Account; units carry no value in the books until they are used.
 /// Returns the account, the entry and, when it made one, the new code.
 #[allow(clippy::too_many_arguments)]
-pub async fn issue(
+pub(crate) async fn issue_value(
     k: &Kernel,
     ctx: &Ctx,
     tx: &mut Tx,
@@ -533,14 +507,9 @@ pub async fn issue(
     holder: Option<Uuid>,
     code: Option<&str>,
     pin: Option<&str>,
-    key: Option<&str>,
 ) -> Result<Value> {
     let kind = kind(k, ctx, tx, kind_id).await?;
     kind.may_issue(ctx)?;
-    let dg = digest(&json!(["issue", kind_id, amount.normalize().to_string(), reason, holder, code.map(normalized)]));
-    if let Some(done) = repeated(ctx, tx, key, &dg).await? {
-        return Ok(done);
-    }
     if reason.trim().is_empty() {
         return Err(Error::field("reason", "say why it is issued without a sale"));
     }
@@ -566,7 +535,6 @@ pub async fn issue(
         source: Some(("StoredValueKind".into(), kind.id)),
         journal,
         remarks: Some(reason.to_string()),
-        key: key.map(|k| (k.to_string(), dg)),
         ..Default::default()
     };
     record(k, ctx, tx, &mut acc, &kind, op, m).await?;
@@ -807,7 +775,8 @@ pub(crate) async fn invoice_submitted(hc: &mut HookCtx<'_>, doc: &Doc) -> Result
 /// Entries a document made that are not yet reversed: (entry, account, amount, value).
 async fn live_entries(ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid) -> Result<Vec<(Uuid, Uuid, Decimal, Decimal)>> {
     Ok(sqlx::query_as(
-        "select e.id, e.account_id, e.amount, e.value from stored_value_entry e where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 \
+        "select e.id, e.account_id, e.amount, e.value from stored_value_entry e where e.tenant_id = $1 \
+         and (case when $2 = 'StoredValueEntry' then e.op_id = $3 else e.source_entity = $2 and e.source_id = $3 end) \
          and e.entry_type <> 'reverse' and not exists (select 1 from stored_value_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id) order by e.created_at",
     )
     .bind(ctx.tenant)
@@ -820,6 +789,7 @@ async fn live_entries(ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid) -> Res
 /// Takes back what a document did to its accounts, each entry by its own reversing entry tied to
 /// `journal` (the document's reversal). What was loaded and has been spent since cannot be taken
 /// back: the refusal says what is left.
+/// With `entity` [`SOURCE`], `source` is an operation: its own entries are reversed.
 pub(crate) async fn reverse_entries(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid, on: NaiveDate, what: &str) -> Result<usize> {
     let entries = live_entries(ctx, tx, entity, source).await?;
     let journal: Option<Uuid> = sqlx::query_scalar(
@@ -871,7 +841,7 @@ pub(crate) async fn payment_fill(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<
     let fresh = s(doc, "stored_value_code").is_some_and(|c| !c.starts_with('•'));
     mask(hc.ctx, doc, "stored_value_secret", "stored_value_code")?;
     if fresh && let Some(sec) = kept_secret(doc, "stored_value_secret") {
-        match lookup(hc.kernel, hc.ctx, hc.tx, None, &sec).await? {
+        match lookup(hc.kernel, hc.ctx, hc.tx, None, &sec, true).await? {
             Some(acc) => {
                 crate::util::set(doc, "stored_value_account", acc.to_string());
                 crate::util::set(doc, "stored_value_secret", Value::Null);
@@ -943,6 +913,9 @@ pub(crate) async fn check_payment(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company)
     };
     if kd.company != co.id {
         return Err(Error::field("stored_value_account", format!("{} is another company's", kd.name)));
+    }
+    if acc.as_ref().and_then(|a| a.holder).is_some_and(|h| Some(h) != id(doc, "customer")) {
+        return Err(Error::field("stored_value_account", "it is held by another customer"));
     }
     let units = d(doc, "stored_value_units");
     if kd.units && units <= Decimal::ZERO {
@@ -1134,6 +1107,392 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, u
     Ok((due.len(), expired.len()))
 }
 
+// ───────────────────────────── for other apps ─────────────────────────────
+//
+// The contracted capabilities `accounting.stored_value_kind.<balance|issue|redeem|refund|transfer|reverse>`
+// are the kind's actions below, run through the platform's gate: once per effect key, the receipt
+// committed with the change, the same key with other input refused. The public functions here are the
+// same operations for apps in this workspace, through the same gate in the caller's transaction.
+
+fn op_input(kind: Uuid, params: Value) -> Value {
+    let params: serde_json::Map<String, Value> =
+        params.as_object().into_iter().flatten().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
+    json!({"id": kind, "params": params})
+}
+
+/// Runs one of a kind's capabilities as the caller, in their transaction: `key` makes a change happen
+/// once (a balance needs none). The result has `repeated` when the key had been used before.
+pub async fn call(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, op: &str, params: Value, key: Option<&str>) -> Result<Value> {
+    let mut inv = ferrum_kernel::capability::Invocation::new(format!("accounting.stored_value_kind.{op}"), op_input(kind, params));
+    if let Some(key) = key {
+        inv = inv.key(key);
+    }
+    let receipt = k.invoke_tx(ctx, tx, &inv).await?;
+    let mut out = receipt.result;
+    if let Value::Object(m) = &mut out {
+        m.insert("repeated".into(), json!(receipt.repeated));
+    }
+    Ok(out)
+}
+
+/// An account's balance by its code (and PIN): `{account, balance, holds, state, expires_on}`.
+pub async fn balance(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, code: &str, pin: Option<&str>) -> Result<Value> {
+    call(k, ctx, tx, kind, "balance", json!({"code": code, "pin": pin}), None).await
+}
+
+/// Value issued by hand: `{account, entry, code (when one was made), balance}`.
+#[allow(clippy::too_many_arguments)]
+pub async fn issue(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind: Uuid,
+    amount: Decimal,
+    reason: &str,
+    holder: Option<Uuid>,
+    code: Option<&str>,
+    pin: Option<&str>,
+    key: &str,
+) -> Result<Value> {
+    let params = json!({"amount": amount.normalize().to_string(), "reason": reason, "holder": holder, "code": code, "pin": pin});
+    call(k, ctx, tx, kind, "issue", params, Some(key)).await
+}
+
+/// A sales invoice paid from the account a code names: `{payment, entry, amount, balance}`.
+#[allow(clippy::too_many_arguments)]
+pub async fn redeem(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind: Uuid,
+    code: &str,
+    pin: Option<&str>,
+    invoice: Uuid,
+    amount: Option<Decimal>,
+    units: Option<Decimal>,
+    key: &str,
+) -> Result<Value> {
+    let params = json!({"code": code, "pin": pin, "invoice": invoice, "amount": amount.map(|a| a.normalize().to_string()), "units": units.map(|u| u.normalize().to_string())});
+    call(k, ctx, tx, kind, "redeem", params, Some(key)).await
+}
+
+/// A credit note's credit put onto an account, or onto new store credit: `{payment, account, entry, code, balance}`.
+#[allow(clippy::too_many_arguments)]
+pub async fn refund(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind: Uuid,
+    credit_note: Uuid,
+    code: Option<&str>,
+    pin: Option<&str>,
+    amount: Option<Decimal>,
+    key: &str,
+) -> Result<Value> {
+    let params = json!({"credit_note": credit_note, "code": code, "pin": pin, "amount": amount.map(|a| a.normalize().to_string())});
+    call(k, ctx, tx, kind, "refund", params, Some(key)).await
+}
+
+/// Value moved to another account of the kind, or to a new one: `{account, to_account, entry, code, balance}`.
+#[allow(clippy::too_many_arguments)]
+pub async fn transfer(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind: Uuid,
+    code: &str,
+    pin: Option<&str>,
+    to_code: Option<&str>,
+    holder: Option<Uuid>,
+    amount: Option<Decimal>,
+    key: &str,
+) -> Result<Value> {
+    let params = json!({"code": code, "pin": pin, "to_code": to_code, "holder": holder, "amount": amount.map(|a| a.normalize().to_string())});
+    call(k, ctx, tx, kind, "transfer", params, Some(key)).await
+}
+
+/// Undoes what an `entry` from issue, redeem, refund or transfer did: `{reversed}`.
+pub async fn reverse(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, entry: Uuid, key: &str) -> Result<Value> {
+    call(k, ctx, tx, kind, "reverse", json!({"entry": entry}), Some(key)).await
+}
+
+async fn current(ctx: &Ctx, tx: &mut Tx, account: Uuid) -> Result<Account> {
+    let sql = format!("select {COLUMNS} from {} where tenant_id = $1 and id = $2", table(ctx, ACCOUNT)?);
+    sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(ctx.tenant)
+        .bind(account)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| Error::NotFound("stored value account".into()))
+}
+
+/// The operation a document's stored value entry of `entry_type` belongs to.
+async fn op_of(ctx: &Ctx, tx: &mut Tx, source: Uuid, entry_type: &str) -> Result<(Uuid, Uuid)> {
+    sqlx::query_as(
+        "select op_id, account_id from stored_value_entry where tenant_id = $1 and source_id = $2 and entry_type = $3 order by created_at desc limit 1",
+    )
+    .bind(ctx.tenant)
+    .bind(source)
+    .bind(entry_type)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| Error::internal("the payment made no stored value entry"))
+}
+
+/// A payment entry made and submitted as the caller, so their rights apply.
+async fn payment(k: &Kernel, ctx: &Ctx, tx: &mut Tx, values: Value) -> Result<Uuid> {
+    let doc = k.insert_tx(ctx, tx, "PaymentEntry", serde_json::from_value(values).map_err(Error::internal)?).await?;
+    let pid = id(&doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    k.submit_tx(ctx, tx, "PaymentEntry", pid, None).await?;
+    Ok(pid)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn redeem_value(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind_id: Uuid,
+    code: &str,
+    pin: Option<&str>,
+    invoice: Uuid,
+    amount: Option<Decimal>,
+    units: Option<Decimal>,
+) -> Result<Value> {
+    let found = find(k, ctx, tx, Some(kind_id), code, pin).await?;
+    let acc = current(ctx, tx, found).await?;
+    let kd = kind(k, ctx, tx, kind_id).await?;
+    let inv = k.get_tx(ctx, tx, "SalesInvoice", invoice, false).await?;
+    let outstanding = d(&inv, "outstanding_amount");
+    let (paid, units) = if kd.units {
+        let units = match units {
+            Some(u) => u,
+            None => acc.balance().min(covered(ctx, tx, k, &kd, invoice).await?),
+        };
+        // What the units pay: the price, with its share of tax, of that many of the covered lines.
+        let lines: Vec<Doc> = rows(&inv, "items").into_iter().filter(|r| id(r, "item").is_some_and(|i| kd.items.contains(&i))).collect();
+        let qty: Decimal = lines.iter().map(crate::util::stock_qty).sum();
+        let net: Decimal = lines.iter().map(|r| d(r, "net_amount")).sum();
+        let gross = if d(&inv, "net_total").is_zero() { Decimal::ONE } else { d(&inv, "rounded_total") / d(&inv, "net_total") };
+        let priced = if qty.is_zero() { Decimal::ZERO } else { round(net / qty * units * gross, 2) };
+        (amount.unwrap_or(priced).min(outstanding), Some(units))
+    } else {
+        (amount.unwrap_or(outstanding.min(acc.balance())), None)
+    };
+    if paid <= Decimal::ZERO {
+        return Err(Error::invalid("nothing on the invoice is left to pay"));
+    }
+    let pid = payment(
+        k,
+        ctx,
+        tx,
+        json!({"company": kd.company, "payment_type": "Receive", "customer": inv.get("customer"), "paid_amount": paid.to_string(),
+               "references": [{"invoice": invoice, "allocated_amount": paid.to_string()}], "stored_value_account": acc.id,
+               "stored_value_units": units.map(|u| u.to_string())}),
+    )
+    .await?;
+    let (op, _) = op_of(ctx, tx, pid, "redeem").await?;
+    let after = current(ctx, tx, acc.id).await?;
+    Ok(json!({"payment": pid, "entry": op, "amount": money(paid), "balance": money(after.balance())}))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn refund_value(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind_id: Uuid,
+    note: Uuid,
+    code: Option<&str>,
+    pin: Option<&str>,
+    amount: Option<Decimal>,
+    units: Option<Decimal>,
+) -> Result<Value> {
+    let kd = kind(k, ctx, tx, kind_id).await?;
+    let cn = k.get_tx(ctx, tx, "SalesInvoice", note, false).await?;
+    let credit = -d(&cn, "outstanding_amount");
+    if !b(&cn, "is_return") || credit <= Decimal::ZERO {
+        return Err(Error::field("credit_note", "nothing is left to give back on this note"));
+    }
+    let paid = amount.unwrap_or(credit);
+    let mut values = json!({"company": kd.company, "payment_type": "Pay", "is_refund": true, "customer": cn.get("customer"), "paid_amount": paid.to_string(),
+        "references": [{"invoice": note, "allocated_amount": paid.to_string()}], "stored_value_units": units.map(|u| u.to_string())});
+    // A known card is loaded without its PIN (value is given, not taken); any other code is a new card's.
+    let existing = match code {
+        Some(c) => lookup(k, ctx, tx, Some(kind_id), &secret(ctx.tenant, c, None)?, false).await?,
+        None => None,
+    };
+    let made = match (existing, code) {
+        (Some(acc), _) => {
+            values["stored_value_account"] = json!(acc);
+            None
+        }
+        (None, given) => {
+            let code = given.map(str::to_string).unwrap_or_else(new_code);
+            values["stored_value_kind"] = json!(kind_id);
+            values["stored_value_code"] = json!(code);
+            values["stored_value_pin"] = json!(pin);
+            given.is_none().then_some(code)
+        }
+    };
+    let pid = payment(k, ctx, tx, values).await?;
+    let (op, account) = op_of(ctx, tx, pid, "refund").await?;
+    let after = current(ctx, tx, account).await?;
+    Ok(json!({"payment": pid, "account": account, "entry": op, "code": made, "balance": money(after.balance())}))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transfer_value(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind_id: Uuid,
+    code: &str,
+    pin: Option<&str>,
+    to_code: Option<&str>,
+    holder: Option<Uuid>,
+    amount: Option<Decimal>,
+) -> Result<Value> {
+    let kd = kind(k, ctx, tx, kind_id).await?;
+    if !kd.transfer {
+        return Err(Error::invalid(format!("{} cannot be transferred", kd.name)));
+    }
+    let from = find(k, ctx, tx, Some(kind_id), code, pin).await?;
+    let on = chrono::Utc::now().date_naive();
+    let (to, made) = match to_code {
+        Some(c) => match lookup(k, ctx, tx, Some(kind_id), &secret(ctx.tenant, c, None)?, false).await? {
+            Some(a) => (a, None),
+            None => {
+                missed(k, ctx, None).await?;
+                return Err(Error::field("to_code", "no account of this kind has this code"));
+            }
+        },
+        None => {
+            let (acc, made) = open(k, ctx, tx, &kd, holder, None, on).await?;
+            (acc.id, made)
+        }
+    };
+    if to == from {
+        return Err(Error::field("to_code", "it is the same account"));
+    }
+    // Both locked, always in the same order, so two transfers between them cannot wait on each other.
+    let (first, second) = if from < to { (from, to) } else { (to, from) };
+    let (a, b2) = (lock(ctx, tx, first).await?, lock(ctx, tx, second).await?);
+    let (mut src, mut dst) = if first == from { (a, b2) } else { (b2, a) };
+    src.usable(&kd, on)?;
+    dst.usable(&kd, on)?;
+    let amount = amount.unwrap_or(src.balance());
+    if amount <= Decimal::ZERO || amount > src.balance() {
+        return Err(src.short(&kd, amount));
+    }
+    if !kd.partial && amount != src.balance() {
+        return Err(Error::invalid(format!("{} is used whole: transfer all {} of it", src.label(&kd), src.balance().normalize())));
+    }
+    if let Some(max) = kd.max_balance.filter(|m| dst.balance() + amount > *m) {
+        return Err(Error::invalid(format!("{}: an account holds at most {}", kd.name, max.normalize())));
+    }
+    let co = company(k, ctx, tx, kd.company).await?;
+    let value = src.release(amount, co.precision);
+    let op = Uuid::now_v7();
+    // One liability account on both sides: nothing to post.
+    let out = Move {
+        entry_type: "transfer",
+        amount: -amount,
+        value: -value,
+        on: Some(on),
+        source: Some(("StoredValueKind".into(), kind_id)),
+        against: Some(dst.id),
+        ..Default::default()
+    };
+    record(k, ctx, tx, &mut src, &kd, op, out).await?;
+    let inn = Move {
+        entry_type: "transfer",
+        amount,
+        value,
+        on: Some(on),
+        source: Some(("StoredValueKind".into(), kind_id)),
+        against: Some(src.id),
+        ..Default::default()
+    };
+    record(k, ctx, tx, &mut dst, &kd, op, inn).await?;
+    Ok(json!({"account": src.id, "to_account": dst.id, "entry": op, "code": made, "balance": money(src.balance())}))
+}
+
+/// Undoes an operation: a payment it made is cancelled (which takes its entries back); one done by
+/// hand or a transfer is reversed entry by entry, with its own posting. A sale's loads go with the
+/// sale, and an expiry is not undone.
+async fn reverse_op(k: &Kernel, ctx: &Ctx, tx: &mut Tx, op: Uuid) -> Result<Value> {
+    let found: Vec<(Option<String>, Option<Uuid>, String, Uuid)> = sqlx::query_as(
+        "select source_entity, source_id, entry_type, account_id from stored_value_entry where tenant_id = $1 and op_id = $2 order by created_at",
+    )
+    .bind(ctx.tenant)
+    .bind(op)
+    .fetch_all(&mut **tx)
+    .await?;
+    let Some((entity, source, entry_type, account)) = found.first().cloned() else { return Err(Error::NotFound("stored value entry".into())) };
+    match (entity.as_deref(), entry_type.as_str()) {
+        (_, "reverse") => return Err(Error::invalid("this entry is itself a reversal")),
+        (_, "expire") => return Err(Error::invalid("an expiry is not undone: adjust the account instead")),
+        (Some("SalesInvoice"), _) => return Err(Error::invalid("value loaded by a sale goes back when the sale is cancelled")),
+        (Some("PaymentEntry"), _) => {
+            k.cancel_tx(ctx, tx, "PaymentEntry", source.unwrap_or_default(), None).await?;
+        }
+        _ => {
+            let acc = current(ctx, tx, account).await?;
+            let co = company(k, ctx, tx, acc.company).await?;
+            let on = chrono::Utc::now().date_naive();
+            ledger::reverse(tx, ctx, SOURCE, op, on, co.precision).await?;
+            if reverse_entries(k, ctx, tx, SOURCE, op, on, "this operation").await? == 0 {
+                return Err(Error::invalid("it was already reversed"));
+            }
+        }
+    }
+    Ok(json!({"reversed": op}))
+}
+
+/// What is left paid out in money from a bank or cash account, where the kind allows it.
+pub(crate) async fn cash_out(k: &Kernel, ctx: &Ctx, tx: &mut Tx, account: Uuid, amount: Option<Decimal>, paid_from: Uuid) -> Result<Value> {
+    let mut acc = lock(ctx, tx, account).await?;
+    let kd = kind(k, ctx, tx, acc.kind).await?;
+    if !kd.cash_out || kd.units {
+        return Err(Error::invalid(format!("{} is not cashed out", kd.name)));
+    }
+    let on = chrono::Utc::now().date_naive();
+    acc.usable(&kd, on)?;
+    let amount = amount.unwrap_or(acc.balance());
+    if amount <= Decimal::ZERO || amount > acc.balance() {
+        return Err(acc.short(&kd, amount));
+    }
+    let bank = get(k, ctx, tx, "Account", paid_from).await?;
+    if id(&bank, "company") != Some(kd.company) || !matches!(s(&bank, "account_type"), Some("Bank" | "Cash")) {
+        return Err(Error::field("paid_from", "choose a Bank or Cash account of the kind's company"));
+    }
+    let co = company(k, ctx, tx, kd.company).await?;
+    let released = acc.release(amount, co.precision);
+    let op = Uuid::now_v7();
+    let mut lines = vec![
+        Line::new(kd.liability, released, &co.currency_code).remarks("Cashed out"),
+        Line::new(paid_from, -amount, &co.currency_code).remarks("Cashed out"),
+    ];
+    if amount != released {
+        // Value already recognised as expected unused comes back out of income.
+        lines.push(Line::new(kd.income()?, amount - released, &co.currency_code).remarks("Cashed out"));
+    }
+    let journal = post(ctx, tx, &co, on, op, &format!("{} cashed out", acc.label(&kd)), lines).await?;
+    let m = Move {
+        entry_type: "redeem",
+        amount: -amount,
+        value: -released,
+        on: Some(on),
+        source: Some((ACCOUNT.into(), acc.id)),
+        journal,
+        remarks: Some("Cashed out".into()),
+        ..Default::default()
+    };
+    record(k, ctx, tx, &mut acc, &kd, op, m).await?;
+    Ok(json!({"account": acc.id, "entry": op, "balance": money(acc.balance())}))
+}
+
 // ───────────────────────────── the check ─────────────────────────────
 
 /// Every way the books and the accounts disagree: an account whose balance or value is not the sum
@@ -1205,10 +1564,10 @@ impl DocHook for KindHook {
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let kind_id = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let (k, ctx) = (hc.kernel, hc.ctx);
+        let p = |n: &str| param(params, n);
         let out = match name {
             "balance" => {
-                let code = param(params, "code").ok_or_else(|| Error::field("code", "is required"))?;
-                let acc = find(k, ctx, hc.tx, Some(kind_id), code, param(params, "pin")).await?;
+                let acc = find(k, ctx, hc.tx, Some(kind_id), p("code").ok_or_else(|| Error::field("code", "is required"))?, p("pin")).await?;
                 let sql = format!("select {COLUMNS} from {} where tenant_id = $1 and id = $2", table(ctx, ACCOUNT)?);
                 let a: Account = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(ctx.tenant).bind(acc).fetch_one(&mut **hc.tx).await?;
                 json!({"account": a.id, "balance": money(a.balance()), "holds": if s(doc, "holds") == Some("Units") { "Units" } else { "Money" },
@@ -1216,10 +1575,23 @@ impl DocHook for KindHook {
             }
             "issue" => {
                 let amount = amount_param(params, "amount")?.ok_or_else(|| Error::field("amount", "is required"))?;
-                let holder = uuid_param(params, "holder")?;
-                issue(k, ctx, hc.tx, kind_id, amount, param(params, "reason").unwrap_or_default(), holder, param(params, "code"), param(params, "pin"), None)
-                    .await?
+                issue_value(k, ctx, hc.tx, kind_id, amount, p("reason").unwrap_or_default(), uuid_param(params, "holder")?, p("code"), p("pin")).await?
             }
+            "redeem" => {
+                let code = p("code").ok_or_else(|| Error::field("code", "is required"))?;
+                let invoice = uuid_param(params, "invoice")?.ok_or_else(|| Error::field("invoice", "is required"))?;
+                redeem_value(k, ctx, hc.tx, kind_id, code, p("pin"), invoice, amount_param(params, "amount")?, amount_param(params, "units")?).await?
+            }
+            "refund" => {
+                let note = uuid_param(params, "credit_note")?.ok_or_else(|| Error::field("credit_note", "is required"))?;
+                refund_value(k, ctx, hc.tx, kind_id, note, p("code"), p("pin"), amount_param(params, "amount")?, amount_param(params, "units")?).await?
+            }
+            "transfer" => {
+                let code = p("code").ok_or_else(|| Error::field("code", "is required"))?;
+                let holder = uuid_param(params, "holder")?;
+                transfer_value(k, ctx, hc.tx, kind_id, code, p("pin"), p("to_code"), holder, amount_param(params, "amount")?).await?
+            }
+            "reverse" => reverse_op(k, ctx, hc.tx, uuid_param(params, "entry")?.ok_or_else(|| Error::field("entry", "is required"))?).await?,
             _ => return Ok(None),
         };
         Ok(Some(out))
@@ -1261,6 +1633,10 @@ impl DocHook for AccountHook {
                 v.insert("pin_hash".into(), json!(sec.pin_hash));
                 k.set_values_tx(&sys(ctx), hc.tx, ACCOUNT, account, v).await?;
                 json!({"account": account, "code": code})
+            }
+            "cash_out" => {
+                let from = uuid_param(params, "paid_from")?.ok_or_else(|| Error::field("paid_from", "is required"))?;
+                cash_out(k, ctx, hc.tx, account, amount_param(params, "amount")?, from).await?
             }
             "adjust" => {
                 let amount = amount_param(params, "amount")?.ok_or_else(|| Error::field("amount", "is required"))?;
