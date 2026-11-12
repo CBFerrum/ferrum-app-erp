@@ -197,6 +197,7 @@
     - {name: round_to_unit, type: check, label: Round to Whole Units, description: "Each amount withheld to a whole unit of the company's currency; to its smallest unit when not ticked"}
     - {name: rates, type: table, of: WithholdingRate, required: true}
     - {name: accounts, type: table, of: WithholdingAccount, label: Accounts, description: "One per company that withholds in this category"}
+    - {name: account_number, type: data, label: Account Number, description: "For a company without a row above: its account with this number in its chart"}
     - {name: description, type: text, description: "The law or section it comes from"}
   list: {columns: [category_name, applies, base], sort: category_name asc}
 

@@ -274,4 +274,16 @@ async fn scenario() {
     assert_eq!(total, n("550"));
     assert_eq!(dec(&report["totals"]["amount"]), n("550"));
     assert!(rows.iter().all(|r| r["voucher_id"].is_string() && r["category"].is_string() && r["party"].is_string()), "{rows:?}");
+
+    // ───────────── a seeded category: no row for the company, its account found by number ─────────────
+    let seeded = uid(&t
+        .insert(
+            "WithholdingCategory",
+            json!({"category_name": "Seeded", "applies": "On Bill", "account_number": "2132", "rates": [{"valid_from": from, "rate": "10"}]}),
+        )
+        .await)
+    .to_string();
+    let s3 = uid(&t.insert("Supplier", json!({"supplier_name": "Seeded Co", "withholding_category": seeded})).await).to_string();
+    let b = t.post("PurchaseInvoice", bill(&s3, "100")).await;
+    assert_eq!(t.posted(uid(&b)).await.get("TDS Payable").copied(), Some(n("-10")));
 }
