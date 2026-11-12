@@ -223,6 +223,10 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
         return Err(Error::invalid(format!("nothing on {number} changes: give a line's new quantity or price, a line to add, or a new date")));
     }
     set(&mut new, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
+    if side == Side::Selling {
+        // Its promotions are worked out again on what it now has.
+        set(&mut new, crate::promotion::REPRICE, true);
+    }
     let credit = if side == Side::Selling { credit::before(hc, doc, false).await? } else { None };
 
     // Judged as at submission, by every app's hooks.
@@ -271,6 +275,9 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
         crate::reservation::refresh_pairs(hc.tx, hc.ctx.tenant, company, gone).await?;
     }
     let stored = hc.kernel.get_tx(&sctx, hc.tx, n.entity, oid, false).await?;
+    if side == Side::Selling {
+        crate::promotion::recount(hc, doc, &stored).await?;
+    }
     for h in &hooks {
         h.after_save(hc, &stored, Some(doc)).await?;
     }

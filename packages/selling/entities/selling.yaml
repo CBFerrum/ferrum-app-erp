@@ -40,6 +40,8 @@
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
     - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
+    - {name: promotion_returned, type: json, hidden: true, read_only: true, no_copy: true, label: Promotions Given Back,
+       description: "What credit notes gave back of the promotions on this line so far: the quantity and the amount per promotion, so the last part returned takes exactly what is left"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
@@ -215,6 +217,8 @@
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
     - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
+    - {name: promotion_returned, type: json, hidden: true, read_only: true, no_copy: true, label: Promotions Given Back,
+       description: "What credit notes gave back of the promotions on this line so far: the quantity and the amount per promotion, so the last part returned takes exactly what is left"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
