@@ -353,4 +353,103 @@ async fn scenario() {
     assert_eq!(t.account(a4).await, (n("10"), n("900"), "Active".into()));
     assert_eq!(t.get("StoredValueAccount", a4).await["holder"], json!(customer.to_string()));
     t.agrees().await;
+
+    // ───────────── 4. redeeming as a payment ─────────────
+    let bill = |who: &Value, item: &Value, qty: &str| json!({"company": c, "customer": who, "items": [{"item": item, "qty": qty}]});
+    let pay = |who: &Value, inv: &Doc, amount: &str, more: Value| {
+        let mut v = obj(json!({"company": c, "payment_type": "Receive", "customer": who, "paid_amount": amount,
+            "references": [{"invoice": inv["id"], "allocated_amount": amount}]}));
+        v.extend(obj(more));
+        Value::Object(v)
+    };
+    // In part, by code: what is left stays on the card, and the liability takes the bank's place.
+    let i1 = t.post("SalesInvoice", bill(&walk_in, &work, "3")).await;
+    let p1 = t.post("PaymentEntry", pay(&walk_in, &i1, "300", json!({"stored_value_code": "GIFT-0000-0000-0001"}))).await;
+    assert_eq!((p1["stored_value_account"].clone(), p1["stored_value_code"].as_str()), (json!(a3.to_string()), Some("••••0001")));
+    assert_eq!(t.posted(uid(&p1)).await, map(&[("Gift Cards", "300"), ("Debtors", "-300")]));
+    assert_eq!(t.account(a3).await, (n("150"), n("150"), "Active".into()));
+    assert_eq!(dec(&t.get("SalesInvoice", uid(&i1)).await["outstanding_amount"]), n("0"));
+    // Two tills take from one card at once: one wins, the other is told what is left.
+    let (i2, i3) = (t.post("SalesInvoice", bill(&walk_in, &work, "3")).await, t.post("SalesInvoice", bill(&walk_in, &work, "3")).await);
+    let d2 = t.insert("PaymentEntry", pay(&walk_in, &i2, "300", json!({"stored_value_account": a1.to_string()}))).await;
+    let d3 = t.insert("PaymentEntry", pay(&walk_in, &i3, "300", json!({"stored_value_account": a1.to_string()}))).await;
+    let (r2, r3) = tokio::join!(t.k.submit(&t.ctx, "PaymentEntry", uid(&d2), None), t.k.submit(&t.ctx, "PaymentEntry", uid(&d3), None));
+    let (won, lost) = match (r2, r3) {
+        (Ok(w), Err(l)) | (Err(l), Ok(w)) => (w, l),
+        other => panic!("exactly one wins: {other:?}"),
+    };
+    assert!(lost.to_string().contains("holds 100"), "{lost}");
+    assert_eq!(t.account(a1).await, (n("100"), n("100"), "Active".into()));
+    // Cancelling the payment puts the value back.
+    t.cancel("PaymentEntry", uid(&won)).await.unwrap();
+    assert_eq!(t.account(a1).await, (n("400"), n("400"), "Active".into()));
+    // Units pay for their items' lines, at what they were bought for: 90 a class, priced at 100.
+    let i4 = t.post("SalesInvoice", bill(&json!(customer.to_string()), &yoga, "2")).await;
+    let p4 =
+        t.post("PaymentEntry", pay(&json!(customer.to_string()), &i4, "200", json!({"stored_value_account": a4.to_string(), "stored_value_units": "2"}))).await;
+    assert_eq!(t.posted(uid(&p4)).await, map(&[("Prepaid Packages", "180"), ("Other Income", "20"), ("Debtors", "-200")]));
+    assert_eq!(t.account(a4).await, (n("8"), n("720"), "Active".into()));
+    let i5 = t.post("SalesInvoice", bill(&json!(customer.to_string()), &yoga, "1")).await;
+    let e =
+        t.k.insert(
+            &t.ctx,
+            "PaymentEntry",
+            obj(pay(&json!(customer.to_string()), &i5, "100", json!({"stored_value_account": a4.to_string(), "stored_value_units": "2"}))),
+        )
+        .await;
+    assert!(e.unwrap_err().to_string().contains("1 of Classes"), "units pay only the lines of their items");
+    // A refund of what a card paid goes back onto it.
+    let cn = t
+        .post("SalesInvoice", json!({"company": c, "customer": walk_in, "is_return": true, "return_against": i1["id"], "items": [{"item": work, "qty": "-3"}]}))
+        .await;
+    let refund = t.k.run_action(&t.ctx, "SalesInvoice", uid(&cn), "make_refund", json!({})).await.unwrap();
+    let rf = t.get("PaymentEntry", vid(&refund["id"])).await;
+    assert_eq!(rf["stored_value_account"], json!(a3.to_string()));
+    let rf = t.submit("PaymentEntry", uid(&rf)).await;
+    assert_eq!(t.posted(uid(&rf)).await, map(&[("Debtors", "300"), ("Gift Cards", "-300")]));
+    assert_eq!(t.account(a3).await, (n("450"), n("450"), "Active".into()));
+    // A return without its receipt, refunded onto new store credit, then spent on an exchange.
+    let exchange =
+        t.insert("StoredValueKind", json!({"kind_name": "Exchange Credit", "company": c, "held_by": "Customer", "liability_account": liability})).await["id"]
+            .clone();
+    let back = t
+        .post(
+            "SalesInvoice",
+            json!({"company": c, "customer": walk_in, "is_return": true, "return_reason": "no receipt", "items": [{"item": work, "qty": "-1"}]}),
+        )
+        .await;
+    let refund = t.k.run_action(&t.ctx, "SalesInvoice", uid(&back), "make_refund", json!({"store_credit": exchange})).await.unwrap();
+    let rf = t.submit("PaymentEntry", vid(&refund["id"])).await;
+    let a5 = t.account_of(uid(&rf)).await;
+    assert_eq!(t.account(a5).await, (n("100"), n("100"), "Active".into()));
+    assert_eq!(t.get("StoredValueAccount", a5).await["holder"], walk_in);
+    let swap = t.post("SalesInvoice", bill(&walk_in, &work, "1.5")).await;
+    let paid = t.post("PaymentEntry", pay(&walk_in, &swap, "100", json!({"stored_value_account": a5.to_string()}))).await;
+    assert_eq!(t.posted(uid(&paid)).await, map(&[("Gift Cards", "100"), ("Debtors", "-100")]));
+    assert_eq!(
+        (t.account(a5).await.2, dec(&t.get("SalesInvoice", uid(&swap)).await["outstanding_amount"])),
+        ("Used Up".into(), n("50")),
+        "the difference is paid as usual"
+    );
+    // Unused value recognised over time: 10% expected unused, recognised with each use, taken back if used after all.
+    let promo = t
+        .insert(
+            "StoredValueKind",
+            json!({"kind_name": "Promo Card", "company": c, "liability_account": liability, "adjustment_account": goodwill,
+            "income_account": income, "on_expiry": "Income Over Time", "breakage_percent": "10"}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a6 = vid(&t.issue(&promo, "100", None, None, None, None).await.unwrap()["account"]);
+    let i6 = t.post("SalesInvoice", bill(&walk_in, &work, "0.45")).await;
+    let p6 = t.post("PaymentEntry", pay(&walk_in, &i6, "45", json!({"stored_value_account": a6.to_string()}))).await;
+    assert_eq!(t.posted(uid(&p6)).await, map(&[("Gift Cards", "50"), ("Other Income", "-5"), ("Debtors", "-45")]));
+    assert_eq!(t.account(a6).await, (n("55"), n("50"), "Active".into()));
+    let i7 = t.post("SalesInvoice", bill(&walk_in, &work, "0.55")).await;
+    let p7 = t.post("PaymentEntry", pay(&walk_in, &i7, "55", json!({"stored_value_account": a6.to_string()}))).await;
+    assert_eq!(t.posted(uid(&p7)).await, map(&[("Gift Cards", "50"), ("Other Income", "5"), ("Debtors", "-55")]), "all of it used: the share comes back");
+    assert_eq!(t.account(a6).await, (n("0"), n("0"), "Used Up".into()));
+    t.agrees().await;
 }
