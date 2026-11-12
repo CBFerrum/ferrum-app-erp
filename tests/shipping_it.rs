@@ -151,6 +151,11 @@ async fn scenario() {
     let labels = String::from_utf8(labels.bytes).unwrap();
     assert!(labels.contains("1 Example Street") && labels.contains("<svg") && labels.contains("1 / 1"), "{labels}");
 
+    // The upkeep tracks a labelled shipment whose connection tracks every so many hours (6 by default), once.
+    assert_eq!(ferrum_app_erp::shipping::upkeep(&t.k, &t.ctx, 100).await.expect("the upkeep's tracking query"), 1);
+    assert_eq!(t.get("CarrierShipment", sid).await["status"], "In Transit");
+    assert_eq!(ferrum_app_erp::shipping::upkeep(&t.k, &t.ctx, 100).await.unwrap(), 0, "tracked a moment ago: not due again");
+
     // The invoice made from the delivery charges the label once.
     let inv = t.action("DeliveryNote", uid(&dn), "make_sales_invoice", json!({})).await.expect("an invoice");
     let inv = t.get("SalesInvoice", inv["id"].as_str().unwrap().parse().unwrap()).await;
