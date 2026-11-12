@@ -167,3 +167,45 @@ impl T {
         rows
     }
 }
+
+/// Every warning or error the process logs, kept: a test that says "nothing was logged" reads it. Install once
+/// with [`Warnings::install`] in a test binary that runs one scenario.
+#[derive(Clone, Default)]
+pub struct Warnings(pub Arc<std::sync::Mutex<Vec<String>>>);
+
+struct Said(String);
+
+impl tracing::field::Visit for Said {
+    fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+        self.0.push_str(&format!(" {}={v:?}", f.name()));
+    }
+}
+
+impl tracing::Subscriber for Warnings {
+    fn enabled(&self, m: &tracing::Metadata<'_>) -> bool {
+        *m.level() <= tracing::Level::WARN
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+    fn event(&self, e: &tracing::Event<'_>) {
+        let mut said = Said(e.metadata().target().to_string());
+        e.record(&mut said);
+        self.0.lock().unwrap().push(said.0);
+    }
+}
+
+impl Warnings {
+    pub fn install() -> Warnings {
+        let w = Warnings::default();
+        tracing::subscriber::set_global_default(w.clone()).expect("no other subscriber");
+        w
+    }
+    pub fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
