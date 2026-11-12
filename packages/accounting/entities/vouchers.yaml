@@ -44,6 +44,9 @@
     - {name: auto_reverse, type: check, label: Reverse It, description: "An accrual or a prepayment: taken out again on its reversal day, when the invoice or payment it stood in for is booked"}
     - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", no_copy: true, description: "The day after, when empty"}
     - {name: reversed_on, type: date, read_only: true, no_copy: true, visible_if: "doc.auto_reverse"}
+    - {name: journal_template, type: link, to: JournalTemplate, read_only: true, no_copy: true, in_filter: true, label: Made From}
+    - {name: template_period, type: date, read_only: true, no_copy: true, label: For the Period Of}
+  unique: [[journal_template, template_period]]
   rules:
     - {name: balanced, check: "doc.total_debit == doc.total_credit", message: "Total debit must equal total credit", on: submit}
     - {name: not_empty, check: "doc.total_debit > 0.0", message: "The entry has no amounts", on: submit}
@@ -323,3 +326,29 @@
                 {name: bank_account, label: Into, type: link, to: Account, required: true}]}
   list: {columns: [number, posting_date, customer_name, invoice_number, amount, recovered_amount], sort: posting_date desc}
 
+# Recurring journals (FN-06, FN-07): a template's lines made into a journal entry every period.
+- name: JournalTemplate
+  label: Journal Template
+  kind: master
+  module: accounting
+  company_scoped: true
+  title_field: template_name
+  description: "A journal entry's lines kept to be made again: by hand from a copy, or every period by the upkeep from its start until its end date or its count, as a draft or submitted. Its next date says what is due; the journal entries made from it list what was made."
+  fields:
+    - {name: template_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: accounts, type: table, of: JournalEntryAccount, required: true, label: Lines}
+    - {name: remark, type: text, description: "The made entries' remark; the template's name when empty"}
+    - {name: repeat, type: check, in_list: true, label: Make It Every Period}
+    - {name: frequency, type: select, options: [Monthly, Quarterly, Half-yearly, Yearly], default: Monthly, visible_if: "doc.repeat"}
+    - {name: start_date, type: date, visible_if: "doc.repeat", required_if: "doc.repeat", description: "The first entry's day; later ones fall on the same day of their month (or its last day)"}
+    - {name: end_date, type: date, visible_if: "doc.repeat", description: "None after it; empty: no end"}
+    - {name: occurrences, type: int, min: 0, visible_if: "doc.repeat", label: How Many, description: "Stops after this many; empty: no limit"}
+    - {name: submit, type: check, visible_if: "doc.repeat", label: Submit Them, description: "Made submitted; left as drafts to check when not ticked"}
+    - {name: auto_reverse, type: check, label: Reverse Each, description: "An accrual: each entry made is taken out again the day after"}
+    - {name: next_date, type: date, read_only: true, no_copy: true, in_list: true, in_filter: true, label: Next Due}
+    - {name: last_made, type: date, read_only: true, no_copy: true}
+    - {name: made_count, type: int, read_only: true, no_copy: true, label: Made So Far}
+    - {name: disabled, type: check, in_filter: true}
+  unique: [[company, template_name]]
+  list: {columns: [template_name, frequency, next_date, made_count], sort: next_date asc}

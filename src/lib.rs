@@ -18,6 +18,7 @@ pub mod deferred;
 pub mod dimensions;
 pub mod flow;
 pub mod instruments;
+pub mod journal_template;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
@@ -70,6 +71,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
             .register("PaymentInstrument", Arc::new(instruments::InstrumentHook))
             .register("BadDebtWriteOff", Arc::new(bad_debt::WriteOffHook))
+            .register("JournalTemplate", Arc::new(journal_template::TemplateHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
@@ -136,6 +138,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
             Ok(_) => tx.commit().await?,
             Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
+        }
+        if let Err(e) = journal_template::upkeep(k, &ctx, today).await {
+            tracing::warn!(%tenant, "recurring journals: {e}");
         }
         if let Err(e) = accounting::upkeep(k, &ctx).await {
             tracing::warn!(%tenant, "journal entry reversals: {e}");
