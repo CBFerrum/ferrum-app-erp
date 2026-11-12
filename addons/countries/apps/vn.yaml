@@ -1,12 +1,12 @@
 # ERP's add-on for Vietnam: vAT at 10%, 8% and 5%, exports at 0%, and the 01/GTGT declaration for ERP in Vietnam. Ferrum localization.md.
 id: vn
 name: "Vietnam"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "VAT at 10%, 8% and 5%, exports at 0%, and the 01/GTGT declaration for ERP in Vietnam"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [vn]
