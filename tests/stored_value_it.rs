@@ -728,4 +728,55 @@ async fn scenario() {
         }
     }
     assert_eq!(rests, Vec::<String>::new(), "a card's code or PIN rests in these tables");
+    drop(tx);
+
+    // ───────────── 9. what 0.20.0 left behind is cleared, and nothing else ─────────────
+    let mut tx = run().await;
+    let issued = json!({"amount": "5", "reason": "x", "code": "OLD-LEAK-CODE-0001", "pin": "Pq-old-pin"});
+    ferrum_kernel::audit::record(&mut tx, &t.ctx, "StoredValueKind", gid, "action:issue", None, issued).await.unwrap();
+    ferrum_kernel::audit::record(
+        &mut tx,
+        &t.ctx,
+        "StoredValueKind",
+        gid,
+        "action:transfer",
+        None,
+        json!({"code": "OLD-LEAK-CODE-0001", "to_code": "OLD-LEAK-CODE-0002", "amount": null}),
+    )
+    .await
+    .unwrap();
+    ferrum_kernel::audit::record(&mut tx, &t.ctx, "StoredValueKind", gid, "action:reverse", None, json!({"entry": "kept-entry"})).await.unwrap();
+    ferrum_kernel::audit::record(&mut tx, &t.ctx, "Customer", customer, "action:other", None, json!({"pin": "Pq-another-app"})).await.unwrap();
+    sqlx::query(
+        "insert into logic_effect (tenant_id, environment, capability, effect_key, input_digest, version, capability_digest, result) \
+         values ($1, 'production', 'accounting.stored_value_kind.issue', 'old-0.20.0', 'd', 'v', 'c', '{\"account\": \"kept-account\", \"code\": \"OLD-MADE-CODE-0003\"}')",
+    )
+    .bind(tenant)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let clean_up = include_str!("../packages/accounting/sql/006_stored_value_logs_cleared.sql");
+    let mut tx = t.k.db.pool.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(clean_up.to_string())).execute(&mut *tx).await.unwrap();
+    sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();
+    let left: Vec<String> = sqlx::query_scalar(
+        "select diff::text from audit_event where tenant_id = $1 and diff::text ~ '(OLD-LEAK|Pq-old|OLD-MADE|kept-entry|Pq-another-app)' \
+         union all select result::text from logic_effect where tenant_id = $1 and result::text ~ '(OLD-MADE|kept-account)' order by 1",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(left.len(), 3, "the other parameters and other apps' events stay: {left:?}");
+    assert!(left.iter().all(|l| !l.contains("OLD-") && !l.contains("Pq-old")), "{left:?}");
+    let note: Value = sqlx::query_scalar(
+        "select redacted from audit_event where tenant_id = $1 and action = 'action:transfer' and diff ? 'to_code' order by id desc limit 1",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(note[0]["fields"], json!(["code", "to_code"]), "the redaction is recorded: {note}");
+    assert_eq!(ferrum_kernel::audit::verify_record(&mut tx, tenant, "StoredValueKind", gid).await.unwrap(), None, "the chain still holds");
 }
