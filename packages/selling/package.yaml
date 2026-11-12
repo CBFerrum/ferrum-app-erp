@@ -41,6 +41,8 @@ roles:
       - {entity: Uom, read: true}
       - {entity: TaxTemplate, read: true}
       - {entity: WithholdingCategory, read: true}
+      - {entity: StoredValueKind, read: true}
+      - {entity: StoredValueAccount, read: true}
       - {entity: TaxRate, read: true}
       - {entity: Project, read: true}
       - {entity: CostCenter, read: true}

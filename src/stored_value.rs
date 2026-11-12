@@ -241,7 +241,6 @@ impl Account {
         format!("{} {}", kind.name, masked(self.code_hint.as_deref().unwrap_or("")))
     }
     /// Refuses a use (taking value off, or loading it) unless it is active and in date.
-    #[allow(dead_code)] // read from sales and redemptions on
     fn usable(&self, kind: &Kind, on: NaiveDate) -> Result<()> {
         match self.state() {
             "Blocked" => return Err(Error::invalid(format!("{} is blocked", self.label(kind)))),
@@ -594,6 +593,257 @@ pub async fn adjust(k: &Kernel, ctx: &Ctx, tx: &mut Tx, account: Uuid, amount: D
     };
     record(k, ctx, tx, &mut acc, &kind, op, m).await?;
     Ok(json!({"account": acc.id, "entry": op, "balance": money(acc.balance())}))
+}
+
+// ───────────────────────────── selling it ─────────────────────────────
+
+/// Prices a sales line whose item sells stored value: it goes to the kind's liability instead of
+/// income, never deferred. Returns whether the line is left untaxed (tax charged when redeemed).
+pub(crate) async fn price_line(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    item: &Doc,
+    row: &mut Doc,
+    kinds: &mut std::collections::HashMap<Uuid, Kind>,
+) -> Result<bool> {
+    let Some(kid) = id(item, "stored_value_kind") else {
+        crate::util::set(row, "stored_value_kind", Value::Null);
+        return Ok(false);
+    };
+    if let std::collections::hash_map::Entry::Vacant(e) = kinds.entry(kid) {
+        e.insert(kind(k, ctx, tx, kid).await?);
+    }
+    let kd = &kinds[&kid];
+    crate::util::set(row, "stored_value_kind", kid.to_string());
+    crate::util::set(row, "income_account", kd.liability.to_string());
+    crate::util::set(row, "enable_deferred_revenue", false);
+    Ok(kd.tax_at_redemption)
+}
+
+/// A line's own rates when its tax is charged on redemption: nothing for each of the document's taxes.
+pub(crate) fn untaxed_rates(taxes: &[Doc]) -> Vec<Doc> {
+    taxes
+        .iter()
+        .filter_map(|t| {
+            let acc = s(t, "account")?;
+            serde_json::from_value(json!({"tax_account": acc, "rate": "0", "exemption_reason": "Stored value: taxed when it is redeemed"})).ok()
+        })
+        .collect()
+}
+
+/// A code typed on a line or a payment is replaced, before anything is stored, by its last four
+/// characters, and kept as a hash in `secret_field` (`hash:hint:pin hash`); a PIN is not kept.
+fn mask(ctx: &Ctx, row: &mut Doc, secret_field: &str, at: &str) -> Result<()> {
+    let typed_pin = s(row, "stored_value_pin").map(str::to_string);
+    match s(row, "stored_value_code").map(str::to_string) {
+        Some(code) if !code.starts_with('•') => {
+            let sec = secret(ctx.tenant, &code, typed_pin.as_deref())?;
+            crate::util::set(row, secret_field, format!("{}:{}:{}", sec.hash, sec.hint, sec.pin_hash.unwrap_or_default()));
+            crate::util::set(row, "stored_value_code", masked(&sec.hint));
+        }
+        Some(_) if typed_pin.is_some() => return Err(Error::field(at, "type the card's code again with its PIN")),
+        Some(_) => {}
+        None => crate::util::set(row, secret_field, Value::Null),
+    }
+    if row.contains_key("stored_value_pin") {
+        crate::util::set(row, "stored_value_pin", Value::Null);
+    }
+    Ok(())
+}
+
+fn kept_secret(row: &Doc, field: &str) -> Option<Secret> {
+    let mut parts = s(row, field)?.splitn(3, ':');
+    let (hash, hint, pin) = (parts.next()?, parts.next()?, parts.next().unwrap_or(""));
+    Some(Secret { hash: hash.into(), hint: hint.into(), pin_hash: (!pin.is_empty()).then(|| pin.to_string()) })
+}
+
+/// Hides the codes typed on a sales invoice's lines (before the draft is stored).
+pub(crate) fn mask_lines(ctx: &Ctx, doc: &mut Doc) -> Result<()> {
+    let mut items = rows(doc, "items");
+    if !items.iter().any(|r| r.contains_key("stored_value_code") || r.contains_key("stored_value_pin")) {
+        return Ok(());
+    }
+    for (i, r) in items.iter_mut().enumerate() {
+        mask(ctx, r, "stored_value_secret", &format!("items.{i}.stored_value_code"))?;
+    }
+    crate::util::set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
+    Ok(())
+}
+
+/// What one sales line loads: its booked value for money, its quantity times the item's units for units.
+async fn line_load(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kd: &Kind, row: &Doc, base: Decimal, i: usize) -> Result<Decimal> {
+    if !kd.units {
+        return Ok(base);
+    }
+    let per = match id(row, "item") {
+        Some(item) => d(&get(k, ctx, tx, "Item", item).await?, "stored_value_units"),
+        None => Decimal::ZERO,
+    };
+    if per <= Decimal::ZERO {
+        return Err(Error::field(
+            format!("items.{i}.item"),
+            format!("set the item's Units Loaded: how many {} one of it loads", kd.unit_name.as_deref().unwrap_or("units")),
+        ));
+    }
+    Ok(crate::util::stock_qty(row) * per)
+}
+
+/// A sales invoice's stored value lines are loadable: not on a return, of the invoice's company,
+/// onto an account that can take it, within the kind's limits.
+pub(crate) async fn check_invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    let bk = crate::pricing::breakup(doc);
+    for (i, (row, base)) in bk.lines.iter().enumerate() {
+        let Some(kid) = id(row, "stored_value_kind") else { continue };
+        let at = format!("items.{i}.item");
+        if b(doc, "is_return") || b(doc, "is_debit_note") {
+            return Err(Error::field(
+                at,
+                "stored value is not credited or charged on a note: take it off its account (cash out or adjust), or cancel the sale while it is unused",
+            ));
+        }
+        let kd = kind(hc.kernel, hc.ctx, hc.tx, kid).await?;
+        if Some(kd.company) != id(doc, "company") {
+            return Err(Error::field(at, format!("{} is another company's", kd.name)));
+        }
+        let amount = line_load(hc.kernel, hc.ctx, hc.tx, &kd, row, *base, i).await?;
+        match id(row, "stored_value_account") {
+            Some(acc) => {
+                let a = get(hc.kernel, hc.ctx, hc.tx, ACCOUNT, acc).await?;
+                if id(&a, "kind") != Some(kid) {
+                    return Err(Error::field(format!("items.{i}.stored_value_account"), format!("is not a {}", kd.name)));
+                }
+                if !kd.top_up {
+                    return Err(Error::field(format!("items.{i}.stored_value_account"), format!("{} cannot be topped up: sell a new one", kd.name)));
+                }
+                if matches!(s(&a, "state"), Some("Blocked" | "Expired")) {
+                    return Err(Error::field(format!("items.{i}.stored_value_account"), format!("is {}", s(&a, "state").unwrap_or_default().to_lowercase())));
+                }
+                kd.check_load(d(&a, "balance"), amount)?;
+            }
+            None => {
+                if kd.disabled {
+                    return Err(Error::field(at, format!("{} is disabled: nothing more is issued", kd.name)));
+                }
+                if s(row, "stored_value_code").is_some() && s(row, "stored_value_secret").is_none() {
+                    return Err(Error::field(format!("items.{i}.stored_value_code"), "type the card's code again"));
+                }
+                if kd.requires_pin && kept_secret(row, "stored_value_secret").is_some_and(|x| x.pin_hash.is_none()) {
+                    return Err(Error::field(format!("items.{i}.stored_value_pin"), format!("{} is used with a PIN", kd.name)));
+                }
+                kd.check_load(Decimal::ZERO, amount)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn journal_of(ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid) -> Result<Option<Uuid>> {
+    Ok(sqlx::query_scalar(
+        "select id from journal_entry where tenant_id = $1 and source_entity = $2 and source_id = $3 and reversal_of is null order by created_at limit 1",
+    )
+    .bind(ctx.tenant)
+    .bind(entity)
+    .bind(source)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// A submitted sales invoice opens or loads an account per stored value line, at what the line was
+/// booked at (its share of the document's discount included), tied to the invoice's posting.
+pub(crate) async fn invoice_submitted(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let on = crate::util::date(doc, "posting_date")?;
+    let bk = crate::pricing::breakup(doc);
+    let mut journal = None;
+    for (i, (row, base)) in bk.lines.iter().enumerate() {
+        let Some(kid) = id(row, "stored_value_kind") else { continue };
+        let (k, ctx) = (hc.kernel, hc.ctx);
+        if journal.is_none() {
+            journal = journal_of(ctx, hc.tx, "SalesInvoice", iid).await?;
+        }
+        let kd = kind(k, ctx, hc.tx, kid).await?;
+        let amount = line_load(k, ctx, hc.tx, &kd, row, *base, i).await?;
+        let (mut acc, entry_type) = match id(row, "stored_value_account") {
+            Some(a) => {
+                let acc = lock(ctx, hc.tx, a).await?;
+                acc.usable(&kd, on)?;
+                kd.check_load(acc.balance(), amount)?;
+                (acc, "top_up")
+            }
+            None => {
+                let holder = if kd.bearer { None } else { id(doc, "customer") };
+                (open(k, ctx, hc.tx, &kd, holder, kept_secret(row, "stored_value_secret"), on).await?.0, "issue")
+            }
+        };
+        let m = Move {
+            entry_type,
+            amount,
+            value: *base,
+            on: Some(on),
+            source: Some(("SalesInvoice".into(), iid)),
+            line: s(row, "id").map(str::to_string),
+            journal,
+            remarks: s(doc, "number").map(str::to_string),
+            ..Default::default()
+        };
+        record(k, ctx, hc.tx, &mut acc, &kd, Uuid::now_v7(), m).await?;
+    }
+    Ok(())
+}
+
+/// Entries a document made that are not yet reversed: (entry, account, amount, value).
+async fn live_entries(ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid) -> Result<Vec<(Uuid, Uuid, Decimal, Decimal)>> {
+    Ok(sqlx::query_as(
+        "select e.id, e.account_id, e.amount, e.value from stored_value_entry e where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 \
+         and e.entry_type <> 'reverse' and not exists (select 1 from stored_value_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id) order by e.created_at",
+    )
+    .bind(ctx.tenant)
+    .bind(entity)
+    .bind(source)
+    .fetch_all(&mut **tx)
+    .await?)
+}
+
+/// Takes back what a document did to its accounts, each entry by its own reversing entry tied to
+/// `journal` (the document's reversal). What was loaded and has been spent since cannot be taken
+/// back: the refusal says what is left.
+pub(crate) async fn reverse_entries(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, source: Uuid, on: NaiveDate, what: &str) -> Result<usize> {
+    let entries = live_entries(ctx, tx, entity, source).await?;
+    let journal: Option<Uuid> = sqlx::query_scalar(
+        "select r.id from journal_entry r join journal_entry e on e.tenant_id = r.tenant_id and e.id = r.reversal_of \
+         where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 order by r.created_at desc limit 1",
+    )
+    .bind(ctx.tenant)
+    .bind(entity)
+    .bind(source)
+    .fetch_optional(&mut **tx)
+    .await?;
+    for (entry, account, amount, value) in &entries {
+        let mut acc = lock(ctx, tx, *account).await?;
+        let kd = kind(k, ctx, tx, acc.kind).await?;
+        if acc.balance() < *amount {
+            return Err(Error::invalid(format!(
+                "{} was loaded with {} by {what} and has been used since: it holds {}. Value already spent cannot be taken back; leave {what} standing, and cash out or adjust what is left if it must go",
+                acc.label(&kd),
+                amount.normalize(),
+                acc.balance().normalize()
+            )));
+        }
+        let m = Move {
+            entry_type: "reverse",
+            amount: -*amount,
+            value: -*value,
+            on: Some(on),
+            source: Some((entity.to_string(), source)),
+            journal,
+            reversal_of: Some(*entry),
+            remarks: Some(format!("Reversal: {what} cancelled")),
+            ..Default::default()
+        };
+        record(k, ctx, tx, &mut acc, &kd, Uuid::now_v7(), m).await?;
+    }
+    Ok(entries.len())
 }
 
 // ───────────────────────────── the check ─────────────────────────────

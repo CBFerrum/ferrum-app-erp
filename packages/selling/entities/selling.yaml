@@ -228,6 +228,13 @@
     - {name: serial_no, type: text}
     - {name: item_tax_rates, type: json, read_only: true}
     - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
+    - {name: stored_value_kind, type: link, to: StoredValueKind, read_only: true, label: Stored Value, description: "Its item sells stored value of this kind"}
+    - {name: stored_value_account, type: link, to: StoredValueAccount, label: Top Up Account, no_copy: true, visible_if: "doc.stored_value_kind != null",
+       description: "An account to load; empty, the line opens a new one when the invoice is submitted"}
+    - {name: stored_value_code, type: data, label: Card Code, no_copy: true, visible_if: "doc.stored_value_kind != null && doc.stored_value_account == null",
+       description: "The new card's own code, typed or scanned; kept only as its last four characters. Empty: one is made, which the account's New Code shows"}
+    - {name: stored_value_pin, type: data, label: Card PIN, no_copy: true, visible_if: "doc.stored_value_kind != null && doc.stored_value_account == null", description: "Never kept as typed"}
+    - {name: stored_value_secret, type: data, read_only: true, hidden: true, no_copy: true}
 
 - name: SalesInvoice
   label: Sales Invoice
