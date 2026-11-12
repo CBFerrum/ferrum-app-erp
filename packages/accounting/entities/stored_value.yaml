@@ -1,0 +1,193 @@
+# Stored value (src/stored_value.rs): gift cards, store credit, prepaid packages. A kind says what
+# its accounts hold and every rule a business varies; an account is one card or credit, its balance
+# the sum of its own append-only ledger (stored_value_entry), each entry tied to the document that
+# caused it and to its posting. Nothing here names a country, a trade or a scheme.
+- name: StoredValueItem
+  label: Covered Item
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+
+- name: StoredValueKind
+  label: Stored Value Kind
+  kind: master
+  module: accounting
+  title_field: kind_name
+  company_scoped: true
+  description: "A kind of stored value a company issues, such as a gift card, store credit or a prepaid package: what it holds, the liability it sits in, and what may be done with it."
+  fields:
+    - {name: kind_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_list: true, in_filter: true}
+    - {name: holds, type: select, options: [Money, Units], required: true, default: Money, in_list: true,
+       description: "Money: an amount in the company's currency. Units: a count of what it pays for, such as ten sessions or five washes"}
+    - {name: currency, type: link, to: Currency, fetch_from: company.default_currency, read_only: true, visible_if: "doc.holds == 'Money'"}
+    - {name: unit_name, type: data, visible_if: "doc.holds == 'Units'", required_if: "doc.holds == 'Units'", description: "What one unit is: session, wash, class"}
+    - {name: items, type: table, of: StoredValueItem, label: Items It Pays For, visible_if: "doc.holds == 'Units'",
+       description: "Lines of these items are what its units pay for, one unit per item in its stock unit"}
+    - {name: held_by, type: select, options: [Bearer, Customer], required: true, default: Bearer, label: Held By,
+       description: "Bearer: whoever has its code, and no one's name is kept. Customer: the customer of the invoice that sells it"}
+    - {name: liability_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Liability Account,
+       description: "What is owed on its accounts. Keep it for stored value alone: its balance is checked against the accounts' values"}
+    - {name: income_account, type: link, to: Account, link_filters: {is_group: false}, label: Income Account,
+       description: "Value that expires or is recognised over time, and, for units, the difference between what they were bought for and the lines they pay"}
+    - {name: adjustment_account, type: link, to: Account, link_filters: {is_group: false}, label: Adjustment Account,
+       description: "Value given by hand without money (goodwill) or corrected is booked against it"}
+    - {name: tax_charged, type: select, options: [When Sold, When Redeemed], required: true, default: When Sold, label: Tax Charged,
+       description: "When Sold: a line that sells it is taxed as its item is. When Redeemed: that line carries no tax, and what it pays for is taxed as usual"}
+    - {name: can_top_up, type: check, default: 1, label: Can Be Topped Up}
+    - {name: can_transfer, type: check, label: Can Be Transferred, description: "Its value can be moved to another account of this kind"}
+    - {name: can_cash_out, type: check, label: Can Be Cashed Out, description: "What is left on it can be paid out in money"}
+    - {name: partial_use, type: check, default: 1, label: Can Be Used in Part, description: "Unticked, a use takes its whole balance"}
+    - {name: refund_to_account, type: check, default: 1, label: Refunds Go Back Onto It,
+       description: "A refund of a sale it paid for is offered back onto the same account rather than in money"}
+    - {name: requires_pin, type: check, label: Needs a PIN, description: "Its code is used with a PIN"}
+    - {name: issue_role, type: data, label: Who May Issue by Hand, description: "The role that may issue or adjust value without a sale; Accounts Manager when empty"}
+    - {name: min_load, type: decimal, min: "0", label: Least Loaded at Once, description: "Empty: no least"}
+    - {name: max_load, type: decimal, min: "0", label: Most Loaded at Once, description: "Empty: no most"}
+    - {name: max_balance, type: decimal, min: "0", label: Most Held, description: "The most one account may hold; empty: no most"}
+    - {name: expiry, type: select, options: [None, From Issue, From Last Use], required: true, default: None, label: Expires,
+       description: "None: never. From Issue: so many days after it is issued. From Last Use: so many days after it was last issued, loaded or used"}
+    - {name: expiry_days, type: int, min: "1", visible_if: "doc.expiry != 'None'", required_if: "doc.expiry != 'None'", label: Days Until Expiry}
+    - {name: warn_days, type: int, min: "1", visible_if: "doc.expiry != 'None'", label: Days of Warning,
+       description: "This many days before an account expires, the event stored_value_expiring is raised once for it, for an automation to tell its holder"}
+    - {name: on_expiry, type: select, options: [Stays Owed, Income at Expiry, Income Over Time], required: true, default: Stays Owed, label: Unused Value,
+       description: "Stays Owed: an expired account still owes its value, and a person decides. Income at Expiry: what is left is income when it expires. Income Over Time: each use also recognises the stated share of unused value expected, and what is left is income when it expires"}
+    - {name: breakage_percent, type: percent, min: "0", max: "99", visible_if: "doc.on_expiry == 'Income Over Time'", required_if: "doc.on_expiry == 'Income Over Time'",
+       label: Expected Unused (%), description: "The share of value issued that experience says will never be used"}
+    - {name: disabled, type: check, description: "Nothing more is issued; what is out can still be used"}
+  unique: [[company, kind_name]]
+  rules:
+    - {name: income_for_breakage, check: "doc.on_expiry == 'Stays Owed' || doc.income_account != null", message: "Unused value recognised as income needs the Income Account"}
+    - {name: income_for_units, check: "doc.holds == 'Money' || doc.income_account != null", message: "A kind that holds units needs the Income Account for the difference between what units were bought for and the lines they pay"}
+    - {name: load_range, check: "doc.min_load == null || doc.max_load == null || doc.max_load >= doc.min_load", message: "The most loaded at once cannot be less than the least"}
+  actions:
+    # Contracted capabilities (accounting.stored_value_kind.<action>), for other apps and configuration.
+    # Codes and amounts are text; every change is done once per effect key.
+    - name: balance
+      label: Balance by Code
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: code, label: Code, required: true}
+        - {name: pin, label: PIN}
+      contract:
+        effect: query
+        returns: {type: object, properties: {account: {type: string, format: uuid}, balance: {type: string}, holds: {type: string}, state: {type: string}, expires_on: {type: [string, "null"]}}}
+        completion: "The account's balance, state and expiry, if the code (and PIN) are right"
+    - name: issue
+      label: Issue by Hand
+      permission: read
+      hidden: true
+      params:
+        - {name: amount, label: Amount or Units, required: true}
+        - {name: reason, label: Reason, required: true}
+        - {name: holder, label: Customer, type: link, to: Customer}
+        - {name: code, label: Code, description: "A card's own code; one is made when empty"}
+        - {name: pin, label: PIN}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        completion: "The account holds the value, booked against the kind's Adjustment Account, committed with this receipt"
+        compensate_with: reverse
+    - name: redeem
+      label: Redeem
+      permission: read
+      hidden: true
+      params:
+        - {name: code, label: Code, required: true}
+        - {name: pin, label: PIN}
+        - {name: invoice, label: Sales Invoice, type: link, to: SalesInvoice, required: true}
+        - {name: amount, label: Amount, description: "Money taken; the invoice's outstanding amount, up to the balance, when empty"}
+        - {name: units, label: Units, description: "For a kind that holds units"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {payment: {type: string, format: uuid}, entry: {type: string, format: uuid}, amount: {type: string}, balance: {type: string}}}
+        completion: "A submitted payment entry pays the invoice from the account, committed with this receipt"
+        compensate_with: reverse
+    - name: refund
+      label: Refund Onto
+      permission: read
+      hidden: true
+      params:
+        - {name: credit_note, label: Credit Note, type: link, to: SalesInvoice, required: true}
+        - {name: code, label: Code, description: "The account to load; a new account of this kind, held by the customer, when empty"}
+        - {name: pin, label: PIN, description: "A new card's PIN, for a kind that needs one"}
+        - {name: amount, label: Amount, description: "The credit note's credit left when empty"}
+        - {name: units, label: Units, description: "For a kind that holds units"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {payment: {type: string, format: uuid}, account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        completion: "A submitted refund puts the credit note's value onto the account, committed with this receipt"
+        compensate_with: reverse
+    - name: transfer
+      label: Transfer
+      permission: read
+      hidden: true
+      params:
+        - {name: code, label: From Code, required: true}
+        - {name: pin, label: PIN}
+        - {name: to_code, label: To Code, description: "A new bearer account (or the customer's) when empty"}
+        - {name: holder, label: To Customer, type: link, to: Customer}
+        - {name: amount, label: Amount or Units, description: "The whole balance when empty"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {account: {type: string, format: uuid}, to_account: {type: string, format: uuid}, entry: {type: string, format: uuid}, code: {type: [string, "null"]}, balance: {type: string}}}
+        completion: "The value is on the other account, committed with this receipt"
+        compensate_with: reverse
+    - name: reverse
+      label: Reverse
+      permission: read
+      hidden: true
+      params:
+        - {name: entry, label: Entry, required: true, description: "The entry an issue, redemption, refund or transfer returned"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {reversed: {type: string, format: uuid}}}
+        completion: "What the entry did is undone (a payment it made is cancelled), committed with this receipt"
+  list: {columns: [kind_name, company, holds, held_by], sort: kind_name asc}
+
+- name: StoredValueAccount
+  label: Stored Value Account
+  kind: master
+  module: accounting
+  title_field: code_hint
+  company_scoped: true
+  description: "One gift card, store credit or package. Its code is kept only as a hash and its last four characters; its balance is the sum of its own ledger, which the statement report shows."
+  fields:
+    - {name: kind, type: link, to: StoredValueKind, read_only: true, in_list: true, in_filter: true}
+    - {name: company, type: link, to: Company, read_only: true, in_filter: true}
+    - {name: code_hint, type: data, read_only: true, in_list: true, label: Code, description: "Its last four characters"}
+    - {name: code_hash, type: data, read_only: true, hidden: true, no_copy: true}
+    - {name: pin_hash, type: data, read_only: true, hidden: true, no_copy: true}
+    - {name: holder, type: link, to: Customer, read_only: true, in_list: true, in_filter: true, description: "Empty: whoever has its code"}
+    - {name: balance, type: decimal, read_only: true, in_list: true, description: "Money, or units for a kind that holds units"}
+    - {name: value, type: currency, read_only: true, description: "What the books owe on it, in the company's currency"}
+    - {name: issued_on, type: date, read_only: true, in_list: true}
+    - {name: last_used_on, type: date, read_only: true}
+    - {name: expires_on, type: date, read_only: true, in_list: true}
+    - {name: warned_on, type: date, read_only: true, hidden: true, no_copy: true}
+    - {name: state, type: select, options: [Active, Blocked, Expired, Used Up], default: Active, read_only: true, in_list: true, in_filter: true}
+  actions:
+    - {name: block, label: Block, permission: write, condition: "doc.state == 'Active'", confirm: "Block it? Nothing can be taken from or put onto it until it is unblocked."}
+    - {name: unblock, label: Unblock, permission: write, condition: "doc.state == 'Blocked'"}
+    - name: new_code
+      label: New Code
+      permission: write
+      confirm: "Give it a new code? The old code stops working; the new one is shown once."
+      params:
+        - {name: pin, label: New PIN, description: "For a kind that needs a PIN"}
+    - name: adjust
+      label: Adjust
+      permission: write
+      params:
+        - {name: amount, label: Amount or Units, required: true, description: "Positive adds, negative takes away"}
+        - {name: reason, label: Reason, required: true}
+    - name: cash_out
+      label: Cash Out
+      permission: write
+      condition: "doc.state == 'Active'"
+      params:
+        - {name: amount, label: Amount, description: "The whole balance when empty"}
+        - {name: paid_from, label: Paid From, type: link, to: Account, required: true, description: "The bank or cash account the money leaves"}
+  list: {columns: [code_hint, kind, holder, balance, expires_on, state], sort: issued_on desc}

@@ -27,6 +27,7 @@ pub mod reservation;
 pub mod setup;
 pub mod stock;
 pub mod stock_entry;
+pub mod stored_value;
 pub mod trade;
 pub mod withholding;
 
@@ -63,7 +64,9 @@ pub fn register(h: &mut HookRegistry) {
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
-            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook));
+            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
+            .register("StoredValueKind", Arc::new(stored_value::KindHook))
+            .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
     });
     h.scoped(&only("inventory"), |h| {
         h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));
@@ -91,7 +94,8 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
 }
 
 /// Periodic upkeep, safe to run on every replica at once: yearly journal partitions, deferred
-/// lines recognised, and journal entries reversed on their reversal day.
+/// lines recognised, journal entries reversed on their reversal day, and stored value warned of and
+/// expired.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let year = chrono::Utc::now().year();
     let mut tx = k.db.system_tx().await?;
@@ -125,6 +129,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
         if let Err(e) = accounting::upkeep(k, &ctx).await {
             tracing::warn!(%tenant, "journal entry reversals: {e}");
+        }
+        if let Err(e) = stored_value::upkeep(k, &ctx, today).await {
+            tracing::warn!(%tenant, "stored value expiry: {e}");
         }
     }
     Ok(())
