@@ -13,6 +13,7 @@ import { Alert, Badge, Button, Field, StatePanel, TabPanel, Tabs, useShellTitle 
 import { LinkInput, LinkTitle, RecordFields, useEntityMeta, useMe, useRecord, type EntityMeta } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
 import { act, amountInput, Gate, useRights } from "./desk";
+import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
 import { basketBody, type BasketLine, GROUPS, type Given, groupGiven, type Priced, rejectedCode, took } from "./promoRules";
@@ -36,11 +37,12 @@ function Desk() {
   const tab = sp.get("tab") ?? "basket";
   return (
     <div className="erp-page">
+      {id && <DeskTabs entity="Promotion" id={id} current="desk" />}
       <PageHead
         title={t("Promotions")}
         meta={<Meta items={[t("Try a sample sale against the promotions as saved, and see what each has given.")]} />}
         actions={
-          <Link className="btn btn-ghost btn-md" to="/e/Promotion">
+          <Link className="btn btn-ghost btn-md" to="/l/Promotion">
             {t("All promotions")}
           </Link>
         }
@@ -104,7 +106,7 @@ function FieldGroups({ meta, id, canWrite }: { meta: EntityMeta; id: string; can
         <RecordFields key={g.id} meta={g.meta} doc={record.data} save={save} />
       ))}
       <p className="muted">
-        {t("Its customers, places and qualifying items are kept in the record.")} <Link to={`/e/Promotion/${id}`}>{t("Open the record")}</Link>
+        {t("Its customers, places and qualifying items are kept in the record.")} <Link to={`/f/Promotion/${id}`}>{t("Open the record")}</Link>
       </p>
     </>
   );

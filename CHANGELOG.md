@@ -13,6 +13,8 @@ Eight desks in ERP's own interface, for server features that were only generic f
 - **Planning desk** (`/desk/planning`): planned orders by period per item and warehouse, taken in bulk (what is left out is set to nothing) and made into orders; action messages; the promise-date check on an order's lines; reservations per line under the company's policy.
 - **Numbering desk** (`/desk/numbering`): series per kind with template, gapless and default flags, the last number each gave, making one the default, and which series a document took.
 
+Reaching them: a record that has a desk (payment run, tax return, shipment, promotion, MRP run) opens on it at its usual address, with the record's own form, actions and all, a tab away; the others answer the list page of their menu row (stored value accounts, withholding categories, numbering series, promotions, shipments, MRP runs), the plain list at `/l/<Entity>`. The Create menu offers payment run, tax return, stored value card and shipment. Menu rows are the existing ones, shown only to people who can read the entity.
+
 Not shown, for lack of a route: the number a series gives next (the platform's counter has none; the last number given is shown), and the list of a stored value account's holds (only the hold a call returns is known; others are released by number). Words of the new screens are in English until translated.
 
 ## ERP 0.25.0: what other apps had to copy, numbering series, carriers through connections, secret proofs, approvals that ship

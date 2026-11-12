@@ -12,6 +12,7 @@ import { Alert, Badge, Button, confirmDialog, StatePanel, toast, useShellTitle }
 import { LinkTitle } from "@ferrum/records";
 import { Meta, PageHead } from "./chrome";
 import { act, Gate, useRights } from "./desk";
+import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
 import { cheapest, chooseBody, connectionOf, may, type PlatformConnection, type Rate, type Shipment, TONE } from "./shipments";
@@ -217,6 +218,7 @@ function Desk({ id }: { id: string }) {
 
   return (
     <div className="erp-page">
+      <DeskTabs entity="CarrierShipment" id={id} current="desk" />
       <PageHead
         title={s.number ? t("Shipment {number}", { number: s.number }) : t("Shipment")}
         meta={
@@ -231,7 +233,6 @@ function Desk({ id }: { id: string }) {
         actions={
           <>
             <Link className="btn btn-ghost btn-md" to="/desk/shipping">{t("All shipments")}</Link>
-            <Link className="btn btn-ghost btn-md" to={`/e/CarrierShipment/${id}`}>{t("Open the record")}</Link>
           </>
         }
       />

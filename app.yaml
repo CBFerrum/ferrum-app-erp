@@ -44,6 +44,12 @@ contributes:
     - {id: mfg_ops, package: mfg_ops, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: quality, package: quality, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
     - {id: project_records, package: project_records, path: "erp/e/{entity}/{id}", list: "erp/e/{entity}"}
+  # The desks that make something, in the Create menu (each shown to people who may create that record).
+  shell.create:
+    - {id: payment_run, label: Payment Run, path: erp/e/PaymentRun/new, entity: PaymentRun}
+    - {id: tax_return, label: Tax Return, path: erp/e/TaxReturn/new, entity: TaxReturn}
+    - {id: stored_value, label: Stored Value Card, path: erp/e/StoredValueAccount/new, entity: StoredValueAccount}
+    - {id: shipment, label: Shipment, path: erp/e/CarrierShipment/new, entity: CarrierShipment}
   # What the assistant should know in ERP's pages, and what it suggests asking there.
   shell.assistant:
     - id: books

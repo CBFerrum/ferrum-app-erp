@@ -6,12 +6,13 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, isolate, newKey, t } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, StatePanel, TabPanel, Tabs, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput, LinkTitle, useMe } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
 import { act, Gate, useRights } from "./desk";
+import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
 import { acceptBody, type Availability, availabilityBody, buckets, defaults, held, keeps, type MrpRun, needSupplier, open, type Order, type OrderLine, reservable, type Supplied, tally } from "./plans";
@@ -20,21 +21,28 @@ const ACTION = (a: string) => (a === "Purchase" ? t("Buy") : a === "Manufacture"
 const MESSAGE = (m: string) => (m === "Bring Forward" ? t("Bring forward") : m === "Push Out" ? t("Push out") : m === "Cancel" ? t("Cancel") : m === "Increase" ? t("Increase") : m === "Decrease" ? t("Decrease") : isolate(m));
 
 /** `/desk/planning`. */
-export function Planning() {
+export function Planning({ run }: { run?: string } = {}) {
   useShellTitle(t("Planning"));
   return (
     <Gate entity="MrpRun">
-      <Desk />
+      <Desk fixed={run} />
     </Gate>
   );
 }
 
-function Desk() {
+/** `/e/MrpRun/:id`: the plan of one run, with the run's own form beside it. */
+export function PlanningRun() {
+  const { id = "" } = useParams();
+  return <Planning run={id} />;
+}
+
+function Desk({ fixed }: { fixed?: string }) {
   const [sp, setSp] = useSearchParams();
   const tab = sp.get("tab") ?? "mrp";
   const put = (k: string, v: string | null) => setSp((p) => { const n = new URLSearchParams(p); v ? n.set(k, v) : n.delete(k); return n; }, { replace: true });
   return (
     <div className="erp-page">
+      {fixed && <DeskTabs entity="MrpRun" id={fixed} current="desk" />}
       <PageHead title={t("Planning")} meta={<Meta items={[t("What to buy, make and move; what can be promised; what is held for orders.")]} />} />
       <Tabs
         id="plan"
@@ -47,7 +55,7 @@ function Desk() {
         ]}
       />
       <TabPanel id="plan" tab={tab}>
-        {tab === "promise" ? <OrderTab mode="promise" order={sp.get("order")} onOrder={(id) => put("order", id)} /> : tab === "reserve" ? <OrderTab mode="reserve" order={sp.get("order")} onOrder={(id) => put("order", id)} /> : <Mrp run={sp.get("run")} onRun={(id) => put("run", id)} />}
+        {tab === "promise" ? <OrderTab mode="promise" order={sp.get("order")} onOrder={(id) => put("order", id)} /> : tab === "reserve" ? <OrderTab mode="reserve" order={sp.get("order")} onOrder={(id) => put("order", id)} /> : <Mrp run={fixed ?? sp.get("run")} onRun={(id) => put("run", id)} />}
       </TabPanel>
     </div>
   );

@@ -8,7 +8,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { api, docPath, errorMessage, formatDate, formatDateTime, isolate, newKey, t } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, Field, StatePanel, TabPanel, Tabs, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput, LinkTitle } from "@ferrum/records";
@@ -53,7 +53,11 @@ function Desk() {
   const kind = useQuery({ queryKey: ["erp", "sv-kind", kindId], enabled: !!kindId, queryFn: ({ signal }) => api.get<Kind>(docPath("StoredValueKind", kindId ?? ""), undefined, signal) });
   return (
     <div className="erp-page">
-      <PageHead title={t("Stored value")} meta={<Meta items={[t("Gift cards, store credit and prepaid packages: find one by its code, issue one, top one up, hold value for an order.")]} />} />
+      <PageHead
+        title={t("Stored value")}
+        meta={<Meta items={[t("Gift cards, store credit and prepaid packages: find one by its code, issue one, top one up, hold value for an order.")]} />}
+        actions={<Link className="btn btn-ghost btn-md" to="/l/StoredValueAccount">{t("All accounts")}</Link>}
+      />
       <form className="erp-bar" onSubmit={(e) => e.preventDefault()} aria-label={t("Which kind")}>
         <Ctl label={t("Kind")} htmlFor="sv-kind">
           <LinkInput to="StoredValueKind" id="sv-kind" value={kindId} onChange={(id) => put("kind", id)} />
