@@ -247,6 +247,13 @@ curl -X POST https://erp.example.com/api/customize \
 After that, the workspace edits the bands on the settings record, or the steps (roles, how many,
 reminders, escalation) in Studio, without code. Nothing in ERP's engine checks an amount.
 
+### Carriers
+
+Delivery notes and purchase returns ship by carrier through a **Carrier Connection**: rates, the label
+(attached, its tracking number and link kept, bought once however often it is pressed), tracking by the
+upkeep and by the carrier's own signed calls, and cancelling, each a described HTTP call. No carrier is
+built in; [`docs/carriers.md`](docs/carriers.md) says what a description holds and gives two worked examples.
+
 ## This repository
 
 ```mermaid

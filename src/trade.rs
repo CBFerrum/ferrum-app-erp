@@ -821,8 +821,11 @@ impl DocHook for ShipmentHook {
         refresh_billing(hc.kernel, hc.ctx, hc.tx, n.shipment, sid).await
     }
 
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let n = names(self.0);
+        if name == "make_carrier_shipment" {
+            return crate::shipping::make_from(hc, n.shipment, doc, params).await.map(Some);
+        }
         if matches!(name, "make_sales_return" | "make_purchase_return") {
             if b(doc, "is_return") {
                 return Err(Error::invalid("this is itself a return: make the return against the original"));
@@ -845,6 +848,12 @@ impl DocHook for ShipmentHook {
         )?;
         if self.0 == Side::Buying {
             input.insert("bill_no".into(), json!(format!("PENDING-{}", s(doc, "number").unwrap_or_default())));
+        } else {
+            // Label costs a carrier connection charges to the customer.
+            let freight = crate::shipping::freight_lines(hc, id(doc, "id").unwrap_or_default(), d(doc, "conversion_rate")).await?;
+            if let Some(Value::Array(lines)) = input.get_mut("items") {
+                lines.extend(freight);
+            }
         }
         let created_doc = create_for_user(hc, n.invoice, input).await?;
         Ok(Some(created(n.invoice, &created_doc)))

@@ -61,6 +61,11 @@ impl T {
     /// Boots on `url`, with ERP and `extra` registered, a workspace with ERP's packages and the
     /// extra ones, and a company in INR with the standard chart.
     pub async fn boot(url: String, extra: impl FnOnce(&mut Vec<ferrum_meta::Package>, &mut HookRegistry)) -> T {
+        T::boot_with(url, KernelSettings::default(), extra).await
+    }
+
+    /// [`T::boot`] with the kernel's settings given (a secret key, private addresses allowed).
+    pub async fn boot_with(url: String, settings: KernelSettings, extra: impl FnOnce(&mut Vec<ferrum_meta::Package>, &mut HookRegistry)) -> T {
         let pool = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
         sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&pool.pool).await.expect("reset");
         let mut packages = ferrum_domain::packages().expect("the shared packages");
@@ -77,7 +82,7 @@ impl T {
             .map(|p| p.name().to_string())
             .filter(|n| !["contacts", "project_records", "parties", "products", "manufacturing"].contains(&n.as_str()))
             .collect();
-        let k: Arc<Kernel> = Kernel::boot(pool, Catalog::from_packages(packages).unwrap(), hooks, KernelSettings::default(), None).await.expect("boot");
+        let k: Arc<Kernel> = Kernel::boot(pool, Catalog::from_packages(packages).unwrap(), hooks, settings, None).await.expect("boot");
         k.set_file_store(Arc::new(MemFiles::default()));
         ferrum_domain::maintenance(&k).await.expect("maintenance");
         ferrum_app_erp::maintenance(&k).await.expect("partitions");

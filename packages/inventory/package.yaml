@@ -30,7 +30,7 @@ modules:
     label: Inventory
     icon: package
     order: 30
-    items: [StockEntry, Item, Warehouse, ItemPrice, report:stock_balance, report:stock_ledger]
+    items: [StockEntry, CarrierShipment, Item, Warehouse, CarrierConnection, ItemPrice, report:stock_balance, report:stock_ledger]
 
 roles:
   - name: Stock Manager
@@ -47,6 +47,9 @@ roles:
       - {entity: Account, read: true}
       - {entity: Currency, read: true}
       - {entity: CostCenter, read: true}
+      - {entity: CarrierConnection, read: true, write: true, create: true, delete: true}
+      - {entity: CarrierShipment, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: Address, read: true}
   - name: Stock User
     permissions:
       - {entity: StockEntry, read: true, write: true, create: true, delete: true, submit: true}
@@ -55,4 +58,7 @@ roles:
       - {entity: Company, read: true}
       - {entity: Uom, read: true}
       - {entity: Account, read: true}
+      - {entity: CarrierConnection, read: true}
+      - {entity: CarrierShipment, read: true, write: true, create: true}
+      - {entity: Address, read: true}
 export_tables: [stock_move, stock_balance, cost_layer, serial_no]
