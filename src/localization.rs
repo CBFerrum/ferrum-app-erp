@@ -70,6 +70,41 @@ pub trait Localization: Send + Sync {
     fn registered(&self, _ctx: &Ctx, _entity: &str, _record: &Doc) -> Option<bool> {
         None
     }
+
+    /// Bad-debt relief: the tax given back when `base` (company currency) of a customer's invoice
+    /// (`entity`, the record whole) is written off. Each part is a tax account and what is no longer
+    /// owed there (a debit); the rest of the write-off stays an expense. Whether there is relief, on
+    /// what conditions and how much is the country's; nothing by default.
+    #[allow(clippy::too_many_arguments)]
+    async fn bad_debt_relief(
+        &self,
+        _k: &Kernel,
+        _ctx: &Ctx,
+        _tx: &mut Tx,
+        _company: Uuid,
+        _entity: &str,
+        _invoice: &Doc,
+        _base: Decimal,
+    ) -> Result<Vec<Relief>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Tax given back on a bad debt ([`Localization::bad_debt_relief`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Relief {
+    pub account: Uuid,
+    pub amount: Decimal,
+    pub description: String,
+}
+
+/// What every installed country gives back on writing off `base` of an invoice; none without one.
+pub async fn bad_debt_relief(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, entity: &str, invoice: &Doc, base: Decimal) -> Result<Vec<Relief>> {
+    let mut out = Vec::new();
+    for l in installed(ctx) {
+        out.extend(l.bad_debt_relief(k, ctx, tx, company, entity, invoice, base).await?);
+    }
+    Ok(out)
 }
 
 /// A tax registration: what it is called and its value. A place can give one party several.

@@ -91,7 +91,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, PaymentInstrument, ModeOfPayment, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
+    items: [JournalEntry, PaymentEntry, PaymentInstrument, ModeOfPayment, BadDebtWriteOff, WriteOffReason, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding, report:stored_value_liability, report:stored_value_statement, report:stored_value_movement]
   - name: setup
     label: Setup
@@ -112,6 +112,8 @@ roles:
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PaymentInstrument, read: true, write: true, export: true}
       - {entity: ModeOfPayment, read: true, write: true, create: true, delete: true}
+      - {entity: BadDebtWriteOff, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: WriteOffReason, read: true, write: true, create: true, delete: true}
       - {entity: OpeningInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, import: true}
       - {entity: Company, read: true, write: true, create: true}
       - {entity: FiscalYear, read: true, write: true, create: true, delete: true}
@@ -145,6 +147,8 @@ roles:
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: PaymentInstrument, read: true, write: true}
       - {entity: ModeOfPayment, read: true}
+      - {entity: BadDebtWriteOff, read: true, write: true, create: true, delete: true}
+      - {entity: WriteOffReason, read: true}
       - {entity: Account, read: true}
       - {entity: WithholdingCategory, read: true}
       - {entity: StoredValueKind, read: true}

@@ -11,6 +11,7 @@
 //! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
 
 pub mod accounting;
+pub mod bad_debt;
 pub mod change;
 pub mod credit;
 pub mod deferred;
@@ -68,6 +69,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
             .register("PaymentInstrument", Arc::new(instruments::InstrumentHook))
+            .register("BadDebtWriteOff", Arc::new(bad_debt::WriteOffHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))

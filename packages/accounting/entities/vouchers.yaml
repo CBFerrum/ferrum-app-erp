@@ -259,3 +259,67 @@
        params: [{name: instrument_no, label: New Number, type: data, required: true}, {name: instrument_date, label: Dated, type: date, required: true},
                 {name: bank, label: Drawn On, type: data}, {name: reason, label: Reason, type: text}]}
   list: {columns: [instrument_no, instrument_date, direction, party_name, amount, status], sort: instrument_date asc}
+
+# Bad-debt write-off (FN-13): a customer's invoice that will not be paid, written off in one action to
+# the account its reason names, with the tax relief a country gives through the localization seam,
+# and what is recovered later booked against it.
+- name: WriteOffReasonAccount
+  label: Write-off Account
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true, label: Written Off To, description: "An expense: bad debts"}
+    - {name: recovery_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Recovered To,
+       description: "Income: bad debts recovered; the write-off account when empty"}
+
+- name: WriteOffReason
+  label: Write-off Reason
+  kind: master
+  module: accounting
+  title_field: reason_name
+  fields:
+    - {name: reason_name, type: data, required: true, unique: true, in_list: true}
+    - {name: accounts, type: table, of: WriteOffReasonAccount, label: Accounts by Company}
+    - {name: description, type: text}
+  list: {columns: [reason_name], sort: reason_name asc}
+
+- name: BadDebtRelief
+  label: Tax Relief
+  kind: child
+  fields:
+    - {name: account, type: link, to: Account, read_only: true, in_list: true}
+    - {name: amount, type: currency, read_only: true, in_list: true}
+    - {name: description, type: data, read_only: true, in_list: true}
+
+- name: BadDebtWriteOff
+  label: Bad Debt Write-off
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  title_field: customer_name
+  numbering: {template: "BDW-{FY}-{seq:4}", gapless: true, on: submit, date_field: posting_date}
+  description: "A customer's invoice written off as a bad debt: to the account its reason names, less the tax relief the company's country gives; submitting it is the approval (the workspace's approval policy, when it sets one). A later recovery is booked against it."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, in_list: true}
+    - {name: customer, type: link, to: Customer, required: true, in_filter: true}
+    - {name: customer_name, type: data, read_only: true, in_list: true}
+    - {name: invoice, type: data, required: true, label: Open Item ID, description: "The customer's open invoice (or other open item) written off"}
+    - {name: invoice_type, type: data, read_only: true, label: Document Type}
+    - {name: invoice_number, type: data, read_only: true, in_list: true}
+    - {name: currency, type: data, read_only: true}
+    - {name: outstanding, type: currency, read_only: true}
+    - {name: amount, type: currency, min: "0", in_list: true, description: "In the invoice's currency; all that is outstanding when empty"}
+    - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
+    - {name: reason, type: link, to: WriteOffReason, required: true, in_filter: true}
+    - {name: write_off_account, type: link, to: Account, read_only: true}
+    - {name: relief, type: table, of: BadDebtRelief, read_only: true, label: Tax Relief}
+    - {name: recovered_amount, type: currency, read_only: true, no_copy: true, label: Recovered (Company Currency)}
+    - {name: remarks, type: text}
+  actions:
+    - {name: record_recovery, label: Record Recovery, docstatus: [1], permission: submit,
+       params: [{name: amount, label: Amount Recovered (Company Currency), type: currency, required: true}, {name: on, label: Received On, type: date},
+                {name: bank_account, label: Into, type: link, to: Account, required: true}]}
+  list: {columns: [number, posting_date, customer_name, invoice_number, amount, recovered_amount], sort: posting_date desc}
+
