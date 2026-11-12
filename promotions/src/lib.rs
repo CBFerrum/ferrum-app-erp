@@ -259,7 +259,10 @@ fn hhmm(t: &str) -> &str {
     t.get(..5).unwrap_or(t)
 }
 
-fn admits(p: &Promotion, w: &When) -> bool {
+/// Whether `p` is in force for `w`: its dates, weekdays, hours, who buys and where (not a code, a first order, a
+/// minimum or its limits, which [`apply`] judges on the document). What a server asks to find out whether a promotion
+/// "was active" at a sale's moment.
+pub fn admits(p: &Promotion, w: &When) -> bool {
     let within_time = match (p.from_time.as_deref().map(hhmm), p.to_time.as_deref().map(hhmm)) {
         (Some(f), Some(t)) if t < f => hhmm(&w.time) >= f || hhmm(&w.time) < t,
         (f, t) => f.is_none_or(|f| hhmm(&w.time) >= f) && t.is_none_or(|t| hhmm(&w.time) < t),
