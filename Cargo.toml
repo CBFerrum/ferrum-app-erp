@@ -4,7 +4,7 @@
 # platform's crates, taken from Ferrum's main, and other apps build on this one.
 [workspace]
 resolver = "3"
-members = [".", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/eu-members", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops", "addons/quality", "addons/wms", "addons/mes"]
+members = [".", "promotions", "addons/india", "addons/eu", "addons/de", "addons/gb", "addons/ca", "addons/us", "addons/countries", "addons/eu-members", "addons/finance", "addons/procurement", "addons/stock-ops", "addons/mfg-ops", "addons/quality", "addons/wms", "addons/mes"]
 
 [workspace.package]
 version = "0.1.0"
@@ -53,6 +53,7 @@ ferrum-kernel = { workspace = true }
 ferrum-meta = { workspace = true }
 ferrum-domain = { workspace = true }
 ferrum-calc = { workspace = true }
+ferrum-erp-promotions = { path = "promotions" }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }

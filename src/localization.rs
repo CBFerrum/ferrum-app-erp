@@ -58,6 +58,66 @@ pub trait Localization: Send + Sync {
     async fn setup_company(&self, _hc: &mut HookCtx<'_>, _company: Uuid, _accounts: &HashMap<&str, String>) -> Result<()> {
         Ok(())
     }
+
+    /// A company's or a party's tax registrations as this country keeps them (`entity`: `Company`,
+    /// `Customer` or `Supplier`; `record`: the record, whole). [`field_tax_ids`] reads its fields.
+    fn tax_ids(&self, _ctx: &Ctx, _entity: &str, _record: &Doc) -> Vec<TaxId> {
+        Vec::new()
+    }
+
+    /// Whether this country holds the party for a business registered for tax; `None` when it does
+    /// not say.
+    fn registered(&self, _ctx: &Ctx, _entity: &str, _record: &Doc) -> Option<bool> {
+        None
+    }
+}
+
+/// A tax registration: what it is called and its value. A place can give one party several.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaxId {
+    pub label: String,
+    pub value: String,
+}
+
+/// The registrations kept in `fields` of a record that has them, each labelled as the workspace's
+/// schema labels its field.
+pub fn field_tax_ids(ctx: &Ctx, entity: &str, record: &Doc, fields: &[&str]) -> Vec<TaxId> {
+    let Some(ent) = ctx.schema.entity(entity) else { return Vec::new() };
+    fields
+        .iter()
+        .filter_map(|f| Some(TaxId { label: ent.field(f)?.label(), value: s(record, f)?.trim().to_string() }))
+        .filter(|t| !t.value.is_empty())
+        .collect()
+}
+
+/// Every installed country's tax registrations of a company or a party, each once. None without a
+/// country.
+pub fn tax_ids(ctx: &Ctx, entity: &str, record: &Doc) -> Vec<TaxId> {
+    let mut out: Vec<TaxId> = Vec::new();
+    for t in installed(ctx).iter().flat_map(|l| l.tax_ids(ctx, entity, record)) {
+        if !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// Whether some installed country holds the party for a business registered for tax (a buyer that
+/// gets a tax invoice at once). False without a country.
+pub fn registered_business(ctx: &Ctx, entity: &str, record: &Doc) -> bool {
+    installed(ctx).iter().any(|l| l.registered(ctx, entity, record) == Some(true))
+}
+
+/// A draft sale's `tax_registrations`, for its print and receipt: the seller's (the company's) and
+/// the buyer's registrations and whether the buyer is a registered business, as the countries say.
+pub(crate) fn fill_tax_registrations(ctx: &Ctx, ent: &EffEntity, doc: &mut Doc, company: &Doc, party: Option<&Doc>, side: Side) {
+    if side != Side::Selling || ent.field("tax_registrations").is_none() || doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        return;
+    }
+    let list = |ids: Vec<TaxId>| ids.into_iter().map(|t| json!({"label": t.label, "value": t.value})).collect::<Vec<_>>();
+    let buyer = party.map(|p| list(tax_ids(ctx, "Customer", p))).unwrap_or_default();
+    let registered = party.is_some_and(|p| registered_business(ctx, "Customer", p));
+    set(doc, "tax_registrations", json!({"seller": list(tax_ids(ctx, "Company", company)), "buyer": buyer, "buyer_registered": registered}));
 }
 
 static ALL: RwLock<Vec<Arc<dyn Localization>>> = RwLock::new(Vec::new());

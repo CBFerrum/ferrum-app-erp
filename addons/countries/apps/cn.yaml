@@ -1,12 +1,12 @@
 # ERP's add-on for China: vAT at 13%, 9% and 6%, small-scale taxpayers, exports at 0%, and the VAT return figures for ERP in China. Ferrum localization.md.
 id: cn
 name: "China"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "VAT at 13%, 9% and 6%, small-scale taxpayers, exports at 0%, and the VAT return figures for ERP in China"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [cn]

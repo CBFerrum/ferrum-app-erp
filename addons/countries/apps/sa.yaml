@@ -1,12 +1,12 @@
 # ERP's add-on for Saudi Arabia: vAT at 15%, zero-rated and exempt supplies, the reverse charge and ZATCA's VAT return for ERP in Saudi Arabia. Ferrum localization.md.
 id: sa
 name: "Saudi Arabia"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "VAT at 15%, zero-rated and exempt supplies, the reverse charge and ZATCA's VAT return for ERP in Saudi Arabia"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [sa]

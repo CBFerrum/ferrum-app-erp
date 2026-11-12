@@ -8,7 +8,7 @@
 
 use crate::util::{b, find, get, id, rows, s, set, sys};
 use async_trait::async_trait;
-use ferrum_app_erp::localization::{Localization, ship_to};
+use ferrum_app_erp::localization::{Localization, TaxId, field_tax_ids, ship_to};
 use ferrum_app_erp::pricing::Side;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx};
 use ferrum_meta::EffEntity;
@@ -201,6 +201,16 @@ pub struct Uk;
 impl Localization for Uk {
     fn package(&self) -> &'static str {
         crate::PACKAGE
+    }
+
+    /// The UK VAT registration number of a company, customer or supplier; with one, a party is a
+    /// registered business.
+    fn tax_ids(&self, ctx: &Ctx, entity: &str, record: &Doc) -> Vec<TaxId> {
+        field_tax_ids(ctx, entity, record, &["gb_vrn"])
+    }
+
+    fn registered(&self, _ctx: &Ctx, _entity: &str, record: &Doc) -> Option<bool> {
+        s(record, "gb_vrn").map(|_| true)
     }
 
     async fn determine(&self, k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<()> {

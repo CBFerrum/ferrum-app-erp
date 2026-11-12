@@ -1,12 +1,12 @@
 # ERP's add-on for Japan: consumption tax at 10% and 8%, qualified invoices and the consumption tax return figures for ERP in Japan. Ferrum localization.md.
 id: jp
 name: "Japan"
-version: 0.1.1
+version: 0.2.0
 publisher: cbferrum
 summary: "Consumption tax at 10% and 8%, qualified invoices and the consumption tax return figures for ERP in Japan"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [jp]

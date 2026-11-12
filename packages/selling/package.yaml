@@ -12,13 +12,37 @@ overlays:
           description: "No new orders or deliveries for this customer until it is unticked; payments and credit notes are still taken"}}
       - {op: add_field, column: true, after: credit_hold, field: {name: credit_hold_reason, type: data, perm_group: credit, label: Credit Hold Reason,
           visible_if: "doc.credit_hold", required_if: "doc.credit_hold"}}
+  - entity: Item
+    ops:
+      - {op: add_field, column: true, after: standard_rate, field: {name: is_delivery_charge, type: check, label: Delivery Charge,
+          description: "Lines of this item are what a sale's delivery costs: free-delivery promotions take them off, and no other promotion does"}}
+  - entity: Company
+    ops:
+      - {op: add_field, column: true, after: fy_start_month, field: {name: time_zone, type: data, max_length: 64, label: Time Zone,
+          description: "IANA time zone (Europe/Berlin) promotions' days and hours are read in; empty: the workspace's"}}
+      - {op: add_action, action: {name: price_lines, label: Price Lines With Promotions, permission: read, read_only: true, hidden: true,
+          params: [{name: lines, type: text, label: Lines, required: true, description: "JSON: [{item, qty, uom?, price_list_rate?, discount_percent?}], as on a sales order"},
+                   {name: customer, type: link, to: Customer, label: Customer, required: true},
+                   {name: channel, label: Channel, description: "Where the sale is made (Web Shop, Point of Sale)"},
+                   {name: place, label: Place, description: "A warehouse's id, or another place promotions name"},
+                   {name: at, label: At, description: "YYYY-MM-DD HH:MM in the company's time zone; now when empty"},
+                   {name: codes, label: Codes, description: "Codes the customer gives, separated by commas or spaces"},
+                   {name: currency, type: link, to: Currency, label: Currency},
+                   {name: price_list, type: link, to: PriceList, label: Price List}],
+          contract: {effect: query,
+            returns: {type: object, properties: {
+              lines: {type: array, items: {type: object}},
+              promotions: {type: array, items: {type: object, properties: {promotion: {type: string, format: uuid}, title: {type: string}, line: {type: integer}, amount: {type: string}, code: {type: [string, "null"]}}}},
+              rejected_codes: {type: array, items: {type: string}},
+              total: {type: string}, net_total: {type: string}, total_taxes: {type: string}, grand_total: {type: string}, rounded_total: {type: string}, currency: {type: string, format: uuid}}},
+            completion: "The lines priced as a sales order would be, with the company's pricing rules and promotions, without saving anything or counting a code"}}}
 
 modules:
   - name: selling
     label: Selling
     icon: shopping-cart
     order: 40
-    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, report:receivables, report:statement_of_account, report:sales_register]
+    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, Promotion, PromotionCode, report:receivables, report:statement_of_account, report:sales_register, report:promotions]
 
 roles:
   - name: Sales User
@@ -28,6 +52,7 @@ roles:
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true, read_groups: [credit]}
       - {entity: PricingRule, read: true}
+      - {entity: Promotion, read: true}
       - {entity: Customer, read: true, write: true, create: true}
       - {entity: Address, read: true}
       - {entity: CustomerGroup, read: true}
@@ -53,6 +78,8 @@ roles:
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: PricingRule, read: true, write: true, create: true, delete: true}
+      - {entity: Promotion, read: true, write: true, create: true, delete: true}
+      - {entity: PromotionCode, read: true, write: true, create: true, delete: true}
   - name: Accounts Manager
     permissions:
       # Releasing a document over a customer's credit limit (its Credit Release Reason) is theirs.

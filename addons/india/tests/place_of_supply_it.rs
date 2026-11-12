@@ -2,7 +2,8 @@
 //! (`FERRUM_INDIA_TEST_DATABASE_URL`, default `postgres://ferrum:ferrum@localhost:5432/ferrum_india_test`;
 //! reset first): the same customer, one invoice delivered in the company's state (through a ship-to
 //! address) and one in another (through the invoice's delivery region alone), gets CGST and SGST on
-//! the first and IGST on the second.
+//! the first and IGST on the second; and the seller's and buyer's GSTINs come through ERP's tax
+//! registration seam.
 
 use ferrum_india::gstin_check_char;
 use ferrum_kernel::tenant::NewTenant;
@@ -99,6 +100,15 @@ async fn scenario() {
     assert_eq!((local["delivery_country"].clone(), local["delivery_region"].clone()), (json!("IN"), json!("Maharashtra")), "the seam follows the ship-to");
     assert_eq!(local["in_place_of_supply"], json!("27"));
     assert_eq!(accounts(&local), ["CGST 9%", "SGST 9%"], "delivered in the company's state: CGST and SGST");
+    // The seller's and the buyer's registrations, through ERP's seam, with India's label.
+    assert_eq!(
+        local["tax_registrations"],
+        json!({"seller": [{"label": "GSTIN", "value": co["in_gstin"]}], "buyer": [{"label": "GSTIN", "value": customer["in_gstin"]}], "buyer_registered": true})
+    );
+    let consumer = insert("Customer", json!({"customer_name": "Walk-in", "in_gst_category": "Consumer"})).await;
+    assert!(ferrum_app_erp::localization::tax_ids(&ctx, "Customer", &consumer).is_empty());
+    assert!(!ferrum_app_erp::localization::registered_business(&ctx, "Customer", &consumer), "no GSTIN: not a registered business");
+    assert!(ferrum_app_erp::localization::registered_business(&ctx, "Customer", &customer));
 
     // The same customer, delivered in Karnataka, stated on the order without an address.
     let away = order(json!({"delivery_country": "India", "delivery_region": "Karnataka"})).await;

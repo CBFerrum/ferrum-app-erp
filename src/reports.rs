@@ -120,6 +120,7 @@ const DEFS: &[Def] = &[
         entity: "SalesInvoice",
         params: &["company", "from_date", "to_date", "customer"],
     },
+    Def { name: "promotions", label: "Promotions Given", module: "selling", entity: "Promotion", params: &["company", "from_date", "to_date"] },
     Def {
         name: "purchase_register",
         label: "Purchase Register",
@@ -197,6 +198,7 @@ impl ReportSource for ErpReports {
             "sales_register" => register(&mut tx, ctx, &co, &p, "customer").await?,
             "purchase_register" => register(&mut tx, ctx, &co, &p, "supplier").await?,
             "tax_summary" => tax_summary(&mut tx, ctx, &co, &p).await?,
+            "promotions" => promotions(&mut tx, ctx, &co, &p).await?,
             "withholding" => withholding(&mut tx, ctx, &co, &p).await?,
             "stored_value_liability" => stored_value_liability(&mut tx, ctx, &co, &p).await?,
             "stored_value_statement" => stored_value_statement(&mut tx, ctx, &co, &p).await?,
@@ -1981,6 +1983,55 @@ async fn register(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, ki
         "rows": rows,
         "totals": {"base_grand_total": money(total_base), "count": count},
         "meta": {"from_date": from, "to_date": to, "truncated": truncated},
+    }))
+}
+
+// ───────────────────────────── promotions ─────────────────────────────
+
+/// What promotions took off the company's submitted sales orders and invoices of the period, by
+/// promotion, month and channel, in company currency, as each document kept it when it was priced.
+/// An invoice made from an order keeps no promotions of its own (the order has them), so nothing
+/// counts twice; a credit note does not give its share back here.
+async fn promotions(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let mut groups: BTreeMap<(String, String, String, Option<Uuid>), (Decimal, i64)> = BTreeMap::new();
+    for entity in ["SalesOrder", "SalesInvoice"] {
+        let Some(ent) = ctx.schema.entity(entity) else { continue };
+        let Some(lines) = ent.children.get("applied_promotions") else { continue };
+        let data: Vec<(Option<Uuid>, Option<String>, String, Option<String>, Decimal, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "select l.promotion, l.title, to_char(i.posting_date, 'YYYY-MM'), nullif(i.channel, ''), sum(coalesce(l.amount, 0) * coalesce(i.conversion_rate, 1)), count(distinct i.id) \
+             from {docs} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
+             where i.tenant_id = $1 and i.company = $2 and i.docstatus = 1 and i.posting_date between $3 and $4 group by 1, 2, 3, 4",
+            docs = ferrum_kernel::ddl::q(&ent.table),
+            lines = ferrum_kernel::ddl::q(&lines.table),
+        )))
+        .bind(ctx.tenant)
+        .bind(co.id)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&mut **tx)
+        .await?;
+        for (promotion, title, month, channel, amount, docs) in data {
+            let g = groups.entry((title.unwrap_or_default(), month, channel.unwrap_or_else(|| ent.def.label.clone()), promotion)).or_default();
+            g.0 += amount;
+            g.1 += docs;
+        }
+    }
+    let mut total = Decimal::ZERO;
+    let rows: Vec<Value> = groups
+        .into_iter()
+        .map(|((title, month, channel, promotion), (amount, docs))| {
+            let amount = amount.round_dp(co.precision);
+            total += amount;
+            json!({"promotion": title, "promotion_id": promotion, "period": month, "channel": channel, "documents": docs, "discount": money(amount)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("promotion", "Promotion", "data"), col("period", "Month", "data"), col("channel", "Channel", "data"),
+            col("documents", "Documents", "int"), col("discount", "Discount Given", "currency")],
+        "rows": rows,
+        "totals": {"discount": money(total)},
+        "meta": {"from_date": from, "to_date": to},
     }))
 }
 
