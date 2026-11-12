@@ -5,7 +5,7 @@
 //! carriers are made on it (one on, one off, a test carrier), then this build boots on the same database and the
 //! workspace's administrator has not applied the update yet: the upkeep puts each carrier on a connection once, turned
 //! on only if the carrier was, with its keys moved in and cleared from the carrier, nothing logged at warning level; the
-//! carrier then buys a label with the key it had, and the update and a second upkeep change nothing.
+//! carrier then buys a label with the key it had, and the update and a second upkeep change nothing, and the update's approval policies ask nothing until switched on.
 
 mod common;
 use common::*;
@@ -213,6 +213,26 @@ async fn scenario(old: Vec<ferrum_meta::Package>) {
     k.registry.invalidate_all();
     upkeeps(&k, &warnings, "after the update").await;
     assert_eq!(check().await, ids, "the same connections");
+    // The update also brings the packages' default approvals for purchase orders and payments out: off until asked for, so
+    // a big order and a big payment are submitted at once, as they were before it.
+    let products = t.find_one("ItemGroup", json!({"group_name": "Products"})).await;
+    let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await;
+    let item = t
+        .insert("Item", json!({"item_code": "Paper", "item_name": "Paper", "item_group": products["id"], "stock_uom": nos["id"], "is_stock_item": false}))
+        .await;
+    let acme = t.insert("Supplier", json!({"supplier_name": "Acme"})).await;
+    let order = t
+        .insert("PurchaseOrder", json!({"company": c, "supplier": acme["id"], "items": [{"item": item["id"], "qty": "1", "price_list_rate": "900000"}]}))
+        .await;
+    assert_eq!(t.submit("PurchaseOrder", uid(&order)).await["docstatus"], json!(1));
+    let bank = t.account("Primary Bank").await;
+    let pay = t
+        .insert(
+            "PaymentEntry",
+            json!({"company": c, "payment_type": "Pay", "supplier": acme["id"], "bank_account": bank, "currency": inr["id"], "paid_amount": "900000"}),
+        )
+        .await;
+    assert_eq!(t.submit("PaymentEntry", uid(&pay)).await["docstatus"], json!(1));
     // The secrets rest nowhere in the clear.
     for table in ["audit_event", "job", "conn_call", "e_carrier_connection", "record_secret"] {
         let n: Vec<(i64,)> = t

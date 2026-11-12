@@ -380,3 +380,16 @@
     - {name: use_by_default, type: check, label: Use When a Document Names None, description: "Documents of this kind (of this company, when one is set) that name no series take this one. At most one per kind and company"}
     - {name: disabled, type: check}
   unique: [[company, document, series_name]]
+
+- name: PaymentApprovalSettings
+  label: Payment Approval Settings
+  kind: settings
+  module: setup
+  description: "The value bands a payment's approval reads, in company currency: above each, its step must approve before a payment out is submitted"
+  fields:
+    - {name: enabled, type: check, default: false, label: Ask for Approval,
+       description: "Off: payments are submitted as they always were. On: a payment to a supplier or a refund to a customer above a band waits for an Accounts Manager other than the person who made it"}
+    - {name: first_above, type: currency, min: "0", default: 0, label: First Approval Above,
+       description: "Payments out whose amount in company currency is above this need one Accounts Manager's approval"}
+    - {name: second_above, type: currency, min: "0", label: Second Approval Above,
+       description: "Above this, two Accounts Managers, neither the first one nor the maker; empty or 0: no second step"}
