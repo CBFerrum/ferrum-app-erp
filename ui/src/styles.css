@@ -1179,3 +1179,32 @@ button.erp-fig:focus-visible {
   font-size: var(--text-base);
   font-weight: 600;
 }
+
+/* ── the desks: payment runs, stored value, promotions, tax returns, withholding, shipping, planning, numbering ── */
+
+.erp-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.erp-off td {
+  color: var(--muted-foreground);
+}
+
+.erp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.erp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 880px) {
+  .erp-four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
