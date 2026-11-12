@@ -49,7 +49,7 @@ const DEFS: &[Def] = &[
 fn param(name: &str) -> Value {
     match name {
         "fiscal_year" => json!({"name": name, "label": "Fiscal Year", "type": "link", "to": "FiscalYear"}),
-        "budget_against" => json!({"name": name, "label": "Budget Against", "type": "select", "options": ["Cost Center", "Project"]}),
+        "budget_against" => json!({"name": name, "label": "Budget Against", "type": "select", "options": ["Cost Center", "Project", "Dimension"]}),
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
         "bank_account" => json!({"name": name, "label": "Bank Account", "type": "link", "to": "BankAccount", "required": true}),
@@ -116,6 +116,7 @@ struct BudgetLine {
     budget_against: String,
     cost_center: Option<Uuid>,
     project: Option<Uuid>,
+    dims: Option<Value>,
     against_name: Option<String>,
     monthly_distribution: Option<Uuid>,
     applicable_on_purchase_order: bool,
@@ -135,11 +136,13 @@ async fn budget_variance(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<
     }
     .ok_or_else(|| Error::field("fiscal_year", "choose a fiscal year of this company"))?;
     let lines: Vec<BudgetLine> = sqlx::query_as(
-        "select b.number, b.budget_against, b.cost_center, b.project, coalesce(cc.cost_center_name, pr.project_name) as against_name, \
+        "select b.number, b.budget_against, b.cost_center, b.project, case when b.budget_against = 'Dimension' then jsonb_build_object(dd.code, b.dimension_value) end as dims, \
+         coalesce(cc.cost_center_name, pr.project_name, dd.dimension_name || ' ' || b.dimension_value) as against_name, \
          b.monthly_distribution, b.applicable_on_purchase_order, b.applicable_on_material_request, a.account, coalesce(acc.account_number || ' - ', '') || acc.account_name as account_name, \
          acc.root_type, a.budget_amount from e_budget b join e_budget__accounts a on a.tenant_id = b.tenant_id and a.parent_id = b.id \
          join e_account acc on acc.tenant_id = a.tenant_id and acc.id = a.account \
          left join e_cost_center cc on cc.tenant_id = b.tenant_id and cc.id = b.cost_center left join e_project pr on pr.tenant_id = b.tenant_id and pr.id = b.project \
+         left join e_accounting_dimension dd on dd.tenant_id = b.tenant_id and dd.id = b.dimension \
          where b.tenant_id = $1 and b.company = $2 and b.fiscal_year = $3 and b.docstatus = 1 and ($4::text is null or b.budget_against = $4) \
          and ($5::uuid is null or b.cost_center = $5) and ($6::uuid is null or b.project = $6) order by b.number, a.idx",
     )
@@ -160,7 +163,7 @@ async fn budget_variance(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<
     let mut rows = Vec::new();
     let mut totals = [Decimal::ZERO; 4];
     for l in lines {
-        let scope = crate::budget::scope_of(tx, ctx.tenant, &l.budget_against, l.cost_center, l.project).await?;
+        let scope = crate::budget::scope_of(tx, ctx.tenant, &l.budget_against, l.cost_center, l.project, l.dims.clone()).await?;
         // Expense consumes a budget; income fulfils it: both read in their natural direction.
         let sign = if l.root_type == "Income" { -Decimal::ONE } else { Decimal::ONE };
         let mut month_rows = Vec::new();

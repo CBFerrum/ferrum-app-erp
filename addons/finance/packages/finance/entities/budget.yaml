@@ -37,11 +37,15 @@
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: fiscal_year, type: link, to: FiscalYear, required: true, in_list: true, in_filter: true}
-    - {name: budget_against, type: select, options: [Cost Center, Project], required: true, default: Cost Center, in_list: true, in_filter: true}
+    - {name: budget_against, type: select, options: [Cost Center, Project, Dimension], required: true, default: Cost Center, in_list: true, in_filter: true}
     - {name: cost_center, type: link, to: CostCenter, in_list: true, in_filter: true,
        visible_if: "doc.budget_against == 'Cost Center'", required_if: "doc.budget_against == 'Cost Center'"}
     - {name: project, type: link, to: Project, in_list: true, in_filter: true,
        visible_if: "doc.budget_against == 'Project'", required_if: "doc.budget_against == 'Project'"}
+    - {name: dimension, type: link, to: AccountingDimension, in_filter: true,
+       visible_if: "doc.budget_against == 'Dimension'", required_if: "doc.budget_against == 'Dimension'", description: "An accounting dimension: the budget limits what is booked with the value below"}
+    - {name: dimension_value, type: data, max_length: 140, in_list: true, in_filter: true,
+       visible_if: "doc.budget_against == 'Dimension'", required_if: "doc.budget_against == 'Dimension'", description: "A list value, or a record's id"}
     - {name: monthly_distribution, type: link, to: MonthlyDistribution, description: Spreads the annual amounts over the months for the accumulated monthly checks (even months when empty)}
     - {name: budget_owner, type: email, description: Notified in the app when a Warn action lets a document exceed this budget}
     - {name: applicable_on_material_request, type: check, label: Applicable on Material Request}
@@ -62,7 +66,7 @@
     - {name: accounts, type: table, of: BudgetAccount, required: true, label: Budget Accounts}
     - {name: total_budget, type: currency, read_only: true, in_list: true}
   form:
-    - {label: Budget, columns: 2, fields: [company, fiscal_year, budget_against, cost_center, project, monthly_distribution, budget_owner, total_budget]}
+    - {label: Budget, columns: 2, fields: [company, fiscal_year, budget_against, cost_center, project, dimension, dimension_value, monthly_distribution, budget_owner, total_budget]}
     - {label: Accounts, columns: 1, fields: [accounts]}
     - {label: Control Actions, columns: 2, collapsible: true, fields: [applicable_on_booking_actual_expenses, action_if_annual_budget_exceeded,
         action_if_accumulated_monthly_budget_exceeded, applicable_on_purchase_order, action_if_annual_budget_exceeded_on_po,

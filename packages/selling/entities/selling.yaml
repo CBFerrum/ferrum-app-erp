@@ -227,6 +227,7 @@
     - {name: deferred_booked, type: currency, read_only: true, no_copy: true, label: Recognised So Far}
     - {name: deferred_booked_till, type: date, read_only: true, no_copy: true, label: Recognised Through}
     - {name: cost_center, type: link, to: CostCenter}
+    - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
@@ -316,6 +317,7 @@
     - {name: po_no, type: data, label: Customer PO No}
     - {name: project, type: link, to: Project}
     - {name: cost_center, type: link, to: CostCenter}
+    - {name: dimensions, type: json, description: "Accounting dimensions by code for every line it books, each line's own over these"}
     - {name: terms, type: text}
     - {name: remarks, type: text}
     - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,

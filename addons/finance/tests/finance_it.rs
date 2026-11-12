@@ -435,6 +435,33 @@ async fn scenario() {
     let over = t.refused(&am, "JournalEntry", t.journal("2026-05-06", json!([dr(utilities, "60", Some(main), Some(website)), cr(cash, "60")]))).await;
     assert!(invalid(&over, "booked 110.00") && invalid(&over, "requested 400.00"), "requests count against actual spending: {over:?}");
 
+    // ───────────── a budget on an accounting dimension: what is booked with its value ─────────────
+    let freight = t.account("Freight and Forwarding").await;
+    let region = t
+        .insert(
+            &a,
+            "AccountingDimension",
+            json!({"dimension_name": "Region", "code": "region", "source": "List", "values": [{"value": "North"}, {"value": "South"}]}),
+        )
+        .await;
+    let b4 = t
+        .insert(
+            &a,
+            "Budget",
+            json!({"company": cid, "fiscal_year": fy26, "budget_against": "Dimension", "dimension": uid(&region).to_string(), "dimension_value": "North",
+                   "cost_center": main.to_string(), "accounts": [{"account": freight.to_string(), "budget_amount": "300"}]}),
+        )
+        .await;
+    assert_eq!(b4["cost_center"], Value::Null, "a dimension budget has no cost center");
+    t.submit(&a, "Budget", uid(&b4)).await;
+    let shipped = |date: &str, amount: &str, value: &str| {
+        t.journal(date, json!([{"account": freight.to_string(), "debit": amount, "dimensions": {"region": value}}, cr(cash, amount)]))
+    };
+    t.make(&am, "JournalEntry", shipped("2026-06-01", "250", "North")).await;
+    t.make(&am, "JournalEntry", shipped("2026-06-02", "900", "South")).await;
+    let north = t.refused(&am, "JournalEntry", shipped("2026-06-03", "60", "North")).await;
+    assert!(invalid(&north, "Region North") && invalid(&north, "booked 310.00"), "only North's lines count: {north:?}");
+
     // ───────────── bank account and statement import ─────────────
     let bad = t
         .k

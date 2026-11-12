@@ -112,7 +112,8 @@ impl DocHook for JournalEntryHook {
                 .customer(id(&l, "customer").filter(|_| s(&l, "party_type") == Some("Customer")))
                 .supplier(id(&l, "supplier").filter(|_| s(&l, "party_type") == Some("Supplier")))
                 .cost_center(id(&l, "cost_center"))
-                .project(id(&l, "project"));
+                .project(id(&l, "project"))
+                .dims(crate::dimensions::of(l.get("dimensions")));
             if let Some(r) = s(&l, "remarks") {
                 line = line.remarks(r);
             }
@@ -567,6 +568,10 @@ impl DocHook for PaymentEntryHook {
                 v.insert("exchange_difference".into(), money(diff));
                 hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
             }
+            let header = crate::dimensions::of(doc.get("dimensions"));
+            for l in entry.lines.iter_mut() {
+                l.dims = header.clone();
+            }
             ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
             return Ok(());
         }
@@ -635,6 +640,7 @@ impl DocHook for PaymentEntryHook {
                 Line::new(account, round(amount * rate, co.precision), &co.currency_code)
                     .txn(amount, &code, rate)
                     .cost_center(id(&r, "cost_center"))
+                    .dims(crate::dimensions::of(r.get("dimensions")))
                     .remarks(s(&r, "remarks").unwrap_or("Payment deduction")),
             );
         }
@@ -648,6 +654,10 @@ impl DocHook for PaymentEntryHook {
             let mut v = Doc::new();
             v.insert("exchange_difference".into(), money(diff));
             hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
+        }
+        let header = crate::dimensions::of(doc.get("dimensions"));
+        for l in lines.iter_mut() {
+            l.dims = crate::dimensions::over(&header, &l.dims);
         }
         let mut entry = Entry::new(co.id, on, "PaymentEntry", pid, s(doc, "number").map(str::to_string));
         entry.lines = lines;

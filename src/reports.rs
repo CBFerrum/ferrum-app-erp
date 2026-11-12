@@ -29,7 +29,7 @@ const DEFS: &[Def] = &[
         label: "Trial Balance",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "finance_book"],
+        params: &["company", "from_date", "to_date", "finance_book", "dimension", "dimension_value"],
     },
     Def {
         name: "consolidated_trial_balance",
@@ -43,28 +43,54 @@ const DEFS: &[Def] = &[
         label: "General Ledger",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "account", "customer", "supplier", "cost_center", "project", "exclude_closing", "finance_book"],
+        params: &[
+            "company",
+            "from_date",
+            "to_date",
+            "account",
+            "customer",
+            "supplier",
+            "cost_center",
+            "project",
+            "dimension",
+            "dimension_value",
+            "exclude_closing",
+            "finance_book",
+        ],
     },
     Def {
         name: "profit_and_loss",
         label: "Profit and Loss",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "cost_center", "project", "finance_book", "consolidated"],
+        params: &[
+            "company",
+            "from_date",
+            "to_date",
+            "compare",
+            "periods",
+            "cost_center",
+            "project",
+            "dimension",
+            "dimension_value",
+            "group_by",
+            "finance_book",
+            "consolidated",
+        ],
     },
     Def {
         name: "balance_sheet",
         label: "Balance Sheet",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "as_of", "compare", "periods", "finance_book", "consolidated"],
+        params: &["company", "as_of", "compare", "periods", "dimension", "dimension_value", "group_by", "finance_book", "consolidated"],
     },
     Def {
         name: "cash_flow",
         label: "Cash Flow",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "finance_book", "consolidated"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "dimension", "dimension_value", "finance_book", "consolidated"],
     },
     Def {
         name: "deferred_revenue_and_expense",
@@ -137,6 +163,11 @@ fn param(name: &str) -> Value {
         "periods" => json!({"name": name, "label": "How Many To Compare", "type": "select", "options": ["1", "2", "3"], "default": "1"}),
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
+        "dimension" => json!({"name": name, "label": "Dimension", "type": "data",
+            "description": "An accounting dimension's code (cost_center and project included) to narrow to, with its value"}),
+        "dimension_value" => json!({"name": name, "label": "Dimension Value", "type": "data", "description": "A list value, or a record's id"}),
+        "group_by" => json!({"name": name, "label": "Group By Dimension", "type": "data",
+            "description": "An accounting dimension's code (cost_center and project included): a column for each of its values, and one for lines without"}),
         "stored_value_account" => json!({"name": name, "label": "Account", "type": "link", "to": "StoredValueAccount", "required": true}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
         "deferred" => json!({"name": name, "label": "Deferred", "type": "select", "options": ["Revenue", "Expense"], "default": "Revenue"}),
@@ -262,21 +293,44 @@ async fn accounts(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany) -> Result<Vec<Acc>
     .await?)
 }
 
-/// Debit-minus-credit per account over `[from, to]` (from = None: since the beginning).
-async fn balances(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, from: Option<NaiveDate>, to: NaiveDate) -> Result<HashMap<Uuid, Decimal>> {
-    balances_where(tx, ctx, co, from, to, &[], &Dims::default()).await
-}
-
-/// What a statement of income and expense can be narrowed to besides its period: a cost center
-/// (with every cost center below it) and a project, the two dimensions a ledger line carries.
-#[derive(Default)]
+/// What a statement can be narrowed to besides its period: a cost center (with every cost center
+/// below it), a project and one value of any other accounting dimension (`dims @> {code: value}`,
+/// served by the index `journal_line_dims`).
+#[derive(Default, Clone)]
 struct Dims {
     cost_centers: Option<Vec<Uuid>>,
     project: Option<Uuid>,
+    dims: Option<Value>,
+    /// A dimension's code whose lines are left out where they have a value (a group's last column).
+    without: Option<String>,
+}
+
+/// The SQL that keeps a ledger line `l` within [`Dims`], its values bound at `$n` (cost centers),
+/// `$n+1` (project), `$n+2` (dimension values) and `$n+3` (a code it must not have).
+fn dims_sql(n: usize) -> String {
+    format!(
+        "(${n}::uuid[] is null or l.cost_center_id = any(${n})) and (${a}::uuid is null or l.project_id = ${a}) \
+         and (${b}::jsonb is null or l.dims @> ${b}) and (${c}::text is null or case ${c} when 'cost_center' then l.cost_center_id is null \
+         when 'project' then l.project_id is null else not (l.dims ? ${c}) end)",
+        a = n + 1,
+        b = n + 2,
+        c = n + 3
+    )
 }
 
 async fn dims(tx: &mut Tx, ctx: &Ctx, p: &Params<'_>) -> Result<Dims> {
-    let cost_centers = match p.uuid("cost_center")? {
+    let mut d = cost_center_and_project(tx, ctx, p.uuid("cost_center")?, p.uuid("project")?).await?;
+    match crate::dimensions::filter(p.str("dimension"), p.str("dimension_value"))? {
+        crate::dimensions::Filter::None => {}
+        crate::dimensions::Filter::CostCenter(c) => d.cost_centers = cost_center_and_project(tx, ctx, Some(c), None).await?.cost_centers,
+        crate::dimensions::Filter::Project(x) => d.project = Some(x),
+        crate::dimensions::Filter::Dims(v) => d.dims = Some(v),
+    }
+    Ok(d)
+}
+
+async fn cost_center_and_project(tx: &mut Tx, ctx: &Ctx, cost_center: Option<Uuid>, project: Option<Uuid>) -> Result<Dims> {
+    let cost_centers = match cost_center {
         Some(root) => Some(
             sqlx::query_scalar(
                 "with recursive t(id, depth) as (select id, 0 from e_cost_center where tenant_id = $1 and id = $2 \
@@ -290,7 +344,66 @@ async fn dims(tx: &mut Tx, ctx: &Ctx, p: &Params<'_>) -> Result<Dims> {
         ),
         None => None,
     };
-    Ok(Dims { cost_centers, project: p.uuid("project")? })
+    Ok(Dims { cost_centers, project, dims: None, without: None })
+}
+
+/// The columns a statement grouped by a dimension has: one per value its lines carry over the
+/// period (named as the value is), then one for lines without; each the filter `base` narrowed to it.
+async fn grouped(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    co: &ReportCompany,
+    p: &Params<'_>,
+    base: &Dims,
+    from: Option<NaiveDate>,
+    to: NaiveDate,
+) -> Result<Option<Vec<(String, Dims)>>> {
+    let Some(code) = p.str("group_by").map(str::trim).filter(|c| !c.is_empty()) else { return Ok(None) };
+    if p.str("compare").is_some() {
+        return Err(Error::field("group_by", "a statement is grouped by a dimension or compared with earlier periods, not both"));
+    }
+    let column = match code {
+        "cost_center" => "l.cost_center_id::text",
+        "project" => "l.project_id::text",
+        _ => "l.dims ->> $3",
+    };
+    let values: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "select distinct {column} from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 and ($4::date is null or l.posting_date >= $4) \
+         and l.posting_date <= $5 and {column} is not null order by 1 limit 51"
+    )))
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(code)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await?;
+    if values.len() > 50 {
+        return Err(Error::field("group_by", format!("{code} has more than 50 values in this period: narrow the report with a dimension filter first")));
+    }
+    let entity = match code {
+        "cost_center" => Some("CostCenter".to_string()),
+        "project" => Some("Project".to_string()),
+        _ => crate::dimensions::load(tx, ctx).await?.into_iter().find(|d| d.code == code).and_then(|d| d.entity),
+    };
+    let mut out = Vec::new();
+    for v in values {
+        let mut d = base.clone();
+        match code {
+            "cost_center" => d.cost_centers = Some(vec![v.parse().map_err(|_| Error::internal("cost center id"))?]),
+            "project" => d.project = Some(v.parse().map_err(|_| Error::internal("project id"))?),
+            _ => d.dims = Some(merged(base.dims.as_ref(), code, Value::String(v.clone()))),
+        }
+        out.push((crate::dimensions::label(tx, ctx, entity.as_deref(), &v).await?, d));
+    }
+    out.push((format!("No {code}"), Dims { without: Some(code.to_string()), ..base.clone() }));
+    Ok(Some(out))
+}
+
+fn merged(base: Option<&Value>, code: &str, v: Value) -> Value {
+    let mut m = base.and_then(Value::as_object).cloned().unwrap_or_default();
+    m.insert(code.to_string(), v);
+    Value::Object(m)
 }
 
 /// Entries that close a year's income and expense into equity (the Finance module's Period
@@ -309,13 +422,13 @@ async fn balances_where(
     skip: &[&str],
     dims: &Dims,
 ) -> Result<HashMap<Uuid, Decimal>> {
-    Ok(sqlx::query_as::<_, (Uuid, Decimal)>(
+    Ok(sqlx::query_as::<_, (Uuid, Decimal)>(sqlx::AssertSqlSafe(format!(
         "select l.account_id, sum(l.debit - l.credit) from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 \
          and ($3::date is null or l.posting_date >= $3) and l.posting_date <= $4 \
          and (cardinality($5::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($5))) \
-         and ($6::uuid[] is null or l.cost_center_id = any($6)) and ($7::uuid is null or l.project_id = $7) \
-         group by l.account_id",
-    )
+         and {} group by l.account_id",
+        dims_sql(6)
+    )))
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
@@ -323,6 +436,8 @@ async fn balances_where(
     .bind(skip.iter().map(|s| s.to_string()).collect::<Vec<_>>())
     .bind(&dims.cost_centers)
     .bind(dims.project)
+    .bind(&dims.dims)
+    .bind(&dims.without)
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
@@ -465,16 +580,23 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     let (from, to) = period(p, co)?;
     let year_start = fy_start(from, co.fy_month);
     let accs = accounts(tx, ctx, co).await?;
-    let before = balances(tx, ctx, co, None, from.pred_opt().unwrap_or(from)).await?;
+    let dims = dims(tx, ctx, p).await?;
+    let before = balances_where(tx, ctx, co, None, from.pred_opt().unwrap_or(from), &[], &dims).await?;
     // Income and expense restart every fiscal year; earlier years show as one equity line.
-    let pl_this_year = balances(tx, ctx, co, Some(year_start), from.pred_opt().unwrap_or(from)).await?;
-    let movement: HashMap<Uuid, (Decimal, Decimal)> = sqlx::query_as::<_, (Uuid, Decimal, Decimal)>(
-        "select account_id, sum(debit), sum(credit) from journal_line_in_book where tenant_id = $1 and company_id = $2 and posting_date between $3 and $4 group by account_id",
-    )
+    let pl_this_year = balances_where(tx, ctx, co, Some(year_start), from.pred_opt().unwrap_or(from), &[], &dims).await?;
+    let movement: HashMap<Uuid, (Decimal, Decimal)> = sqlx::query_as::<_, (Uuid, Decimal, Decimal)>(sqlx::AssertSqlSafe(format!(
+        "select l.account_id, sum(l.debit), sum(l.credit) from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 \
+         and l.posting_date between $3 and $4 and {} group by l.account_id",
+        dims_sql(5)
+    )))
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
     .bind(to)
+    .bind(&dims.cost_centers)
+    .bind(dims.project)
+    .bind(&dims.dims)
+    .bind(&dims.without)
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
@@ -1114,25 +1236,28 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     };
     let skip: Vec<String> =
         if p.str("exclude_closing").is_some_and(|v| v == "true" || v == "1") { CLOSING_SOURCES.iter().map(|s| s.to_string()).collect() } else { vec![] };
-    let opening: Decimal = sqlx::query_scalar(
+    let opening: Decimal = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l where l.tenant_id = $1 and l.company_id = $2 and l.posting_date < $3 \
          and ($4::uuid[] is null or l.account_id = any($4)) and ($5::uuid[] is null or l.customer_id = any($5)) and ($6::uuid[] is null or l.supplier_id = any($6)) \
-         and ($7::uuid[] is null or l.cost_center_id = any($7)) and ($8::uuid is null or l.project_id = $8) \
-         and (cardinality($9::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($9)))",
-    )
+         and {} \
+         and (cardinality($7::text[]) = 0 or not exists (select 1 from journal_entry e where e.tenant_id = l.tenant_id and e.id = l.entry_id and e.source_entity = any($7)))",
+        dims_sql(8)
+    )))
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
     .bind(&accounts)
     .bind(&customer)
     .bind(&supplier)
+    .bind(&skip)
     .bind(&dims.cost_centers)
     .bind(dims.project)
-    .bind(&skip)
+    .bind(&dims.dims)
+    .bind(&dims.without)
     .fetch_one(&mut **tx)
     .await?;
     #[allow(clippy::type_complexity)]
-    let lines: Vec<(NaiveDate, String, String, Option<String>, Uuid, Option<String>, Decimal, Decimal, Option<String>)> = sqlx::query_as(
+    let lines: Vec<(NaiveDate, String, String, Option<String>, Uuid, Option<String>, Decimal, Decimal, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select l.posting_date, coalesce(a.account_number || ' - ', '') || a.account_name, e.source_entity, e.source_number, e.source_id, \
          coalesce(c.customer_name, s.supplier_name), l.debit, l.credit, l.remarks \
          from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
@@ -1141,10 +1266,10 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
          left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date between $3 and $4 \
          and ($5::uuid[] is null or l.account_id = any($5)) and ($6::uuid[] is null or l.customer_id = any($6)) and ($7::uuid[] is null or l.supplier_id = any($7)) \
-         and ($9::uuid[] is null or l.cost_center_id = any($9)) and ($10::uuid is null or l.project_id = $10) \
-         and (cardinality($11::text[]) = 0 or e.source_entity <> all($11)) \
+         and (cardinality($9::text[]) = 0 or e.source_entity <> all($9)) and {} \
          order by l.posting_date, e.created_at, l.entry_id, l.line_no limit $8",
-    )
+        dims_sql(10)
+    )))
     .bind(ctx.tenant)
     .bind(co.id)
     .bind(from)
@@ -1153,9 +1278,11 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     .bind(&customer)
     .bind(&supplier)
     .bind(MAX_ROWS + 1)
+    .bind(&skip)
     .bind(&dims.cost_centers)
     .bind(dims.project)
-    .bind(&skip)
+    .bind(&dims.dims)
+    .bind(&dims.without)
     .fetch_all(&mut **tx)
     .await?;
     let truncated = lines.len() as i64 > MAX_ROWS;
@@ -1205,6 +1332,17 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
     let mut bals = Vec::new();
     // The part of each period's profit that is non-controlling interests', and how it is made up.
     let (mut minority, mut minority_of) = (Vec::new(), Vec::new());
+    let by = match &group {
+        Some(_) if p.str("group_by").is_some() => return Err(Error::field("group_by", "a group's consolidated statement is not grouped by a dimension")),
+        Some(_) => None,
+        None => grouped(tx, ctx, co, p, &dims, Some(from), to).await?,
+    };
+    if let Some(by) = &by {
+        for (_, d) in by {
+            bals.push(balances_where(tx, ctx, co, Some(from), to, CLOSING_SOURCES, d).await?);
+        }
+        return Ok(by_dimension(profit_and_loss_rows(&accs, &bals, co).0, by, json!({"from_date": from, "to_date": to})));
+    }
     for (f, t) in &spans {
         bals.push(match &group {
             Some(g) => {
@@ -1217,16 +1355,7 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
             None => balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?,
         });
     }
-    let (inc_nodes, income) = tree(&accs, &bals, "Income", co.precision);
-    let (exp_nodes, expense) = tree(&accs, &bals, "Expense", co.precision);
-    let net: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
-    let mut rows = vec![json!({"account": "Income", "_bold": true})];
-    rows.extend(node_rows(&inc_nodes, 1));
-    rows.push(total_row("Total Income", &income));
-    rows.push(json!({"account": "Expenses", "_bold": true}));
-    rows.extend(node_rows(&exp_nodes, 1));
-    rows.push(total_row("Total Expenses", &expense));
-    rows.push(total_row(if net[0] >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, &net));
+    let (mut rows, income, expense, net) = profit_and_loss_rows(&accs, &bals, co);
     let split = minority.iter().any(|m| !m.is_zero());
     let owners: Vec<Decimal> = net.iter().zip(minority.iter().chain(std::iter::repeat(&Decimal::ZERO))).map(|(n, m)| *n - *m).collect();
     if split {
@@ -1258,6 +1387,46 @@ async fn profit_and_loss(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany,
     }))
 }
 
+/// Income and expense trees over `bals` (one per column), their totals and the net.
+fn profit_and_loss_rows(accs: &[Acc], bals: &[HashMap<Uuid, Decimal>], co: &ReportCompany) -> (Vec<Value>, Vec<Decimal>, Vec<Decimal>, Vec<Decimal>) {
+    let (inc_nodes, income) = tree(accs, bals, "Income", co.precision);
+    let (exp_nodes, expense) = tree(accs, bals, "Expense", co.precision);
+    let net: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
+    let mut rows = vec![json!({"account": "Income", "_bold": true})];
+    rows.extend(node_rows(&inc_nodes, 1));
+    rows.push(total_row("Total Income", &income));
+    rows.push(json!({"account": "Expenses", "_bold": true}));
+    rows.extend(node_rows(&exp_nodes, 1));
+    rows.push(total_row("Total Expenses", &expense));
+    let whole: Decimal = net.iter().sum();
+    rows.push(total_row(if whole >= Decimal::ZERO { "Net Profit" } else { "Net Loss" }, &net));
+    (rows, income, expense, net)
+}
+
+/// A statement grouped by a dimension: a column per value (`amount`, `amount_1`...) and the total of
+/// them all, which is the statement as it would be without grouping.
+fn by_dimension(rows: Vec<Value>, by: &[(String, Dims)], mut meta: Value) -> Value {
+    let rows: Vec<Value> = rows
+        .into_iter()
+        .map(|mut r| {
+            if let Value::Object(m) = &mut r {
+                m.remove("change");
+                m.remove("change_pct");
+                if m.contains_key("amount") {
+                    let total: Decimal = (0..by.len()).filter_map(|i| m.get(&key(i)).and_then(Value::as_str).and_then(|v| v.parse::<Decimal>().ok())).sum();
+                    m.insert("total".into(), money(total));
+                }
+            }
+            r
+        })
+        .collect();
+    let mut cols = vec![col("account", "Account", "data")];
+    cols.extend(by.iter().enumerate().map(|(i, (l, _))| col(&key(i), l, "currency")));
+    cols.push(col("total", "Total", "currency"));
+    meta["groups"] = json!(by.iter().enumerate().map(|(i, (l, _))| json!({"key": key(i), "label": l})).collect::<Vec<_>>());
+    json!({"columns": cols, "rows": rows, "meta": meta})
+}
+
 /// How the non-controlling interests are made up, company by company ([`non_controlling`]).
 fn minority_json(g: &Group, parts: &[(Uuid, Decimal, Decimal, Decimal, Decimal, Decimal)]) -> Value {
     json!(parts
@@ -1274,6 +1443,36 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
     let on = days(p, as_of)?;
     let group = Group::asked(tx, ctx, co, p).await?;
     let accs = accounts(tx, ctx, co).await?;
+    let dims = dims(tx, ctx, p).await?;
+    let by = match &group {
+        Some(_) if p.str("group_by").is_some() => return Err(Error::field("group_by", "a group's consolidated statement is not grouped by a dimension")),
+        Some(_) => None,
+        None => grouped(tx, ctx, co, p, &dims, None, as_of).await?,
+    };
+    if let Some(by) = &by {
+        let mut bals = Vec::new();
+        for (_, d) in by {
+            bals.push(balances_where(tx, ctx, co, None, as_of, &[], d).await?);
+        }
+        let mut rows = Vec::new();
+        for (root, heading) in [("Asset", "Assets"), ("Liability", "Liabilities"), ("Equity", "Equity")] {
+            let (nodes, total) = tree(&accs, &bals, root, co.precision);
+            rows.push(json!({"account": heading, "_bold": true}));
+            rows.extend(node_rows(&nodes, 1));
+            if root == "Equity" {
+                let (_, income) = tree(&accs, &bals, "Income", co.precision);
+                let (_, expense) = tree(&accs, &bals, "Expense", co.precision);
+                let unclosed: Vec<Decimal> = income.iter().zip(&expense).map(|(i, e)| *i - *e).collect();
+                let mut open = json!({"account": "Profit/loss not yet closed to equity", "_indent": 1});
+                amounts(&mut open, &unclosed);
+                rows.push(open);
+                rows.push(total_row("Total Equity", &total.iter().zip(&unclosed).map(|(e, u)| *e + *u).collect::<Vec<_>>()));
+            } else {
+                rows.push(total_row(&format!("Total {heading}"), &total));
+            }
+        }
+        return Ok(by_dimension(rows, by, json!({"as_of": as_of})));
+    }
     let mut bals = Vec::new();
     let mut reserves = Vec::new();
     // The part of each day's equity that is non-controlling interests', and how it is made up.
@@ -1289,7 +1488,7 @@ async fn balance_sheet(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p
                 reserves.push(reserve);
                 b
             }
-            None => balances(tx, ctx, co, None, *day).await?,
+            None => balances_where(tx, ctx, co, None, *day, &[], &dims).await?,
         });
     }
     let reserves = reserves.iter().any(|r| !r.is_zero()).then_some(reserves);
@@ -1453,6 +1652,7 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
     let (from, to) = period(p, co)?;
     let spans = spans(p, from, to)?;
     let group = Group::asked(tx, ctx, co, p).await?;
+    let dims = dims(tx, ctx, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let cash = |a: &Acc| a.root_type == "Asset" && matches!(a.account_type.as_deref(), Some("Bank" | "Cash"));
     let mut per: Vec<CashFigures> = Vec::new();
@@ -1461,7 +1661,7 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
             per.push(group_cash_figures(k, tx, ctx, co, g, *f, *t).await?);
             continue;
         }
-        let moves = balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &Dims::default()).await?;
+        let moves = balances_where(tx, ctx, co, Some(*f), *t, CLOSING_SOURCES, &dims).await?;
         let moved = |a: &Acc| moves.get(&a.id).copied().unwrap_or_default();
         let profit = -accs.iter().filter(|a| matches!(a.root_type.as_str(), "Income" | "Expense")).map(moved).sum::<Decimal>();
         let impact = accs
@@ -1470,17 +1670,22 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
             .map(|a| (a.id, -moved(a)))
             .collect();
         let cash_at = |bal: HashMap<Uuid, Decimal>| accs.iter().filter(|a| cash(a)).map(|a| bal.get(&a.id).copied().unwrap_or_default()).sum::<Decimal>();
-        let opening = cash_at(balances(tx, ctx, co, None, f.pred_opt().unwrap_or(*f)).await?);
-        let closing = cash_at(balances(tx, ctx, co, None, *t).await?);
-        let exchange: Decimal = sqlx::query_scalar(
+        let opening = cash_at(balances_where(tx, ctx, co, None, f.pred_opt().unwrap_or(*f), &[], &dims).await?);
+        let closing = cash_at(balances_where(tx, ctx, co, None, *t, &[], &dims).await?);
+        let exchange: Decimal = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
              join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id where l.tenant_id = $1 and l.company_id = $2 \
-             and l.posting_date between $3 and $4 and e.source_entity = 'ExchangeRevaluation' and a.root_type = 'Asset' and a.account_type in ('Bank', 'Cash')",
-        )
+             and l.posting_date between $3 and $4 and e.source_entity = 'ExchangeRevaluation' and a.root_type = 'Asset' and a.account_type in ('Bank', 'Cash') and {}",
+            dims_sql(5)
+        )))
         .bind(ctx.tenant)
         .bind(co.id)
         .bind(f)
         .bind(t)
+        .bind(&dims.cost_centers)
+        .bind(dims.project)
+        .bind(&dims.dims)
+        .bind(&dims.without)
         .fetch_one(&mut **tx)
         .await?;
         per.push(CashFigures { profit, impact, revalued: exchange, exchange, residue: Decimal::ZERO, opening, closing });
