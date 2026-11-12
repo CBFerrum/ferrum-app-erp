@@ -127,7 +127,6 @@ pub async fn kind(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid) -> Result<Kind
 }
 
 impl Kind {
-    #[allow(dead_code)] // read from redemptions and expiry on
     fn income(&self) -> Result<Uuid> {
         self.income.ok_or_else(|| Error::invalid(format!("set the Income Account of {}", self.name)))
     }
@@ -252,6 +251,16 @@ impl Account {
         }
         Ok(())
     }
+    /// What someone taking more than it holds is told.
+    fn short(&self, kind: &Kind, amount: Decimal) -> Error {
+        Error::invalid(format!(
+            "{} holds {}{}: {} cannot be taken from it",
+            self.label(kind),
+            self.balance().normalize(),
+            kind.unit_name.as_deref().filter(|_| kind.units).map(|u| format!(" {u}")).unwrap_or_default(),
+            amount.normalize()
+        ))
+    }
     /// The value that leaves with `amount` of the balance: all of it with the whole balance, else
     /// its share, so units are valued at what was paid for them.
     fn release(&self, amount: Decimal, precision: u32) -> Decimal {
@@ -301,13 +310,7 @@ pub(crate) async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, acc: &mut Account
     let on = m.on.unwrap_or_else(|| chrono::Utc::now().date_naive());
     let balance = acc.balance() + m.amount;
     if balance < Decimal::ZERO {
-        return Err(Error::invalid(format!(
-            "{} holds {}{}: {} cannot be taken from it",
-            acc.label(kind),
-            acc.balance().normalize(),
-            kind.unit_name.as_deref().filter(|_| kind.units).map(|u| format!(" {u}")).unwrap_or_default(),
-            (-m.amount).normalize()
-        )));
+        return Err(acc.short(kind, -m.amount));
     }
     let value = acc.value() + m.value;
     let entry = Uuid::now_v7();
@@ -423,6 +426,19 @@ pub(crate) async fn open(
 /// The account a code (and PIN) name, of `kind` when given; every miss counts against the person
 /// and, for a wrong PIN, against the account.
 pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: &str, pin: Option<&str>) -> Result<Uuid> {
+    let sec = secret(ctx.tenant, code, pin)?;
+    match lookup(k, ctx, tx, kind, &sec).await? {
+        Some(acc) => Ok(acc),
+        None => {
+            missed(k, ctx, None).await?;
+            Err(Error::invalid("no stored value account of this kind has this code"))
+        }
+    }
+}
+
+/// The account a kept code names, with the guessing limits and its PIN checked; `None` when no
+/// account (of `kind`) has it, which the caller counts as a miss or not.
+async fn lookup(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, sec: &Secret) -> Result<Option<Uuid>> {
     let guesses: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "select count(*) from stored_value_attempt where tenant_id = $1 and user_id is not distinct from $2 and at > now() - interval '{GUESS_WINDOW_MINUTES} minutes'"
     )))
@@ -433,17 +449,13 @@ pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: 
     if guesses >= WRONG_GUESSES {
         return Err(Error::TooManyRequests(format!("too many codes or PINs that did not match: try again in {GUESS_WINDOW_MINUTES} minutes")));
     }
-    let sec = secret(ctx.tenant, code, pin)?;
     let found: Option<(Uuid, Uuid, Option<String>)> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!("select id, kind, pin_hash from {} where tenant_id = $1 and code_hash = $2", table(ctx, ACCOUNT)?)))
             .bind(ctx.tenant)
             .bind(&sec.hash)
             .fetch_optional(&mut **tx)
             .await?;
-    let Some((acc, _, pin_hash)) = found.filter(|(_, kd, _)| kind.is_none_or(|want| want == *kd)) else {
-        missed(k, ctx, None).await?;
-        return Err(Error::invalid("no stored value account of this kind has this code"));
-    };
+    let Some((acc, _, pin_hash)) = found.filter(|(_, kd, _)| kind.is_none_or(|want| want == *kd)) else { return Ok(None) };
     if let Some(want) = pin_hash {
         let wrong: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "select count(*) from stored_value_attempt where tenant_id = $1 and account_id = $2 and at > now() - interval '{GUESS_WINDOW_MINUTES} minutes'"
@@ -457,10 +469,10 @@ pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: 
         }
         if sec.pin_hash.as_deref() != Some(want.as_str()) {
             missed(k, ctx, Some(acc)).await?;
-            return Err(Error::invalid(if pin.is_none_or(|p| p.trim().is_empty()) { "this card needs its PIN" } else { "the PIN is wrong" }));
+            return Err(Error::invalid(if sec.pin_hash.is_none() { "this card needs its PIN" } else { "the PIN is wrong" }));
         }
     }
-    Ok(acc)
+    Ok(Some(acc))
 }
 
 /// A miss, kept whatever becomes of the caller's transaction (which a refusal rolls back).
@@ -846,6 +858,223 @@ pub(crate) async fn reverse_entries(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: 
     Ok(entries.len())
 }
 
+// ───────────────────────────── paying with it ─────────────────────────────
+
+/// Whether a payment entry takes from or gives back onto stored value.
+pub(crate) fn pays(doc: &Doc) -> bool {
+    id(doc, "stored_value_account").is_some() || id(doc, "stored_value_kind").is_some()
+}
+
+/// A payment's card: a code typed in this save finds its account (PIN and guessing limits checked)
+/// and is hidden; the kind's liability account takes the bank account's place.
+pub(crate) async fn payment_fill(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+    let fresh = s(doc, "stored_value_code").is_some_and(|c| !c.starts_with('•'));
+    mask(hc.ctx, doc, "stored_value_secret", "stored_value_code")?;
+    if fresh && let Some(sec) = kept_secret(doc, "stored_value_secret") {
+        match lookup(hc.kernel, hc.ctx, hc.tx, None, &sec).await? {
+            Some(acc) => {
+                crate::util::set(doc, "stored_value_account", acc.to_string());
+                crate::util::set(doc, "stored_value_secret", Value::Null);
+            }
+            // A new card's code, for a refund into new store credit.
+            None if b(doc, "is_refund") && id(doc, "stored_value_kind").is_some() => {}
+            None => {
+                missed(hc.kernel, hc.ctx, None).await?;
+                return Err(Error::field("stored_value_code", "no stored value account has this code"));
+            }
+        }
+    }
+    let kid = match id(doc, "stored_value_account") {
+        Some(acc) => id(&get(hc.kernel, hc.ctx, hc.tx, ACCOUNT, acc).await?, "kind"),
+        None => id(doc, "stored_value_kind"),
+    };
+    if let Some(kid) = kid {
+        let kd = kind(hc.kernel, hc.ctx, hc.tx, kid).await?;
+        crate::util::set(doc, "bank_account", kd.liability.to_string());
+    }
+    Ok(())
+}
+
+/// The invoice a units redemption pays: its lines of the kind's items, less what was redeemed on it.
+async fn covered(ctx: &Ctx, tx: &mut Tx, k: &Kernel, kd: &Kind, invoice: Uuid) -> Result<Decimal> {
+    let inv = get(k, ctx, tx, "SalesInvoice", invoice).await?;
+    let lines: Decimal = rows(&inv, "items").iter().filter(|r| id(r, "item").is_some_and(|i| kd.items.contains(&i))).map(crate::util::stock_qty).sum();
+    let used: Decimal = sqlx::query_scalar(
+        "select coalesce(-sum(e.amount), 0) from stored_value_entry e where e.tenant_id = $1 and e.against_id = $2 and e.entry_type = 'redeem' \
+         and not exists (select 1 from stored_value_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id)",
+    )
+    .bind(ctx.tenant)
+    .bind(invoice)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(lines - used)
+}
+
+/// A stored value payment: a customer's receipt that pays their invoices from an account, or a
+/// refund to a customer back onto one (or onto new store credit), in the company's currency.
+pub(crate) async fn check_payment(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company) -> Result<()> {
+    if !pays(doc) {
+        return Ok(());
+    }
+    let refund = b(doc, "is_refund");
+    let redeem = s(doc, "payment_type") == Some("Receive") && !refund;
+    if !(redeem || (s(doc, "payment_type") == Some("Pay") && refund)) || id(doc, "customer").is_none() {
+        return Err(Error::field("stored_value_account", "stored value pays a customer's invoices, or takes back a refund to a customer"));
+    }
+    if id(doc, "currency") != Some(co.currency_id) {
+        return Err(Error::field("currency", format!("stored value is paid in the company's currency, {}", co.currency_code)));
+    }
+    if !rows(doc, "deductions").is_empty() {
+        return Err(Error::field("deductions", "a stored value payment has no deductions"));
+    }
+    if d(doc, "unallocated_amount") > Decimal::ZERO {
+        return Err(Error::field("references", "stored value pays invoices: allocate all of it"));
+    }
+    let on = crate::util::date(doc, "posting_date")?;
+    let (acc, kd) = match id(doc, "stored_value_account") {
+        Some(a) => {
+            let sql = format!("select {COLUMNS} from {} where tenant_id = $1 and id = $2", table(hc.ctx, ACCOUNT)?);
+            let acc: Account = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(hc.ctx.tenant).bind(a).fetch_one(&mut **hc.tx).await?;
+            let kd = kind(hc.kernel, hc.ctx, hc.tx, acc.kind).await?;
+            acc.usable(&kd, on)?;
+            (Some(acc), kd)
+        }
+        None => (None, kind(hc.kernel, hc.ctx, hc.tx, id(doc, "stored_value_kind").unwrap_or_default()).await?),
+    };
+    if kd.company != co.id {
+        return Err(Error::field("stored_value_account", format!("{} is another company's", kd.name)));
+    }
+    let units = d(doc, "stored_value_units");
+    if kd.units && units <= Decimal::ZERO {
+        return Err(Error::field("stored_value_units", format!("how many {} are taken or given back", kd.unit_name.as_deref().unwrap_or("units"))));
+    }
+    let amount = if kd.units { units } else { d(doc, "paid_amount") };
+    if let (true, Some(acc)) = (redeem, &acc) {
+        if amount > acc.balance() {
+            return Err(Error::field("paid_amount", format!("{} holds {}", acc.label(&kd), acc.balance().normalize())));
+        }
+        if !kd.partial && amount != acc.balance() {
+            return Err(Error::field("paid_amount", format!("{} is used whole: take {} from it", acc.label(&kd), acc.balance().normalize())));
+        }
+        if kd.units {
+            let refs = rows(doc, "references");
+            let [r] = refs.as_slice() else { return Err(Error::field("references", "units pay one invoice at a time")) };
+            let inv = id(r, "invoice").ok_or_else(|| Error::field("references", "name the invoice"))?;
+            let open = covered(hc.ctx, hc.tx, hc.kernel, &kd, inv).await?;
+            if units > open {
+                return Err(Error::field("stored_value_units", format!("the invoice has {} of {}'s items left to pay with units", open.normalize(), kd.name)));
+            }
+        }
+    }
+    if refund && acc.is_none() && kd.requires_pin && kept_secret(doc, "stored_value_secret").is_none_or(|x| x.pin_hash.is_none()) {
+        return Err(Error::field("stored_value_pin", format!("{} is used with a PIN: give the new card's code and PIN", kd.name)));
+    }
+    Ok(())
+}
+
+/// A submitted stored value payment, under the account's lock. A receipt takes from the account the
+/// value its amount carries (units at what they were bought for); the payment posted the money to
+/// the liability, so the difference goes to the kind's Income Account, and so does the expected
+/// unused share a kind recognising it over time sets aside. A refund loads the account, or a new
+/// one held by the customer.
+pub(crate) async fn payment_submitted(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company) -> Result<()> {
+    if !pays(doc) {
+        return Ok(());
+    }
+    let (k, ctx) = (hc.kernel, hc.ctx);
+    let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let on = crate::util::date(doc, "posting_date")?;
+    let paid = d(doc, "base_paid_amount");
+    let journal = journal_of(ctx, hc.tx, "PaymentEntry", pid).await?;
+    let against = rows(doc, "references").first().and_then(|r| id(r, "invoice"));
+    let source = Some(("PaymentEntry".to_string(), pid));
+    let op = Uuid::now_v7();
+    if !b(doc, "is_refund") {
+        let mut acc = lock(ctx, hc.tx, id(doc, "stored_value_account").unwrap_or_default()).await?;
+        let kd = kind(k, ctx, hc.tx, acc.kind).await?;
+        acc.usable(&kd, on)?;
+        let amount = if kd.units { d(doc, "stored_value_units") } else { paid };
+        if amount > acc.balance() {
+            return Err(acc.short(&kd, amount));
+        }
+        if !kd.partial && amount != acc.balance() {
+            return Err(Error::invalid(format!("{} is used whole: take {} from it", acc.label(&kd), acc.balance().normalize())));
+        }
+        if kd.units && amount > covered(ctx, hc.tx, k, &kd, against.unwrap_or_default()).await? {
+            return Err(Error::invalid(format!("the invoice has no more of {}'s items to pay with units", kd.name)));
+        }
+        let released = acc.release(amount, co.precision);
+        let breakage = if kd.on_expiry == OnExpiry::IncomeOverTime && amount < acc.balance() {
+            round(released * kd.breakage / (Decimal::ONE - kd.breakage), co.precision).min(acc.value() - released).max(Decimal::ZERO)
+        } else {
+            Decimal::ZERO
+        };
+        // The payment debited the liability with the money; it owes `released` (and `breakage`) less.
+        let difference = paid - released - breakage;
+        if !difference.is_zero() {
+            let mut e = Entry::new(co.id, on, "PaymentEntry", pid, s(doc, "number").map(str::to_string));
+            e.memo = Some(format!("{} at what it was bought for", acc.label(&kd)));
+            e.lines = vec![
+                Line::new(kd.liability, -difference, &co.currency_code).remarks("Stored value at what it was bought for"),
+                Line::new(kd.income()?, difference, &co.currency_code).remarks("Stored value at what it was bought for"),
+            ];
+            ledger::post(hc.tx, ctx, e, co.precision).await?;
+        }
+        let m = Move { entry_type: "redeem", amount: -amount, value: -released, on: Some(on), source: source.clone(), against, journal, ..Default::default() };
+        record(k, ctx, hc.tx, &mut acc, &kd, op, m).await?;
+        if breakage > Decimal::ZERO {
+            let m = Move {
+                entry_type: "breakage",
+                value: -breakage,
+                on: Some(on),
+                source,
+                against,
+                journal,
+                remarks: Some("Expected unused share".into()),
+                ..Default::default()
+            };
+            record(k, ctx, hc.tx, &mut acc, &kd, op, m).await?;
+        }
+        return Ok(());
+    }
+    let (mut acc, kd) = match id(doc, "stored_value_account") {
+        Some(a) => {
+            let acc = lock(ctx, hc.tx, a).await?;
+            let kd = kind(k, ctx, hc.tx, acc.kind).await?;
+            acc.usable(&kd, on)?;
+            (acc, kd)
+        }
+        None => {
+            let kd = kind(k, ctx, hc.tx, id(doc, "stored_value_kind").unwrap_or_default()).await?;
+            // Without a code typed, the one made here is shown to no one: the account's New Code gives one.
+            (open(k, ctx, hc.tx, &kd, id(doc, "customer"), kept_secret(doc, "stored_value_secret"), on).await?.0, kd)
+        }
+    };
+    let amount = if kd.units { d(doc, "stored_value_units") } else { paid };
+    let m = Move { entry_type: "refund", amount, value: paid, on: Some(on), source, against, journal, ..Default::default() };
+    record(k, ctx, hc.tx, &mut acc, &kd, op, m).await?;
+    Ok(())
+}
+
+/// Where a refund of `invoice` goes back by default: the account that paid it, when its kind says
+/// refunds go back onto it.
+pub(crate) async fn refund_onto(k: &Kernel, ctx: &Ctx, tx: &mut Tx, invoice: Uuid) -> Result<Option<Uuid>> {
+    let paid_by: Option<(Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select e.account_id, a.kind from stored_value_entry e join {} a on a.tenant_id = e.tenant_id and a.id = e.account_id \
+         where e.tenant_id = $1 and e.against_id = $2 and e.entry_type = 'redeem' \
+         and not exists (select 1 from stored_value_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id) order by e.created_at desc limit 1",
+        table(ctx, ACCOUNT)?
+    )))
+    .bind(ctx.tenant)
+    .bind(invoice)
+    .fetch_optional(&mut **tx)
+    .await?;
+    match paid_by {
+        Some((acc, kid)) if kind(k, ctx, tx, kid).await?.refund_back => Ok(Some(acc)),
+        _ => Ok(None),
+    }
+}
+
 // ───────────────────────────── the check ─────────────────────────────
 
 /// Every way the books and the accounts disagree: an account whose balance or value is not the sum
@@ -893,7 +1122,7 @@ fn amount_param(params: &Value, name: &str) -> Result<Option<Decimal>> {
     }
 }
 
-fn uuid_param(params: &Value, name: &str) -> Result<Option<Uuid>> {
+pub(crate) fn uuid_param(params: &Value, name: &str) -> Result<Option<Uuid>> {
     param(params, name).map(|v| v.parse().map_err(|_| Error::field(name, "is not a record id"))).transpose()
 }
 

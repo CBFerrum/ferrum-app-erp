@@ -450,7 +450,7 @@ impl DocHook for PaymentEntryHook {
         // Withheld from a supplier, it settles their bills on top of the money.
         let withheld = crate::withholding::payment(hc, doc, &co, rate, settled(doc, receive), allocated).await?;
         set(doc, "unallocated_amount", money(settled(doc, receive) + withheld - allocated));
-        Ok(())
+        crate::stored_value::payment_fill(hc, doc).await
     }
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -463,7 +463,9 @@ impl DocHook for PaymentEntryHook {
                 if d(doc, "total_deductions").is_zero() { "allocations exceed the paid amount" } else { "allocations exceed the paid amount and deductions" };
             return Err(Error::field("references", msg));
         }
-        if let Some(bank) = id(doc, "bank_account") {
+        if let Some(bank) = id(doc, "bank_account")
+            && !crate::stored_value::pays(doc)
+        {
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", bank).await?;
             if id(&a, "company") != Some(cid) || !matches!(s(&a, "account_type"), Some("Bank" | "Cash")) {
                 return Err(Error::field("bank_account", "choose a Bank or Cash account of this company"));
@@ -535,7 +537,8 @@ impl DocHook for PaymentEntryHook {
                 return Err(Error::Validation(vec![FieldError::new("allocated_amount", msg).in_row("references", i)]));
             }
         }
-        Ok(())
+        let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        crate::stored_value::check_payment(hc, doc, &co).await
     }
 
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -650,6 +653,7 @@ impl DocHook for PaymentEntryHook {
         entry.lines = lines;
         entry.memo = s(doc, "remarks").map(str::to_string);
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        crate::stored_value::payment_submitted(hc, doc, &co).await?;
         for (entity, inv) in touched {
             sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, inv).await?;
         }
@@ -666,6 +670,7 @@ impl DocHook for PaymentEntryHook {
             ledger::cancel_open_item(hc.tx, hc.ctx, pid).await?;
         }
         ledger::reverse(hc.tx, hc.ctx, "PaymentEntry", pid, on, co.precision).await?;
+        crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, "PaymentEntry", pid, on, "this payment").await?;
         for inv in items {
             if let Some(item) = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, false).await? {
                 sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await?;

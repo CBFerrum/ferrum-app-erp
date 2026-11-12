@@ -317,7 +317,9 @@
        message: "A debit note names the invoice it charges more on, and is not a credit note"}
   actions:
     - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
-    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0"}
+    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0",
+       params: [{name: store_credit, label: Into New Store Credit, type: link, to: StoredValueKind,
+                 description: "Refund onto a new account of this kind held by the customer, instead of money. Empty: back onto the stored value that paid the sale, when its kind says so, else in money"}]}
     - {name: make_credit_note, label: Create Credit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
        params: [{name: credit_percent, type: data, label: Credit of Price Only (%),
                  description: "Empty: the goods come back, for what is still returnable. A figure (10): no goods come back, and that share of each line's price is credited"}]}
