@@ -67,7 +67,6 @@ base64 = "0.22"
 hex = { workspace = true }
 hmac = "0.12"
 minijinja = { version = "2", features = ["fuel"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { workspace = true }
 
 [dev-dependencies]

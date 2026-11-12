@@ -69,8 +69,8 @@ pub fn register(h: &mut HookRegistry) {
     h.add_site("selling", Arc::new(portal::SellingPortal));
     // A supplier's orders and bills on the workspace's portal ("Your orders").
     h.add_site("buying", Arc::new(portal::BuyingPortal));
-    // Carriers' tracking calls, signed per connection.
-    h.add_site("inventory", Arc::new(shipping::CarrierSite));
+    // Carriers' tracking calls, which arrive at each carrier's connection.
+    h.add_inbound_handler("erp", Arc::new(shipping::CarrierInbound));
     h.scoped(&only("accounting"), |h| {
         h.register("NumberSeries", Arc::new(series::SeriesRecordHook))
             .register("Company", Arc::new(setup::CompanyHook))
