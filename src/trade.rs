@@ -146,6 +146,8 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
         // cost they left at (never at the selling price), and go back to a supplier at the cost
         // they came in at. Without an original, at the cost the line states, else today's.
         let back = match (&original, id(r, "return_line")) {
+            // Rejected goods came in at no value: they leave the rejected warehouse at what it holds them at.
+            _ if b(doc, "rejected_return") => None,
             (Some(o), Some(line)) => Some(original_moves(hc, o, entity, line, sales_return, i, r).await?),
             _ => None,
         };
@@ -751,7 +753,12 @@ impl DocHook for ShipmentHook {
         let n = names(self.0);
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
-        count_return(hc, n.shipment, doc, Decimal::ONE).await?;
+        let rejected_return = b(doc, "rejected_return");
+        if rejected_return {
+            count_rejected(hc, doc, Decimal::ONE).await?;
+        } else {
+            count_return(hc, n.shipment, doc, Decimal::ONE).await?;
+        }
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let ret = b(doc, "is_return");
         // Selling issues stock (returns receive it back); buying receives (returns issue).
@@ -759,8 +766,14 @@ impl DocHook for ShipmentHook {
             (Side::Selling, false) | (Side::Buying, true) => -Decimal::ONE,
             _ => Decimal::ONE,
         };
+        if self.0 == Side::Selling && !ret {
+            refuse_unavailable(hc, doc).await?;
+        }
         let posted = post_line_stock(hc, &co, n.shipment, doc, direction, n.serial_status).await?;
         write_valuation(hc, n.shipment, &posted).await?;
+        if self.0 == Side::Buying && !ret {
+            receive_rejected(hc, &co, doc).await?;
+        }
         let on = date(doc, "posting_date")?;
         let mut entry = Entry::new(co.id, on, n.shipment, sid, s(doc, "number").map(str::to_string));
         for p in &posted {
@@ -775,7 +788,7 @@ impl DocHook for ShipmentHook {
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         let sign = if ret { -Decimal::ONE } else { Decimal::ONE };
         let mut orders = Vec::new();
-        for r in rows(doc, "items") {
+        for r in rows(doc, "items").into_iter().filter(|_| !rejected_return) {
             if let (Some(o), Some(line)) = (id(&r, n.order_link), id(&r, n.order_line)) {
                 add_progress_in(hc.kernel, hc.ctx, hc.tx, n.order, o, line, n.fulfil_field, sign * d(&r, "qty"), Some(unit_factor(&r))).await?;
                 if !orders.contains(&o) {
@@ -794,6 +807,9 @@ impl DocHook for ShipmentHook {
         if rows(doc, "items").iter().any(|r| d(r, "billed_qty") > Decimal::ZERO) {
             return Err(Error::invalid("cancel the invoices made against this document first"));
         }
+        if rows(doc, "items").iter().any(|r| d(r, "rejected_returned_qty") > Decimal::ZERO) {
+            return Err(Error::invalid("rejected goods of this receipt went back on a return; cancel that return first"));
+        }
         has_returns(doc)
     }
 
@@ -802,12 +818,17 @@ impl DocHook for ShipmentHook {
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
-        count_return(hc, n.shipment, doc, -Decimal::ONE).await?;
+        let rejected_return = b(doc, "rejected_return");
+        if rejected_return {
+            count_rejected(hc, doc, -Decimal::ONE).await?;
+        } else {
+            count_return(hc, n.shipment, doc, -Decimal::ONE).await?;
+        }
         stock::reverse_moves(hc.tx, hc.ctx, &co, n.shipment, sid, on, ts).await?;
         ledger::reverse(hc.tx, hc.ctx, n.shipment, sid, on, co.precision).await?;
         let sign = if b(doc, "is_return") { Decimal::ONE } else { -Decimal::ONE };
         let mut orders = Vec::new();
-        for r in rows(doc, "items") {
+        for r in rows(doc, "items").into_iter().filter(|_| !rejected_return) {
             if let (Some(o), Some(line)) = (id(&r, n.order_link), id(&r, n.order_line)) {
                 add_progress_in(hc.kernel, hc.ctx, hc.tx, n.order, o, line, n.fulfil_field, sign * d(&r, "qty"), Some(unit_factor(&r))).await?;
                 if !orders.contains(&o) {
@@ -825,6 +846,9 @@ impl DocHook for ShipmentHook {
         let n = names(self.0);
         if name == "make_carrier_shipment" {
             return crate::shipping::make_from(hc, n.shipment, doc, params).await.map(Some);
+        }
+        if name == "return_rejected" && self.0 == Side::Buying {
+            return return_rejected(hc, doc, params).await.map(Some);
         }
         if matches!(name, "make_sales_return" | "make_purchase_return") {
             if b(doc, "is_return") {
@@ -858,6 +882,146 @@ impl DocHook for ShipmentHook {
         let created_doc = create_for_user(hc, n.invoice, input).await?;
         Ok(Some(created(n.invoice, &created_doc)))
     }
+}
+
+// ─────────────────────────── rejected goods ───────────────────────────
+
+/// A delivery takes nothing from a warehouse whose goods are not available (in transit, rejected).
+async fn refuse_unavailable(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    for (i, r) in rows(doc, "items").iter().enumerate() {
+        if let Some(w) = id(r, "warehouse")
+            && stock::unavailable(hc.tx, hc.ctx.tenant, w).await?
+        {
+            return Err(Error::Validation(vec![
+                FieldError::new("warehouse", "holds goods in transit or rejected, which cannot be delivered").in_row("items", i),
+            ]));
+        }
+    }
+    Ok(())
+}
+
+/// What a receipt refused goes into its rejected warehouse (the line's, else the company's) at no value: kept, out
+/// of what can be sold or used, posted to no account, and never billed.
+async fn receive_rejected(hc: &mut HookCtx<'_>, co: &Company, doc: &Doc) -> Result<()> {
+    let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let mut moves = Vec::new();
+    let mut cache = HashMap::new();
+    for r in rows(doc, "items") {
+        let qty = d(&r, "rejected_qty") * unit_factor(&r);
+        let Some(item) = id(&r, "item").filter(|_| qty > Decimal::ZERO) else { continue };
+        if !is_stock_item(hc, &mut cache, item).await? {
+            continue;
+        }
+        let wh = match id(&r, "rejected_warehouse") {
+            Some(w) => w,
+            None => stock::kind_warehouse(hc.kernel, hc.ctx, hc.tx, co.id, "rejected_warehouse", "Rejected").await?,
+        };
+        if let Some(line) = id(&r, "id") {
+            let mut v = Doc::new();
+            v.insert("rejected_warehouse".into(), json!(wh.to_string()));
+            hc.kernel.set_child_values_tx(&sys(hc.ctx), hc.tx, "PurchaseReceipt", "items", line, v).await?;
+        }
+        moves.push(MoveIn { item, warehouse: wh, qty, rate: Some(Decimal::ZERO), batch_no: s(&r, "batch_no").map(str::to_string), ..Default::default() });
+    }
+    if moves.is_empty() {
+        return Ok(());
+    }
+    let on = date(doc, "posting_date")?;
+    stock::post_moves(hc.tx, hc.ctx, co, "PurchaseReceipt", sid, on, posting_ts(doc)?, moves, "consumed").await?;
+    Ok(())
+}
+
+/// Counts a return of rejected goods on its receipt's lines (`sign` 1), or takes a cancelled one off: never more
+/// than a line rejected.
+async fn count_rejected(hc: &mut HookCtx<'_>, doc: &Doc, sign: Decimal) -> Result<()> {
+    let orig = id(doc, "return_against").ok_or_else(|| Error::field("return_against", "is required"))?;
+    let original = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "PurchaseReceipt", orig, true).await?;
+    let lines = rows(&original, "items");
+    for (i, r) in rows(doc, "items").iter().enumerate() {
+        let o = id(r, "return_line").and_then(|l| lines.iter().find(|o| id(o, "id") == Some(l)));
+        let o = o.ok_or_else(|| Error::Validation(vec![FieldError::new("item", "is not a rejected line of the receipt").in_row("items", i)]))?;
+        let q = (d(r, "qty").abs() * unit_factor(r) / unit_factor(o)).round_dp(9);
+        let now = d(o, "rejected_returned_qty") + sign * q;
+        if sign > Decimal::ZERO && now > d(o, "rejected_qty") + QTY_TOLERANCE {
+            let left = (d(o, "rejected_qty") - d(o, "rejected_returned_qty")).max(Decimal::ZERO);
+            return Err(Error::Validation(vec![
+                FieldError::new("qty", format!("{} of what was rejected is left to send back", left.normalize())).in_row("items", i),
+            ]));
+        }
+        let mut v = Doc::new();
+        v.insert("rejected_returned_qty".into(), money(now.max(Decimal::ZERO)));
+        hc.kernel.set_child_values_tx(&sys(hc.ctx), hc.tx, "PurchaseReceipt", "items", id(o, "id").unwrap_or_default(), v).await?;
+    }
+    Ok(())
+}
+
+/// `return_rejected`: a draft return of what a receipt rejected and has not sent back yet, from its rejected
+/// warehouse; or (`make` Debit Note) a draft debit note against the latest submitted invoice that billed this
+/// receipt, for those goods at its prices, no goods moving.
+async fn return_rejected(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
+    let rid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let open: Vec<(Doc, Decimal)> = rows(doc, "items")
+        .into_iter()
+        .map(|r| (d(&r, "rejected_qty") - d(&r, "rejected_returned_qty"), r))
+        .filter(|(q, _)| *q > Decimal::ZERO)
+        .map(|(q, r)| (r, q))
+        .collect();
+    if open.is_empty() {
+        return Err(Error::invalid("nothing rejected on this receipt is left to send back"));
+    }
+    if params.get("make").and_then(Value::as_str) == Some("Debit Note") {
+        let inv: Option<Uuid> = sqlx::query_scalar(
+            "select i.id from e_purchase_invoice i where i.tenant_id = $1 and i.docstatus = 1 and not coalesce(i.is_return, false) and exists              (select 1 from e_purchase_invoice__items l where l.tenant_id = i.tenant_id and l.parent_id = i.id and l.purchase_receipt = $2)              order by i.posting_date desc, i.created_at desc limit 1",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(rid)
+        .fetch_optional(&mut **hc.tx)
+        .await?;
+        let inv = inv.ok_or_else(|| Error::invalid("no submitted invoice bills this receipt: make the return, or enter the supplier's invoice first"))?;
+        let invoice = get(hc.kernel, hc.ctx, hc.tx, "PurchaseInvoice", inv).await?;
+        let inv_lines = rows(&invoice, "items");
+        let mut input = return_input(hc, Side::Buying, "PurchaseInvoice", &invoice, None)?;
+        let mut kept = Vec::new();
+        if let Some(Value::Array(lines)) = input.get_mut("items") {
+            for m in lines.iter_mut().filter_map(Value::as_object_mut) {
+                let Some(il) = inv_lines.iter().find(|l| s(l, "id") == s(m, "return_line")) else { continue };
+                let Some((r, q)) = open.iter().find(|(r, _)| s(r, "id") == s(il, "pr_line")) else { continue };
+                let q = (q * unit_factor(r) / unit_factor(il)).round_dp(9).min(d(m, "qty").abs());
+                m.insert("qty".into(), money(-q));
+                kept.push(Value::Object(m.clone()));
+            }
+        }
+        if kept.is_empty() {
+            return Err(Error::invalid("the invoice billing this receipt has no line for its rejected goods"));
+        }
+        input.insert("items".into(), Value::Array(kept));
+        input.insert("update_stock".into(), json!(false));
+        // A fixed charge is the person's to share out on a debit note of part of the goods.
+        if let Some(Value::Array(taxes)) = input.get_mut("taxes") {
+            taxes.retain(|t| t.get("charge_type").and_then(Value::as_str) != Some("Actual"));
+        }
+        let place = Uuid::now_v7().simple().to_string();
+        input.insert("bill_no".into(), json!(format!("PENDING-{}-{}", s(&invoice, "number").unwrap_or_default(), &place[place.len() - 6..])));
+        let made = create_for_user(hc, "PurchaseInvoice", input).await?;
+        return Ok(created("PurchaseInvoice", &made));
+    }
+    let lines: Vec<Value> = open
+        .iter()
+        .map(|(r, q)| {
+            json!({"item": r.get("item"), "uom": r.get("uom"), "qty": money(*q), "price_list_rate": r.get("price_list_rate"), "discount_percent": r.get("discount_percent"),
+                   "warehouse": r.get("rejected_warehouse"), "batch_no": r.get("batch_no"), "return_line": r.get("id")})
+        })
+        .collect();
+    let mut input = Doc::new();
+    for f in ["company", "supplier", "supplier_address", "currency", "conversion_rate"] {
+        input.insert(f.into(), doc.get(f).cloned().unwrap_or(Value::Null));
+    }
+    input.insert("is_return".into(), json!(true));
+    input.insert("return_against".into(), json!(rid.to_string()));
+    input.insert("rejected_return".into(), json!(true));
+    input.insert("items".into(), Value::Array(lines));
+    let made = create_for_user(hc, "PurchaseReceipt", input).await?;
+    Ok(created("PurchaseReceipt", &made))
 }
 
 // ─────────────────────────── a sale within the group ───────────────────────────
