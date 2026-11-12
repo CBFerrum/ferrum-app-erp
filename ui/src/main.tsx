@@ -127,6 +127,7 @@ const erpRoutes = [
       { path: "e/MrpRun", lazy: () => import("./Planning").then((m) => ({ Component: m.Planning })) },
       { path: "e/StoredValueAccount", lazy: () => import("./StoredValue").then((m) => ({ Component: m.StoredValue })) },
       { path: "e/WithholdingCategory", lazy: () => import("./Withholding").then((m) => ({ Component: m.Withholding })) },
+      { path: "e/NumberSeries/new", lazy: () => import("./Numbering").then((m) => ({ Component: m.NewSeries })) },
       { path: "e/NumberSeries", lazy: () => import("./Numbering").then((m) => ({ Component: m.Numbering })) },
       { path: "f/:entity/:id", lazy: () => import("./Form").then((m) => ({ Component: m.FormPage })) },
       { path: "l/:entity", lazy: () => import("./Form").then((m) => ({ Component: m.ListPage })) },

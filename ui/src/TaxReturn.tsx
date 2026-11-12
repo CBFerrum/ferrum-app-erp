@@ -12,7 +12,7 @@ import { api, docPath, download, errorMessage, formatDate, isolate, newKey, t } 
 import { Alert, Badge, Button, confirmDialog, StatePanel, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
-import { amountInput, Gate, useRights } from "./desk";
+import { amountInput, Gate, SetUp, useMissing, useRights } from "./desk";
 import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
@@ -64,6 +64,7 @@ function Start() {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [key, setKey] = useState(newKey);
+  const noDefinition = useMissing("TaxReturnDefinition");
   const earlier = useQuery({
     queryKey: ["erp", "returns", company, definition],
     enabled: !!company && !!definition,
@@ -84,6 +85,7 @@ function Start() {
     }
   };
 
+  if (noDefinition) return <SetUp title={t("No tax return defined yet")} why={t("A return is worked out from a return definition (its boxes and how each is found), and this workspace has none. A country's add-on brings its own; or make one.")} to="/e/TaxReturnDefinition/new" label={t("Make a return definition")} />;
   return (
     <div className="erp-page">
       <PageHead title={t("Tax return")} meta={<Meta items={[t("Choose a return and the first day of its period. The boxes are worked out from the books.")]} />} actions={<Link className="btn btn-ghost btn-md" to="/e/TaxReturn">{t("Earlier returns")}</Link>} />
