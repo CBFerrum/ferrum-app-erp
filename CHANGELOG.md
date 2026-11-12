@@ -1,5 +1,17 @@
 # Changelog
 
+## ERP 0.20.0: stored value
+
+Gift cards, store credit and prepaid packages, built once beside the ledger so the till, the web shop and Bookings use the same thing (POS PS-34 to PS-37, Commerce CM-42, Bookings BK-27 and BK-29).
+
+- **Kinds.** A Stored Value Kind holds money in the company's currency or a count of units (sessions, washes) that pay for the items it lists; is held by a bearer or by the customer who buys it; sits in a liability account; and says whether it can be topped up, transferred, cashed out or used in part, whether refunds go back onto it, whether it needs a PIN, who may issue it by hand, its least and most loads and balance, its expiry (none, or so many days from issue or from last use) with a warning period, what unused value becomes (stays owed, income at expiry, or income over time at a stated expected share), and whether tax is charged when it is sold or when it is redeemed. Nothing is seeded.
+- **Accounts and their ledger.** A Stored Value Account keeps its balance and the value the books owe, each the sum of its own append-only ledger, every entry tied to its document and journal entry, never below nothing in the database; changes lock the account first, so of two tills taking from one card one waits and is then told what is left. Codes are kept as a salted hash and their last four characters; wrong PINs and unknown codes are limited. Block, unblock, a new code (shown once), adjust and cash out.
+- **Selling.** An item names the kind it sells (and the units one loads); its invoice lines go to the liability, taxed as any line or not at all as the kind says, and open or top up an account on submit. Cancelling the sale takes the value back, refused once it has been used. Issue by hand against the kind's Adjustment Account.
+- **Redeeming.** A payment entry naming an account or a code pays a customer's invoices from it, the liability in the bank account's place; units pay their items' lines at what they were bought for. Refund on a credit note goes back onto the card that paid, or onto new store credit for a return without its receipt.
+- **Expiry** by ERP's upkeep, once per account, with the event `accounting.stored_value_expiring` raised once before it.
+- **Reports**: Stored Value Outstanding (by kind and age), Stored Value Statement, Stored Value Issued and Used.
+- **Capabilities** `accounting.stored_value_kind.balance`, `issue`, `redeem`, `refund`, `transfer` and `reverse`, once per effect key, each undone by `reverse`, and the same as public functions in `stored_value`.
+
 ## ERP 0.19.1, Warehouse 0.2.3, Shop Floor 0.2.3: the tuned design system
 
 Rebuilt with Ferrum-Frontend 45dad7f, the design system as tuned after the landed build was reviewed. The left menu's icons are chosen so that none repeats on more than three rows and each fits its row; their drawings load beside the first page instead of inside it, so the page starts lighter; a row that scrolls sideways fades at the edge where there is more, in every browser and with reduced motion; a printed record leaves out empty fields and keeps its totals with the table; menus and popovers sit inside the page's landmarks for assistive technology; a selection bar folds what does not fit into More on a narrow screen. Nothing else changes.

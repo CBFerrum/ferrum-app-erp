@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.20.0** | Stored value built once beside the ledger: gift cards, store credit and prepaid packages of money or units, sold on an invoice line, redeemed as a payment, refunded back onto them or onto new store credit, expiring by the kind's rule, with three reports and contracted capabilities for the till, the web shop and Bookings. |
 | **0.19.1, Warehouse 0.2.3, Shop Floor 0.2.3** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.19.0, India 0.4.0, Canada 0.1.1** | A delivery country and region on sales and purchase documents that every country's rules read (India's place of supply follows it), a tax summary report by tax, category and rate, and withholding by category with thresholds, certificates and a report. |
 | **0.18.2, Finance 0.4.2, Stock Operations 0.1.2, Manufacturing Operations 0.1.2** | Item groups' accounts are read, and expired or disabled batches no longer leave for use. |
