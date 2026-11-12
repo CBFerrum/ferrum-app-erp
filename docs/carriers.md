@@ -1,7 +1,7 @@
 # Carrier connections
 
 A **Carrier Connection** (Inventory menu) describes a carrier, or a service that speaks for many, as four
-HTTP calls. ERP knows no carrier: what to send and where to find the answer is the connection's
+HTTP calls. ERP knows no carrier: what to send and where to find the answer is the carrier's
 `description` (Calls), a JSON object:
 
 | Part | What it is |
@@ -11,7 +11,7 @@ HTTP calls. ERP knows no carrier: what to send and where to find the answer is t
 | `track` | where the parcels are: `status_at`, `statuses` (the carrier's words to In Transit, Delivered or Exception) |
 | `cancel` | cancels the label |
 | `tracking_link` | a template giving the link people follow, when the label's answer has none |
-| `inbound` | how the carrier's own tracking calls are checked and read: `auth` `hmac` (HMAC-SHA256 of the body under the Inbound Secret, hex, in `header`, `sha256=` before it or not) or `token` (the secret in `header` or the `token` query parameter), `tracking_at`, `status_at`, `statuses` |
+| `inbound` | how the carrier's own tracking calls are read: `auth` `token` (the Inbound Secret sent in `header`; the platform checks it), `tracking_at`, `status_at`, `statuses`. `auth` `hmac` (a body signed without a timestamp) is accepted but the platform does not check such a signature: the carrier has no inbound address and the upkeep tracks it instead |
 
 Each call has `url`, `method` (POST), `headers`, and a `body` (a JSON template) or a `form`, all templates
 (MiniJinja, `| json` writes a value as JSON) over: `shipment` (the record, its `packages` with `weight`,
@@ -24,13 +24,34 @@ says where the answer explains a refusal; `temporary` lists the statuses meaning
 425, 429, 500, 502, 503, 504 when left out). Pointers are JSON pointers (`/a/0/b`); the rate's are
 relative to each rate.
 
-The API Key, API Secret and Inbound Secret are secret fields: sealed with the server's key, never read
-back. A **Test Carrier** answers each call from its `fixtures` (`{rate, label, track, cancel}`, each the
-answer the call would get) and calls nobody.
+## Connections
 
-The carrier's tracking calls go to `POST /api/site/{workspace}/inventory/carriers/{connection id}`; one
-not signed as `inbound` says is refused (401) and counted on the connection (Refused Inbound Calls). The
-upkeep tracks labelled shipments every *Track Every (Hours)* (6; 0: only when asked or told).
+The calls are made by the platform's connections (Administration, Connections). Saving a carrier makes one
+connection of the workspace for it, named `carrier_` and eight digits (one more, `…_2`, for each further
+address its calls go to), whose operations `rate`, `label`, `track` and `cancel` are the carrier's calls with
+each `url` split into the connection's base and the operation's path (a template in the host cannot be split
+and is refused). Descriptions keep their names (`to`, `shipment`, `rate`, `secret.api_key` and the rest): the
+connection's templates set each again from the operation's inputs. The carrier's *Enabled* turns its
+connection on; its description is the carrier's, and saving it rewrites the connection's.
+
+The API Key, API Secret and Inbound Secret typed on a carrier are **moved** into its connection's secrets on
+saving and cleared from the carrier, so only the connection holds them (sealed, never read back, never in a
+log, an audit row or a job). To change one, type every key again, or change them under Connections. A
+carrier made before connections is put on one by the upkeep, once, from its stored settings: turned on only
+if it was, its keys moved.
+
+A **Test Carrier** answers each call from its `fixtures` (`{rate, label, track, cancel}`, each the answer the
+call would get) and calls nobody. A label is bought with the shipment's id as the connection's call key: the
+carrier is called once even if the first answer was lost with a rolled-back run.
+
+The carrier's tracking calls go to the connection's inbound address, `POST /api/connections/inbound/{id}`
+(shown under Connections), with the Inbound Secret in `inbound.header`; a call that is wrong, replayed or
+too large is refused alike and counted on the connection. The old address under `/api/site/…/carriers/…` is
+gone. The upkeep tracks labelled shipments every *Track Every (Hours)* (6; 0: only when asked or told; a
+carrier that signed with `hmac` and had 0 gets 6).
+
+A label the answer gives as an address (`label_url_at`) is fetched with the platform's vetted client: the
+connection's operations read JSON, not files.
 
 **On a delivery note or a purchase return**: Ship by Carrier makes a Carrier Shipment with the first
 parcel; add parcels; Get Rates; Choose Rate; Buy Label (the file attached to the shipment, the tracking
@@ -62,7 +83,7 @@ The addresses are placeholders.
   "track": {"url": "https://api.multicarrier.example/v2/tracks/{{ tracking_number }}", "method": "GET", "headers": {"Authorization": "Bearer {{ secret.api_key }}"},
             "status_at": "/tracking_status/status", "statuses": {"TRANSIT": "In Transit", "DELIVERED": "Delivered", "FAILURE": "Exception", "RETURNED": "Exception"}},
   "cancel": {"url": "https://api.multicarrier.example/v2/refunds", "headers": {"Authorization": "Bearer {{ secret.api_key }}"}, "body": "{\"transaction\": {{ provider_id|json }}}"},
-  "inbound": {"auth": "hmac", "header": "X-Signature", "tracking_at": "/data/tracking_number", "status_at": "/data/tracking_status/status",
+  "inbound": {"auth": "token", "header": "X-Signature", "tracking_at": "/data/tracking_number", "status_at": "/data/tracking_status/status",
               "statuses": {"TRANSIT": "In Transit", "DELIVERED": "Delivered", "FAILURE": "Exception"}}
 }
 ```
@@ -93,12 +114,3 @@ The addresses are placeholders.
               "statuses": {"POD": "Delivered", "EXC": "Exception", "OUT": "In Transit"}}
 }
 ```
-
-## What the platform would need for this copy to go
-
-ERP runs these calls itself (`src/shipping.rs`), modelled on the platform's message channels, because the
-platform describes calls only for text and chat channels. The platform would need to offer, for any app: a
-**described call on a connection** (a stored connection with sealed secrets; a call rendered from templates
-over values the app passes; sent through the vetted client; the answer read by pointers, with `error_at` and
-temporary statuses; an idempotency key per attempt series), and **signed inbound calls per connection** (an
-address per connection, `hmac` or `token`, refusals counted, the body handed to the app).
