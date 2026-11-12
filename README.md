@@ -227,6 +227,26 @@ Apps that post through the engine rely on [its contract](docs/contracts.md): eac
 in the caller's transaction, appends rather than changes, says what it refuses, and whether
 calling it twice does it twice.
 
+### Purchase order approvals
+
+A purchase order can wait for approval before it is submitted, by value band. The bands are a
+settings record, **Purchase Approval Settings** (Buying menu): the order's total in company
+currency above *First Approval Above* needs a Purchase Manager, above *Second Approval Above* an
+Accounts Manager after them, above *Third Approval Above* two more Accounts Managers; an empty
+band is no step. The policy itself is ordinary configuration: the platform takes an approval on a
+document's submit only as the workspace's own customization (a package cannot ship one yet), so
+ERP ships it as [`docs/approvals/purchase_order.json`](docs/approvals/purchase_order.json), applied
+once by an administrator:
+
+```sh
+curl -X POST https://erp.example.com/api/customize \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d @docs/approvals/purchase_order.json
+```
+
+After that, the workspace edits the bands on the settings record, or the steps (roles, how many,
+reminders, escalation) in Studio, without code. Nothing in ERP's engine checks an amount.
+
 ## This repository
 
 ```mermaid
@@ -340,6 +360,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.23.0, Finance 0.6.0** | Promotions priced again on Update Items and given back by credit notes to the cent; stored value held for orders and untaxed on orders when taxed at redemption; instrument numbers from a book; erasure reaches supplier bank details and run lines; group by a dimension in every statement; early-payment discount tax in the tax summary and returns; promised dates and availability at order entry; stock held for orders under a Hold policy; purchase approvals by value band as configuration. |
 | **0.22.0, Finance 0.5.0, EU 0.3.0** | Accounting dimensions on every ledger line, in every report and in budgets; payment instruments (post-dated, cleared, bounced, replaced); payment runs with approval, a bank file from a document template and remittance advice; early-payment discounts on payments; bad-debt write-off with relief through the localization seam; recurring journals; tax returns as definitions, with Ireland's VAT3 seeded by the EU add-on. |
 | **0.21.0, India 0.5.0, EU 0.2.0, UK 0.2.0, thirteen countries 0.2.0** | Promotions over a whole sale (off the document or lines, buy and get, bundles, free delivery, free items, codes counted once, a report), computed by a pure engine the till can run offline, applied after pricing rules and kept line by line; a query that prices lines for the till and the web shop. Tax registrations of seller and buyer through the localization seam, on sales documents and their prints. |
 | **0.20.1** | A card's code and PIN never come to rest: they go to a new read-only `prove`, which answers a single-use proof that the stored value operations take; what 0.20.0 left in the audit log and receipts is cleared on install. |
