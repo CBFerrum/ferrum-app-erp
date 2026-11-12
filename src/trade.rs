@@ -606,6 +606,7 @@ impl DocHook for OrderHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
+        crate::promotion::count_uses(hc, doc, 1).await?;
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
         credit::check(hc, credit, "this order", credit::released(doc)).await
     }
@@ -620,6 +621,7 @@ impl DocHook for OrderHook {
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
+        crate::promotion::count_uses(hc, doc, -1).await?;
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await
     }
 
@@ -1067,6 +1069,7 @@ impl DocHook for InvoiceHook {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
+        crate::promotion::count_uses(hc, doc, 1).await?;
         count_return(hc, n.invoice, doc, Decimal::ONE).await?;
         count_debit_note(hc, doc, Decimal::ONE).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
@@ -1326,6 +1329,7 @@ impl DocHook for InvoiceHook {
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
         count_return(hc, n.invoice, doc, -Decimal::ONE).await?;
         count_debit_note(hc, doc, -Decimal::ONE).await?;
+        crate::promotion::count_uses(hc, doc, -1).await?;
         let touched = ledger::unallocate(hc.tx, hc.ctx, n.invoice, iid, on).await?;
         ledger::cancel_open_item(hc.tx, hc.ctx, iid).await?;
         if b(doc, "update_stock") {

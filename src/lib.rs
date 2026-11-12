@@ -22,6 +22,7 @@ pub mod opening;
 pub mod periods;
 pub mod portal;
 pub mod pricing;
+pub mod promotion;
 pub mod reports;
 pub mod reservation;
 pub mod setup;
@@ -75,6 +76,9 @@ pub fn register(h: &mut HookRegistry) {
         h.register("Bom", Arc::new(manufacturing::BomHook))
             .register("WorkOrder", Arc::new(manufacturing::WorkOrderHook))
             .register("MrpRun", Arc::new(manufacturing::MrpRunHook));
+    });
+    h.scoped(&only("selling"), |h| {
+        h.register("PromotionCode", Arc::new(promotion::CodeHook)).register("Company", Arc::new(promotion::PriceLinesHook));
     });
     for (side, package, order, shipment, invoice) in [
         (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),
