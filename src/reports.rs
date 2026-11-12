@@ -129,6 +129,7 @@ const DEFS: &[Def] = &[
         params: &["company", "from_date", "to_date"],
     },
     Def { name: "tax_summary", label: "Tax Summary", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
+    Def { name: "tax_return_documents", label: "Tax Return Box", module: "accounting", entity: "TaxReturn", params: &["company", "tax_return", "box"] },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
     Def { name: "stock_balance", label: "Stock Balance", module: "inventory", entity: "StockEntry", params: &["company", "as_of", "warehouse", "item"] },
@@ -163,6 +164,8 @@ fn param(name: &str) -> Value {
         "periods" => json!({"name": name, "label": "How Many To Compare", "type": "select", "options": ["1", "2", "3"], "default": "1"}),
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
+        "tax_return" => json!({"name": name, "label": "Tax Return", "type": "link", "to": "TaxReturn", "required": true}),
+        "box" => json!({"name": name, "label": "Box", "type": "data", "required": true, "description": "The box's code"}),
         "dimension" => json!({"name": name, "label": "Dimension", "type": "data",
             "description": "An accounting dimension's code (cost_center and project included) to narrow to, with its value"}),
         "dimension_value" => json!({"name": name, "label": "Dimension Value", "type": "data", "description": "A list value, or a record's id"}),
@@ -229,6 +232,10 @@ impl ReportSource for ErpReports {
             "sales_register" => register(&mut tx, ctx, &co, &p, "customer").await?,
             "purchase_register" => register(&mut tx, ctx, &co, &p, "supplier").await?,
             "tax_summary" => tax_summary(&mut tx, ctx, &co, &p).await?,
+            "tax_return_documents" => {
+                let ret = p.uuid("tax_return")?.ok_or_else(|| Error::field("tax_return", "is required"))?;
+                crate::tax_return::documents(k, ctx, &mut tx, ret, p.str("box").unwrap_or_default().trim()).await?
+            }
             "promotions" => promotions(&mut tx, ctx, &co, &p).await?,
             "withholding" => withholding(&mut tx, ctx, &co, &p).await?,
             "stored_value_liability" => stored_value_liability(&mut tx, ctx, &co, &p).await?,

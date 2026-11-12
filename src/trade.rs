@@ -1068,6 +1068,7 @@ impl DocHook for InvoiceHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        crate::tax_return::check_open(hc, doc).await?;
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         crate::promotion::count_uses(hc, doc, 1).await?;
         count_return(hc, n.invoice, doc, Decimal::ONE).await?;
@@ -1336,6 +1337,7 @@ impl DocHook for InvoiceHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        crate::tax_return::check_open(hc, doc).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
         count_return(hc, n.invoice, doc, -Decimal::ONE).await?;

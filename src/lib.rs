@@ -33,6 +33,7 @@ pub mod setup;
 pub mod stock;
 pub mod stock_entry;
 pub mod stored_value;
+pub mod tax_return;
 pub mod trade;
 pub mod withholding;
 
@@ -72,6 +73,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("PaymentInstrument", Arc::new(instruments::InstrumentHook))
             .register("BadDebtWriteOff", Arc::new(bad_debt::WriteOffHook))
             .register("JournalTemplate", Arc::new(journal_template::TemplateHook))
+            .register("TaxReturn", Arc::new(tax_return::ReturnHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
