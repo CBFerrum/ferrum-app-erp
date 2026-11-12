@@ -111,8 +111,12 @@
     - {name: base_received_amount, type: currency, read_only: true, visible_if: "doc.payment_type == 'Internal Transfer'"}
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true}
     - {name: exchange_difference, type: currency, read_only: true}
-    - {name: reference_no, type: data, label: Cheque / Reference No}
-    - {name: reference_date, type: date}
+    - {name: mode_of_payment, type: link, to: ModeOfPayment, in_filter: true, visible_if: "doc.payment_type != 'Internal Transfer'",
+       description: "How it is paid. A mode paid by instrument (a cheque, a draft) records the instrument and reaches the bank account only when it clears"}
+    - {name: reference_no, type: data, label: Cheque / Reference No, description: "For a mode paid by instrument, the instrument's number"}
+    - {name: reference_date, type: date, description: "For a mode paid by instrument, the date written on it: it cannot clear before"}
+    - {name: instrument_bank, type: data, max_length: 140, label: Drawn On, visible_if: "doc.mode_of_payment != null", description: "The bank the instrument is drawn on"}
+    - {name: payment_instrument, type: link, to: PaymentInstrument, read_only: true, no_copy: true, label: Instrument}
     - {name: references, type: table, of: PaymentReference, label: Allocations}
     - {name: deductions, type: table, of: PaymentDeduction, label: Deductions and Charges, description: "Settles more (or less) than the bank moved: bank charges, early-payment discounts, tax withheld"}
     - {name: total_deductions, type: currency, currency: currency, read_only: true}
@@ -173,3 +177,79 @@
   rules:
     - {name: due_after_invoice, check: "doc.due_date == null || doc.due_date >= doc.invoice_date", message: "Due date cannot be before the invoice date"}
   list: {columns: [party_name, invoice_no, invoice_date, due_date, amount, outstanding_amount, status], sort: invoice_date desc}
+
+# Payment instruments (FN-34): a cheque, a draft, a promissory note. A payment whose mode uses them
+# records one; it waits in the instruments received (or issued) account until it clears into the bank
+# account, and a bounce takes the payment back so its invoices are open again.
+- name: ModeOfPaymentAccount
+  label: Mode of Payment Account
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: in_hand_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Received Account,
+       description: "An asset: what customers paid by instrument until it clears"}
+    - {name: issued_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Issued Account,
+       description: "A liability: what the company paid by instrument until it clears"}
+    - {name: bounce_charge_account, type: link, to: Account, link_filters: {is_group: false}, label: Bounce Charge Account,
+       description: "Income a customer's charge for a bounced instrument is credited to"}
+
+- name: ModeOfPayment
+  label: Mode of Payment
+  label_plural: Modes of Payment
+  kind: master
+  module: accounting
+  title_field: mode_name
+  fields:
+    - {name: mode_name, type: data, required: true, unique: true, in_list: true}
+    - {name: uses_instruments, type: check, in_list: true, label: Paid by Instrument,
+       description: "A cheque, a draft, a promissory note: a payment records the instrument (its number, the date written on it, its bank) and books to the instruments received or issued account until it clears"}
+    - {name: bounce_charge, type: currency, min: "0", visible_if: "doc.uses_instruments", label: Charge for a Bounce,
+       description: "What a customer is charged when an instrument they gave bounces (empty: nothing); whoever records the bounce may leave it off"}
+    - {name: accounts, type: table, of: ModeOfPaymentAccount, label: Accounts by Company}
+    - {name: disabled, type: check, in_filter: true}
+  list: {columns: [mode_name, uses_instruments, disabled], sort: mode_name asc}
+
+- name: PaymentInstrument
+  label: Payment Instrument
+  kind: master
+  module: accounting
+  company_scoped: true
+  title_field: instrument_no
+  description: "A cheque, a draft or another instrument a payment was made with: received or issued, deposited, cleared, bounced, cancelled or replaced. Made by the payment; its state moves by its actions."
+  fields:
+    - {name: company, type: link, to: Company, read_only: true, in_filter: true}
+    - {name: direction, type: select, options: [Received, Issued], read_only: true, in_list: true, in_filter: true}
+    - {name: instrument_no, type: data, read_only: true, in_list: true, label: Number}
+    - {name: instrument_date, type: date, read_only: true, in_list: true, in_filter: true, label: Dated, description: "The date written on it: it does not clear before"}
+    - {name: bank, type: data, read_only: true, label: Drawn On}
+    - {name: mode_of_payment, type: link, to: ModeOfPayment, read_only: true}
+    - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_filter: true}
+    - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: currency, type: link, to: Currency, read_only: true}
+    - {name: amount, type: currency, currency: currency, read_only: true, in_list: true}
+    - {name: holding_account, type: link, to: Account, read_only: true, label: Waits In, description: "The instruments account it is booked to until it clears"}
+    - {name: status, type: select, options: [Received, Issued, Deposited, Cleared, Bounced, Cancelled, Replaced], read_only: true, in_list: true, in_filter: true}
+    - {name: deposited_on, type: date, read_only: true}
+    - {name: cleared_on, type: date, read_only: true}
+    - {name: bounced_on, type: date, read_only: true}
+    - {name: reason, type: text, read_only: true, description: "Why it bounced, was cancelled or replaced"}
+    - {name: charge_entry, type: link, to: JournalEntry, read_only: true, label: Charge, description: "The customer's charge for the bounce"}
+    - {name: replaces, type: link, to: PaymentInstrument, read_only: true}
+    - {name: replaced_by, type: link, to: PaymentInstrument, read_only: true}
+    - {name: reminded_on, type: date, read_only: true, description: "When those who deposit were told it can be deposited"}
+  actions:
+    - {name: deposit, label: Deposit, permission: write, condition: "doc.status == 'Received'",
+       params: [{name: on, label: Deposited On, type: date, description: "Today when empty"}]}
+    - {name: clear, label: Cleared, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       params: [{name: on, label: Cleared On, type: date, description: "Today when empty; not before the date written on it"}]}
+    - {name: bounce, label: Bounced, permission: write, condition: "doc.status != 'Bounced' && doc.status != 'Cancelled' && doc.status != 'Replaced'",
+       confirm: "The payment is taken back and what it paid is owed again.",
+       params: [{name: on, label: Bounced On, type: date, description: "Today when empty"}, {name: reason, label: Reason, type: text, required: true},
+                {name: no_charge, label: Do Not Charge the Customer, type: check, description: "Leave off the mode's charge for a bounce"}]}
+    - {name: cancel_instrument, label: Cancel Instrument, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       confirm: "The payment is taken back and what it paid is owed again.",
+       params: [{name: on, label: Cancelled On, type: date}, {name: reason, label: Reason, type: text, required: true}]}
+    - {name: replace, label: Replace, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       params: [{name: instrument_no, label: New Number, type: data, required: true}, {name: instrument_date, label: Dated, type: date, required: true},
+                {name: bank, label: Drawn On, type: data}, {name: reason, label: Reason, type: text}]}
+  list: {columns: [instrument_no, instrument_date, direction, party_name, amount, status], sort: instrument_date asc}

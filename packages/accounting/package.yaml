@@ -91,7 +91,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
+    items: [JournalEntry, PaymentEntry, PaymentInstrument, ModeOfPayment, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding, report:stored_value_liability, report:stored_value_statement, report:stored_value_movement]
   - name: setup
     label: Setup
@@ -110,6 +110,8 @@ roles:
     permissions:
       - {entity: JournalEntry, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: PaymentInstrument, read: true, write: true, export: true}
+      - {entity: ModeOfPayment, read: true, write: true, create: true, delete: true}
       - {entity: OpeningInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, import: true}
       - {entity: Company, read: true, write: true, create: true}
       - {entity: FiscalYear, read: true, write: true, create: true, delete: true}
@@ -141,6 +143,8 @@ roles:
     permissions:
       - {entity: JournalEntry, read: true, write: true, create: true, delete: true, if_owner: false}
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true}
+      - {entity: PaymentInstrument, read: true, write: true}
+      - {entity: ModeOfPayment, read: true}
       - {entity: Account, read: true}
       - {entity: WithholdingCategory, read: true}
       - {entity: StoredValueKind, read: true}
@@ -161,6 +165,11 @@ personal_data:
   - {entity: StoredValueAccount, match: holder, retain: "A stored-value account is money or units the books still owe or owed; the customer's own details are erased on the customer"}
 
 events:
+  - name: instrument_bounced
+    label: Payment instrument bounced
+    description: "A cheque or other instrument bounced: its payment was taken back, and a charge made when asked"
+    entity: PaymentInstrument
+    payload: {type: object, properties: {instrument: {type: string, format: uuid}, payment: {type: string, format: uuid}, direction: {type: string}, amount: {type: string}, reason: {type: string}, charge_entry: {type: [string, "null"], format: uuid}}}
   - name: stored_value_expiring
     label: Stored value expiring
     description: "Raised once per account, its kind's Days of Warning before it expires, for an automation to tell its holder"
@@ -169,3 +178,16 @@ events:
 merge_links:
   - {table: open_item, column: customer_id, to: Customer}
   - {table: open_item, column: supplier_id, to: Supplier}
+
+messages:
+  - key: accounting.instrument_due
+    label: An instrument can be deposited
+    entity: PaymentInstrument
+    languages:
+      en:
+        email:
+          subject: "Deposit {{ doc.instrument_no }} from {{ doc.party_name }}"
+          body: "<p>The instrument {{ doc.instrument_no }} from {{ doc.party_name }} for {{ doc.amount }}, dated {{ doc.instrument_date }}, can be deposited now.</p>"
+        inapp:
+          title: "Deposit {{ doc.instrument_no }} from {{ doc.party_name }}"
+          text: "{{ doc.amount }}, dated {{ doc.instrument_date }}"

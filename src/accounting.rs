@@ -241,6 +241,26 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
 
 pub struct PaymentEntryHook;
 
+/// Takes back what a submitted payment did, dated `on`: its allocations, its credit left open, its
+/// ledger entries and its stored value. What was taken back already is not taken back twice, so a
+/// payment whose instrument bounced (taken back on the bounce's day) is then cancelled as it stands.
+pub async fn undo_payment(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, on: chrono::NaiveDate) -> Result<()> {
+    let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let co = company(k, ctx, tx, id(doc, "company").unwrap_or_default()).await?;
+    let items = ledger::unallocate(tx, ctx, "PaymentEntry", pid, on).await?;
+    if ledger::load_open_item(tx, ctx.tenant, pid, true).await?.is_some_and(|i| i.status != "cancelled") {
+        ledger::cancel_open_item(tx, ctx, pid).await?;
+    }
+    ledger::reverse(tx, ctx, "PaymentEntry", pid, on, co.precision).await?;
+    crate::stored_value::reverse_entries(k, ctx, tx, "PaymentEntry", pid, on, "this payment").await?;
+    for inv in items {
+        if let Some(item) = ledger::load_open_item(tx, ctx.tenant, inv, false).await? {
+            sync_invoice_outstanding(k, ctx, tx, &item.entity, inv).await?;
+        }
+    }
+    Ok(())
+}
+
 /// What an open item is, for people: its entity's label ("Sales Invoice", "Journal Entry").
 fn item_kind(ctx: &ferrum_kernel::Ctx, entity: &str) -> String {
     ctx.schema.entity(entity).map(|e| e.def.label.clone()).unwrap_or_else(|| entity.to_string())
@@ -539,6 +559,7 @@ impl DocHook for PaymentEntryHook {
             }
         }
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        crate::instruments::check_payment(hc, doc, &co).await?;
         crate::stored_value::check_payment(hc, doc, &co).await
     }
 
@@ -632,6 +653,8 @@ impl DocHook for PaymentEntryHook {
             .await?;
         }
         let bank = id(doc, "bank_account").ok_or_else(|| Error::field("bank_account", "is required"))?;
+        // Paid by instrument: it waits in the instruments account until it clears into the bank.
+        let bank = crate::instruments::holding_account(hc, doc, &co, receive).await?.unwrap_or(bank);
         let bank_sign = if receive { Decimal::ONE } else { -Decimal::ONE };
         lines.push(Line::new(bank, bank_sign * base_paid, &co.currency_code).txn(bank_sign * paid, &code, rate));
         for r in rows(doc, "deductions") {
@@ -663,6 +686,7 @@ impl DocHook for PaymentEntryHook {
         entry.lines = lines;
         entry.memo = s(doc, "remarks").map(str::to_string);
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        crate::instruments::payment_submitted(hc, doc, &co, receive).await?;
         crate::stored_value::payment_submitted(hc, doc, &co).await?;
         for (entity, inv) in touched {
             sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, inv).await?;
@@ -671,22 +695,11 @@ impl DocHook for PaymentEntryHook {
     }
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        crate::instruments::payment_cancelled(hc, doc).await?;
         // Allocations, ledger and receivables all reverse on the same date, so as-of reports agree.
         let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
-        let items = ledger::unallocate(hc.tx, hc.ctx, "PaymentEntry", pid, on).await?;
-        if ledger::load_open_item(hc.tx, hc.ctx.tenant, pid, true).await?.is_some() {
-            ledger::cancel_open_item(hc.tx, hc.ctx, pid).await?;
-        }
-        ledger::reverse(hc.tx, hc.ctx, "PaymentEntry", pid, on, co.precision).await?;
-        crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, "PaymentEntry", pid, on, "this payment").await?;
-        for inv in items {
-            if let Some(item) = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, false).await? {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await?;
-            }
-        }
-        Ok(())
+        undo_payment(hc.kernel, hc.ctx, hc.tx, doc, on).await
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {

@@ -16,6 +16,7 @@ pub mod credit;
 pub mod deferred;
 pub mod dimensions;
 pub mod flow;
+pub mod instruments;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
@@ -66,6 +67,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
+            .register("PaymentInstrument", Arc::new(instruments::InstrumentHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
@@ -135,6 +137,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
         if let Err(e) = accounting::upkeep(k, &ctx).await {
             tracing::warn!(%tenant, "journal entry reversals: {e}");
+        }
+        if let Err(e) = instruments::upkeep(k, &ctx, today).await {
+            tracing::warn!(%tenant, "instruments to deposit: {e}");
         }
         if let Err(e) = stored_value::upkeep(k, &ctx, today).await {
             tracing::warn!(%tenant, "stored value expiry: {e}");
