@@ -323,14 +323,16 @@ impl DocHook for InspectionGate {
         let table = hc.ctx.schema.entity(ENTITY).map(|e| e.table.clone()).unwrap_or_default();
         let when = if flag.ends_with("purchase") { "purchase" } else { "delivery" };
         let mut errors = Vec::new();
+        let mut partly: Vec<(usize, Decimal)> = Vec::new();
         for (i, r) in lines.iter().enumerate() {
             let Some((item, code)) = id(r, "item").and_then(|x| required.iter().find(|(r, _)| *r == x)) else { continue };
             let line = s(r, "id").unwrap_or_default();
             // The latest inspection of this line (or of the item on the whole document) decides.
-            let status: Option<Option<String>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "select status from {} where tenant_id = $1 and docstatus = 1 and {} = $2 and item = $3 \
+            let found: Option<(Option<String>, Option<Decimal>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "select status, {} from {} where tenant_id = $1 and docstatus = 1 and {} = $2 and item = $3 \
                  and (reference_line = $4 or coalesce(reference_line, '') = '') \
                  order by (reference_line = $4) desc nulls last, report_date desc, created_at desc limit 1",
+                if entity == "PurchaseReceipt" { "rejected_qty" } else { "null::numeric" },
                 q(&table),
                 q(field)
             )))
@@ -340,13 +342,38 @@ impl DocHook for InspectionGate {
             .bind(line)
             .fetch_optional(&mut **hc.tx)
             .await?;
-            match status.flatten().as_deref() {
+            let (status, part) = found.map(|(s, p)| (s, p.unwrap_or_default())).unwrap_or_default();
+            if status.as_deref() == Some("Accepted") && part > d(r, "rejected_qty") {
+                partly.push((i, part));
+                continue;
+            }
+            match status.as_deref() {
                 Some("Accepted") => {}
                 Some(_) => errors.push(FieldError::new("item", format!("{code} was rejected by its quality inspection")).in_row("items", i)),
                 None => errors.push(FieldError::new("item", format!("{code} needs an accepted quality inspection before {when}")).in_row("items", i)),
             }
         }
-        validation(errors)
+        validation(errors)?;
+        // An inspection that accepted a line with part refused: that part moves from accepted to rejected, as
+        // if it had been entered so, and the receipt is priced again on what is accepted.
+        if !partly.is_empty() {
+            let mut lines = lines;
+            for (i, part) in partly {
+                let r = &mut lines[i];
+                let more = part - d(r, "rejected_qty");
+                if more >= d(r, "qty") {
+                    return Err(Error::Validation(vec![
+                        FieldError::new("qty", "its inspection rejects all of it: refuse the line instead").in_row("items", i),
+                    ]));
+                }
+                set(r, "qty", money(d(r, "qty") - more));
+                set(r, "rejected_qty", money(part));
+            }
+            set(doc, "items", Value::Array(lines.into_iter().map(Value::Object).collect()));
+            let entity = hc.entity.clone();
+            ferrum_app_erp::pricing::calculate(hc.kernel, hc.ctx, hc.tx, &entity, doc, ferrum_app_erp::pricing::Side::Buying).await?;
+        }
+        Ok(())
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {

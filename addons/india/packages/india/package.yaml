@@ -5,6 +5,173 @@ description: GSTIN validation (checksum), place of supply, automatic CGST+SGST v
 depends: [selling, buying]
 field_prefix: in_
 
+# Country content as data (FN-28, FN-38 in part), arriving when an administrator updates the app; an accountant edits
+# them. Withholding (TDS) categories book to each company's TDS Payable (account 2132 of the standard chart) unless the
+# category names an account for the company. The returns are definitions over the tax ledger; what their boxes cannot
+# say is By Hand and listed in the README.
+seed:
+  - entity: WithholdingCategory
+    key: [category_name]
+    records:
+      - category_name: "TDS 194C Contractors (Individual or HUF)"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194C: payments to a resident contractor who is an individual or a Hindu undivided family"
+        rates: [{valid_from: "2010-07-01", rate: "1", single_threshold: "30000", yearly_threshold: "100000"}]
+      - category_name: "TDS 194C Contractors (Others)"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194C: payments to any other resident contractor"
+        rates: [{valid_from: "2010-07-01", rate: "2", single_threshold: "30000", yearly_threshold: "100000"}]
+      - category_name: "TDS 194H Commission or Brokerage"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194H"
+        rates:
+          - {valid_from: "2016-06-01", rate: "5", yearly_threshold: "15000"}
+          - {valid_from: "2024-10-01", rate: "2", yearly_threshold: "15000"}
+          - {valid_from: "2025-04-01", rate: "2", yearly_threshold: "20000"}
+      - category_name: "TDS 194J(a) Fees for Technical Services"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194J(a): fees for technical services (not professional services), royalty for films"
+        rates:
+          - {valid_from: "2020-04-01", rate: "2", yearly_threshold: "30000"}
+          - {valid_from: "2025-04-01", rate: "2", yearly_threshold: "50000"}
+      - category_name: "TDS 194J(b) Professional Fees"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194J(b): fees for professional services and other sums under the section"
+        rates:
+          - {valid_from: "2020-04-01", rate: "10", yearly_threshold: "30000"}
+          - {valid_from: "2025-04-01", rate: "10", yearly_threshold: "50000"}
+      - category_name: "TDS 194I(a) Rent of Plant and Machinery"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194I(a). From 1 April 2025 the threshold is per month or part of a month, which the yearly threshold here does not express: check it by hand"
+        rates: [{valid_from: "2019-04-01", rate: "2", yearly_threshold: "240000"}]
+      - category_name: "TDS 194I(b) Rent of Land, Building or Furniture"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Whole Year
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194I(b). From 1 April 2025 the threshold is per month or part of a month, which the yearly threshold here does not express: check it by hand"
+        rates: [{valid_from: "2019-04-01", rate: "10", yearly_threshold: "240000"}]
+      - category_name: "TDS 194Q Purchase of Goods"
+        applies: On Bill
+        base: Net Total
+        cumulative_base: Above Threshold
+        round_to_unit: true
+        account_number: "2132"
+        description: "Income-tax Act 1961, section 194Q: a buyer whose turnover exceeded ten crore rupees in the previous year, on purchases from a resident seller above fifty lakh rupees in the year"
+        rates: [{valid_from: "2021-07-01", rate: "0.1", yearly_threshold: "5000000"}]
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: India GSTR-3B
+        country: IN
+        frequency: Monthly
+        notes: "The monthly summary return, from the tax ledger. Boxes marked By Hand need what the tax ledger does not hold (see the README): enter them with a reason. Nothing is filed from here."
+        boxes:
+          - {code: B31A_TV_C, label: "3.1(a) Taxable value, intra-state", kind: Sum, measure: Base, direction: Output, tax: CGST Output, reverse_charge: "No"}
+          - {code: B31A_TV_I, label: "3.1(a) Taxable value, inter-state", kind: Sum, measure: Base, direction: Output, tax: IGST Output, reverse_charge: "No"}
+          - {code: B31B_TV, label: "3.1(b) Zero rated supplies: taxable value", kind: Sum, measure: Base, direction: Output, category: Export}
+          - {code: B31C_TV, label: "3.1(c) Nil rated and exempted supplies", kind: Sum, measure: Base, direction: Output, category: Exempt}
+          - {code: B31A_TV, label: "3.1(a) Outward taxable supplies: taxable value", kind: Formula, formula: "B31A_TV_C + B31A_TV_I - B31B_TV - B31C_TV"}
+          - {code: B31A_IGST, label: "3.1(a) Integrated tax", kind: Sum, measure: Tax, direction: Output, tax: IGST Output}
+          - {code: B31A_CGST, label: "3.1(a) Central tax", kind: Sum, measure: Tax, direction: Output, tax: CGST Output}
+          - {code: B31A_SGST, label: "3.1(a) State/UT tax", kind: Sum, measure: Tax, direction: Output, tax: SGST Output}
+          - {code: B31A_CESS, label: "3.1(a) Cess", kind: By Hand}
+          - {code: B31D_TV_C, label: "3.1(d) Inward supplies under reverse charge, intra-state value", kind: Sum, measure: Base, direction: Input, tax: CGST Input, reverse_charge: "Yes"}
+          - {code: B31D_TV_I, label: "3.1(d) Inward supplies under reverse charge, inter-state value", kind: Sum, measure: Base, direction: Input, tax: IGST Input, reverse_charge: "Yes"}
+          - {code: B31D_TV, label: "3.1(d) Inward supplies liable to reverse charge: taxable value", kind: Formula, formula: "B31D_TV_C + B31D_TV_I"}
+          - {code: B31D_IGST, label: "3.1(d) Integrated tax", kind: Sum, measure: Tax, direction: Input, tax: IGST Input, reverse_charge: "Yes"}
+          - {code: B31D_CGST, label: "3.1(d) Central tax", kind: Sum, measure: Tax, direction: Input, tax: CGST Input, reverse_charge: "Yes"}
+          - {code: B31D_SGST, label: "3.1(d) State/UT tax", kind: Sum, measure: Tax, direction: Input, tax: SGST Input, reverse_charge: "Yes"}
+          - {code: B31E_TV, label: "3.1(e) Non-GST outward supplies", kind: Sum, measure: Base, direction: Output, category: Out of Scope}
+          - {code: B32, label: "3.2 Inter-state supplies to unregistered persons, composition dealers and UIN holders, by state", kind: By Hand}
+          - {code: B4A1, label: "4(A)(1) Import of goods", kind: By Hand}
+          - {code: B4A2, label: "4(A)(2) Import of services", kind: By Hand}
+          - {code: B4A3, label: "4(A)(3) Inward supplies liable to reverse charge", kind: Formula, formula: "B31D_IGST + B31D_CGST + B31D_SGST"}
+          - {code: B4A5_IGST, label: "4(A)(5) All other ITC: integrated tax", kind: Sum, measure: Tax, direction: Input, tax: IGST Input, reverse_charge: "No"}
+          - {code: B4A5_CGST, label: "4(A)(5) All other ITC: central tax", kind: Sum, measure: Tax, direction: Input, tax: CGST Input, reverse_charge: "No"}
+          - {code: B4A5_SGST, label: "4(A)(5) All other ITC: state/UT tax", kind: Sum, measure: Tax, direction: Input, tax: SGST Input, reverse_charge: "No"}
+          - {code: B4B, label: "4(B) ITC reversed", kind: By Hand}
+          - {code: B4C, label: "4(C) Net ITC available", kind: Formula, formula: "B4A1 + B4A2 + B4A3 + B4A5_IGST + B4A5_CGST + B4A5_SGST - B4B"}
+          - {code: B4D, label: "4(D) Other details (ineligible ITC)", kind: By Hand}
+          - {code: B5_INTER, label: "5 Exempt, nil rated and non-GST inward supplies", kind: Sum, measure: Base, direction: Input, category: Exempt}
+          - {code: B6_OUT, label: "Tax on outward and reverse-charge supplies", kind: Formula, formula: "B31A_IGST + B31A_CGST + B31A_SGST + B31A_CESS + B31D_IGST + B31D_CGST + B31D_SGST"}
+          - {code: B6_NET, label: "Payable after input tax credit (before cash for reverse charge)", kind: Formula, formula: "max(B6_OUT - B4C, 0)"}
+      - definition_name: India GSTR-1
+        country: IN
+        frequency: Monthly
+        notes: "The outward supplies return as totals from the tax ledger. Its invoice-level tables (B2B, B2C large, B2C small, amendments, HSN summary, documents issued) need what the tax ledger does not hold and are By Hand; see the README. Nothing is filed from here."
+        boxes:
+          - {code: T4, label: "4 B2B supplies (to registered persons)", kind: By Hand}
+          - {code: T5, label: "5 B2C large inter-state invoices", kind: By Hand}
+          - {code: T7, label: "7 B2C other supplies", kind: By Hand}
+          - {code: TV_C, label: "Taxable value, intra-state", kind: Sum, measure: Base, direction: Output, tax: CGST Output, document: Invoice}
+          - {code: TV_I, label: "Taxable value, inter-state (exports included)", kind: Sum, measure: Base, direction: Output, tax: IGST Output, document: Invoice}
+          - {code: IGST, label: "Integrated tax on invoices", kind: Sum, measure: Tax, direction: Output, tax: IGST Output, document: Invoice}
+          - {code: CGST, label: "Central tax on invoices", kind: Sum, measure: Tax, direction: Output, tax: CGST Output, document: Invoice}
+          - {code: SGST, label: "State/UT tax on invoices", kind: Sum, measure: Tax, direction: Output, tax: SGST Output, document: Invoice}
+          - {code: T6A, label: "6A Exports: taxable value", kind: Sum, measure: Base, direction: Output, category: Export, document: Invoice}
+          - {code: T8_EX, label: "8 Nil rated and exempted", kind: Sum, measure: Base, direction: Output, category: Exempt}
+          - {code: T8_NG, label: "8 Non-GST supplies", kind: Sum, measure: Base, direction: Output, category: Out of Scope}
+          - {code: T8, label: "8 Nil rated, exempted and non-GST supplies", kind: Formula, formula: "T8_EX + T8_NG"}
+          - {code: T9B_C, label: "9B Credit notes, intra-state", kind: Sum, measure: Base, direction: Output, tax: CGST Output, document: Credit Note}
+          - {code: T9B_I, label: "9B Credit notes, inter-state", kind: Sum, measure: Base, direction: Output, tax: IGST Output, document: Credit Note}
+          - {code: T9B_TV, label: "9B Credit notes: taxable value (counted negative)", kind: Formula, formula: "T9B_C + T9B_I"}
+          - {code: T9A, label: "9A and 9C Amendments", kind: By Hand}
+          - {code: T12, label: "12 HSN-wise summary", kind: By Hand}
+          - {code: T13, label: "13 Documents issued", kind: By Hand}
+          - {code: TOTAL, label: "Total value invoiced, net of credit notes", kind: Formula, formula: "TV_C + TV_I + T9B_TV"}
+
+# The returns' exports: a summary file in the shape the portal's offline tools take, for checking against them.
+documents:
+  - key: india.gstr3b_json
+    label: GSTR-3B summary (JSON)
+    entity: TaxReturn
+    output: text
+    languages:
+      en:
+        body: |-
+          {% macro v(c) %}{% for b in doc.boxes %}{% if b.code == c %}{{ b.value|fixed(2) }}{% endif %}{% endfor %}{% endmacro %}{"gstin": "{{ links.company.in_gstin }}", "ret_period": "{{ doc.from_date|date('%m%Y') }}",
+           "sup_details": {"osup_det": {"txval": {{ v('B31A_TV') }}, "iamt": {{ v('B31A_IGST') }}, "camt": {{ v('B31A_CGST') }}, "samt": {{ v('B31A_SGST') }}, "csamt": {{ v('B31A_CESS') }}},
+            "osup_zero": {"txval": {{ v('B31B_TV') }}}, "osup_nil_exmp": {"txval": {{ v('B31C_TV') }}},
+            "isup_rev": {"txval": {{ v('B31D_TV') }}, "iamt": {{ v('B31D_IGST') }}, "camt": {{ v('B31D_CGST') }}, "samt": {{ v('B31D_SGST') }}}, "osup_nongst": {"txval": {{ v('B31E_TV') }}}},
+           "itc_elg": {"itc_avl": [{"ty": "IMPG", "value": {{ v('B4A1') }}}, {"ty": "IMPS", "value": {{ v('B4A2') }}}, {"ty": "ISRC", "value": {{ v('B4A3') }}},
+             {"ty": "OTH", "iamt": {{ v('B4A5_IGST') }}, "camt": {{ v('B4A5_CGST') }}, "samt": {{ v('B4A5_SGST') }}}], "itc_rev": {{ v('B4B') }}, "itc_net": {{ v('B4C') }}, "itc_inelg": {{ v('B4D') }}}}
+  - key: india.gstr1_summary_csv
+    label: GSTR-1 summary (CSV)
+    entity: TaxReturn
+    output: csv
+    languages:
+      en:
+        body: |-
+          GSTIN,Period,Box,Label,Value
+          {% for b in doc.boxes %}{{ links.company.in_gstin }},{{ doc.from_date|date('%m%Y') }},{{ b.code }},{{ b.label }},{{ b.value|fixed(2) }}
+          {% endfor %}
+
 overlays:
   - entity: Company
     ops:

@@ -115,6 +115,18 @@ impl DocHook for BomHook {
                 errors.push(FieldError::new("item", "a BOM cannot consume the item it produces").in_row("items", i));
             }
         }
+        let weighted = s(doc, "co_product_basis").is_some_and(|b| b != "Quantity");
+        if weighted && rows(doc, "outputs").iter().any(|r| s(r, "kind") == Some("Co-product")) && d(doc, "main_weight") <= Decimal::ZERO {
+            errors.push(FieldError::new("main_weight", "co-products share cost by a ratio or standard value: give the main item's"));
+        }
+        for (i, r) in rows(doc, "outputs").iter().enumerate() {
+            if id(r, "item") == Some(item) {
+                errors.push(FieldError::new("item", "is the BOM's main item").in_row("outputs", i));
+            }
+            if weighted && s(r, "kind") == Some("Co-product") && d(r, "rate") <= Decimal::ZERO {
+                errors.push(FieldError::new("rate", "give its ratio or standard value per unit").in_row("outputs", i));
+            }
+        }
         if !errors.is_empty() {
             return Err(Error::Validation(errors));
         }
@@ -352,6 +364,10 @@ impl DocHook for WorkOrderHook {
                     }));
                 }
                 items.push(json!({"item": doc.get("item"), "qty": qty.normalize().to_string(), "target_warehouse": doc.get("target_warehouse")}));
+                for o in outputs(hc.tx, hc.ctx, bom).await?.2 {
+                    let made = (o.per_unit * qty).round_dp(9);
+                    items.push(json!({"item": o.item.to_string(), "qty": made.normalize().to_string(), "target_warehouse": doc.get("target_warehouse")}));
+                }
                 let additional = round(d(&bdoc, "operating_cost") / per * qty, co.precision);
                 let mut input = Doc::new();
                 input.insert("company".into(), json!(cid.to_string()));
@@ -385,9 +401,6 @@ impl DocHook for WorkOrderHook {
 struct ItemPlan {
     id: Uuid,
     item_name: Option<String>,
-    safety_stock: Option<Decimal>,
-    lead_time_days: Option<i64>,
-    min_order_qty: Option<Decimal>,
     is_purchased: Option<bool>,
     is_manufactured: Option<bool>,
 }
@@ -396,6 +409,9 @@ pub struct MrpRunHook;
 
 impl MrpRunHook {
     async fn run(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
+        if let Some(b) = s(doc, "bucket").and_then(crate::planning::Bucket::parse) {
+            return bucketed(hc, doc, b).await;
+        }
         let tenant = hc.ctx.tenant;
         let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
         let wh = id(doc, "warehouse").ok_or_else(|| Error::field("warehouse", "is required"))?;
@@ -468,7 +484,7 @@ impl MrpRunHook {
         }
         let all: Vec<Uuid> = level.keys().copied().collect();
         let plans: HashMap<Uuid, ItemPlan> = sqlx::query_as::<_, ItemPlan>(
-            "select id, item_name, safety_stock, lead_time_days::int8 as lead_time_days, min_order_qty, is_purchased, is_manufactured \
+            "select id, item_name, is_purchased, is_manufactured \
              from e_item where tenant_id = $1 and id = any($2)",
         )
         .bind(tenant)
@@ -513,18 +529,7 @@ impl MrpRunHook {
         for (i, qty) in wo_supply {
             *on_order.entry(i).or_default() += qty;
         }
-        let suppliers_table = child_table(hc, "Item", "suppliers")?;
-        let suppliers: HashMap<Uuid, Uuid> = sqlx::query_as::<_, (Uuid, Uuid)>(sqlx::AssertSqlSafe(format!(
-            "select distinct on (parent_id) parent_id, supplier from {} where tenant_id = $1 and parent_id = any($2) and supplier is not null \
-             and coalesce(approved, true) order by parent_id, priority nulls last, idx",
-            q(&suppliers_table)
-        )))
-        .bind(tenant)
-        .bind(&all)
-        .fetch_all(&mut **hc.tx)
-        .await?
-        .into_iter()
-        .collect();
+        let suppliers = default_suppliers(hc, &all).await?;
 
         let mut by_level: BTreeMap<usize, Vec<Uuid>> = BTreeMap::new();
         for (i, l) in &level {
@@ -536,15 +541,17 @@ impl MrpRunHook {
             for item in items {
                 let g = gross.get(&item).copied().unwrap_or_default();
                 let plan = plans.get(&item);
-                let safety = plan.and_then(|p| p.safety_stock).unwrap_or_default();
+                // The netting the production plan shares (crate::planning).
+                let params = crate::planning::params(hc.tx, hc.ctx, item, Some(wh)).await?;
+                let safety = params.safety;
                 let avail = available.get(&item).copied().unwrap_or_default().max(Decimal::ZERO);
                 let incoming = on_order.get(&item).copied().unwrap_or_default();
-                let net = g + safety - avail - incoming;
+                let (net, lots) = crate::planning::net(g, avail, incoming, &params);
                 if net <= Decimal::ZERO {
                     continue;
                 }
-                let suggested = net.max(plan.and_then(|p| p.min_order_qty).unwrap_or_default()).round_dp(9);
-                let lead = plan.and_then(|p| p.lead_time_days).unwrap_or(0).max(0);
+                let suggested = lots.iter().copied().sum::<Decimal>().round_dp(9);
+                let lead = params.lead_days.max(0);
                 let due = need_by.get(&item).copied().unwrap_or(today);
                 let start = (due - chrono::Duration::days(lead)).max(today);
                 let bom = bom_of.get(&item).and_then(|b| b.clone());
@@ -633,6 +640,21 @@ impl MrpRunHook {
             hc.kernel.set_child_values_tx(&sctx, hc.tx, "MrpRun", "lines", id(l, "id").unwrap_or_default(), v).await?;
             created_docs.push(created("WorkOrder", &wo));
         }
+        let transfers: Vec<&Doc> = lines.iter().filter(|l| s(l, "action") == Some("Transfer")).collect();
+        if !transfers.is_empty() {
+            let items: Vec<Value> = transfers
+                .iter()
+                .map(|l| json!({"item": l.get("item"), "qty": l.get("suggested_qty"), "source_warehouse": l.get("source_warehouse"), "target_warehouse": l.get("warehouse")}))
+                .collect();
+            let input = json!({"company": cid.to_string(), "purpose": "Material Transfer", "items": items});
+            let entry = hc.kernel.insert_tx(hc.ctx, hc.tx, "StockEntry", input.as_object().cloned().unwrap_or_default()).await?;
+            for l in transfers {
+                let mut v = Doc::new();
+                v.insert("created_document".into(), json!(format!("StockEntry {}", s(&entry, "number").or(s(&entry, "id")).unwrap_or_default())));
+                hc.kernel.set_child_values_tx(&sctx, hc.tx, "MrpRun", "lines", id(l, "id").unwrap_or_default(), v).await?;
+            }
+            created_docs.push(created("StockEntry", &entry));
+        }
         let mut v = Doc::new();
         v.insert("status".into(), json!("Orders Created"));
         hc.kernel.set_values_tx(&sctx, hc.tx, "MrpRun", mid, v).await?;
@@ -648,5 +670,358 @@ impl DocHook for MrpRunHook {
             "create_orders" => Ok(Some(self.create_orders(hc, doc).await?)),
             _ => Ok(None),
         }
+    }
+}
+
+/// Each item's first approved supplier, by priority.
+async fn default_suppliers(hc: &mut HookCtx<'_>, items: &[Uuid]) -> Result<HashMap<Uuid, Uuid>> {
+    let suppliers_table = child_table(hc, "Item", "suppliers")?;
+    Ok(sqlx::query_as::<_, (Uuid, Uuid)>(sqlx::AssertSqlSafe(format!(
+        "select distinct on (parent_id) parent_id, supplier from {} where tenant_id = $1 and parent_id = any($2) and supplier is not null \
+         and coalesce(approved, true) order by parent_id, priority nulls last, idx",
+        q(&suppliers_table)
+    )))
+    .bind(hc.ctx.tenant)
+    .bind(items)
+    .fetch_all(&mut **hc.tx)
+    .await?
+    .into_iter()
+    .collect())
+}
+
+/// The requirements run by period (`MrpRun.bucket`): over the horizon, in each planning warehouse, each item's demand
+/// (open sales order lines delivered from it by their day, open work orders' materials taken from it by their start,
+/// and what planned production of its parents needs) against its stock and the orders already bringing it there, by
+/// [`crate::planning::plan_item`]; a warehouse short takes first what another planning warehouse has over (a transfer),
+/// then new orders; action messages on the orders already there. Items are planned parents first.
+async fn bucketed(hc: &mut HookCtx<'_>, doc: &Doc, bucket: crate::planning::Bucket) -> Result<Value> {
+    use crate::planning::{Supply, plan_item};
+    let tenant = hc.ctx.tenant;
+    let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
+    let mut whs: Vec<Uuid> = rows(doc, "warehouses").iter().filter_map(|r| id(r, "warehouse")).collect();
+    if whs.is_empty() {
+        whs.push(id(doc, "warehouse").ok_or_else(|| Error::field("warehouse", "is required"))?);
+    }
+    let today = hc.ctx.today();
+    let until = today + chrono::Duration::days(doc.get("horizon_days").and_then(Value::as_i64).unwrap_or(90).max(1));
+    // Demand and supply by (item, warehouse).
+    let mut demand: HashMap<(Uuid, Uuid), Vec<(NaiveDate, Decimal)>> = HashMap::new();
+    let mut supply: HashMap<(Uuid, Uuid), Vec<(Supply, &'static str, String)>> = HashMap::new();
+    if b(doc, "include_sales_orders") {
+        let lines = child_table(hc, "SalesOrder", "items")?;
+        let rows_: Vec<(Uuid, Uuid, Decimal, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "select l.item, coalesce(l.warehouse, o.set_warehouse), (l.qty - coalesce(l.delivered_qty, 0)) * coalesce(nullif(l.conversion_factor, 0), 1), \
+             coalesce(l.delivery_date, o.delivery_date, o.posting_date) from e_sales_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
+             where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.delivered_qty, 0) \
+             and coalesce(l.warehouse, o.set_warehouse) = any($3)",
+            q(&lines)
+        )))
+        .bind(tenant)
+        .bind(cid)
+        .bind(&whs)
+        .fetch_all(&mut **hc.tx)
+        .await?;
+        for (item, wh, qty, day) in rows_ {
+            demand.entry((item, wh)).or_default().push((day, qty));
+        }
+    }
+    let open_wos: Vec<(Uuid, Uuid, Option<String>, Uuid, Decimal, Uuid, Uuid, NaiveDate, Option<NaiveDate>)> = sqlx::query_as(
+        "select id, item, number, bom, qty - coalesce(produced_qty, 0), source_warehouse, target_warehouse, planned_start_date, expected_end_date \
+         from e_work_order where tenant_id = $1 and company = $2 and docstatus = 1 and status in ('Not Started', 'In Process') and qty > coalesce(produced_qty, 0)",
+    )
+    .bind(tenant)
+    .bind(cid)
+    .fetch_all(&mut **hc.tx)
+    .await?;
+    for (wid, item, number, bom, remaining, source, target, start, end) in open_wos {
+        if whs.contains(&source) {
+            for (c, per_unit) in components(hc, bom).await?.1 {
+                demand.entry((c, source)).or_default().push((start, per_unit * remaining));
+            }
+        }
+        if whs.contains(&target) {
+            let key = Supply { key: wid.to_string(), date: end.unwrap_or(start), qty: remaining };
+            supply.entry((item, target)).or_default().push((key, "WorkOrder", number.unwrap_or_default()));
+        }
+    }
+    let po_lines = child_table(hc, "PurchaseOrder", "items")?;
+    let pos: Vec<(Uuid, Option<String>, Uuid, Uuid, Decimal, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select l.id, o.number, l.item, coalesce(l.warehouse, o.set_warehouse), (l.qty - coalesce(l.received_qty, 0)) * coalesce(nullif(l.conversion_factor, 0), 1), \
+         coalesce(l.schedule_date, o.schedule_date, o.posting_date) from e_purchase_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
+         where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.received_qty, 0) \
+         and coalesce(l.warehouse, o.set_warehouse) = any($3)",
+        q(&po_lines)
+    )))
+    .bind(tenant)
+    .bind(cid)
+    .bind(&whs)
+    .fetch_all(&mut **hc.tx)
+    .await?;
+    for (line, number, item, wh, qty, day) in pos {
+        supply.entry((item, wh)).or_default().push((Supply { key: line.to_string(), date: day, qty }, "PurchaseOrder", number.unwrap_or_default()));
+    }
+    // Parents first: an item's level is its deepest place under anything demanded.
+    let mut bom_of: HashMap<Uuid, Option<(Uuid, Vec<(Uuid, Decimal)>)>> = HashMap::new();
+    let roots: HashSet<Uuid> = demand.keys().chain(supply.keys()).map(|(i, _)| *i).collect();
+    let mut level: HashMap<Uuid, usize> = roots.iter().map(|i| (*i, 0)).collect();
+    let mut stack: Vec<(Uuid, usize)> = level.iter().map(|(i, l)| (*i, *l)).collect();
+    while let Some((item, l)) = stack.pop() {
+        if l > MAX_BOM_DEPTH {
+            return Err(Error::invalid("the BOM structure is too deep or circular"));
+        }
+        if let std::collections::hash_map::Entry::Vacant(e) = bom_of.entry(item) {
+            let entry = match default_bom(hc, cid, item).await? {
+                Some(bom) => Some((bom, components(hc, bom).await?.1)),
+                None => None,
+            };
+            e.insert(entry);
+        }
+        for (c, _) in bom_of[&item].as_ref().map(|(_, cs)| cs.clone()).unwrap_or_default() {
+            if level.get(&c).is_none_or(|cl| *cl < l + 1) {
+                level.insert(c, l + 1);
+                stack.push((c, l + 1));
+            }
+        }
+    }
+    let all: Vec<Uuid> = level.keys().copied().collect();
+    let info: HashMap<Uuid, (Option<String>, bool, bool)> = sqlx::query_as::<_, (Uuid, Option<String>, Option<bool>, Option<bool>)>(
+        "select id, item_name, is_purchased, is_manufactured from e_item where tenant_id = $1 and id = any($2) and is_stock_item",
+    )
+    .bind(tenant)
+    .bind(&all)
+    .fetch_all(&mut **hc.tx)
+    .await?
+    .into_iter()
+    .map(|(i, n, p, m)| (i, (n, p.unwrap_or(true), m.unwrap_or(false))))
+    .collect();
+    let on_hand: HashMap<(Uuid, Uuid), Decimal> = sqlx::query_as::<_, (Uuid, Uuid, Decimal)>(
+        "select item_id, warehouse_id, qty from stock_balance where tenant_id = $1 and warehouse_id = any($2) and item_id = any($3)",
+    )
+    .bind(tenant)
+    .bind(&whs)
+    .bind(&all)
+    .fetch_all(&mut **hc.tx)
+    .await?
+    .into_iter()
+    .map(|(i, w, q)| ((i, w), q))
+    .collect();
+    let suppliers = default_suppliers(hc, &all).await?;
+    let mut by_level: BTreeMap<usize, Vec<Uuid>> = BTreeMap::new();
+    for (i, l) in &level {
+        by_level.entry(*l).or_default().push(*i);
+    }
+    let (mut lines, mut messages) = (Vec::new(), Vec::new());
+    for (_, mut items) in by_level {
+        items.sort();
+        for item in items {
+            let Some((name, purchased, made)) = info.get(&item).cloned() else { continue };
+            let mut params = HashMap::new();
+            for w in &whs {
+                params.insert(*w, crate::planning::params(hc.tx, hc.ctx, item, Some(*w)).await?);
+            }
+            let mut have: HashMap<Uuid, Decimal> = whs.iter().map(|w| (*w, on_hand.get(&(item, *w)).copied().unwrap_or_default())).collect();
+            let plan_at = |w: Uuid, have: &HashMap<Uuid, Decimal>, demand: &HashMap<(Uuid, Uuid), Vec<(NaiveDate, Decimal)>>| {
+                let sup: Vec<Supply> = supply.get(&(item, w)).map(|v| v.iter().map(|x| x.0.clone()).collect()).unwrap_or_default();
+                plan_item(have[&w], demand.get(&(item, w)).map(Vec::as_slice).unwrap_or(&[]), &sup, &params[&w], bucket, today, until)
+            };
+            // Transfers: a warehouse short takes what another has over, before anything is ordered.
+            let first: HashMap<Uuid, crate::planning::Plan> = whs.iter().map(|w| (*w, plan_at(*w, &have, &demand))).collect();
+            let mut surplus: Vec<(Uuid, Decimal)> = whs.iter().map(|w| (*w, first[w].surplus)).filter(|(_, s)| *s > Decimal::ZERO).collect();
+            for w in &whs {
+                let mut short = first[w].short;
+                for (from, left) in surplus.iter_mut().filter(|(f, _)| f != w) {
+                    let q = short.min(*left);
+                    if q <= Decimal::ZERO {
+                        continue;
+                    }
+                    *left -= q;
+                    short -= q;
+                    *have.entry(*w).or_default() += q;
+                    *have.entry(*from).or_default() -= q;
+                    lines.push(json!({"item": item.to_string(), "item_name": name, "action": "Transfer", "source_warehouse": from.to_string(), "warehouse": w.to_string(),
+                                      "suggested_qty": q.normalize().to_string(), "net_requirement": q.normalize().to_string(), "bucket_start": today.to_string(),
+                                      "required_by": today.to_string()}));
+                }
+            }
+            for w in &whs {
+                let plan = plan_at(*w, &have, &demand);
+                let bom = bom_of.get(&item).and_then(|b| b.clone());
+                let manufacture = bom.is_some() && (made || !purchased);
+                for (due, release, qty) in &plan.orders {
+                    if manufacture && let Some((_, comps)) = &bom {
+                        for (c, per_unit) in comps {
+                            demand.entry((*c, *w)).or_default().push((*release, per_unit * qty));
+                        }
+                    }
+                    lines.push(json!({"item": item.to_string(), "item_name": name, "action": if manufacture { "Manufacture" } else { "Purchase" },
+                                      "warehouse": w.to_string(), "suggested_qty": qty.normalize().to_string(), "net_requirement": qty.normalize().to_string(),
+                                      "supplier": (!manufacture).then(|| suppliers.get(&item).map(|s| s.to_string())).flatten(),
+                                      "safety_stock": params[w].safety.normalize().to_string(), "bucket_start": due.to_string(), "required_by": release.to_string()}));
+                }
+                for m in plan.messages {
+                    let Some((s0, kind, number)) = supply.get(&(item, *w)).and_then(|v| v.iter().find(|x| x.0.key == m.key)) else { continue };
+                    messages.push(json!({"message": m.kind, "document_type": kind, "document": number, "item": item.to_string(), "warehouse": w.to_string(),
+                                         "current_date": s0.date.to_string(), "current_qty": s0.qty.normalize().to_string(),
+                                         "suggested_date": m.date.to_string(), "suggested_qty": m.qty.normalize().to_string()}));
+                }
+            }
+        }
+    }
+    let (count, said) = (lines.len(), messages.len());
+    let mut patch = Doc::new();
+    patch.insert("lines".into(), Value::Array(lines));
+    patch.insert("messages".into(), Value::Array(messages));
+    patch.insert("status".into(), json!("Planned"));
+    hc.kernel.update_tx(&elevated(hc.ctx), hc.tx, "MrpRun", id(doc, "id").unwrap_or_default(), patch, None).await?;
+    Ok(json!({"lines": count, "messages": said}))
+}
+
+// ───────────────────────────── by-products and co-products ─────────────────────────────
+
+/// One output beside the main item, per unit of the main item produced.
+#[derive(Debug, Clone)]
+pub struct Output {
+    pub item: Uuid,
+    pub per_unit: Decimal,
+    pub byproduct: bool,
+    pub rate: Decimal,
+    pub share: Decimal,
+}
+
+/// A BOM's other outputs and how co-products share cost: `(basis, main item's weight per unit, outputs)`.
+pub async fn outputs(tx: &mut ferrum_kernel::Tx, ctx: &ferrum_kernel::Ctx, bom: Uuid) -> Result<(String, Decimal, Vec<Output>)> {
+    let Some(table) = ctx.schema.entity("Bom").and_then(|e| e.children.get("outputs").map(|c| c.table.clone())) else {
+        return Ok(("Quantity".into(), Decimal::ONE, vec![]));
+    };
+    let (per, basis, main): (Decimal, Option<String>, Option<Decimal>) =
+        sqlx::query_as("select quantity, co_product_basis, main_weight from e_bom where tenant_id = $1 and id = $2")
+            .bind(ctx.tenant)
+            .bind(bom)
+            .fetch_one(&mut **tx)
+            .await?;
+    let per = if per.is_zero() { Decimal::ONE } else { per };
+    let rows: Vec<(Uuid, Decimal, Option<String>, Option<Decimal>, Option<Decimal>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select item, qty, kind, rate, cost_share from {} where tenant_id = $1 and parent_id = $2 order by idx",
+        q(&table)
+    )))
+    .bind(ctx.tenant)
+    .bind(bom)
+    .fetch_all(&mut **tx)
+    .await?;
+    let basis = basis.unwrap_or_else(|| "Quantity".into());
+    let main = if basis == "Quantity" { Decimal::ONE } else { main.unwrap_or_default() };
+    Ok((
+        basis,
+        main,
+        rows.into_iter()
+            .map(|(item, qty, kind, rate, share)| Output {
+                item,
+                per_unit: qty / per,
+                byproduct: kind.as_deref() != Some("Co-product"),
+                rate: rate.unwrap_or_default(),
+                share: share.unwrap_or_default(),
+            })
+            .collect(),
+    ))
+}
+
+/// Splits `total` (materials and operating cost) over what a production yields, to the cent: by-products first, at
+/// their value per unit or their share of `total`; what is left over the main item (`main_qty`, `main_weight` per
+/// unit) and the co-products by quantity times weight (1 for each under the Quantity basis). `outs` are each output's
+/// definition and quantity produced. Answers the main item's value and each output's.
+pub fn split_cost(
+    total: Decimal,
+    main_qty: Decimal,
+    main_weight: Decimal,
+    quantity_basis: bool,
+    outs: &[(&Output, Decimal)],
+    precision: u32,
+    rounding: ferrum_calc::Rounding,
+) -> Result<(Decimal, Vec<Decimal>)> {
+    let mut values = vec![Decimal::ZERO; outs.len()];
+    let mut left = total;
+    for (i, (o, qty)) in outs.iter().enumerate().filter(|(_, (o, _))| o.byproduct) {
+        let v = if o.rate > Decimal::ZERO { round(o.rate * qty, precision) } else { round(total * o.share / Decimal::ONE_HUNDRED, precision) };
+        values[i] = v;
+        left -= v;
+    }
+    if left < Decimal::ZERO {
+        return Err(Error::invalid(format!("the by-products are valued at more than the production cost of {total}")));
+    }
+    let shared: Vec<usize> = (0..outs.len()).filter(|i| !outs[*i].0.byproduct).collect();
+    let mut weights = vec![main_qty * if quantity_basis { Decimal::ONE } else { main_weight }];
+    weights.extend(shared.iter().map(|i| outs[*i].1 * if quantity_basis { Decimal::ONE } else { outs[*i].0.rate }));
+    if weights.iter().all(|w| w.is_zero()) {
+        return Err(Error::invalid("co-products share cost by a ratio or standard value: give the main item's and each co-product's"));
+    }
+    let shares = ferrum_calc::allocate(round(left, precision), &weights, precision, rounding).map_err(|e| Error::invalid(e.to_string()))?;
+    for (k, i) in shared.iter().enumerate() {
+        values[*i] = shares[k + 1];
+    }
+    Ok((shares[0], values))
+}
+
+/// What each output line of a work order's manufacture entry is valued at: the BOM's by-products and co-products
+/// as [`split_cost`] says, the main item's lines sharing its value by quantity; an output the BOM does not name is a
+/// co-product weighing as the main item. Without other outputs, by quantity as before.
+pub async fn output_shares(hc: &mut HookCtx<'_>, wo: Uuid, lines: &[&Doc], total: Decimal, co: &crate::util::Company) -> Result<Vec<Decimal>> {
+    let w = get(hc.kernel, hc.ctx, hc.tx, "WorkOrder", wo).await?;
+    let main_item = id(&w, "item");
+    let (basis, main_weight, defs) = match id(&w, "bom") {
+        Some(b) => outputs(hc.tx, hc.ctx, b).await?,
+        None => ("Quantity".into(), Decimal::ONE, vec![]),
+    };
+    let by_qty = |total: Decimal, ls: &[&Doc]| {
+        let weights: Vec<Decimal> = ls.iter().map(|r| d(r, "qty")).collect();
+        ferrum_calc::allocate(total, &weights, co.precision, co.rounding).map_err(|e| Error::invalid(e.to_string()))
+    };
+    if defs.is_empty() {
+        return by_qty(total, lines);
+    }
+    let main: Vec<usize> = (0..lines.len()).filter(|i| id(lines[*i], "item") == main_item).collect();
+    let main_qty: Decimal = main.iter().map(|i| d(lines[*i], "qty")).sum();
+    let other: Vec<usize> = (0..lines.len()).filter(|i| !main.contains(i)).collect();
+    let extra = Output { item: Uuid::nil(), per_unit: Decimal::ZERO, byproduct: false, rate: main_weight, share: Decimal::ZERO };
+    let outs: Vec<(&Output, Decimal)> =
+        other.iter().map(|i| (defs.iter().find(|o| Some(o.item) == id(lines[*i], "item")).unwrap_or(&extra), d(lines[*i], "qty"))).collect();
+    let (main_value, values) = split_cost(total, main_qty, main_weight, basis == "Quantity", &outs, co.precision, co.rounding)?;
+    let main_lines: Vec<&Doc> = main.iter().map(|i| lines[*i]).collect();
+    let main_shares = by_qty(main_value, &main_lines)?;
+    let mut out = vec![Decimal::ZERO; lines.len()];
+    for (k, i) in main.iter().enumerate() {
+        out[*i] = main_shares[k];
+    }
+    for (k, i) in other.iter().enumerate() {
+        out[*i] = values[k];
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    fn out(byproduct: bool, rate: &str, share: &str) -> Output {
+        Output { item: Uuid::nil(), per_unit: Decimal::ONE, byproduct, rate: rate.parse().unwrap(), share: share.parse().unwrap() }
+    }
+
+    #[test]
+    fn costs_sum_to_the_cent() {
+        let n = |s: &str| s.parse::<Decimal>().unwrap();
+        let scrap = out(true, "0.35", "0");
+        let shell = out(true, "0", "10");
+        let oil = out(false, "3", "0");
+        let outs = [(&scrap, n("3")), (&shell, n("1")), (&oil, n("7"))];
+        let (main, v) = split_cost(n("100.00"), n("3"), n("2"), false, &outs, 2, ferrum_calc::Rounding::default()).unwrap();
+        assert_eq!(v[0], n("1.05"), "scrap at its recovery value");
+        assert_eq!(v[1], n("10.00"), "a share of cost");
+        // 88.95 left over weights 3x2 = 6 and 7x3 = 21.
+        assert_eq!(main + v[2], n("88.95"));
+        assert_eq!(main + v.iter().sum::<Decimal>(), n("100.00"));
+        assert_eq!(main, n("19.77"));
+        let (main, v) = split_cost(n("10"), n("1"), Decimal::ZERO, true, &[(&oil, n("2"))], 2, ferrum_calc::Rounding::default()).unwrap();
+        assert_eq!((main, v[0]), (n("3.33"), n("6.67")), "by quantity");
+        let dear = out(true, "50", "0");
+        assert!(split_cost(n("10"), n("1"), Decimal::ONE, true, &[(&dear, n("1"))], 2, ferrum_calc::Rounding::default()).is_err());
     }
 }

@@ -5,6 +5,9 @@ description: Purchase orders, receipts and supplier invoices with three-way matc
 depends: [accounting, inventory]
 
 overlays:
+  - entity: CarrierShipment
+    ops:
+      - {op: add_field, column: true, after: reference, field: {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true, in_filter: true}}
   - entity: Item
     ops:
       - {op: add_field, column: true, after: is_stock_item, field: {name: is_purchased, type: check, default: true}}
@@ -55,3 +58,14 @@ roles:
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseOrder, read: true}
       - {entity: PurchaseReceipt, read: true}
+
+documents:
+  - key: buying.serial_labels
+    label: Serial number labels
+    entity: PurchaseReceipt
+    output: page
+    languages:
+      en:
+        body: |-
+          <style>@page {size: 50mm 25mm; margin: 2mm} .l {font: 8pt sans-serif; page-break-after: always}</style>
+          {% for r in doc.items %}{% for sn in (r.serial_no or '')|split('\n') %}{% if sn|trim %}<div class="l"><b>{{ r.item_name }}</b>{{ barcode(sn|trim, module=1, height=40, text=true) }}</div>{% endif %}{% endfor %}{% endfor %}

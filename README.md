@@ -67,12 +67,12 @@ and CRM build on its engine.
 | 🇺🇸 | **United States** (`ferrum-us`) | `0.1.0` | Sales tax by destination (by origin within origin-based states) at the ZIP code's combined rate from the states' rate tables, only where the company is registered; marketplace facilitators, exemption certificates and product taxability by state; use tax on untaxed purchases; sales reported to Avalara AvaTax; sales tax by jurisdiction, economic nexus and Forms 1099 reports |
 | 🌏 | **Thirteen more countries** (`ferrum-countries`) | `0.1.0`–`0.1.1` | Singapore, Malaysia, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, the UAE, Australia, New Zealand, Japan, Mexico and China: each its own app on one VAT/GST engine, with its dated rates, exports zero-rated, input tax recovered where it is recoverable, services from abroad reverse-charged where the country says, its registration number's check and its return; e-invoices sent on submit in six of them (below) |
 | 🇨🇦 | **Canada** (`ferrum-ca`) | `0.1.1` | GST/HST, PST/RST and QST by province of supply (goods where delivered, services by the customer's address) with the CRA's dated rates, zero-rated and exempt supplies, exports, input tax credits, and the GST/HST (GST34) and QST returns |
-| 🇮🇳 | **India** (`ferrum-india`) | `0.4.0` | GSTIN validation, place of supply from where the goods are delivered, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP |
+| 🇮🇳 | **India** (`ferrum-india`) | `0.6.0` | GSTIN validation, place of supply from where the goods are delivered, CGST + SGST or IGST chosen for you, HSN/SAC on lines, reverse charge on purchases (RCM), GST e-invoices (IRN, signed QR) and e-way bills through the IRP; TDS categories and GSTR-3B / GSTR-1 as editable records |
 | 💰 | **Finance** | `0.4.2` | budgets, bank reconciliation (a workbench with exact-match suggestions), payment allocation, exchange revaluation, a finance overview, period closing, dunning, subscriptions and payment terms |
 | 📋 | **Procurement** | `0.1.4` | material requests, requests for quotation, supplier quotations and scorecards |
-| 🏷️ | **Stock Operations** | `0.1.2` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
-| ⚙️ | **Manufacturing Operations** | `0.1.2` | workstations, operations, routings, job cards, production planning and subcontracting |
-| 🏭 | **Warehouse Management** | `0.2.3` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
+| 🏷️ | **Stock Operations** | `0.2.0` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
+| ⚙️ | **Manufacturing Operations** | `0.2.0` | workstations, operations, routings, job cards, production planning and subcontracting |
+| 🏭 | **Warehouse Management** | `0.3.0` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
 | 🛠️ | **Manufacturing Execution** | `0.2.3` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
 | ✅ | **Quality** | `0.1.0` | holds that stop stock everywhere it could go, nonconformances and corrective action |
 
@@ -247,6 +247,13 @@ curl -X POST https://erp.example.com/api/customize \
 After that, the workspace edits the bands on the settings record, or the steps (roles, how many,
 reminders, escalation) in Studio, without code. Nothing in ERP's engine checks an amount.
 
+### Carriers
+
+Delivery notes and purchase returns ship by carrier through a **Carrier Connection**: rates, the label
+(attached, its tracking number and link kept, bought once however often it is pressed), tracking by the
+upkeep and by the carrier's own signed calls, and cancelling, each a described HTTP call. No carrier is
+built in; [`docs/carriers.md`](docs/carriers.md) says what a description holds and gives two worked examples.
+
 ## This repository
 
 ```mermaid
@@ -360,6 +367,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.24.0, India 0.6.0, Stock Operations 0.2.0, Manufacturing Operations 0.2.0, Warehouse Management 0.3.0** | Carriers described as calls (rates, labels bought once, tracking pulled and pushed, cancel, label cost booked); labels for items, batches, bins, parcels and serials; a scan capability that reads barcodes, numbers and GS1 strings; transfers through transit with partial receipt and shortages; rejected goods kept and returned; by-products and co-products costed to the cent; planning by period across warehouses with transfers and action messages; India's TDS categories and GST returns as data. |
 | **0.23.0, Finance 0.6.0** | Promotions priced again on Update Items and given back by credit notes to the cent; stored value held for orders and untaxed on orders when taxed at redemption; instrument numbers from a book; erasure reaches supplier bank details and run lines; group by a dimension in every statement; early-payment discount tax in the tax summary and returns; promised dates and availability at order entry; stock held for orders under a Hold policy; purchase approvals by value band as configuration. |
 | **0.22.0, Finance 0.5.0, EU 0.3.0** | Accounting dimensions on every ledger line, in every report and in budgets; payment instruments (post-dated, cleared, bounced, replaced); payment runs with approval, a bank file from a document template and remittance advice; early-payment discounts on payments; bad-debt write-off with relief through the localization seam; recurring journals; tax returns as definitions, with Ireland's VAT3 seeded by the EU add-on. |
 | **0.21.0, India 0.5.0, EU 0.2.0, UK 0.2.0, thirteen countries 0.2.0** | Promotions over a whole sale (off the document or lines, buy and get, bundles, free delivery, free items, codes counted once, a report), computed by a pure engine the till can run offline, applied after pricing rules and kept line by line; a query that prices lines for the till and the web shop. Tax registrations of seller and buyer through the localization seam, on sales documents and their prints. |

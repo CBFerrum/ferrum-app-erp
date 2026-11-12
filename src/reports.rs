@@ -134,6 +134,7 @@ const DEFS: &[Def] = &[
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
     Def { name: "stock_balance", label: "Stock Balance", module: "inventory", entity: "StockEntry", params: &["company", "as_of", "warehouse", "item"] },
+    Def { name: "goods_in_transit", label: "Goods in Transit", module: "inventory", entity: "StockEntry", params: &["company", "item"] },
     Def {
         name: "stock_ledger",
         label: "Stock Ledger",
@@ -229,6 +230,7 @@ impl ReportSource for ErpReports {
             "receivables" => ageing(&mut tx, ctx, &co, &p, "customer").await?,
             "payables" => ageing(&mut tx, ctx, &co, &p, "supplier").await?,
             "stock_balance" => stock_balance(&mut tx, ctx, &co, &p).await?,
+            "goods_in_transit" => goods_in_transit(&mut tx, ctx, &co, &p).await?,
             "stock_ledger" => stock_ledger(&mut tx, ctx, &co, &p).await?,
             "sales_register" => register(&mut tx, ctx, &co, &p, "customer").await?,
             "purchase_register" => register(&mut tx, ctx, &co, &p, "supplier").await?,
@@ -2160,37 +2162,79 @@ async fn stock_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     let as_of = p.date("as_of")?;
     let sql = if as_of.is_some() {
         // Historical: sum the append-only moves up to the date.
-        "select i.item_code, i.item_name, w.warehouse_name, sum(m.qty), sum(m.value) from stock_move m \
+        "select i.item_code, i.item_name, w.warehouse_name, coalesce(w.warehouse_type, 'Stock'), sum(m.qty), sum(m.value) from stock_move m \
          join e_item i on i.tenant_id = m.tenant_id and i.id = m.item_id join e_warehouse w on w.tenant_id = m.tenant_id and w.id = m.warehouse_id \
          where m.tenant_id = $1 and m.company_id = $2 and ($3::uuid is null or m.warehouse_id = $3) and ($4::uuid is null or m.item_id = $4) \
-         and m.posting_date <= $5::date group by i.item_code, i.item_name, w.warehouse_name having sum(m.qty) <> 0 or sum(m.value) <> 0 \
+         and m.posting_date <= $5::date group by i.item_code, i.item_name, w.warehouse_name, w.warehouse_type having sum(m.qty) <> 0 or sum(m.value) <> 0 \
          order by i.item_code, w.warehouse_name limit $6"
     } else {
-        "select i.item_code, i.item_name, w.warehouse_name, b.qty, b.value from stock_balance b \
+        "select i.item_code, i.item_name, w.warehouse_name, coalesce(w.warehouse_type, 'Stock'), b.qty, b.value from stock_balance b \
          join e_item i on i.tenant_id = b.tenant_id and i.id = b.item_id join e_warehouse w on w.tenant_id = b.tenant_id and w.id = b.warehouse_id \
          where b.tenant_id = $1 and b.company_id = $2 and ($3::uuid is null or b.warehouse_id = $3) and ($4::uuid is null or b.item_id = $4) \
          and $5::date is null and (b.qty <> 0 or b.value <> 0) order by i.item_code, w.warehouse_name limit $6"
     };
-    let data: Vec<(String, String, String, Decimal, Decimal)> =
+    let data: Vec<(String, String, String, String, Decimal, Decimal)> =
         sqlx::query_as(sql).bind(ctx.tenant).bind(co.id).bind(wh).bind(item).bind(as_of).bind(MAX_ROWS + 1).fetch_all(&mut **tx).await?;
     let truncated = data.len() as i64 > MAX_ROWS;
     let (mut tq, mut tv) = (Decimal::ZERO, Decimal::ZERO);
     let rows: Vec<Value> = data
         .into_iter()
         .take(MAX_ROWS as usize)
-        .map(|(code, name, whn, qty, value)| {
+        .map(|(code, name, whn, holds, qty, value)| {
             tq += qty;
             tv += value;
             let rate = if qty.is_zero() { Decimal::ZERO } else { (value / qty).round_dp(co.precision + 2) };
-            json!({"item_code": code, "item_name": name, "warehouse": whn, "qty": money(qty), "valuation_rate": money(rate), "value": money(value)})
+            json!({"item_code": code, "item_name": name, "warehouse": whn, "holds": holds, "qty": money(qty), "valuation_rate": money(rate), "value": money(value)})
         })
         .collect();
     Ok(json!({
-        "columns": [col("item_code", "Item", "data"), col("item_name", "Item Name", "data"), col("warehouse", "Warehouse", "data"),
+        "columns": [col("item_code", "Item", "data"), col("item_name", "Item Name", "data"), col("warehouse", "Warehouse", "data"), col("holds", "Holds", "data"),
             col("qty", "Quantity", "decimal"), col("valuation_rate", "Valuation Rate", "currency"), col("value", "Value", "currency")],
         "rows": rows,
         "totals": {"qty": money(tq), "value": money(tv)},
         "meta": {"as_of": as_of, "truncated": truncated},
+    }))
+}
+
+/// Transfers shipped and not yet all received: each line's from, to, what left, what was received or settled, what is
+/// still on its way and its value at the rate it left at.
+async fn goods_in_transit(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let item = p.uuid("item")?;
+    let data: Vec<(Uuid, Option<String>, NaiveDate, String, String, String, String, Decimal, Decimal, Decimal)> = sqlx::query_as(
+        "select e.id, e.number, e.posting_date, i.item_code, sw.warehouse_name, tw.warehouse_name, transit.warehouse_name, l.qty, coalesce(l.received_qty, 0), \
+         coalesce(l.basic_rate, 0) from e_stock_entry e join e_stock_entry__items l on l.tenant_id = e.tenant_id and l.parent_id = e.id \
+         join e_item i on i.tenant_id = l.tenant_id and i.id = l.item join e_warehouse sw on sw.tenant_id = l.tenant_id and sw.id = l.source_warehouse \
+         join e_warehouse tw on tw.tenant_id = l.tenant_id and tw.id = l.target_warehouse \
+         join e_warehouse transit on transit.tenant_id = e.tenant_id and transit.id = e.transit_warehouse \
+         where e.tenant_id = $1 and e.company = $2 and e.docstatus = 1 and e.through_transit and l.qty > coalesce(l.received_qty, 0) \
+         and ($3::uuid is null or l.item = $3) order by e.posting_date, e.number limit $4",
+    )
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(item)
+    .bind(MAX_ROWS + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    let truncated = data.len() as i64 > MAX_ROWS;
+    let mut total = Decimal::ZERO;
+    let rows: Vec<Value> = data
+        .into_iter()
+        .take(MAX_ROWS as usize)
+        .map(|(id, number, on, code, from, to, via, qty, received, rate)| {
+            let open = qty - received;
+            let value = crate::util::round(open * rate, co.precision);
+            total += value;
+            json!({"stock_entry": id, "number": number, "posting_date": on, "item_code": code, "from": from, "to": to, "transit": via,
+                   "shipped": money(qty), "received": money(received), "in_transit": money(open), "value": money(value)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("number", "Transfer", "data"), col("posting_date", "Shipped", "date"), col("item_code", "Item", "data"), col("from", "From", "data"),
+            col("to", "To", "data"), col("transit", "Through", "data"), col("shipped", "Shipped Qty", "decimal"), col("received", "Received or Settled", "decimal"),
+            col("in_transit", "In Transit", "decimal"), col("value", "Value", "currency")],
+        "rows": rows,
+        "totals": {"value": money(total)},
+        "meta": {"truncated": truncated},
     }))
 }
 

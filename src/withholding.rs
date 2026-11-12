@@ -347,7 +347,21 @@ pub(crate) async fn lines(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company) -> Resu
         let amount = d(&r, "amount");
         let (false, Some(cat)) = (amount.is_zero(), id(&r, "category")) else { continue };
         let c = get(hc.kernel, hc.ctx, hc.tx, "WithholdingCategory", cat).await?;
-        let account = rows(&c, "accounts").iter().find(|a| id(a, "company") == Some(co.id)).and_then(|a| id(a, "account")).ok_or_else(|| {
+        let mut account = rows(&c, "accounts").iter().find(|a| id(a, "company") == Some(co.id)).and_then(|a| id(a, "account"));
+        // A company without a row of its own: its account with the category's account number (as a seeded category says).
+        if account.is_none()
+            && let Some(number) = s(&c, "account_number")
+        {
+            account = sqlx::query_scalar(
+                "select id from e_account where tenant_id = $1 and company = $2 and account_number = $3 and not coalesce(is_group, false) limit 1",
+            )
+            .bind(hc.ctx.tenant)
+            .bind(co.id)
+            .bind(number)
+            .fetch_optional(&mut **hc.tx)
+            .await?;
+        }
+        let account = account.ok_or_else(|| {
             Error::field("withholdings", format!("the withholding category {} has no account for this company", s(&c, "category_name").unwrap_or("?")))
         })?;
         out.push(Line::new(account, -amount, &co.currency_code).remarks(format!("Withholding: {}", s(&c, "category_name").unwrap_or("?"))));

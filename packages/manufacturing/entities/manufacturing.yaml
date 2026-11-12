@@ -1,3 +1,14 @@
+- name: ItemPlanning
+  label: Item Planning
+  kind: child
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true, description: "Empty: every warehouse without a row of its own"}
+    - {name: safety_stock, type: decimal, min: "0", in_list: true}
+    - {name: min_order_qty, type: decimal, min: "0", in_list: true, label: Minimum Order}
+    - {name: order_multiple, type: decimal, min: "0", in_list: true, label: Order Multiple}
+    - {name: max_order_qty, type: decimal, min: "0", in_list: true, label: Maximum Order, description: "Larger needs are split into several orders. Empty: no most"}
+    - {name: lead_time_days, type: int, min: "0", label: Lead Time (Days), description: "Empty: the item's"}
+
 - name: BomItem
   label: BOM Item
   kind: child
@@ -11,6 +22,19 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: source_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: reference_designators, type: text, description: "e.g. R1-R12, C3"}
+
+- name: BomOutput
+  label: Other Output
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true, description: Quantity per BOM quantity}
+    - {name: kind, type: select, options: [By-product, Co-product], required: true, default: By-product, in_list: true,
+       description: "By-product: valued first, at its value per unit or its share of cost (scrap with a recovery value is one). Co-product: shares what is left with the main item by the BOM's basis"}
+    - {name: rate, type: currency, min: "0", in_list: true, label: Value or Weight per Unit,
+       description: "By-product: its value per unit (empty: its share of cost below). Co-product: its ratio or standard value per unit, as the BOM's basis says"}
+    - {name: cost_share, type: percent, min: "0", max: "100", label: Share of Cost (%), visible_if: "doc.kind == 'By-product'"}
 
 - name: Bom
   label: Bill of Materials
@@ -32,6 +56,10 @@
     - {name: effective_from, type: date}
     - {name: items, type: table, of: BomItem, required: true}
     - {name: operating_cost, type: currency, default: 0, min: "0", description: Labour and overheads per BOM quantity}
+    - {name: outputs, type: table, of: BomOutput, label: By-products and Co-products}
+    - {name: co_product_basis, type: select, options: [Quantity, Ratio, Standard Value], default: Quantity, label: Co-products Share Cost By,
+       description: "Quantity: by how many. Ratio or Standard Value: by quantity times each one's ratio or standard value per unit (the main item's below)"}
+    - {name: main_weight, type: decimal, min: "0", label: Main Item's Ratio or Standard Value, visible_if: "doc.co_product_basis != 'Quantity'"}
     - {name: raw_material_cost, type: currency, read_only: true, no_copy: true}
     - {name: total_cost, type: currency, read_only: true, no_copy: true, in_list: true}
     - {name: change_note, type: text, description: Engineering change description for this revision}
@@ -76,7 +104,9 @@
   fields:
     - {name: item, type: link, to: Item, in_list: true}
     - {name: item_name, type: data, read_only: true, in_list: true}
-    - {name: action, type: select, options: [Purchase, Manufacture], in_list: true}
+    - {name: action, type: select, options: [Purchase, Manufacture, Transfer], in_list: true}
+    - {name: source_warehouse, type: link, to: Warehouse, label: From Warehouse, description: "A transfer's: the warehouse with more than it needs"}
+    - {name: bucket_start, type: date, read_only: true, in_list: true, label: Needed In, description: "The first day of the period it is needed in"}
     - {name: gross_requirement, type: decimal, read_only: true}
     - {name: available, type: decimal, read_only: true}
     - {name: on_order, type: decimal, read_only: true}
@@ -87,6 +117,26 @@
     - {name: warehouse, type: link, to: Warehouse}
     - {name: required_by, type: date}
     - {name: created_document, type: data, read_only: true}
+
+- name: MrpWarehouse
+  label: Planning Warehouse
+  kind: child
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, in_list: true}
+
+- name: MrpMessage
+  label: Action Message
+  kind: child
+  fields:
+    - {name: message, type: select, options: [Bring Forward, Push Out, Cancel, Increase, Decrease], in_list: true}
+    - {name: document_type, type: data, read_only: true, in_list: true}
+    - {name: document, type: data, read_only: true, in_list: true, description: "The order's number and line"}
+    - {name: item, type: link, to: Item, read_only: true, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, read_only: true}
+    - {name: current_date, type: date, read_only: true}
+    - {name: current_qty, type: decimal, read_only: true}
+    - {name: suggested_date, type: date, read_only: true, in_list: true}
+    - {name: suggested_qty, type: decimal, read_only: true, in_list: true}
 
 - name: MrpRun
   label: MRP Run
@@ -99,7 +149,12 @@
     - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, description: Planning warehouse}
     - {name: include_sales_orders, type: check, default: true}
     - {name: demand_until, type: date, description: Sales orders with delivery dates up to this date}
+    - {name: bucket, type: select, options: [Day, Week, Month], label: Plan By,
+       description: "Empty: one total for the planning warehouse, as before. A period: demand and orders by period over the horizon, the warehouses below, transfers between them and action messages on the orders already there"}
+    - {name: horizon_days, type: int, min: "1", default: 90, label: Horizon (Days), visible_if: "doc.bucket != null"}
+    - {name: warehouses, type: table, of: MrpWarehouse, label: Plan Across, visible_if: "doc.bucket != null", description: "Empty: the planning warehouse"}
     - {name: lines, type: table, of: MrpLine}
+    - {name: messages, type: table, of: MrpMessage, label: Action Messages}
     - {name: status, type: select, options: [Draft, Planned, Orders Created], default: Draft, read_only: true, in_list: true}
   actions:
     - {name: run, label: Run MRP, docstatus: [0], permission: write}
