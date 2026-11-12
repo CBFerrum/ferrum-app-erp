@@ -35,6 +35,22 @@ of ERP's pricing to do it, which its browser could not run. The money logic now 
 Not done: `price_lines` (the contracted query) still prices through the server's draft, not the crate; the browser
 package `@ferrum/pricing` in Ferrum-Frontend (the files this script builds, committed beside `@ferrum/calc`). Seen and
 left: a bundle that names one item in two parts can take more than that item's line (the engine counts the line twice).
+## ERP 0.25.1: the screens 0.19.0 to 0.25.0 asked for
+
+Eight desks in ERP's own interface, for server features that were only generic forms until now. Each loads when first opened, shows only where its package is installed and only to people who can read what it works on, and names no country, tax, form or currency: labels and choices are the server's (the localization seam, return definitions, withholding categories, templates). The server is unchanged.
+
+- **Payment run desk** (`/e/PaymentRun/new`, `/desk/payment-run/:id`): filters, propose, review and edit the bills (discount, amount, instrument number, left out), the approval state where a policy is on, submit, make the payments once, the bank file, the remittance messages sent for each payment, each failed line with the server's reason and a retry that pays only what is not paid.
+- **Stored value desk** (`/desk/stored-value`, `/e/StoredValueAccount/new`): find a card (balance, held, available, state, expiry, movements), issue, top up, hold for an order, release. A code and PIN are password boxes sent only to the kind's `prove` and `balance`, cleared as the call starts, and never in the address, a cache key, a toast or storage; a code the server makes is shown once.
+- **Promotions desk** (`/desk/promotions/:id?`): a promotion's fields grouped (what it is, schedule, conditions, what it gives, limits, stacking) and changed where they stand; a test basket priced by the server's `price_lines`, saving nothing, with what the chosen promotion took; the Promotions Given report by promotion.
+- **Tax return workbench** (`/e/TaxReturn/new`, `/desk/tax-return/:id`): a return definition and a period, boxes with how each is worked out, drill-down to the tax ledger documents behind a sum box, adjustments with reasons, the files the templates give, filing (which closes the period to invoices) and cancelling.
+- **Withholding desk** (`/desk/withholding`): categories with dated rates and thresholds, the rate in force marked; a statement per party and period as a file; what is payable by category and the account it books to.
+- **Shipping desk** (`/desk/shipping`, `/desk/shipping/:id`): parcels, rates, choosing one, buying the label once (disabled while sent, with the request's key), the label file, tracking, cancelling; carrier connections with the state of the platform connection each goes through and a link to Administration.
+- **Planning desk** (`/desk/planning`): planned orders by period per item and warehouse, taken in bulk (what is left out is set to nothing) and made into orders; action messages; the promise-date check on an order's lines; reservations per line under the company's policy.
+- **Numbering desk** (`/desk/numbering`): series per kind with template, gapless and default flags, the last number each gave, making one the default, and which series a document took.
+
+Reaching them: a record that has a desk (payment run, tax return, shipment, promotion, MRP run) opens on it at its usual address, with the record's own form, actions and all, a tab away; the others answer the list page of their menu row (stored value accounts, withholding categories, numbering series, promotions, shipments, MRP runs), the plain list at `/l/<Entity>`. The Create menu offers payment run, tax return, stored value card and shipment. Menu rows are the existing ones, shown only to people who can read the entity.
+
+Not shown, for lack of a route: the number a series gives next (the platform's counter has none; the last number given is shown), and the list of a stored value account's holds (only the hold a call returns is known; others are released by number). Words of the new screens are in English until translated.
 
 ## ERP 0.25.0: what other apps had to copy, numbering series, carriers through connections, secret proofs, approvals that ship
 
