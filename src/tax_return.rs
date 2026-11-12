@@ -20,7 +20,10 @@ use uuid::Uuid;
 /// One row of the tax ledger.
 #[derive(Debug, Clone)]
 pub struct TaxRow {
+    /// The invoice's kind, which says the direction: output on a sale, input on a purchase.
     pub entity: &'static str,
+    /// The document the row comes from: the invoice, or a payment whose discount took tax back.
+    pub voucher: &'static str,
     pub id: Uuid,
     pub number: Option<String>,
     pub date: NaiveDate,
@@ -62,6 +65,7 @@ pub async fn ledger(tx: &mut Tx, ctx: &Ctx, company: Uuid, from: NaiveDate, to: 
         for (iid, number, day, name, account, description, category, rate, reverse, ret, place, base, amount) in data {
             out.push(TaxRow {
                 entity,
+                voucher: entity,
                 id: iid,
                 number,
                 date: day,
@@ -78,7 +82,98 @@ pub async fn ledger(tx: &mut Tx, ctx: &Ctx, company: Uuid, from: NaiveDate, to: 
             });
         }
     }
+    for r in discount_taxes(tx, ctx, company, from, to).await? {
+        out.push(TaxRow {
+            entity: r.entity,
+            voucher: "PaymentEntry",
+            id: r.id,
+            number: r.number,
+            date: r.date,
+            party: r.party,
+            tax: r.account_name,
+            description: r.description,
+            category: r.category,
+            rate: r.rate,
+            reverse_charge: false,
+            credit_note: true,
+            place: String::new(),
+            base: -r.taxable,
+            amount: -r.tax,
+        });
+    }
     Ok(out)
+}
+
+/// Tax an early-payment discount took back: a payment's row for one tax of one invoice.
+pub struct DiscountTax {
+    /// The invoice's kind, which says the direction (output on a sale, input on a purchase).
+    pub entity: &'static str,
+    /// The payment.
+    pub id: Uuid,
+    pub number: Option<String>,
+    pub date: NaiveDate,
+    pub party: Option<String>,
+    pub account: Option<Uuid>,
+    pub account_name: String,
+    pub description: String,
+    pub category: String,
+    pub rate: Decimal,
+    /// What the discount took off the base, and off the tax, positive, in company currency.
+    pub taxable: Decimal,
+    pub tax: Decimal,
+}
+
+/// The tax submitted payments of `[from, to]` took back with early-payment discounts, on the payment's day.
+pub async fn discount_taxes(tx: &mut Tx, ctx: &Ctx, company: Uuid, from: NaiveDate, to: NaiveDate) -> Result<Vec<DiscountTax>> {
+    let Some(ent) = ctx.schema.entity("PaymentEntry") else { return Ok(vec![]) };
+    if ent.field("discount_taxes").is_none() {
+        return Ok(vec![]);
+    }
+    #[allow(clippy::type_complexity)]
+    let data: Vec<(
+        Uuid,
+        Option<String>,
+        NaiveDate,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select p.id, p.number, p.posting_date, p.party_name, t->>'invoice_type', t->>'account', a.account_name, t->>'description', t->>'category', \
+             t->>'rate', t->>'taxable', t->>'tax' from {payments} p cross join lateral jsonb_array_elements(coalesce(p.discount_taxes, '[]'::jsonb)) t \
+             left join e_account a on a.tenant_id = p.tenant_id and a.id::text = t->>'account' \
+             where p.tenant_id = $1 and p.company = $2 and p.docstatus = 1 and p.posting_date between $3 and $4 order by p.posting_date, p.number, p.id",
+        payments = ferrum_kernel::ddl::q(&ent.table),
+    )))
+    .bind(ctx.tenant)
+    .bind(company)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await?;
+    let num = |v: Option<String>| v.and_then(|x| x.parse::<Decimal>().ok()).unwrap_or_default();
+    Ok(data
+        .into_iter()
+        .map(|(pid, number, day, party, kind, account, name, description, category, rate, taxable, tax)| DiscountTax {
+            entity: if kind.as_deref() == Some("PurchaseInvoice") { "PurchaseInvoice" } else { "SalesInvoice" },
+            id: pid,
+            number,
+            date: day,
+            party,
+            account: account.and_then(|a| a.parse().ok()),
+            account_name: name.unwrap_or_default(),
+            description: description.unwrap_or_default(),
+            category: category.unwrap_or_default(),
+            rate: num(rate),
+            taxable: num(taxable),
+            tax: num(tax),
+        })
+        .collect())
 }
 
 /// Whether a ledger row is one a Sum box counts.
@@ -257,7 +352,7 @@ pub async fn documents(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ret: Uuid, code: &str
     for x in rows_.iter().filter(|x| matches(&b, x)) {
         let v = if base { x.base } else { x.amount };
         total += v;
-        out.push(json!({"voucher_type": x.entity, "voucher_id": x.id, "voucher_no": x.number, "posting_date": x.date, "party": x.party,
+        out.push(json!({"voucher_type": x.voucher, "voucher_id": x.id, "voucher_no": x.number, "posting_date": x.date, "party": x.party,
                         "tax": x.tax, "rate": money(x.rate), "taxable": money(x.base), "tax_amount": money(x.amount), "counted": money(v)}));
     }
     Ok(json!({

@@ -94,6 +94,23 @@ async fn scenario() {
     assert_eq!(dec(&gl["rows"].as_array().unwrap().last().unwrap()["debit"]), Decimal::from(100));
     let bs = t.report("balance_sheet", &[("as_of", &day), ("group_by", "department")]).await;
     assert!(bs["meta"]["groups"].as_array().unwrap().len() == 3);
+    // Every statement that filters by a dimension groups by one too.
+    let tb = t.report("trial_balance", &[("from_date", &day), ("to_date", &day), ("group_by", "department")]).await;
+    let rent = tb["rows"].as_array().unwrap().iter().find(|r| r["account"] == json!("5230 - Rent")).unwrap().clone();
+    assert_eq!(dec(&rent["amount"]), Decimal::from(30), "Ops' rent in the period: {rent}");
+    let gl = t.report("general_ledger", &[("from_date", &day), ("to_date", &day), ("group_by", "department")]).await;
+    let subtotals: Vec<(String, Decimal)> = gl["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["account"].as_str().is_some_and(|a| a.starts_with("Total ")))
+        .map(|r| (r["group"].as_str().unwrap().to_string(), dec(&r["debit"])))
+        .collect();
+    assert_eq!(subtotals.iter().map(|(g, _)| g.as_str()).collect::<Vec<_>>(), ["Ops", "Sales", "No department"], "{subtotals:?}");
+    let cf = t.report("cash_flow", &[("from_date", &day), ("to_date", &day), ("group_by", "department")]).await;
+    assert_eq!(cf["meta"]["groups"].as_array().unwrap().len(), 3);
+    let profit = cf["rows"].as_array().unwrap().iter().find(|r| r["section"] == json!("profit")).unwrap().clone();
+    assert_eq!((dec(&profit["amount"]), dec(&profit["amount_1"])), (Decimal::from(-30), Decimal::from(-100)), "{profit}");
 
     // The entry from before reverses as it was, though the dimension is now required.
     t.k.cancel(&t.ctx, "JournalEntry", uid(&before), None).await.expect("cancel the entry from before");

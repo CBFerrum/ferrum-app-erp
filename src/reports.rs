@@ -29,7 +29,7 @@ const DEFS: &[Def] = &[
         label: "Trial Balance",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "finance_book", "dimension", "dimension_value"],
+        params: &["company", "from_date", "to_date", "finance_book", "dimension", "dimension_value", "group_by"],
     },
     Def {
         name: "consolidated_trial_balance",
@@ -54,6 +54,7 @@ const DEFS: &[Def] = &[
             "project",
             "dimension",
             "dimension_value",
+            "group_by",
             "exclude_closing",
             "finance_book",
         ],
@@ -90,7 +91,7 @@ const DEFS: &[Def] = &[
         label: "Cash Flow",
         module: "accounting",
         entity: "JournalEntry",
-        params: &["company", "from_date", "to_date", "compare", "periods", "dimension", "dimension_value", "finance_book", "consolidated"],
+        params: &["company", "from_date", "to_date", "compare", "periods", "dimension", "dimension_value", "group_by", "finance_book", "consolidated"],
     },
     Def {
         name: "deferred_revenue_and_expense",
@@ -588,6 +589,24 @@ async fn trial_balance(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_
     let year_start = fy_start(from, co.fy_month);
     let accs = accounts(tx, ctx, co).await?;
     let dims = dims(tx, ctx, p).await?;
+    if let Some(by) = grouped(tx, ctx, co, p, &dims, Some(from), to).await? {
+        // Grouped: each account's movement in the period (debit less credit), a column per value.
+        let mut bals = Vec::new();
+        for (_, d) in &by {
+            bals.push(balances_where(tx, ctx, co, Some(from), to, &[], d).await?);
+        }
+        let rows: Vec<Value> = accs
+            .iter()
+            .filter(|a| !a.is_group.unwrap_or(false))
+            .filter(|a| bals.iter().any(|b| b.get(&a.id).is_some_and(|v| !v.is_zero())))
+            .map(|a| {
+                let mut row = json!({"account": label(a), "root_type": a.root_type});
+                amounts(&mut row, &bals.iter().map(|b| b.get(&a.id).copied().unwrap_or_default()).collect::<Vec<_>>());
+                row
+            })
+            .collect();
+        return Ok(by_dimension(rows, &by, json!({"from_date": from, "to_date": to, "amounts": "movement in the period, debit less credit"})));
+    }
     let before = balances_where(tx, ctx, co, None, from.pred_opt().unwrap_or(from), &[], &dims).await?;
     // Income and expense restart every fiscal year; earlier years show as one equity line.
     let pl_this_year = balances_where(tx, ctx, co, Some(year_start), from.pred_opt().unwrap_or(from), &[], &dims).await?;
@@ -1263,18 +1282,26 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     .bind(&dims.without)
     .fetch_one(&mut **tx)
     .await?;
+    // Grouped by a dimension: the lines by its value (those without it last), each value subtotalled.
+    let group_by = p.str("group_by").map(str::trim).filter(|c| !c.is_empty());
+    let group_col = match group_by {
+        None => "null::text",
+        Some("cost_center") => "l.cost_center_id::text",
+        Some("project") => "l.project_id::text",
+        Some(_) => "l.dims ->> $14",
+    };
     #[allow(clippy::type_complexity)]
-    let lines: Vec<(NaiveDate, String, String, Option<String>, Uuid, Option<String>, Decimal, Decimal, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let lines: Vec<(NaiveDate, String, String, Option<String>, Uuid, Option<String>, Decimal, Decimal, Option<String>, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select l.posting_date, coalesce(a.account_number || ' - ', '') || a.account_name, e.source_entity, e.source_number, e.source_id, \
-         coalesce(c.customer_name, s.supplier_name), l.debit, l.credit, l.remarks \
+         coalesce(c.customer_name, s.supplier_name), l.debit, l.credit, l.remarks, {group_col} \
          from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
          join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
          left join e_customer c on c.tenant_id = l.tenant_id and c.id = l.customer_id \
          left join e_supplier s on s.tenant_id = l.tenant_id and s.id = l.supplier_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.posting_date between $3 and $4 \
          and ($5::uuid[] is null or l.account_id = any($5)) and ($6::uuid[] is null or l.customer_id = any($6)) and ($7::uuid[] is null or l.supplier_id = any($7)) \
-         and (cardinality($9::text[]) = 0 or e.source_entity <> all($9)) and {} \
-         order by l.posting_date, e.created_at, l.entry_id, l.line_no limit $8",
+         and (cardinality($9::text[]) = 0 or e.source_entity <> all($9)) and {} and ($14::text is null or true) \
+         order by {group_col} nulls last, l.posting_date, e.created_at, l.entry_id, l.line_no limit $8",
         dims_sql(10)
     )))
     .bind(ctx.tenant)
@@ -1290,20 +1317,61 @@ async fn general_ledger(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'
     .bind(dims.project)
     .bind(&dims.dims)
     .bind(&dims.without)
+    .bind(group_by)
     .fetch_all(&mut **tx)
     .await?;
     let truncated = lines.len() as i64 > MAX_ROWS;
+    let group_entity = match group_by {
+        Some("cost_center") => Some("CostCenter".to_string()),
+        Some("project") => Some("Project".to_string()),
+        Some(code) => crate::dimensions::load(tx, ctx).await?.into_iter().find(|d| d.code == code).and_then(|d| d.entity),
+        None => None,
+    };
+    let mut names: HashMap<String, String> = HashMap::new();
+    for v in lines.iter().filter_map(|l| l.9.clone()) {
+        if let std::collections::hash_map::Entry::Vacant(e) = names.entry(v) {
+            let name = crate::dimensions::label(tx, ctx, group_entity.as_deref(), e.key()).await?;
+            e.insert(name);
+        }
+    }
     let mut balance = opening;
     let mut rows = vec![
         json!({"posting_date": from, "account": "Opening", "debit": money(opening.max(Decimal::ZERO)), "credit": money((-opening).max(Decimal::ZERO)), "balance": money(opening), "_bold": true}),
     ];
     let (mut tdr, mut tcr) = (Decimal::ZERO, Decimal::ZERO);
-    for (day, acc, entity, number, sid, party, dr, cr, remarks) in lines.into_iter().take(MAX_ROWS as usize) {
+    // The group being written, and its debits and credits.
+    let mut open: Option<(Option<String>, Decimal, Decimal)> = None;
+    let group_name = |g: &Option<String>| match (g, group_by) {
+        (Some(v), _) => names.get(v).cloned().unwrap_or_else(|| v.clone()),
+        (None, Some(code)) => format!("No {code}"),
+        (None, None) => String::new(),
+    };
+    let subtotal = |rows: &mut Vec<Value>, g: &Option<String>, dr: Decimal, cr: Decimal| {
+        rows.push(json!({"account": format!("Total {}", group_name(g)), "group": group_name(g), "debit": money(dr), "credit": money(cr), "_bold": true}));
+    };
+    for (day, acc, entity, number, sid, party, dr, cr, remarks, g) in lines.into_iter().take(MAX_ROWS as usize) {
+        if group_by.is_some() {
+            match &mut open {
+                Some((was, gdr, gcr)) if *was == g => {
+                    *gdr += dr;
+                    *gcr += cr;
+                }
+                _ => {
+                    if let Some((was, gdr, gcr)) = open.take() {
+                        subtotal(&mut rows, &was, gdr, gcr);
+                    }
+                    open = Some((g.clone(), dr, cr));
+                }
+            }
+        }
         balance += dr - cr;
         tdr += dr;
         tcr += cr;
         rows.push(json!({"posting_date": day, "account": acc, "voucher_type": entity, "voucher_no": number, "voucher_id": sid, "party": party,
-            "debit": money(dr), "credit": money(cr), "balance": money(balance), "remarks": remarks}));
+            "debit": money(dr), "credit": money(cr), "balance": money(balance), "remarks": remarks, "group": group_by.map(|_| group_name(&g))}));
+    }
+    if let Some((was, gdr, gcr)) = open {
+        subtotal(&mut rows, &was, gdr, gcr);
     }
     rows.push(json!({"account": "Closing", "debit": money(tdr), "credit": money(tcr), "balance": money(balance), "_bold": true}));
     Ok(json!({
@@ -1662,8 +1730,19 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
     let dims = dims(tx, ctx, p).await?;
     let accs = accounts(tx, ctx, co).await?;
     let cash = |a: &Acc| a.root_type == "Asset" && matches!(a.account_type.as_deref(), Some("Bank" | "Cash"));
+    let by = match &group {
+        Some(_) if p.str("group_by").is_some() => return Err(Error::field("group_by", "a group's consolidated statement is not grouped by a dimension")),
+        Some(_) => None,
+        None => grouped(tx, ctx, co, p, &dims, Some(from), to).await?,
+    };
+    // A column per period, or per value of the dimension it is grouped by.
+    let cols: Vec<(NaiveDate, NaiveDate, Dims)> = match &by {
+        Some(by) => by.iter().map(|(_, d)| (from, to, d.clone())).collect(),
+        None => spans.iter().map(|(f, t)| (*f, *t, dims.clone())).collect(),
+    };
     let mut per: Vec<CashFigures> = Vec::new();
-    for (f, t) in &spans {
+    for (f, t, dims) in &cols {
+        let dims = dims.clone();
         if let Some(g) = &group {
             per.push(group_cash_figures(k, tx, ctx, co, g, *f, *t).await?);
             continue;
@@ -1759,6 +1838,9 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
     amounts(&mut at_start, &opening);
     rows.push(at_start);
     rows.push(total_row("Cash and bank at the end of the period", &closing));
+    if let Some(by) = &by {
+        return Ok(by_dimension(rows, by, json!({"from_date": from, "to_date": to})));
+    }
     let difference: Vec<Decimal> = (0..n).map(|i| closing[i] - opening[i] - net[i]).collect();
     let labels: Vec<String> = spans.iter().map(|(f, t)| periods::label(*f, *t)).collect();
     Ok(json!({
@@ -2291,6 +2373,18 @@ async fn tax_summary(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>)
             g.2.push(json!({"direction": direction, "voucher_type": entity, "voucher_id": iid, "voucher_no": number, "posting_date": day, "party": name,
                 "taxable": money(taxable), "tax": money(tax), "_indent": 1}));
         }
+    }
+    // Tax taken back by early-payment discounts, on the payment's day: less output tax on a sale, less input on a purchase.
+    for r in crate::tax_return::discount_taxes(tx, ctx, co.id, from, to).await? {
+        let (order, direction) = if r.entity == "PurchaseInvoice" { (1u8, "Input") } else { (0, "Output") };
+        let account = r.account.and_then(|a| names.get(&a).cloned()).unwrap_or(r.account_name);
+        let g = groups.entry((order, account, r.category, r.rate.normalize(), false)).or_default();
+        g.0 -= r.taxable;
+        g.1 -= r.tax;
+        g.2.push(
+            json!({"direction": direction, "voucher_type": "PaymentEntry", "voucher_id": r.id, "voucher_no": r.number, "posting_date": r.date, "party": r.party,
+            "taxable": money(-r.taxable), "tax": money(-r.tax), "_indent": 1}),
+        );
     }
     let (mut output, mut input) = (Decimal::ZERO, Decimal::ZERO);
     let mut rows = Vec::new();
