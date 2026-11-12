@@ -19,8 +19,6 @@ create table stored_value_entry (
   against_id uuid,
   journal_entry_id uuid,
   reversal_of uuid,
-  op_key text,
-  op_digest text,
   remarks text,
   created_by uuid,
   created_at timestamptz not null default now(),
@@ -29,7 +27,7 @@ create table stored_value_entry (
 );
 create index stored_value_entry_account on stored_value_entry (tenant_id, account_id, created_at);
 create index stored_value_entry_source on stored_value_entry (tenant_id, source_entity, source_id);
-create unique index stored_value_entry_key on stored_value_entry (tenant_id, op_key) where op_key is not null;
+create index stored_value_entry_op on stored_value_entry (tenant_id, op_id);
 create unique index stored_value_entry_reversal on stored_value_entry (tenant_id, reversal_of) where reversal_of is not null;
 create unique index stored_value_account_code on e_stored_value_account (tenant_id, code_hash) where code_hash is not null;
 create trigger stored_value_entry_append_only before update or delete on stored_value_entry
