@@ -237,6 +237,12 @@ async fn first_order(ctx: &Ctx, tx: &mut Tx, customer: Uuid, doc: Option<Uuid>) 
     Ok(!seen)
 }
 
+/// What each line comes to before promotions ([`ferrum_erp_pricing::before_promotions`]).
+fn before_promotions(items: &[Doc], co: &Company, precision: u32, rate: Decimal) -> Result<Vec<Decimal>> {
+    ferrum_erp_pricing::before_promotions(&calc_input(items, &[], Decimal::ZERO, co, precision, rate, false))
+        .map_err(|e| Error::Validation(vec![ferrum_kernel::FieldError::new("items", e)]))
+}
+
 /// Runs the document's promotions over its priced `items` (before taxes): each line's share
 /// (`promotion_percent`), what each promotion took off each line (`applied_promotions`), and the
 /// free items they add or no longer add. Returns whether lines were added or removed, so the
@@ -265,7 +271,11 @@ pub(crate) async fn apply(
         return Ok(false);
     }
     for row in items.iter_mut() {
-        set(row, "promotion_percent", Value::Null);
+        // An app that priced the sale itself may give each line's share as it priced it (the line's rate then
+        // carries the promotions as ERP's own would); otherwise the share is worked out below.
+        if given.is_none() {
+            set(row, "promotion_percent", Value::Null);
+        }
         if s(row, "id").is_none() {
             set(row, "id", Uuid::now_v7().to_string());
         }
@@ -309,9 +319,8 @@ pub(crate) async fn apply(
         codes,
     };
     // The lines' amounts before promotions, as the engine works them out.
-    let before = ferrum_calc::compute(&calc_input(items, &[], Decimal::ZERO, co, precision, rate, false))
-        .map_err(|e| Error::Validation(vec![ferrum_kernel::FieldError::new("items", e.to_string())]))?;
-    let lines: Vec<Line> = items.iter().zip(&before.lines).map(|(r, out)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), out.amount)).collect();
+    let before = before_promotions(items, co, precision, rate)?;
+    let lines: Vec<Line> = items.iter().zip(&before).map(|(r, amount)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), *amount)).collect();
     let promotions: Vec<Promotion> = found.iter().filter_map(|p| to_engine(p, rate)).collect();
     let input = engine::Input { lines, promotions, when, precision, rounding: co.rounding };
     let out = engine::apply(&input).map_err(|e| Error::field("items", e))?;
@@ -418,18 +427,13 @@ async fn record_given(
         };
         at_line.push(place.ok_or_else(|| bad(format!("line {line} is not a line of this document")))?);
     }
-    let before = ferrum_calc::compute(&calc_input(items, &[], Decimal::ZERO, co, precision, rate, false))
-        .map_err(|e| Error::Validation(vec![ferrum_kernel::FieldError::new("items", e.to_string())]))?;
+    let before = before_promotions(items, co, precision, rate)?;
     let mut again = vec![Decimal::ZERO; items.len()];
     for ((.., amount, _), at) in given.applied.iter().zip(&at_line) {
         again[*at] += amount;
     }
-    let lines: Vec<Line> = items
-        .iter()
-        .zip(&before.lines)
-        .zip(&again)
-        .map(|((r, out), more)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), out.amount + more))
-        .collect();
+    let lines: Vec<Line> =
+        items.iter().zip(&before).zip(&again).map(|((r, amount), more)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), amount + more)).collect();
     let mut promotions: Vec<Promotion> = Vec::new();
     let mut titles: HashMap<Uuid, String> = HashMap::new();
     for (p, ..) in &given.applied {
