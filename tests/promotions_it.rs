@@ -259,4 +259,54 @@ async fn scenario() {
     assert_eq!(dec(&out["net_total"]), n("245"));
     assert_eq!(t.k.list(&t.ctx, "SalesOrder", &ListQuery::default()).await.unwrap().rows.len(), orders_before);
     assert_eq!(t.used("PromotionCode", code).await, 1);
+
+    // Update Items on a submitted order prices its promotions again: the code it holds stays good
+    // though used up, a promotion the change brings in is counted once, one it drops is given back.
+    let edit = uid(&t.insert("PromotionCode", json!({"code": "EDIT-1", "promotion": save10.to_string(), "max_uses": 1})).await);
+    let eo = uid(&t.insert("SalesOrder", order(json!([{"item": a, "qty": "1"}]), json!({"promotion_codes": "EDIT-1"}))).await);
+    t.submit("SalesOrder", eo).await;
+    let bulbs = t.used("Promotion", bulb).await;
+    assert_eq!(t.used("PromotionCode", edit).await, 1);
+    t.k.run_action(&t.ctx, "SalesOrder", eo, "update_items", json!({"line": 1, "qty": "3"})).await.expect("up to three lamps");
+    let up = t.get("SalesOrder", eo).await;
+    assert_eq!(amounts(&up), [("Lamp".to_string(), n("290")), ("Bulb".to_string(), n("0"))], "10 off, and the bulb over 200");
+    assert_eq!((t.used("PromotionCode", edit).await, t.used("Promotion", bulb).await), (1, bulbs + 1));
+    t.k.run_action(&t.ctx, "SalesOrder", eo, "update_items", json!({"line": 1, "qty": "4"})).await.expect("four lamps");
+    assert_eq!((t.used("PromotionCode", edit).await, t.used("Promotion", bulb).await), (1, bulbs + 1), "kept: nothing counted twice");
+    t.k.run_action(&t.ctx, "SalesOrder", eo, "update_items", json!({"line": 1, "qty": "1"})).await.expect("back to one lamp");
+    let down = t.get("SalesOrder", eo).await;
+    assert_eq!(amounts(&down), [("Lamp".to_string(), n("90"))], "the bulb goes");
+    assert_eq!((t.used("PromotionCode", edit).await, t.used("Promotion", bulb).await), (1, bulbs), "the bulb's use given back");
+
+    // A line returned in three parts gives back the promotion's 10 on it exactly: 3.33, 3.33 and
+    // the 3.34 left; the report nets the credit notes; cancelling one puts its part back.
+    t.insert("PromotionCode", json!({"code": "THIRDS", "promotion": save10.to_string()})).await;
+    let three = t.insert("SalesInvoice", json!({"company": c, "customer": globex, "items": [{"item": a, "qty": "3"}], "promotion_codes": "THIRDS"})).await;
+    let si3 = uid(&three);
+    assert_eq!(amounts(&three), [("Lamp".to_string(), n("290")), ("Bulb".to_string(), n("0"))]);
+    t.submit("SalesInvoice", si3).await;
+    let mut notes = Vec::new();
+    for _ in 0..3 {
+        let cn: Uuid = t.k.run_action(&t.ctx, "SalesInvoice", si3, "make_credit_note", json!({})).await.unwrap()["id"].as_str().unwrap().parse().unwrap();
+        let line = t.get("SalesInvoice", cn).await["items"][0]["id"].clone();
+        t.k.update(&t.ctx, "SalesInvoice", cn, obj(json!({"items": [{"id": line, "qty": "-1"}]})), None).await.unwrap();
+        let done = t.submit("SalesInvoice", cn).await;
+        notes.push((cn, done["applied_promotions"].as_array().unwrap().iter().map(|r| dec(&r["amount"])).sum::<Decimal>()));
+    }
+    assert_eq!(notes.iter().map(|(_, a)| *a).collect::<Vec<_>>(), [n("-3.33"), n("-3.33"), n("-3.34")]);
+    assert_eq!(t.used("PromotionCode", edit).await, 1, "a return counts no code");
+    let given = |doc: &Doc| doc["items"][0]["promotion_returned"].clone();
+    assert_eq!(dec(&given(&t.get("SalesInvoice", si3).await)["amounts"][save10.to_string()]), n("10"));
+    let report = ferrum_domain::reports::run(&t.k, &t.ctx, "promotions", &raw).await.expect("promotions report");
+    let net: Decimal = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["promotion"] == json!("10 off with a code") && r["channel"] == json!("Sales Invoice"))
+        .map(|r| dec(&r["discount"]))
+        .sum();
+    assert_eq!(net, n("0"), "given on the invoice, all given back");
+    t.k.cancel(&t.ctx, "SalesInvoice", notes[1].0, None).await.expect("cancel the second credit note");
+    let left = given(&t.get("SalesInvoice", si3).await);
+    assert_eq!((dec(&left["qty"]), dec(&left["amounts"][save10.to_string()])), (n("2"), n("6.67")));
 }

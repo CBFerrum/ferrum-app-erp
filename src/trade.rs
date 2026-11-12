@@ -449,6 +449,7 @@ async fn count_return(hc: &mut HookCtx<'_>, entity: &str, doc: &Doc, sign: Decim
         t.0 += q;
         t.1 += d(&r, "net_amount").abs();
     }
+    let parts: Vec<(Uuid, Decimal)> = taken.iter().map(|(l, (q, _))| (*l, *q)).collect();
     for (line, (q, amount)) in taken {
         let Some(o) = lines.iter().find(|o| id(o, "id") == Some(line)) else { continue };
         let what = s(o, "item_name").unwrap_or("item");
@@ -486,6 +487,9 @@ async fn count_return(hc: &mut HookCtx<'_>, entity: &str, doc: &Doc, sign: Decim
             v.insert("credited_amount".into(), money(now.max(Decimal::ZERO)));
         }
         hc.kernel.set_child_values_tx(&sys(hc.ctx), hc.tx, entity, "items", line, v).await?;
+    }
+    if entity == "SalesInvoice" && !price_only {
+        crate::promotion::give_back(hc, doc, &original, &parts, sign, precision).await?;
     }
     Ok(())
 }
