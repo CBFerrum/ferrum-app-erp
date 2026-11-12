@@ -53,6 +53,27 @@ impl T {
     async fn insert(&self, entity: &str, v: Value) -> Doc {
         self.k.insert(&self.ctx, entity, obj(v)).await.unwrap_or_else(|e| panic!("insert {entity}: {e:?}"))
     }
+    async fn submit(&self, entity: &str, id: Uuid) -> Doc {
+        self.k.submit(&self.ctx, entity, id, None).await.unwrap_or_else(|e| panic!("submit {entity}: {e:?}"))
+    }
+    /// Inserted and submitted.
+    async fn post(&self, entity: &str, v: Value) -> Doc {
+        let d = self.insert(entity, v).await;
+        self.submit(entity, uid(&d)).await
+    }
+    async fn cancel(&self, entity: &str, id: Uuid) -> ferrum_kernel::Result<Doc> {
+        self.k.cancel(&self.ctx, entity, id, None).await
+    }
+    /// The account a document's stored value entries are on.
+    async fn account_of(&self, source: Uuid) -> Uuid {
+        let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
+        sqlx::query_scalar("select account_id from stored_value_entry where tenant_id = $1 and source_id = $2 order by created_at limit 1")
+            .bind(self.ctx.tenant)
+            .bind(source)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap()
+    }
     async fn get(&self, entity: &str, id: Uuid) -> Doc {
         self.k.get(&self.ctx, entity, id, false).await.unwrap()
     }
@@ -241,5 +262,95 @@ async fn scenario() {
     }
     assert!(matches!(t.find(&pinned, "STORECREDIT-0001", Some("2468")).await, Err(ferrum_kernel::Error::TooManyRequests(_))));
 
+    t.agrees().await;
+
+    // ───────────── 3. selling and loading on a sales invoice ─────────────
+    let output = account("Output Tax").await;
+    let vat = t
+        .insert("TaxTemplate", json!({"title": "VAT", "company": c, "kind": "Sales", "rows": [{"charge_type": "On Net Total", "account": output, "rate": "18", "description": "VAT"}]}))
+        .await["id"]
+        .clone();
+    let evoucher = t
+        .insert("StoredValueKind", json!({"kind_name": "E-Voucher", "company": c, "liability_account": liability, "tax_charged": "When Redeemed"}))
+        .await["id"]
+        .clone();
+    let products = t.find_one("ItemGroup", json!({"group_name": "Products"})).await["id"].clone();
+    let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await["id"].clone();
+    let item = |code: &'static str, rate: &'static str, more: Value| {
+        let (t, products, nos) = (&t, products.clone(), nos.clone());
+        async move {
+            let mut v =
+                obj(json!({"item_code": code, "item_name": code, "item_group": products, "stock_uom": nos, "standard_rate": rate, "is_stock_item": false}));
+            v.extend(obj(more));
+            t.insert("Item", Value::Object(v)).await["id"].clone()
+        }
+    };
+    let card = item("Gift Card", "500", json!({"stored_value_kind": gift})).await;
+    let voucher = item("E-Voucher", "300", json!({"stored_value_kind": evoucher})).await;
+    let work = item("Work", "100", json!({})).await;
+    let walk_in = t.insert("Customer", json!({"customer_name": "Walk-in"})).await["id"].clone();
+    // Taxed when sold: the card's line is taxed like any other and goes to the liability, not income.
+    let draft = t
+        .insert(
+            "SalesInvoice",
+            json!({"company": c, "customer": walk_in, "tax_template": vat, "items": [
+                {"item": card, "qty": "1", "stored_value_code": "GIFT-0000-0000-0001"}, {"item": work, "qty": "1"}]}),
+        )
+        .await;
+    let line = &draft["items"][0];
+    assert_eq!(
+        (line["stored_value_code"].as_str(), line["income_account"].clone()),
+        (Some("••••0001"), liability.clone()),
+        "the code is hidden before it is stored"
+    );
+    assert!(!serde_json::to_string(&draft).unwrap().contains("GIFT000000000001") && !serde_json::to_string(&draft).unwrap().contains("GIFT-0000"));
+    let sale = t.submit("SalesInvoice", uid(&draft)).await;
+    assert_eq!(t.posted(uid(&sale)).await, map(&[("Debtors", "708"), ("Gift Cards", "-500"), ("Sales", "-100"), ("Output Tax", "-108")]));
+    let a3 = t.find(&gift, "GIFT-0000-0000-0001", None).await.unwrap();
+    assert_eq!(t.account(a3).await, (n("500"), n("500"), "Active".into()));
+    assert_eq!(t.get("StoredValueAccount", a3).await["holder"], Value::Null, "a bearer card names no one");
+    // Taxed when redeemed: the voucher's line carries no tax.
+    let sold = t.post("SalesInvoice", json!({"company": c, "customer": walk_in, "tax_template": vat, "items": [{"item": voucher, "qty": "1"}]})).await;
+    assert_eq!(t.posted(uid(&sold)).await, map(&[("Debtors", "300"), ("Gift Cards", "-300")]));
+    assert_eq!(dec(&sold["total_taxes"]), n("0"));
+    // A top-up, cancelled while unused: the value comes off again.
+    let top =
+        t.post("SalesInvoice", json!({"company": c, "customer": walk_in, "items": [{"item": card, "qty": "1", "stored_value_account": a3.to_string()}]})).await;
+    assert_eq!(t.account(a3).await, (n("1000"), n("1000"), "Active".into()));
+    t.cancel("SalesInvoice", uid(&top)).await.unwrap();
+    assert_eq!(t.account(a3).await, (n("500"), n("500"), "Active".into()));
+    // Spent value cannot be taken back by cancelling the sale.
+    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+    stored_value::adjust(&t.k, &t.ctx, &mut tx, a3, n("-50"), "used").await.unwrap();
+    tx.commit().await.unwrap();
+    let e = t.cancel("SalesInvoice", uid(&sale)).await.unwrap_err().to_string();
+    assert!(e.contains("used since") && e.contains("holds 450"), "{e}");
+    assert_eq!(t.get("SalesInvoice", uid(&sale)).await["docstatus"], json!(1), "still standing");
+    // Not on a credit note.
+    let e =
+        t.k.insert(
+            &t.ctx,
+            "SalesInvoice",
+            obj(json!({"company": c, "customer": walk_in, "is_return": true, "return_reason": "x", "items": [{"item": card, "qty": "-1"}]})),
+        )
+        .await;
+    assert!(e.unwrap_err().to_string().contains("not credited"));
+    // Units: a ten-class pack, held by the customer who buys it, valued at what was paid.
+    let yoga = item("Yoga Class", "100", json!({})).await;
+    let classes = t
+        .insert(
+            "StoredValueKind",
+            json!({"kind_name": "Classes", "company": c, "holds": "Units", "unit_name": "class", "items": [{"item": yoga}],
+            "held_by": "Customer", "liability_account": packages, "income_account": income, "tax_charged": "When Redeemed"}),
+        )
+        .await["id"]
+        .clone();
+    let pack = item("Ten Classes", "900", json!({"stored_value_kind": classes, "stored_value_units": "10"})).await;
+    let bought =
+        t.post("SalesInvoice", json!({"company": c, "customer": customer.to_string(), "tax_template": vat, "items": [{"item": pack, "qty": "1"}]})).await;
+    assert_eq!(t.posted(uid(&bought)).await, map(&[("Debtors", "900"), ("Prepaid Packages", "-900")]));
+    let a4 = t.account_of(uid(&bought)).await;
+    assert_eq!(t.account(a4).await, (n("10"), n("900"), "Active".into()));
+    assert_eq!(t.get("StoredValueAccount", a4).await["holder"], json!(customer.to_string()));
     t.agrees().await;
 }

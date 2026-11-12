@@ -980,6 +980,9 @@ impl DocHook for InvoiceHook {
             }
         }
         crate::withholding::invoice(hc, doc, self.0, &co).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::mask_lines(hc.ctx, doc)?;
+        }
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
             // What is withheld comes off what the supplier is owed; what is collected is added to what the customer owes.
@@ -1015,6 +1018,9 @@ impl DocHook for InvoiceHook {
             return Err(Error::Validation(errors));
         }
         check_lines(hc, doc, Some(if self.0 == Side::Selling { "income_account" } else { "expense_account" })).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::check_invoice(hc, doc).await?;
+        }
         if self.0 == Side::Buying
             && let (Some(supplier), Some(bill)) = (id(doc, "supplier"), s(doc, "bill_no"))
         {
@@ -1282,6 +1288,9 @@ impl DocHook for InvoiceHook {
                 }
             }
         }
+        if self.0 == Side::Selling {
+            crate::stored_value::invoice_submitted(hc, doc).await?;
+        }
         credit::check(hc, credit, "this invoice", credit::released(doc)).await
     }
 
@@ -1323,6 +1332,9 @@ impl DocHook for InvoiceHook {
             stock::reverse_moves(hc.tx, hc.ctx, &co, n.invoice, iid, on, ts).await?;
         }
         ledger::reverse(hc.tx, hc.ctx, n.invoice, iid, on, co.precision).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, n.invoice, iid, on, "this sale").await?;
+        }
         for t in touched {
             if t != iid {
                 sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, t).await?;
