@@ -1,0 +1,51 @@
+# Payment runs (FN-26): what to pay suppliers, proposed, adjusted, approved and paid in one go.
+- name: PaymentRunLine
+  label: Payment Run Line
+  kind: child
+  fields:
+    - {name: pay, type: check, in_list: true, description: "Untick to leave it out of this run"}
+    - {name: supplier, type: link, to: Supplier, read_only: true, in_list: true}
+    - {name: invoice, type: data, read_only: true, label: Open Item ID}
+    - {name: invoice_type, type: data, read_only: true, label: Document Type}
+    - {name: invoice_number, type: data, read_only: true, in_list: true}
+    - {name: due_date, type: date, read_only: true, in_list: true}
+    - {name: outstanding, type: currency, read_only: true, in_list: true}
+    - {name: discount, type: currency, min: "0", in_list: true, label: Discount Taken,
+       description: "The early-payment discount still open on the pay date; lower or clear it to pay more"}
+    - {name: discount_account, type: link, to: Account, read_only: true}
+    - {name: discount_reduces_tax, type: check, read_only: true}
+    - {name: amount, type: currency, min: "0", in_list: true, label: To Pay, description: "What the bank pays on it: the outstanding less the discount, or less to pay part of it"}
+    - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_list: true}
+    - {name: state, type: select, options: [Proposed, Paid, Failed], read_only: true, in_list: true}
+    - {name: error, type: text, read_only: true}
+
+- name: PaymentRun
+  label: Payment Run
+  kind: document
+  module: finance
+  submittable: true
+  company_scoped: true
+  numbering: {template: "PRUN-{FY}-{seq:4}", date_field: posting_date}
+  description: "What to pay suppliers in one go: proposed by due date and early-payment discount, adjusted by a person, approved by submitting it (through the workspace's approval policy on Payment Run, when it sets one), then paid with one payment per supplier and remittance advice to each. Making the payments again pays only what is not paid yet."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, label: Pay On}
+    - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Pay From}
+    - {name: mode_of_payment, type: link, to: ModeOfPayment}
+    - {name: currency, type: link, to: Currency, description: "Bills in this currency; the company's when empty"}
+    - {name: due_by, type: date, required: true, default_expr: today, label: Due On or Before}
+    - {name: take_discounts, type: check, default: true, label: Take Early-Payment Discounts,
+       description: "Also bills not yet due whose early-payment discount is still open on the pay date, paid less the discount"}
+    - {name: supplier, type: link, to: Supplier, in_filter: true, description: "One supplier only; every supplier when empty"}
+    - {name: supplier_group, type: link, to: SupplierGroup, description: "Suppliers of this group only"}
+    - {name: minimum_amount, type: currency, min: "0", label: Least to Pay a Supplier, description: "A supplier whose total comes to less waits for a later run"}
+    - {name: lines, type: table, of: PaymentRunLine, label: Bills to Pay}
+    - {name: total_amount, type: currency, read_only: true, in_list: true}
+    - {name: paid_amount, type: currency, read_only: true, no_copy: true}
+    - {name: failed_count, type: int, read_only: true, no_copy: true, label: Payments Failed}
+    - {name: run_status, type: select, options: [Proposed, Approved, Paid, Partly Paid], default: Proposed, read_only: true, no_copy: true, in_list: true, in_filter: true}
+  actions:
+    - {name: propose, label: Propose Bills, docstatus: [0], permission: write}
+    - {name: make_payments, label: Make Payments, docstatus: [1], permission: submit, condition: "doc.run_status != 'Paid'",
+       confirm: "Pay each supplier its bills now? What is paid already is not paid again."}
+  list: {columns: [number, posting_date, total_amount, run_status], sort: posting_date desc}

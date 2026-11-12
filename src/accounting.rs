@@ -386,6 +386,41 @@ async fn check_transfer(hc: &mut HookCtx<'_>, doc: &Doc, cid: Uuid) -> Result<()
     Ok(())
 }
 
+/// The early-payment discount on one invoice, `base` in company currency: discount allowed (a debit)
+/// on money received, discount received (a credit) on money paid. When it reduces the tax, each of the
+/// invoice's taxes takes back its share of the discount, in the proportion the invoice charged it
+/// (reverse-charge and withheld rows are not charged to the party, so they take none).
+async fn discount_lines(
+    hc: &mut HookCtx<'_>,
+    entity: &str,
+    invoice: Uuid,
+    base: Decimal,
+    receive: bool,
+    account: Uuid,
+    reduces_tax: bool,
+    co: &crate::util::Company,
+) -> Result<Vec<Line>> {
+    let sign = if receive { Decimal::ONE } else { -Decimal::ONE };
+    let mut lines = Vec::new();
+    let mut taxed = Decimal::ZERO;
+    if reduces_tax && matches!(entity, "SalesInvoice" | "PurchaseInvoice") {
+        let inv = get(hc.kernel, hc.ctx, hc.tx, entity, invoice).await?;
+        let total = d(&inv, "base_grand_total");
+        if !total.is_zero() {
+            for t in rows(&inv, "taxes").iter().filter(|t| !b(t, "reverse_charge") && !b(t, "deduct")) {
+                let (Some(acc), tax) = (id(t, "account"), d(t, "base_tax_amount")) else { continue };
+                let share = round(base * tax / total, co.precision);
+                if !share.is_zero() {
+                    taxed += share;
+                    lines.push(Line::new(acc, sign * share, &co.currency_code).remarks("Early-payment discount: tax taken back"));
+                }
+            }
+        }
+    }
+    lines.push(Line::new(account, sign * (base - taxed), &co.currency_code).remarks("Early-payment discount"));
+    Ok(lines)
+}
+
 /// What a payment settles with its parties: the bank amount, plus deductions (debits) on a receipt
 /// or minus them on a payment, so that 98 received with 2 of bank charges settles 100.
 fn settled(doc: &Doc, receive: bool) -> Decimal {
@@ -552,6 +587,21 @@ impl DocHook for PaymentEntryHook {
                 ]));
             }
             let open = item.outstanding.abs();
+            let discount = d(r, "discount_amount");
+            if discount > Decimal::ZERO {
+                let bad = |f: &str, m: String| Err(Error::Validation(vec![FieldError::new(f, m).in_row("references", i)]));
+                if refund {
+                    return bad("discount_amount", "a refund takes no discount".into());
+                }
+                let Some(acc) = id(r, "discount_account") else { return bad("discount_account", format!("say where the discount on {what} is booked")) };
+                let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
+                if id(&a, "company") != id(doc, "company") || matches!(s(&a, "account_type"), Some("Receivable" | "Payable" | "Bank" | "Cash")) {
+                    return bad("discount_account", "an income or expense account of the company".into());
+                }
+                if d(r, "allocated_amount") + discount > open {
+                    return bad("discount_amount", format!("the allocation and the discount settle more than is outstanding on {what} ({})", open.normalize()));
+                }
+            }
             if d(r, "allocated_amount") > open {
                 let msg =
                     if refund { format!("more than the credit left on {what} ({})", open.normalize()) } else { "more than the outstanding amount".to_string() };
@@ -602,12 +652,19 @@ impl DocHook for PaymentEntryHook {
         let mut lines = Vec::new();
         let mut touched = Vec::new();
         for r in rows(doc, "references") {
-            let amount = d(&r, "allocated_amount");
+            let discount = d(&r, "discount_amount").max(Decimal::ZERO);
+            // What it settles: the money allocated and the discount taken.
+            let amount = d(&r, "allocated_amount") + discount;
             if amount.is_zero() {
                 continue;
             }
             let inv = id(&r, "invoice").ok_or_else(|| Error::internal("allocation without invoice"))?;
             let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::invalid("invoice is no longer open"))?;
+            if discount > Decimal::ZERO {
+                let account = id(&r, "discount_account").ok_or_else(|| Error::field("discount_account", "is required"))?;
+                let base = round(discount * rate, co.precision);
+                lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co).await?);
+            }
             let base_at_invoice = round(amount * item.exchange_rate, co.precision);
             ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
