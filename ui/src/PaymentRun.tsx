@@ -14,6 +14,7 @@ import { Alert, Badge, Button, confirmDialog, StatePanel, toast, useShellTitle, 
 import { LinkInput, LinkTitle, useMe } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
 import { act, amountInput, Gate, useRights } from "./desk";
+import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
 import { createBody, edited, type Edits, failed, left, lineOf, patchBody, payments, problem, type Run, type RunLine, totals } from "./paymentRuns";
@@ -278,6 +279,7 @@ function Desk({ id }: { id: string }) {
 
   return (
     <div className="erp-page">
+      <DeskTabs entity="PaymentRun" id={id} current="desk" />
       <PageHead
         title={run.number ? t("Payment run {number}", { number: run.number }) : t("Payment run (draft)")}
         meta={
@@ -289,11 +291,6 @@ function Desk({ id }: { id: string }) {
               code && isolate(code),
             ]}
           />
-        }
-        actions={
-          <Link className="btn btn-ghost btn-md" to={`/e/PaymentRun/${id}`}>
-            {t("Open the record")}
-          </Link>
         }
       />
       {approval.data && <ApprovalLine a={approval.data} />}

@@ -13,6 +13,7 @@ import { Alert, Badge, Button, confirmDialog, StatePanel, toast, useShellTitle }
 import { LinkInput, useMe } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
 import { amountInput, Gate, useRights } from "./desk";
+import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
 import { type Adjust, adjustBody, boxOf, type Definition, drillable, type Drill, edited, kindOf, needReason, startBody, status, type TaxReturn as Return } from "./taxReturns";
@@ -198,10 +199,10 @@ function Desk({ id }: { id: string }) {
 
   return (
     <div className="erp-page">
+      <DeskTabs entity="TaxReturn" id={id} current="desk" />
       <PageHead
         title={r.number ? t("Tax return {number}", { number: r.number }) : t("Tax return")}
         meta={<Meta items={[<Badge key="s" tone={STATUS_TONE[s]}>{STATUS_WORD[s]()}</Badge>, `${formatDate(r.from_date)} – ${formatDate(r.to_date)}`, r.filed_on && t("Filed on {date}", { date: formatDate(r.filed_on) })]} />}
-        actions={<Link className="btn btn-ghost btn-md" to={`/e/TaxReturn/${id}`}>{t("Open the record")}</Link>}
       />
       {r.docstatus === 1 && <Alert tone="info">{t("This period is closed to invoices: none dated within it can be submitted or cancelled until the return is cancelled.")}</Alert>}
       {problem && <Alert tone="error">{isolate(problem)}</Alert>}
