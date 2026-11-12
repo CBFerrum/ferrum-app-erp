@@ -12,6 +12,10 @@ overlays:
           description: "How much more than ordered may be delivered or received, for items that set none of their own. Empty: none"}}
       - {op: add_field, column: true, after: over_delivery_allowance, field: {name: over_billing_allowance, type: percent, min: "0", max: "100", label: Over-Billing Allowance (%),
           description: "How much more than ordered or delivered may be billed, for items that set none of their own. Empty: none"}}
+      - {op: add_field, column: true, after: over_billing_allowance, field: {name: transit_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Transit}, label: Transit Warehouse,
+          description: "Where transfers shipped now and received later wait. Empty: the company's first transit warehouse, made when it has none"}}
+      - {op: add_field, column: true, after: transit_warehouse, field: {name: rejected_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Rejected}, label: Rejected Warehouse,
+          description: "Where goods refused at receipt are kept, out of what can be sold or used. Empty: the company's first rejected-goods warehouse, made when it has none"}}
       - {op: add_action, action: {name: scan, label: Scan, permission: read, read_only: true, hidden: true,
           params: [{name: text, label: Scanned Text, required: true, description: "What the scanner typed: a barcode, a code, a number, or a GS1 element string"}],
           contract: {effect: query,
@@ -40,7 +44,7 @@ modules:
     label: Inventory
     icon: package
     order: 30
-    items: [StockEntry, CarrierShipment, Item, Warehouse, CarrierConnection, ItemPrice, report:stock_balance, report:stock_ledger]
+    items: [StockEntry, CarrierShipment, Item, Warehouse, CarrierConnection, ItemPrice, report:stock_balance, report:goods_in_transit, report:stock_ledger]
 
 roles:
   - name: Stock Manager

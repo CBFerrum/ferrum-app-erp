@@ -524,6 +524,50 @@ pub async fn valuation_rate(tx: &mut Tx, tenant: Uuid, company: Uuid, item: Uuid
     Ok(r.unwrap_or(Decimal::ZERO).round_dp(12))
 }
 
+/// The company's warehouse holding `kind` goods (`Transit`, `Rejected`): the one its setting `setting` names,
+/// else its first enabled warehouse of that kind, else one made now beside its other warehouses (under an
+/// advisory lock, so two postings at once make one).
+pub async fn kind_warehouse(k: &ferrum_kernel::Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, setting: &str, kind: &str) -> Result<Uuid> {
+    let sctx = crate::util::sys(ctx);
+    let co = k.get_tx(&sctx, tx, "Company", company, false).await?;
+    if let Some(w) = crate::util::id(&co, setting) {
+        return Ok(w);
+    }
+    sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(format!("ferrum:warehouse:{company}:{kind}")).execute(&mut **tx).await?;
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "select id from e_warehouse where tenant_id = $1 and company = $2 and warehouse_type = $3 and not coalesce(is_group, false) \
+         and not coalesce(disabled, false) order by created_at, id limit 1",
+    )
+    .bind(ctx.tenant)
+    .bind(company)
+    .bind(kind)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(w) = found {
+        return Ok(w);
+    }
+    let parent: Option<Uuid> =
+        sqlx::query_scalar("select id from e_warehouse where tenant_id = $1 and company = $2 and is_group order by created_at, id limit 1")
+            .bind(ctx.tenant)
+            .bind(company)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let input =
+        serde_json::json!({"warehouse_name": kind, "company": company.to_string(), "warehouse_type": kind, "parent_warehouse": parent.map(|p| p.to_string())});
+    let made = k.insert_tx(&sctx, tx, "Warehouse", input.as_object().cloned().unwrap_or_default()).await?;
+    crate::util::id(&made, "id").ok_or_else(|| Error::internal("a warehouse without its id"))
+}
+
+/// Whether a warehouse holds goods that are not available (in transit, rejected).
+pub async fn unavailable(tx: &mut Tx, tenant: Uuid, warehouse: Uuid) -> Result<bool> {
+    let kind: Option<Option<String>> = sqlx::query_scalar("select warehouse_type from e_warehouse where tenant_id = $1 and id = $2")
+        .bind(tenant)
+        .bind(warehouse)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(kind.flatten().is_some_and(|k| k != "Stock"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
