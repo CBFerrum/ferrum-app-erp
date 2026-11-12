@@ -12,6 +12,16 @@ overlays:
           description: "How much more than ordered may be delivered or received, for items that set none of their own. Empty: none"}}
       - {op: add_field, column: true, after: over_delivery_allowance, field: {name: over_billing_allowance, type: percent, min: "0", max: "100", label: Over-Billing Allowance (%),
           description: "How much more than ordered or delivered may be billed, for items that set none of their own. Empty: none"}}
+      - {op: add_action, action: {name: scan, label: Scan, permission: read, read_only: true, hidden: true,
+          params: [{name: text, label: Scanned Text, required: true, description: "What the scanner typed: a barcode, a code, a number, or a GS1 element string"}],
+          contract: {effect: query,
+            returns: {type: object, properties: {
+              text: {type: string}, ambiguous: {type: boolean},
+              gs1: {type: [object, "null"], properties: {gtin: {type: [string, "null"]}, batch_no: {type: [string, "null"]}, expiry: {type: [string, "null"]}, serial_no: {type: [string, "null"]}, qty: {type: [string, "null"]}}},
+              matches: {type: array, items: {type: object, properties: {
+                kind: {type: string, enum: [item, gs1, batch, serial, bin, document]}, entity: {type: [string, "null"]}, id: {type: [string, "null"]}, title: {type: [string, "null"]},
+                item: {type: [string, "null"]}, uom: {type: [string, "null"]}, qty: {type: [string, "null"]}, batch_no: {type: [string, "null"]}, expiry: {type: [string, "null"]},
+                serial_no: {type: [string, "null"]}, warehouse: {type: [string, "null"]}}}}}}}}}
   - entity: Item
     ops:
       - {op: add_field, column: true, after: stock_uom, field: {name: is_stock_item, type: check, default: true, in_filter: true}}
@@ -62,3 +72,37 @@ roles:
       - {entity: CarrierShipment, read: true, write: true, create: true}
       - {entity: Address, read: true}
 export_tables: [stock_move, stock_balance, cost_layer, serial_no]
+
+# Labels (OP-20): small pages with barcodes, or text a label printer reads; printed for many records at once
+# with POST /api/documents/{key}/labels. A workspace edits them under Settings.
+documents:
+  - key: inventory.item_label
+    label: Item label
+    entity: Item
+    output: page
+    languages:
+      en:
+        body: |-
+          <style>@page {size: 50mm 25mm; margin: 2mm} .l {font: 8pt sans-serif; page-break-after: always} .l b {display: block; overflow: hidden; white-space: nowrap}</style>
+          <div class="l"><b>{{ doc.item_name }}</b>{{ barcode(doc.barcode or doc.item_code, module=1, height=40, text=true) }}</div>
+  - key: inventory.item_label_printer
+    label: Item label (label printer text)
+    entity: Item
+    output: text
+    languages:
+      en:
+        body: "^XA^CI28^FO20,15^A0N,28,28^FD{{ doc.item_name }}^FS^FO20,55^BCN,70,Y,N,N^FD{{ doc.barcode or doc.item_code }}^FS^XZ\n"
+  - key: inventory.parcel_labels
+    label: Parcel labels
+    entity: CarrierShipment
+    output: page
+    languages:
+      en:
+        body: |-
+          <style>@page {size: 100mm 150mm; margin: 4mm} .p {font: 10pt sans-serif; page-break-after: always} .p h2 {margin: 0 0 2mm}</style>
+          {% for p in doc.packages %}<div class="p">
+          <h2>{{ doc.reference }}</h2>
+          <p>{{ links.ship_to.display or links.ship_to.address_line1 }}</p>
+          <p>{{ loop.index }} / {{ doc.packages|length }} · {{ p.weight }} {{ links.carrier.weight_unit }}{% if p.reference %} · {{ p.reference }}{% endif %}</p>
+          {% if doc.tracking_number %}{{ barcode(doc.tracking_number, module=2, height=80, text=true) }}{% endif %}
+          </div>{% endfor %}

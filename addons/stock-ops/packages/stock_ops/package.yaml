@@ -128,3 +128,14 @@ roles:
     permissions:
       - {entity: LandedCostVoucher, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: StockReconciliation, read: true, export: true}
+
+documents:
+  - key: stock_ops.batch_label
+    label: Batch label
+    entity: Batch
+    output: page
+    languages:
+      en:
+        body: |-
+          <style>@page {size: 50mm 25mm; margin: 2mm} .l {font: 8pt sans-serif; page-break-after: always}</style>
+          <div class="l"><b>{{ doc.item_name }}</b>{% if doc.expiry_date %} · {{ doc.expiry_date|date('short') }}{% endif %}{{ barcode(doc.batch_id, module=1, height=40, text=true) }}</div>

@@ -86,3 +86,14 @@ roles:
       - {entity: ReturnAuthorization, read: true, write: true, create: true, delete: true, export: true}
       - {entity: ReplenishmentRule, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: StorageContract, read: true, write: true, create: true, delete: true}
+
+documents:
+  - key: wms.bin_label
+    label: Bin label
+    entity: StorageBin
+    output: page
+    languages:
+      en:
+        body: |-
+          <style>@page {size: 80mm 30mm; margin: 2mm} .l {font: 14pt sans-serif; page-break-after: always}</style>
+          <div class="l"><b>{{ doc.bin_code }}</b>{{ barcode(doc.bin_code, module=2, height=50) }}</div>

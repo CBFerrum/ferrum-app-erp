@@ -147,6 +147,9 @@ async fn scenario() {
     assert_eq!(entries, vec![(dec(&json!("30")),)]);
     let files = t.k.attachments(&t.ctx, "CarrierShipment", sid).await.unwrap();
     assert_eq!(files.len(), 1, "{files:?}");
+    let labels = t.k.render_documents(&t.ctx, "inventory.parcel_labels", &[sid], 1, None, false).await.expect("parcel labels");
+    let labels = String::from_utf8(labels.bytes).unwrap();
+    assert!(labels.contains("1 Example Street") && labels.contains("<svg") && labels.contains("1 / 1"), "{labels}");
 
     // The invoice made from the delivery charges the label once.
     let inv = t.action("DeliveryNote", uid(&dn), "make_sales_invoice", json!({})).await.expect("an invoice");
