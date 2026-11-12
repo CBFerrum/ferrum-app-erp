@@ -80,4 +80,39 @@ mod tests {
         }
         assert!(schema.entity("SalesInvoice").unwrap().field("eu_customer_vat").is_some());
     }
+
+    /// The seeded VAT3 works out on ERP's return engine: a sale, an intra-Community acquisition
+    /// under reverse charge and a domestic purchase.
+    #[test]
+    fn the_vat3_definition_computes() {
+        use ferrum_app_erp::tax_return::{TaxRow, compute};
+        use rust_decimal::Decimal;
+        let pkg = super::packages().expect("the EU's package").remove(0);
+        let seed = pkg.manifest.seed.iter().find(|s| s.entity == "TaxReturnDefinition").expect("seeded");
+        let boxes: Vec<ferrum_kernel::Doc> = seed.records[0]["boxes"].as_array().unwrap().iter().map(|b| b.as_object().cloned().unwrap()).collect();
+        let row = |entity: &'static str, category: &str, reverse: bool, base: i64, tax: i64| TaxRow {
+            entity,
+            id: uuid::Uuid::nil(),
+            number: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+            party: None,
+            tax: "VAT".into(),
+            description: "VAT".into(),
+            category: category.into(),
+            rate: Decimal::from(23),
+            reverse_charge: reverse,
+            credit_note: false,
+            place: String::new(),
+            base: Decimal::from(base),
+            amount: Decimal::from(tax),
+        };
+        let ledger = [
+            row("SalesInvoice", "Standard", false, 1000, 230),
+            row("PurchaseInvoice", "Intra-Community", true, 500, 115),
+            row("PurchaseInvoice", "Standard", false, 200, 46),
+        ];
+        let out = compute(&boxes, &ledger, &Default::default(), 2).expect("computes");
+        let v = |c: &str| out.iter().find(|b| b["code"] == c).map(|b| b["value"].as_str().unwrap().parse::<Decimal>().unwrap()).unwrap();
+        assert_eq!((v("T1"), v("T2"), v("T3"), v("T4"), v("E1"), v("E2")), (345.into(), 161.into(), 184.into(), 0.into(), 0.into(), 500.into()));
+    }
 }

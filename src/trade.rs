@@ -1068,6 +1068,7 @@ impl DocHook for InvoiceHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        crate::tax_return::check_open(hc, doc).await?;
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         crate::promotion::count_uses(hc, doc, 1).await?;
         count_return(hc, n.invoice, doc, Decimal::ONE).await?;
@@ -1164,7 +1165,13 @@ impl DocHook for InvoiceHook {
                 },
             };
             amount *= -sign;
-            entry.lines.push(Line::new(account, amount, &co.currency_code).cost_center(id(r, "cost_center")).project(id(doc, "project")));
+            entry.lines.push(
+                Line::new(account, amount, &co.currency_code)
+                    .cost_center(id(r, "cost_center"))
+                    .project(id(doc, "project"))
+                    .item(id(r, "item"))
+                    .dims(crate::dimensions::of_line(doc, r)),
+            );
         }
         for (t, base) in &bk.taxes {
             let acc = id(t, "account").ok_or_else(|| Error::field("taxes", "a tax row has no account"))?;
@@ -1208,6 +1215,11 @@ impl DocHook for InvoiceHook {
                     }
                 }
             }
+        }
+        // The party, tax and stock lines are the document's: its dimensions.
+        let header = crate::dimensions::of(doc.get("dimensions"));
+        for l in entry.lines.iter_mut() {
+            l.dims = crate::dimensions::over(&header, &l.dims);
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
 
@@ -1325,6 +1337,7 @@ impl DocHook for InvoiceHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+        crate::tax_return::check_open(hc, doc).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
         count_return(hc, n.invoice, doc, -Decimal::ONE).await?;

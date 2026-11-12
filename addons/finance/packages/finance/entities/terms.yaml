@@ -17,6 +17,14 @@
     - {name: discount_percent, type: percent, default: 0, min: "0", max: "100", label: Early Payment Discount %}
     - {name: discount_days, type: int, default: 0, min: 0, max: 3650, label: Discount Valid (days after invoice)}
 
+- name: PaymentTermsDiscountAccount
+  label: Discount Accounts
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: allowed_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Discount Allowed Account, description: "Customers' early-payment discounts: an expense"}
+    - {name: received_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Discount Received Account, description: "Suppliers' early-payment discounts: income"}
+
 - name: PaymentTermsTemplate
   label: Payment Terms Template
   module: finance
@@ -26,6 +34,10 @@
   fields:
     - {name: template_name, type: data, required: true, unique: true, in_list: true}
     - {name: terms, type: table, of: PaymentTermsTemplateDetail, required: true, label: Installments}
+    - {name: discount_accounts, type: table, of: PaymentTermsDiscountAccount, label: Discount Accounts,
+       description: "Where an early-payment discount taken is booked, per company: without a row the discount is not taken by itself"}
+    - {name: discount_reduces_tax, type: check, label: Discount Reduces the Tax,
+       description: "A discount taken takes back its share of the invoice's tax (the taxable amount is reduced); ticked off, the tax stays as invoiced"}
     - {name: disabled, type: check, in_filter: true}
   list: {columns: [template_name, disabled], sort: template_name asc}
 

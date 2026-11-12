@@ -11,10 +11,14 @@
 //! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
 
 pub mod accounting;
+pub mod bad_debt;
 pub mod change;
 pub mod credit;
 pub mod deferred;
+pub mod dimensions;
 pub mod flow;
+pub mod instruments;
+pub mod journal_template;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
@@ -29,6 +33,7 @@ pub mod setup;
 pub mod stock;
 pub mod stock_entry;
 pub mod stored_value;
+pub mod tax_return;
 pub mod trade;
 pub mod withholding;
 
@@ -65,7 +70,12 @@ pub fn register(h: &mut HookRegistry) {
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
+            .register("PaymentInstrument", Arc::new(instruments::InstrumentHook))
+            .register("BadDebtWriteOff", Arc::new(bad_debt::WriteOffHook))
+            .register("JournalTemplate", Arc::new(journal_template::TemplateHook))
+            .register("TaxReturn", Arc::new(tax_return::ReturnHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
+            .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
     });
@@ -131,8 +141,14 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             Ok(_) => tx.commit().await?,
             Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
         }
+        if let Err(e) = journal_template::upkeep(k, &ctx, today).await {
+            tracing::warn!(%tenant, "recurring journals: {e}");
+        }
         if let Err(e) = accounting::upkeep(k, &ctx).await {
             tracing::warn!(%tenant, "journal entry reversals: {e}");
+        }
+        if let Err(e) = instruments::upkeep(k, &ctx, today).await {
+            tracing::warn!(%tenant, "instruments to deposit: {e}");
         }
         if let Err(e) = stored_value::upkeep(k, &ctx, today).await {
             tracing::warn!(%tenant, "stored value expiry: {e}");
