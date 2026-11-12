@@ -1,5 +1,15 @@
 # Changelog
 
+## ERP 0.24.1, Finance 0.6.1: two faults of workspaces not yet updated
+
+Both were in code released in 0.23.0 and 0.24.0 and neither showed in a test, because every test started from a fresh install.
+
+- **Carrier tracking logged a database error on every start, for every workspace.** The upkeep asked Postgres for `make_interval(hours => c.track_every_hours)`, and the column is a bigint where `make_interval` takes an integer. Shipments were never tracked by the upkeep. The hours are now cast. The same mistake was searched for in every crate (`make_interval`, interval arithmetic on bound values, dates against mismatched types); the other `make_interval` already cast.
+- **Finance's backfill of the payment run lines' supplier email failed and was queued again, for ever.** It named the child entity `PaymentRunLine`, which has no table of its own, so the platform built SQL with an empty table name. It now names the lines' table, `e_payment_run__lines`. Workspaces with Finance 0.5 or older fill the email the next time backfills run, with or without the update applied (the schema is synced when the server starts; only seeds and versions wait for the administrator). No other backfill or upkeep of ERP or its add-ons assumes a table, column or seeded row the workspace may not have.
+- **An upgrade test** (`addons/finance/tests/upgrade_it.rs`) installs ERP 0.22.0 and Finance 0.5.0 from their package files at commit `51cefe5`, makes documents, boots this build on the same database, runs every upkeep and backfill before and after the update, and asserts that nothing is logged at warning level, no job fails and the documents are intact. CI now fetches the whole history for it. The carrier test now runs the upkeep's tracking.
+
+No administrator action; nothing in `ui/` changed.
+
 ## ERP 0.24.0, India 0.6.0, Stock Operations 0.2.0, Manufacturing Operations 0.2.0, Warehouse Management 0.3.0: carriers, labels and scanning, goods in transit, rejected goods, by-products, planning by period, India's TDS and GST returns as data
 
 Operations rows OP-17, OP-20, OP-24, OP-28, OP-31, OP-39 and OP-42, and finance rows FN-28 and FN-38 in part.

@@ -628,7 +628,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, limit: i64) -> Result<usize> {
     let due: Vec<Uuid> = sqlx::query_scalar(
         "select s.id from e_carrier_shipment s join e_carrier_connection c on c.tenant_id = s.tenant_id and c.id = s.carrier \
          where s.tenant_id = $1 and s.status in ('Label Bought', 'In Transit', 'Exception') and s.tracking_number is not null and c.enabled \
-         and coalesce(c.track_every_hours, 0) > 0 and (s.last_tracked_at is null or s.last_tracked_at < now() - make_interval(hours => c.track_every_hours)) \
+         and coalesce(c.track_every_hours, 0) > 0 and (s.last_tracked_at is null or s.last_tracked_at < now() - make_interval(hours => c.track_every_hours::int)) \
          order by s.last_tracked_at nulls first limit $2",
     )
     .bind(ctx.tenant)
