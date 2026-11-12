@@ -1,12 +1,12 @@
 # ERP's add-on for New Zealand: gST at 15%, zero-rated and exempt supplies, the reverse charge and the GST101A return for ERP in New Zealand. Ferrum localization.md.
 id: nz
 name: "New Zealand"
-version: 0.1.1
+version: 0.2.0
 publisher: cbferrum
 summary: "GST at 15%, zero-rated and exempt supplies, the reverse charge and the GST101A return for ERP in New Zealand"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [nz]

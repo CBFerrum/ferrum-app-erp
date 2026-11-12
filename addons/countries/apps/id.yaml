@@ -1,12 +1,12 @@
 # ERP's add-on for Indonesia: pPN (VAT) on 11/12 of the price, luxury goods at 12%, and SPT Masa PPN figures for ERP in Indonesia. Ferrum localization.md.
 id: id
 name: "Indonesia"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "PPN (VAT) on 11/12 of the price, luxury goods at 12%, and SPT Masa PPN figures for ERP in Indonesia"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [id]

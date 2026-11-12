@@ -19,7 +19,7 @@
 use crate::util::{b, find, get, id, rows, s, set, sys};
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_app_erp::localization::{Localization, ship_to};
+use ferrum_app_erp::localization::{Localization, TaxId, field_tax_ids, ship_to};
 use ferrum_app_erp::pricing::Side;
 use ferrum_domain::reports::{Params, ReportSource, col, param_def, period, read_tx, resolve_company};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx};
@@ -323,6 +323,16 @@ fn needed(c: &Country, side: Side, treated: &[Vec<Treatment>]) -> Vec<(usize, &'
 impl Localization for National {
     fn package(&self) -> &'static str {
         self.0.package
+    }
+
+    /// The country's registration number of a company, customer or supplier; with one, a party is
+    /// a registered business.
+    fn tax_ids(&self, ctx: &Ctx, entity: &str, record: &Doc) -> Vec<TaxId> {
+        field_tax_ids(ctx, entity, record, &[self.0.number_field])
+    }
+
+    fn registered(&self, _ctx: &Ctx, _entity: &str, record: &Doc) -> Option<bool> {
+        s(record, self.0.number_field).map(|_| true)
     }
 
     async fn determine(&self, k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<()> {

@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.21.0, India 0.5.0, EU 0.2.0, UK 0.2.0, thirteen countries 0.2.0** | Promotions over a whole sale (off the document or lines, buy and get, bundles, free delivery, free items, codes counted once, a report), computed by a pure engine the till can run offline, applied after pricing rules and kept line by line; a query that prices lines for the till and the web shop. Tax registrations of seller and buyer through the localization seam, on sales documents and their prints. |
 | **0.20.1** | A card's code and PIN never come to rest: they go to a new read-only `prove`, which answers a single-use proof that the stored value operations take; what 0.20.0 left in the audit log and receipts is cleared on install. |
 | **0.20.0** | Stored value built once beside the ledger: gift cards, store credit and prepaid packages of money or units, sold on an invoice line, redeemed as a payment, refunded back onto them or onto new store credit, expiring by the kind's rule, with three reports and contracted capabilities for the till, the web shop and Bookings. |
 | **0.19.1, Warehouse 0.2.3, Shop Floor 0.2.3** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |

@@ -297,7 +297,8 @@ pub fn calc_input(items: &[Doc], taxes: &[Doc], discount_percent: Decimal, co: &
             key: s(r, "id").unwrap_or_default().to_string(),
             qty: d(r, "qty"),
             price: d(r, "price_list_rate"),
-            discount_percent: d(r, "discount_percent"),
+            // Its own discount, then the share promotions take of what that leaves.
+            discount_percent: ferrum_erp_promotions::combined_percent(d(r, "discount_percent"), d(r, "promotion_percent")),
             tax_rates: line_tax_rates(r, taxes),
             // Per-unit taxes count stock units.
             tax_qty: r.get("stock_qty").is_some_and(|v| !v.is_null()).then(|| d(r, "stock_qty")),
@@ -432,6 +433,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         Some(pid) => Some(get(k, ctx, tx, side.party_entity(), pid).await?),
         None => None,
     };
+    crate::localization::fill_tax_registrations(ctx, ent, doc, &co.doc, party.as_ref(), side);
 
     // Currency and conversion rate.
     if id(doc, "currency").is_none() {
@@ -574,6 +576,12 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         {
             set(row, "cost_center", c.to_string());
         }
+    }
+    // Promotions over the whole document, on what each line came to (a free item they add is
+    // priced like any line, so the document is priced again).
+    if side == Side::Selling && crate::promotion::apply(k, ctx, tx, ent, doc, &mut items, &item_cache, &co, precision, rate).await? {
+        set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
+        return Box::pin(calculate(k, ctx, tx, ent, doc, side)).await;
     }
     set(doc, "items", Value::Array(items.iter().cloned().map(Value::Object).collect()));
 

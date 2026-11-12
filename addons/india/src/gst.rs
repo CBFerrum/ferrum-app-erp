@@ -2,7 +2,7 @@
 //! between intra-state (CGST+SGST), inter-state (IGST) and export templates, and HSN checks.
 
 use async_trait::async_trait;
-use ferrum_app_erp::localization::{Localization, ship_to};
+use ferrum_app_erp::localization::{Localization, TaxId, field_tax_ids, ship_to};
 use ferrum_app_erp::pricing::Side;
 use ferrum_domain::util::{b, get, id, rows, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx};
@@ -214,6 +214,16 @@ pub struct India;
 impl Localization for India {
     fn package(&self) -> &'static str {
         crate::PACKAGE
+    }
+
+    /// The GSTIN of a company, customer or supplier.
+    fn tax_ids(&self, ctx: &Ctx, entity: &str, record: &Doc) -> Vec<TaxId> {
+        field_tax_ids(ctx, entity, record, &["in_gstin"])
+    }
+
+    /// A party with a GSTIN, unless its GST category says it is not a registered business.
+    fn registered(&self, _ctx: &Ctx, _entity: &str, record: &Doc) -> Option<bool> {
+        Some(s(record, "in_gstin").is_some() && !matches!(s(record, "in_gst_category"), Some("Unregistered" | "Consumer" | "Overseas")))
     }
 
     async fn determine(&self, k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &mut Doc, side: Side) -> Result<()> {
