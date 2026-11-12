@@ -1,6 +1,6 @@
 id: mes
 name: Manufacturing Execution
-version: 0.2.2
+version: 0.2.3
 publisher: cbferrum
 summary: Approved revisions, release gates, execution events, lot genealogy and OEE on ERP's work orders
 description: README.md
