@@ -31,6 +31,7 @@ pub mod promotion;
 pub mod reports;
 pub mod reservation;
 pub mod scan;
+pub mod series;
 pub mod setup;
 pub mod shipping;
 pub mod stock;
@@ -68,10 +69,11 @@ pub fn register(h: &mut HookRegistry) {
     h.add_site("selling", Arc::new(portal::SellingPortal));
     // A supplier's orders and bills on the workspace's portal ("Your orders").
     h.add_site("buying", Arc::new(portal::BuyingPortal));
-    // Carriers' tracking calls, signed per connection.
-    h.add_site("inventory", Arc::new(shipping::CarrierSite));
+    // Carriers' tracking calls, which arrive at each carrier's connection.
+    h.add_inbound_handler("erp", Arc::new(shipping::CarrierInbound));
     h.scoped(&only("accounting"), |h| {
-        h.register("Company", Arc::new(setup::CompanyHook))
+        h.register("NumberSeries", Arc::new(series::SeriesRecordHook))
+            .register("Company", Arc::new(setup::CompanyHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
@@ -83,9 +85,13 @@ pub fn register(h: &mut HookRegistry) {
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
+        for numbered in ["JournalEntry", "PaymentEntry"] {
+            h.register(numbered, Arc::new(series::SeriesHook));
+        }
     });
     h.scoped(&only("inventory"), |h| {
-        h.register("StockEntry", Arc::new(stock_entry::StockEntryHook))
+        h.register("StockEntry", Arc::new(series::SeriesHook))
+            .register("StockEntry", Arc::new(stock_entry::StockEntryHook))
             .register("CarrierConnection", Arc::new(shipping::CarrierHook))
             .register("CarrierShipment", Arc::new(shipping::ShipmentHook))
             .register("Company", Arc::new(scan::ScanHook));
@@ -105,7 +111,10 @@ pub fn register(h: &mut HookRegistry) {
         (Side::Buying, "buying", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
     ] {
         h.scoped(&only(package), |h| {
-            h.register(order, Arc::new(trade::OrderHook(side)))
+            h.register(order, Arc::new(series::SeriesHook))
+                .register(shipment, Arc::new(series::SeriesHook))
+                .register(invoice, Arc::new(series::SeriesHook))
+                .register(order, Arc::new(trade::OrderHook(side)))
                 .register(shipment, Arc::new(trade::ShipmentHook(side)))
                 .register(invoice, Arc::new(trade::InvoiceHook(side)));
         });

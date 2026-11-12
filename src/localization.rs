@@ -53,6 +53,13 @@ pub trait Localization: Send + Sync {
         Ok(())
     }
 
+    /// The name of the numbering series a document takes when it names none (a country that numbers invoices to a
+    /// consumer apart from those to a business answers its simplified series here): a `NumberSeries` of the
+    /// document's kind, by name. `None`: no say.
+    async fn number_series(&self, _hc: &mut HookCtx<'_>, _entity: &str, _doc: &Doc) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     /// After a new company's standard chart is made (`accounts`: its accounts' ids by name): the
     /// country's own accounts and tax templates.
     async fn setup_company(&self, _hc: &mut HookCtx<'_>, _company: Uuid, _accounts: &HashMap<&str, String>) -> Result<()> {
@@ -231,6 +238,16 @@ pub async fn check(hc: &mut HookCtx<'_>, doc: &Doc, side: Side) -> Result<()> {
         l.check(hc, doc, side).await?;
     }
     Ok(())
+}
+
+/// The numbering series a country's rules ask for on `doc` (the first add-on that answers), by name.
+pub async fn number_series(hc: &mut HookCtx<'_>, entity: &str, doc: &Doc) -> Result<Option<String>> {
+    for l in installed(hc.ctx) {
+        if let Some(name) = l.number_series(hc, entity, doc).await? {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// Where a document's goods go, as countries' rules read it (`country_code`, `state`,

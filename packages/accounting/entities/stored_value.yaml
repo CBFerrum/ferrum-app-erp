@@ -65,8 +65,9 @@
   actions:
     # Contracted capabilities (accounting.stored_value_kind.<action>), for other apps and configuration.
     # Codes and amounts are text; every change is done once per effect key. An action's parameters are
-    # logged and a change's result is kept as its receipt, so a code and PIN go only to prove (read
-    # only, not logged), and the changes take its proof.
+    # logged and a change's result is kept as its receipt, so a code and PIN go only to prove and balance (read
+    # only; their code and PIN are secret parameters, which the platform keeps out of the audit trail, approval
+    # requests and error texts), and the changes take its proof.
     - name: prove
       label: Prove a Code
       permission: read
@@ -75,8 +76,8 @@
       params:
         - {name: operation, label: For, type: select, options: [issue, redeem, refund, transfer, transfer_to, new_code, hold], required: true,
            description: "The one operation the proof is for; transfer_to is a transfer's other card"}
-        - {name: code, label: Code, description: "A card's own code; one is made, and answered once, when empty"}
-        - {name: pin, label: PIN}
+        - {name: code, label: Code, secret: true, description: "A card's own code; one is made, and answered once, when empty"}
+        - {name: pin, label: PIN, secret: true}
         - {name: key, label: Effect Key, description: "The key the operation runs under: proving the same code again under it gives the same proof, so a retry repeats"}
       contract:
         effect: query
@@ -88,8 +89,8 @@
       read_only: true
       hidden: true
       params:
-        - {name: code, label: Code, required: true}
-        - {name: pin, label: PIN}
+        - {name: code, label: Code, required: true, secret: true}
+        - {name: pin, label: PIN, secret: true}
       contract:
         effect: query
         returns: {type: object, properties: {account: {type: string, format: uuid}, balance: {type: string}, held: {type: string}, available: {type: string},

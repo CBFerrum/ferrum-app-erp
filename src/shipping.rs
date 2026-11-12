@@ -1,23 +1,31 @@
 //! Carriers behind one interface (OP-17). A [carrier connection](CarrierHook) is configuration: four
 //! described HTTP calls (rates, label, tracking, cancellation), each a method, headers and a body or form
 //! as templates over the shipment, and JSON pointers saying where the answer holds the rates, the label
-//! file, the tracking number and the error, and which statuses mean "later". Its keys are secret fields,
-//! sealed by the platform. A test connection answers from fixtures. No carrier's name or format is here.
+//! file, the tracking number and the error, and which statuses mean "later". A test connection answers from
+//! fixtures. No carrier's name or format is here.
 //!
-//! The runner is modelled on the platform's message channels (`ferrum_kernel::messages`, its
-//! `deliver_message`): the platform offers described calls only for text and chat channels, so this is
-//! the smallest copy that an app-facing "described call on a connection" in the kernel would replace.
+//! The calls are made by the platform's connections (BD-29): saving a carrier makes one connection of the
+//! workspace for it (named `carrier_…`, one for each address its calls go to), whose operations `rate`,
+//! `label`, `track` and `cancel` are the carrier's calls with the url split into the connection's base and the
+//! operation's path. The API Key, API Secret and Inbound Secret typed on the carrier are moved into the
+//! connection's secrets and cleared from the carrier; the connection holds them, logs the calls and keeps a
+//! label's call key. ERP keeps what is ERP's: the shipment's values as the calls' inputs, turning the mapped
+//! answer into rates, labels and tracking states, booking the cost, and the carrier's tracking calls
+//! ([`CarrierInbound`], through the connection's inbound address).
 //!
 //! A label is bought once per shipment: the shipment's row is locked first, a second press (or a retry)
-//! finds the label there and answers it; every attempt sends the same idempotency key (`key`, the
-//! shipment's id) for carriers that keep one.
+//! finds the label there and answers it, and the connection's call key (the shipment's id) means the carrier
+//! is called once even when the first call's record was lost with a rolled-back run; every attempt sends the
+//! same key (`key`) for carriers that keep one.
 
 use crate::ledger::{self, Entry, Line};
 use crate::util::{company, d, get, id, money, rows, s, sys};
 use async_trait::async_trait;
 use base64::Engine;
 use ferrum_domain::flow::{create_for_user, created};
-use ferrum_kernel::{Ctx, Doc, DocHook, Error, Filter, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
+use ferrum_kernel::connections::inbound::{Inbound as ConnInbound, InboundHandler, Verify};
+use ferrum_kernel::connections::{self, Auth, Call as ConnCall, ConnectionInput, Operation};
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, Filter, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -25,8 +33,6 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Statuses meaning "later" when a call names none.
-const TEMPORARY: [u16; 7] = [408, 425, 429, 500, 502, 503, 504];
 /// What tracking may say, after a connection's `statuses` map the carrier's words.
 const TRACKED: [&str; 3] = ["In Transit", "Delivered", "Exception"];
 
@@ -210,74 +216,278 @@ impl Description {
     }
 }
 
-/// A connection as the calls need it.
+/// The values every operation of a carrier's connection takes as inputs; a call's templates read them by these
+/// names (the connection's own templates read `inputs.<name>`: each is set again by name at the top of every
+/// template the carrier's description gives, so descriptions written before connections work as they were).
+const INPUTS: [&str; 9] = ["shipment", "to", "from", "rate", "tracking_number", "provider_id", "weight_unit", "dimension_unit", "total_weight"];
+/// The secrets a carrier takes, held by its connection under the same names (`secret.api_key`).
+const SECRETS: [&str; 3] = ["api_key", "api_secret", "webhook_secret"];
+
+fn with_inputs(template: &str) -> String {
+    let set: String = INPUTS.iter().map(|n| format!("{{% set {n} = inputs.{n} %}}")).collect();
+    format!("{set}{template}")
+}
+
+/// An address split into the connection's base (scheme, host and port), the operation's path and its query.
+fn split_url(url: &str) -> std::result::Result<(String, String, BTreeMap<String, String>), String> {
+    let (scheme, rest) = url.split_once("://").ok_or("the url has no scheme")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    if authority.contains("{{") || authority.contains("{%") || authority.is_empty() {
+        return Err("the host of the url is a template: a connection has one address".into());
+    }
+    let tail = tail.split('#').next().unwrap_or_default();
+    let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
+    let query = query
+        .split('&')
+        .filter(|q| !q.is_empty())
+        .map(|q| q.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap_or((q.to_string(), String::new())))
+        .collect();
+    let path = if path.is_empty() { String::new() } else { format!("/{}{}", with_inputs(""), &path[1..]) };
+    Ok((format!("{scheme}://{authority}"), path, query))
+}
+
+/// One carrier's call as the connection's operation, and the address it goes to.
+fn operation(op: &str, c: &Call, fixture: Option<&Value>) -> std::result::Result<(String, Operation), String> {
+    let (origin, path, query) = if fixture.is_some() { (String::new(), format!("/{op}"), BTreeMap::new()) } else { split_url(&c.url)? };
+    let pointers = |pairs: &[(&str, &Option<String>)]| -> BTreeMap<String, String> {
+        pairs.iter().filter_map(|(name, p)| Some((name.to_string(), (*p).clone()?))).collect()
+    };
+    let result = match op {
+        "rate" => pointers(&[("rates", &c.rates_at)]),
+        "label" => pointers(&[
+            ("tracking", &c.tracking_at),
+            ("label", &c.label_at),
+            ("label_url", &c.label_url_at),
+            ("tracking_url", &c.tracking_url_at),
+            ("cost", &c.cost_at),
+            ("id", &c.id_at),
+        ]),
+        "track" => pointers(&[("status", &c.status_at)]),
+        _ => BTreeMap::new(),
+    };
+    Ok((
+        origin,
+        Operation {
+            label: Some(op.to_string()),
+            method: Some(c.method.clone().unwrap_or_else(|| "POST".into())),
+            path,
+            query: query.into_iter().map(|(k, v)| (k, with_inputs(&v))).collect(),
+            headers: c.headers.iter().map(|(h, v)| (h.clone(), with_inputs(v))).collect(),
+            body: c.body.as_deref().map(with_inputs),
+            form: c.form.iter().map(|(k, v)| (k.clone(), with_inputs(v))).collect(),
+            result,
+            error_at: c.error_at.clone(),
+            temporary: c.temporary.clone(),
+            idempotency_header: None,
+            changes: Some(matches!(op, "label" | "cancel")),
+            inputs: INPUTS.iter().map(|n| n.to_string()).collect(),
+            fixture: fixture.map(|body| json!({"status": 200, "body": body})),
+        },
+    ))
+}
+
+/// What a carrier's description becomes: its connections (the first named `base`, the others `base_2`, … for each
+/// further address its calls go to) and the connection each call goes through.
+struct Plan {
+    defs: Vec<(String, connections::Description)>,
+    names: BTreeMap<String, String>,
+}
+
+fn plan(base: &str, desc: &Description, test: bool, fixtures: Option<&Value>) -> std::result::Result<Plan, String> {
+    let mut groups: Vec<(String, BTreeMap<String, Operation>)> = Vec::new();
+    let calls = [("rate", Some(&desc.rate)), ("label", Some(&desc.label)), ("track", desc.track.as_ref()), ("cancel", desc.cancel.as_ref())];
+    for (op, call) in calls {
+        let Some(call) = call else { continue };
+        let fixture = fixtures.and_then(|f| f.get(op)).filter(|_| test);
+        if test && fixture.is_none() {
+            continue;
+        }
+        let (origin, operation) = operation(op, call, fixture).map_err(|e| format!("{op}: {e}"))?;
+        match groups.iter_mut().find(|(o, _)| *o == origin) {
+            Some((_, ops)) => {
+                ops.insert(op.to_string(), operation);
+            }
+            None => groups.push((origin, BTreeMap::from([(op.to_string(), operation)]))),
+        }
+    }
+    let mut out = Plan { defs: Vec::new(), names: BTreeMap::new() };
+    for (n, (origin, operations)) in groups.into_iter().enumerate() {
+        let name = if n == 0 { base.to_string() } else { format!("{base}_{}", n + 1) };
+        out.names.extend(operations.keys().map(|op| (op.clone(), name.clone())));
+        // Verified as the platform verifies: a secret both sides hold, sent in a header. (A body signed without a
+        // timestamp, which is what `hmac` was, is not a scheme the platform checks: such a carrier is tracked by the
+        // upkeep.)
+        let inbound = (n == 0).then_some(desc.inbound.as_ref()).flatten().filter(|i| i.auth == "token").map(|i| ConnInbound {
+            verify: Verify::Token { header: i.header.clone().unwrap_or_else(|| "X-Webhook-Token".into()), secret: "webhook_secret".into() },
+            delivery_header: None,
+            delivery_at: None,
+            max_bytes: None,
+            map: None,
+            handler: Some("erp".into()),
+        });
+        out.defs.push((
+            name,
+            connections::Description {
+                test,
+                base: origin,
+                auth: Auth::None,
+                timeout_ms: Some(30_000),
+                apps: vec!["erp".into()],
+                operations,
+                inbound,
+                ..Default::default()
+            },
+        ));
+    }
+    if out.defs.is_empty() {
+        return Err("the carrier has no call to make".into());
+    }
+    Ok(out)
+}
+
+/// The base name of a carrier's connection: `carrier_` and the last eight digits of its id.
+fn connection_name(carrier: Uuid) -> String {
+    format!("carrier_{}", &carrier.simple().to_string()[24..])
+}
+
+fn parse(rec: &Doc) -> Result<Description> {
+    serde_json::from_value(rec.get("description").cloned().unwrap_or(Value::Null)).map_err(|e| Error::invalid(format!("the carrier connection's calls: {e}")))
+}
+
+/// Makes or updates the connections of a carrier from its description, and moves into them the secrets typed on the
+/// carrier (cleared from it: moved, not copied; they are never logged). A carrier already on connections keeps their
+/// secrets unless new ones are typed, and typing them replaces the connection's whole set: a key left out of what is
+/// typed is refused rather than lost.
+async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rec: &Doc) -> Result<()> {
+    let carrier = id(rec, "id").ok_or_else(|| Error::internal("a carrier without its id"))?;
+    if ctx.schema.entity("CarrierConnection").is_none_or(|e| e.field("connection_ops").is_none()) {
+        return Ok(());
+    }
+    let sctx = sys(ctx);
+    let base = s(rec, "connection").map(str::to_string).unwrap_or_else(|| connection_name(carrier));
+    let planned = plan(&base, &parse(rec)?, crate::util::b(rec, "test"), rec.get("fixtures")).map_err(|m| Error::field("description", m))?;
+    let mut typed = BTreeMap::new();
+    for f in SECRETS {
+        if let Some(v) = k.secret(tx, ctx.tenant, "CarrierConnection", carrier, f).await?.filter(|v| !v.is_empty()) {
+            typed.insert(f.to_string(), v);
+        }
+    }
+    let listed = k.connection_defs(&sctx).await?;
+    let label = format!("Carrier: {}", s(rec, "connection_name").unwrap_or_default());
+    for (name, def) in planned.defs {
+        let found = listed.iter().find(|c| c["name"] == json!(name) && !c["id"].is_null());
+        let held: Vec<&str> = found.and_then(|c| c["secrets"].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        if !typed.is_empty() && held.iter().any(|h| !typed.contains_key(*h)) {
+            return Err(Error::field(
+                "api_key",
+                "this carrier's secrets are held by its connection: type every key again to replace them, or change them under Connections",
+            ));
+        }
+        let input = ConnectionInput {
+            name,
+            label: label.clone(),
+            description: def,
+            secrets: (!typed.is_empty()).then(|| typed.clone()),
+            enabled: crate::util::b(rec, "enabled"),
+        };
+        k.save_connection_def(&sctx, found.and_then(|c| c["id"].as_str()).and_then(|i| i.parse().ok()), &input).await?;
+    }
+    let mut v = Doc::new();
+    v.insert("connection".into(), json!(base));
+    v.insert("connection_ops".into(), json!(planned.names));
+    k.set_values_tx(&sctx, tx, "CarrierConnection", carrier, v).await?;
+    if !typed.is_empty() {
+        let cleared: Doc = typed.keys().map(|f| (f.clone(), Value::Null)).collect();
+        k.update_tx(&sctx, tx, "CarrierConnection", carrier, cleared, None).await?;
+    }
+    Ok(())
+}
+
+/// Puts carriers made before connections on them, once each: the connection is made from the carrier's stored
+/// settings, turned on only if the carrier was, its secrets moved in and cleared from the carrier. A carrier whose
+/// tracking calls were signed as a bare body (which the platform does not verify) is tracked by the upkeep instead,
+/// every 6 hours when it had no interval. Runs in the upkeep, and on first use of a carrier it has not reached.
+pub async fn migrate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    if ctx.schema.entity("CarrierConnection").is_none_or(|e| e.field("connection_ops").is_none()) {
+        return Ok(0);
+    }
+    let sctx = sys(ctx);
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let todo: Vec<Uuid> = k
+        .find_tx(&sctx, &mut tx, "CarrierConnection", &[], None, 500)
+        .await?
+        .iter()
+        .filter(|r| r.get("connection_ops").is_none_or(Value::is_null))
+        .filter_map(|r| id(r, "id"))
+        .collect();
+    tx.commit().await?;
+    let mut done = 0;
+    for rid in todo {
+        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        let rec = k.get_tx(&sctx, &mut tx, "CarrierConnection", rid, true).await?;
+        if rec.get("connection_ops").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
+        match sync(k, ctx, &mut tx, &rec).await {
+            Ok(()) => {
+                if parse(&rec).is_ok_and(|x| x.track.is_some() && x.inbound.as_ref().is_some_and(|i| i.auth == "hmac"))
+                    && d(&rec, "track_every_hours").is_zero()
+                {
+                    let mut v = Doc::new();
+                    v.insert("track_every_hours".into(), json!(6));
+                    k.set_values_tx(&sctx, &mut tx, "CarrierConnection", rid, v).await?;
+                }
+                tx.commit().await?;
+                done += 1;
+            }
+            Err(e) => tracing::warn!(tenant = %ctx.tenant, carrier = %rid, "moving a carrier onto a connection: {e}"),
+        }
+    }
+    Ok(done)
+}
+
+/// A carrier as the calls need it.
 struct Conn {
     doc: Doc,
     desc: Description,
-    secrets: Value,
+    /// The connection each call goes through.
+    names: BTreeMap<String, String>,
 }
 
 async fn connection(k: &Kernel, ctx: &Ctx, tx: &mut Tx, conn: Uuid) -> Result<Conn> {
-    let doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
+    let mut doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
     if !crate::util::b(&doc, "enabled") {
         return Err(Error::invalid(format!("the carrier connection {} is turned off", s(&doc, "connection_name").unwrap_or_default())));
     }
-    let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
-        .map_err(|e| Error::invalid(format!("the carrier connection's calls: {e}")))?;
-    let mut secrets = serde_json::Map::new();
-    for f in ["api_key", "api_secret"] {
-        if let Some(v) = k.secret(tx, ctx.tenant, "CarrierConnection", conn, f).await? {
-            secrets.insert(f.into(), json!(v));
-        }
+    // A carrier the upkeep has not reached yet is put on its connection now.
+    if doc.get("connection_ops").is_none_or(Value::is_null) {
+        sync(k, ctx, tx, &doc).await?;
+        doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
     }
-    Ok(Conn { doc, desc, secrets: Value::Object(secrets) })
+    let desc = parse(&doc)?;
+    let names = serde_json::from_value(doc.get("connection_ops").cloned().unwrap_or_default()).unwrap_or_default();
+    Ok(Conn { doc, desc, names })
 }
 
-/// Makes one described call and answers the carrier's answer (a 2xx). A status the call calls temporary is
-/// `Unavailable` (try again later); any other refusal says what the carrier said.
-async fn call(k: &Kernel, conn: &Conn, op: &str, c: &Call, vars: &Value) -> Result<Value> {
-    let r = |t: &str| render(t, vars);
-    let url = r(&c.url)?;
-    let mut headers = Vec::new();
-    for (h, v) in &c.headers {
-        headers.push((h.clone(), r(v)?));
-    }
-    let body = c.body.as_deref().map(r).transpose()?;
-    let body: Option<Value> =
-        body.map(|b| serde_json::from_str(&b).map_err(|e| Error::invalid(format!("the {op} call's body is not JSON: {e}")))).transpose()?;
-    let form = c.form.iter().map(|(k, v)| Ok((k.clone(), r(v)?))).collect::<Result<Vec<_>>>()?;
-    let (status, answer) = if crate::util::b(&conn.doc, "test") {
-        let fixture = conn.doc.get("fixtures").and_then(|f| f.get(op)).cloned();
-        (200, fixture.ok_or_else(|| Error::invalid(format!("the test carrier has no fixture for {op}")))?)
-    } else {
-        let (client, parsed) = k.vetted_client(&url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-Carriers/1").await?;
-        let method = reqwest::Method::from_bytes(c.method.as_deref().unwrap_or("POST").as_bytes()).map_err(Error::internal)?;
-        let mut req = client.request(method, parsed);
-        for (h, v) in &headers {
-            req = req.header(h.as_str(), v.as_str());
-        }
-        if let Some(b) = &body {
-            req = req.json(b);
-        } else if !form.is_empty() {
-            req = req.form(&form);
-        }
-        let res = req.send().await.map_err(|e| Error::Unavailable(format!("the carrier did not answer: {e}")))?;
-        let status = res.status().as_u16();
-        let text = res.text().await.unwrap_or_default();
-        (status, serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text)))
+/// Makes one call through the carrier's connection and answers what its `result` maps. A status the call calls
+/// temporary is `Unavailable` (try again later); any other refusal says what the carrier said. `key` makes a call that
+/// changes something (a label, a cancellation) happen once: the same key again gets the first answer.
+async fn call(k: &Kernel, ctx: &Ctx, conn: &Conn, op: &str, key: Option<Uuid>, shipment: Uuid, inputs: &Value) -> Result<Value> {
+    let name = conn.names.get(op).ok_or_else(|| Error::invalid(format!("this carrier's connection does not make the {op} call: save the carrier again")))?;
+    let c = ConnCall {
+        connection: name.clone(),
+        operation: op.to_string(),
+        inputs: inputs.clone(),
+        key: key.map(|k| k.to_string()),
+        entity: Some("CarrierShipment".into()),
+        record: Some(shipment),
     };
-    if (200..300).contains(&status) {
-        return Ok(answer);
-    }
-    let said = at(&answer, c.error_at.as_deref()).unwrap_or_else(|| answer.to_string().chars().take(300).collect());
-    if c.temporary.as_deref().unwrap_or(&TEMPORARY).contains(&status) {
-        return Err(Error::Unavailable(format!("the carrier answered {status}, try again later: {said}")));
-    }
-    Err(Error::invalid(format!("the carrier refused ({status}): {said}")))
+    connections::call(k, &sys(ctx), Some("erp"), &c).await
 }
 
-/// What the calls read: the shipment and its parcels, the addresses, the chosen rate, the label's numbers,
-/// the connection's units and secrets, and `key` (the same on every attempt for this shipment).
+/// What the calls read: the shipment and its parcels, the addresses, the chosen rate, the label's numbers and the
+/// connection's units.
 async fn vars(k: &Kernel, ctx: &Ctx, tx: &mut Tx, conn: &Conn, ship: &Doc) -> Result<Value> {
     let sctx = sys(ctx);
     let mut address = Vec::new();
@@ -291,11 +501,10 @@ async fn vars(k: &Kernel, ctx: &Ctx, tx: &mut Tx, conn: &Conn, ship: &Doc) -> Re
     let to = address.pop().unwrap_or_default();
     let weight: Decimal = rows(ship, "packages").iter().map(|p| d(p, "weight")).sum();
     Ok(json!({
-        "shipment": ship, "to": to, "from": from, "key": s(ship, "id"),
+        "shipment": ship, "to": to, "from": from,
         "rate": {"id": ship.get("rate_id"), "service": ship.get("service"), "amount": ship.get("rate_amount"), "currency": ship.get("rate_currency")},
         "tracking_number": ship.get("tracking_number"), "provider_id": ship.get("provider_id"),
         "weight_unit": conn.doc.get("weight_unit"), "dimension_unit": conn.doc.get("dimension_unit"), "total_weight": weight.normalize().to_string(),
-        "secret": conn.secrets,
     }))
 }
 
@@ -314,8 +523,32 @@ impl DocHook for CarrierHook {
     async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
             .map_err(|e| Error::field("description", format!("is not a carrier description: {e}")))?;
-        if let Some(p) = desc.problem(crate::util::b(doc, "test")) {
+        let test = crate::util::b(doc, "test");
+        if let Some(p) = desc.problem(test) {
             return Err(Error::field("description", p));
+        }
+        plan("carrier_check", &desc, test, doc.get("fixtures")).map_err(|m| Error::field("description", m))?;
+        Ok(())
+    }
+
+    /// The carrier's connections follow what is saved, and typed secrets move into them.
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, _old: Option<&Doc>) -> Result<()> {
+        sync(hc.kernel, hc.ctx, hc.tx, doc).await
+    }
+
+    async fn before_delete(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        let sctx = sys(hc.ctx);
+        let names: std::collections::BTreeSet<String> =
+            serde_json::from_value::<BTreeMap<String, String>>(doc.get("connection_ops").cloned().unwrap_or_default())
+                .unwrap_or_default()
+                .into_values()
+                .collect();
+        for c in hc.kernel.connection_defs(&sctx).await? {
+            if let (Some(name), Some(cid)) = (c["name"].as_str(), c["id"].as_str().and_then(|i| i.parse().ok()))
+                && names.contains(name)
+            {
+                hc.kernel.delete_connection_def(&sctx, cid).await?;
+            }
         }
         Ok(())
     }
@@ -380,8 +613,8 @@ async fn rates(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
     }
     let v = vars(hc.kernel, hc.ctx, hc.tx, &conn, &ship).await?;
     let c = &conn.desc.rate;
-    let answer = call(hc.kernel, &conn, "rate", c, &v).await?;
-    let list = answer.pointer(c.rates_at.as_deref().unwrap_or_default()).and_then(Value::as_array).cloned().unwrap_or_default();
+    let answer = call(hc.kernel, hc.ctx, &conn, "rate", None, sid, &v).await?;
+    let list = answer.get("rates").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut offered = Vec::new();
     for r in &list {
         let (Some(service), Some(amount)) = (at(r, c.service_at.as_deref()), at(r, c.amount_at.as_deref())) else { continue };
@@ -416,11 +649,11 @@ async fn choose(hc: &mut HookCtx<'_>, sid: Uuid, service: &str) -> Result<Value>
     Ok(r.clone())
 }
 
-async fn label_file(k: &Kernel, conn: &Conn, c: &Call, answer: &Value) -> Result<Vec<u8>> {
-    if let Some(b64) = at(answer, c.label_at.as_deref()) {
+async fn label_file(k: &Kernel, conn: &Conn, answer: &Value) -> Result<Vec<u8>> {
+    if let Some(b64) = at(answer, Some("/label")) {
         return base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|_| Error::invalid("the carrier's label is not base64"));
     }
-    let url = at(answer, c.label_url_at.as_deref()).ok_or_else(|| Error::invalid("the carrier's answer holds no label"))?;
+    let url = at(answer, Some("/label_url")).ok_or_else(|| Error::invalid("the carrier's answer holds no label"))?;
     if crate::util::b(&conn.doc, "test") {
         return Ok(url.into_bytes());
     }
@@ -450,9 +683,9 @@ async fn buy_label(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
     }
     let v = vars(hc.kernel, hc.ctx, hc.tx, &conn, &ship).await?;
     let c = &conn.desc.label;
-    let answer = call(hc.kernel, &conn, "label", c, &v).await?;
-    let tracking = at(&answer, c.tracking_at.as_deref()).ok_or_else(|| Error::invalid("the carrier's answer holds no tracking number"))?;
-    let bytes = label_file(hc.kernel, &conn, c, &answer).await?;
+    let answer = call(hc.kernel, hc.ctx, &conn, "label", Some(sid), sid, &v).await?;
+    let tracking = at(&answer, Some("/tracking")).ok_or_else(|| Error::invalid("the carrier's answer holds no tracking number"))?;
+    let bytes = label_file(hc.kernel, &conn, &answer).await?;
     let kind = c.label_type.as_deref().unwrap_or("pdf").to_lowercase();
     let ctype = match kind.as_str() {
         "pdf" => "application/pdf",
@@ -462,12 +695,12 @@ async fn buy_label(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
     let file = hc.kernel.store_file(hc.ctx, None, &format!("label-{tracking}.{kind}"), ctype, &bytes).await?;
     let file_id: Uuid = file["id"].as_str().and_then(|f| f.parse().ok()).ok_or_else(|| Error::internal("a stored file without its id"))?;
     hc.kernel.attach_file_tx(&sys(hc.ctx), hc.tx, file_id, "CarrierShipment", sid).await?;
-    let link = match (at(&answer, c.tracking_url_at.as_deref()), &conn.desc.tracking_link) {
+    let link = match (at(&answer, Some("/tracking_url")), &conn.desc.tracking_link) {
         (Some(u), _) => Some(u),
         (None, Some(t)) => Some(render(t, &json!({"tracking_number": tracking, "shipment": ship}))?),
         _ => None,
     };
-    let cost = match at(&answer, c.cost_at.as_deref()) {
+    let cost = match at(&answer, Some("/cost")) {
         Some(c) => c.trim().parse::<Decimal>().map_err(|_| Error::invalid(format!("the carrier's cost {c} is not a number")))?,
         None => d(&ship, "rate_amount"),
     };
@@ -484,7 +717,7 @@ async fn buy_label(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
     save(
         hc,
         sid,
-        json!({"tracking_number": tracking, "tracking_url": link, "provider_id": at(&answer, c.id_at.as_deref()), "label_file": file_id.to_string(),
+        json!({"tracking_number": tracking, "tracking_url": link, "provider_id": at(&answer, Some("/id")), "label_file": file_id.to_string(),
                "cost": money(cost), "freight_booked": booked, "status": "Label Bought"}),
     )
     .await?;
@@ -516,8 +749,8 @@ pub async fn track(k: &Kernel, ctx: &Ctx, tx: &mut Tx, sid: Uuid) -> Result<Valu
     }
     let c = conn.desc.track.clone().ok_or_else(|| Error::invalid("this carrier's connection does not describe tracking"))?;
     let v = vars(k, ctx, tx, &conn, &ship).await?;
-    let answer = call(k, &conn, "track", &c, &v).await?;
-    let said = at(&answer, c.status_at.as_deref()).unwrap_or_default();
+    let answer = call(k, ctx, &conn, "track", None, sid, &v).await?;
+    let said = at(&answer, Some("/status")).unwrap_or_default();
     let mapped = c.statuses.get(&said).map(String::as_str);
     record_status(k, ctx, tx, &ship, &said, mapped).await
 }
@@ -543,9 +776,11 @@ async fn cancel(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
             return Err(Error::invalid(format!("{inv} charges this label to the customer: cancel or credit it first")));
         }
     }
-    let c = conn.desc.cancel.clone().ok_or_else(|| Error::invalid("this carrier's connection does not describe cancelling: ask the carrier"))?;
+    if conn.desc.cancel.is_none() {
+        return Err(Error::invalid("this carrier's connection does not describe cancelling: ask the carrier"));
+    }
     let v = vars(hc.kernel, hc.ctx, hc.tx, &conn, &ship).await?;
-    call(hc.kernel, &conn, "cancel", &c, &v).await?;
+    call(hc.kernel, hc.ctx, &conn, "cancel", Some(sid), sid, &v).await?;
     if crate::util::b(&ship, "freight_booked") {
         let co = company(hc.kernel, hc.ctx, hc.tx, id(&ship, "company").unwrap_or_default()).await?;
         ledger::reverse(hc.tx, hc.ctx, "CarrierShipment", sid, hc.ctx.today(), co.precision).await?;
@@ -624,6 +859,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, limit: i64) -> Result<usize> {
     if ctx.schema.entity("CarrierShipment").is_none() {
         return Ok(0);
     }
+    migrate(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let due: Vec<Uuid> = sqlx::query_scalar(
         "select s.id from e_carrier_shipment s join e_carrier_connection c on c.tenant_id = s.tenant_id and c.id = s.carrier \
@@ -650,74 +886,29 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, limit: i64) -> Result<usize> {
     Ok(done)
 }
 
-/// A carrier's tracking call to `/api/site/{workspace}/inventory/carriers/{connection}`, checked as the
-/// connection's `inbound` says. Unknown, unsigned or wrongly signed calls are refused and counted.
-pub struct CarrierSite;
-
-fn equal(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
+/// A carrier's tracking calls, which arrive at the carrier's connection (`POST /api/connections/inbound/{id}`), checked
+/// by the platform as the connection says (a secret sent in a header, once per delivery, refusals counted on the
+/// connection) and processed once by a job: the shipment with that tracking number goes where the carrier says.
+pub struct CarrierInbound;
 
 #[async_trait]
-impl Site for CarrierSite {
-    async fn handle(&self, k: &Kernel, req: SiteRequest) -> Result<SiteResponse> {
-        let segs: Vec<&str> = req.path.split('/').filter(|p| !p.is_empty()).collect();
-        let ("POST", ["carriers", conn]) = (req.method.as_str(), segs.as_slice()) else {
-            return Err(Error::NotFound(format!("inventory endpoint {} {}", req.method, req.path)));
-        };
-        let conn: Uuid = conn.parse().map_err(|_| Error::NotFound("carrier connection".into()))?;
-        let schema = k.registry.schema(req.tenant).await?;
-        if schema.entity("CarrierShipment").is_none() {
-            return Err(Error::NotFound("carrier connection".into()));
-        }
-        let ctx = Ctx::system(req.tenant, schema);
-        let mut tx = k.db.tenant_tx(req.tenant).await?;
-        let doc = k.get_tx(&ctx, &mut tx, "CarrierConnection", conn, false).await.map_err(|_| Error::NotFound("carrier connection".into()))?;
-        let desc: Option<Description> = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null)).ok();
-        let Some(inbound) = desc.and_then(|d| d.inbound) else { return Err(Error::NotFound("carrier connection".into())) };
-        let secret = k.secret(&mut tx, req.tenant, "CarrierConnection", conn, "webhook_secret").await?;
-        let header = |name: &str| req.headers.iter().find(|(h, _)| h.eq_ignore_ascii_case(name)).and_then(|(_, v)| v.as_str()).map(str::trim);
-        let signed = match (&secret, inbound.auth.as_str()) {
-            (None, _) => false,
-            (Some(sec), "hmac") => {
-                use hmac::Mac;
-                let given = inbound.header.as_deref().and_then(header).map(|h| h.strip_prefix("sha256=").unwrap_or(h).to_lowercase());
-                let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(sec.as_bytes()).map_err(Error::internal)?;
-                mac.update(&req.body);
-                given.is_some_and(|g| equal(g.as_bytes(), hex::encode(mac.finalize().into_bytes()).as_bytes()))
-            }
-            (Some(sec), _) => {
-                let given = inbound.header.as_deref().and_then(header).or(req.query.get("token").and_then(Value::as_str));
-                given.is_some_and(|g| equal(g.as_bytes(), sec.as_bytes()))
-            }
-        };
-        if !signed {
-            sqlx::query("update e_carrier_connection set refused_calls = coalesce(refused_calls, 0) + 1 where tenant_id = $1 and id = $2")
-                .bind(req.tenant)
-                .bind(conn)
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-            return Ok(SiteResponse::json(401, &json!({"error": "not signed as this connection's inbound secret says"})));
-        }
-        let body: Value = serde_json::from_slice(&req.body).map_err(|e| Error::invalid(format!("the request body: {e}")))?;
-        let (Some(tracking), Some(said)) = (at(&body, Some(&inbound.tracking_at)), at(&body, Some(&inbound.status_at))) else {
+impl InboundHandler for CarrierInbound {
+    async fn handle(&self, k: &Kernel, tx: &mut Tx, ctx: &Ctx, connection: &str, payload: &Value) -> Result<()> {
+        let carriers = k.find_tx(ctx, tx, "CarrierConnection", &[Filter::eq("connection", connection)], None, 1).await?;
+        let Some(carrier) = carriers.first() else { return Err(Error::invalid(format!("{connection} is not a carrier's connection"))) };
+        let conn: Uuid = id(carrier, "id").ok_or_else(|| Error::internal("a carrier without its id"))?;
+        let Some(inbound) = parse(carrier)?.inbound else { return Err(Error::invalid("this carrier does not describe tracking calls")) };
+        let (Some(tracking), Some(said)) = (at(payload, Some(&inbound.tracking_at)), at(payload, Some(&inbound.status_at))) else {
             return Err(Error::invalid("the call holds no tracking number or status where the connection says"));
         };
-        let ships = k
-            .find_tx(&ctx, &mut tx, "CarrierShipment", &[Filter::eq("carrier", conn.to_string()), Filter::eq("tracking_number", tracking.clone())], None, 10)
-            .await?;
+        let ships =
+            k.find_tx(ctx, tx, "CarrierShipment", &[Filter::eq("carrier", conn.to_string()), Filter::eq("tracking_number", tracking)], None, 10).await?;
         let mapped = inbound.statuses.get(&said).map(String::as_str);
         for ship in &ships {
-            let ship = k.get_tx(&ctx, &mut tx, "CarrierShipment", id(ship, "id").unwrap_or_default(), true).await?;
-            record_status(k, &ctx, &mut tx, &ship, &said, mapped).await?;
+            let ship = k.get_tx(ctx, tx, "CarrierShipment", id(ship, "id").unwrap_or_default(), true).await?;
+            record_status(k, ctx, tx, &ship, &said, mapped).await?;
         }
-        tx.commit().await?;
-        Ok(SiteResponse::json(200, &json!({"shipments": ships.len()})))
-    }
-
-    fn max_body(&self) -> usize {
-        256 << 10
+        Ok(())
     }
 }
 
@@ -757,7 +948,42 @@ mod tests {
         for b in blocks {
             let d: Description = serde_json::from_str(b).unwrap_or_else(|e| panic!("{e}: {b}"));
             assert_eq!(d.problem(false), None);
+            // Each becomes connections the platform accepts: the calls, their addresses, the inbound.
+            let planned = plan("carrier_x", &d, false, None).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(planned.defs.len(), 1, "one address");
+            assert_eq!(planned.names.keys().map(String::as_str).collect::<Vec<_>>(), ["cancel", "label", "rate", "track"]);
+            for (_, def) in &planned.defs {
+                assert_eq!(def.problem(), None);
+            }
+            assert!(planned.defs[0].1.inbound.is_some());
         }
+    }
+
+    #[test]
+    fn an_address_is_split_into_the_connections_and_the_calls() {
+        let (base, path, query) = split_url("https://api.example.test:8443/v1/track/{{ tracking_number }}?a=1&b={{ key }}").unwrap();
+        assert_eq!(base, "https://api.example.test:8443");
+        assert!(path.starts_with("/{% set shipment = inputs.shipment %}") && path.ends_with("v1/track/{{ tracking_number }}"), "{path}");
+        assert_eq!(query, BTreeMap::from([("a".to_string(), "1".to_string()), ("b".to_string(), "{{ key }}".to_string())]));
+        assert_eq!(split_url("https://api.example.test").unwrap().1, "");
+        assert!(split_url("https://{{ secret.api_secret }}.example.test/x").is_err(), "a host that is a template is not one address");
+        // Calls to two addresses are two connections; the second is named after the first.
+        let two = desc(json!({"rate": {"url": "https://rates.example/r", "rates_at": "/r", "service_at": "/s", "amount_at": "/a"},
+                              "label": {"url": "https://ship.example/l", "tracking_at": "/t", "label_at": "/f"},
+                              "cancel": {"url": "https://ship.example/c"}}));
+        let planned = plan("carrier_x", &two, false, None).unwrap();
+        assert_eq!(
+            planned.defs.iter().map(|(n, d)| (n.as_str(), d.base.as_str())).collect::<Vec<_>>(),
+            [("carrier_x", "https://rates.example"), ("carrier_x_2", "https://ship.example")]
+        );
+        assert_eq!(
+            (planned.names["rate"].as_str(), planned.names["label"].as_str(), planned.names["cancel"].as_str()),
+            ("carrier_x", "carrier_x_2", "carrier_x_2")
+        );
+        // A label and a cancellation change something at the carrier and are made once under a key; rates and tracking are not.
+        let ops = &planned.defs[1].1.operations;
+        assert_eq!((ops["label"].changes, ops["cancel"].changes), (Some(true), Some(true)));
+        assert_eq!(planned.defs[0].1.operations["rate"].changes, Some(false));
     }
 
     #[test]
