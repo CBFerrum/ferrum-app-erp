@@ -235,3 +235,61 @@
     - {name: taxable, type: currency, read_only: true, in_list: true, label: Withheld On}
     - {name: rate, type: percent, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true, description: "In company currency"}
+
+# Accounting dimensions (FN-01): what a workspace analyses its books by beyond cost centre and
+# project. A ledger line keeps its values as {code: value}; documents and their lines carry them in
+# `dimensions`, a line's own over its document's.
+- name: AccountingDimensionValue
+  label: Dimension Value
+  kind: child
+  fields:
+    - {name: value, type: data, required: true, max_length: 140, in_list: true}
+    - {name: description, type: data, in_list: true}
+
+- name: AccountingDimensionRequirement
+  label: Required For
+  kind: child
+  fields:
+    - {name: account, type: link, to: Account, link_filters: {is_group: false}, in_list: true}
+    - name: account_type
+      type: select
+      in_list: true
+      options: [Receivable, Payable, Bank, Cash, Stock, Cost of Goods Sold, Stock Received But Not Billed, Tax, Income, Expense,
+                Round Off, Exchange Gain Loss, Stock Adjustment, Fixed Asset, Equity, Temporary]
+    - {name: root_type, type: select, options: [Asset, Liability, Equity, Income, Expense], in_list: true}
+
+- name: AccountingDimensionDefault
+  label: Dimension Default
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, in_list: true}
+    - {name: cost_center, type: link, to: CostCenter, in_list: true}
+    - {name: project, type: link, to: Project, in_list: true}
+    - {name: customer, type: link, to: Customer, in_list: true}
+    - {name: supplier, type: link, to: Supplier, in_list: true}
+    - {name: item, type: link, to: Item, in_list: true}
+    - {name: value, type: data, required: true, max_length: 140, in_list: true}
+
+- name: AccountingDimension
+  label: Accounting Dimension
+  kind: master
+  module: accounting
+  title_field: dimension_name
+  description: "Something the books are analysed by beyond cost centre and project (a department, a branch, a product line): its values, the accounts that need it on every line, and the value a line takes when it gives none. Every report filters and groups by it."
+  fields:
+    - {name: dimension_name, type: data, required: true, unique: true, in_list: true}
+    - {name: code, type: data, required: true, unique: true, locked: true, max_length: 40, in_list: true,
+       description: "What documents' dimensions and reports call it (department): lower-case letters, digits and _. cost_center and project are the dimensions every line already has"}
+    - {name: source, type: select, options: [List, Records], required: true, default: List, in_list: true,
+       description: "List: the values below. Records: the records of an entity (a branch, an employee, a territory), each value a record's id"}
+    - {name: source_entity, type: data, label: Entity, max_length: 80, visible_if: "doc.source == 'Records'", required_if: "doc.source == 'Records'", description: "The entity its values are records of, e.g. Territory"}
+    - {name: values, type: table, of: AccountingDimensionValue, visible_if: "doc.source == 'List'"}
+    - {name: required_for, type: table, of: AccountingDimensionRequirement, label: Required For,
+       description: "Every ledger line on these accounts, account types or root types needs a value"}
+    - {name: defaults, type: table, of: AccountingDimensionDefault,
+       description: "The value a line with none takes: the first row whose company, cost center, project, party and item all match the line's (an empty one matches any)"}
+    - {name: disabled, type: check, in_filter: true, description: "Its values stay on the lines that have them; nothing needs it or defaults to it any more"}
+  rules:
+    - {name: code_form, check: "doc.code.matches('^[a-z][a-z0-9_]*$') && doc.code != 'cost_center' && doc.code != 'project'",
+       message: "The code is lower-case letters, digits and _, starting with a letter, and not cost_center or project"}
+  list: {columns: [dimension_name, code, source, disabled], sort: dimension_name asc}

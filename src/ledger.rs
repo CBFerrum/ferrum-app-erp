@@ -29,6 +29,10 @@ pub struct Line {
     pub project: Option<Uuid>,
     pub against: Option<(String, Uuid)>,
     pub remarks: Option<String>,
+    /// The workspace's own accounting dimensions on this line, by code (`crate::dimensions`).
+    pub dims: crate::dimensions::Dims,
+    /// The item the line is for: read by dimension defaults, not kept.
+    pub item: Option<Uuid>,
 }
 
 impl Line {
@@ -65,6 +69,14 @@ impl Line {
         self.remarks = Some(r.into());
         self
     }
+    pub fn dims(mut self, d: crate::dimensions::Dims) -> Line {
+        self.dims = d;
+        self
+    }
+    pub fn item(mut self, i: Option<Uuid>) -> Line {
+        self.item = i;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -98,13 +110,19 @@ impl Entry {
     }
 }
 
-type MergeKey = (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<(String, Uuid)>, String);
+type MergeKey = (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<(String, Uuid)>, String, crate::dimensions::Dims);
 
-/// Appends one balanced journal entry. Returns `None` when every line nets to zero.
-pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Result<Option<Uuid>> {
+/// Appends one balanced journal entry. Returns `None` when every line nets to zero. Lines take
+/// their dimensions' defaults first and are refused a dimension value that is not one, or an
+/// account's required dimension left empty.
+pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> Result<Option<Uuid>> {
+    // A reversal mirrors what it reverses, whatever the dimensions say now.
+    if entry.reversal_of.is_none() {
+        crate::dimensions::prepare(tx, ctx, entry.company, &mut entry.lines).await?;
+    }
     let mut merged: BTreeMap<MergeKey, Line> = BTreeMap::new();
     for l in entry.lines {
-        let key = (l.account, l.customer, l.supplier, l.cost_center, l.project, l.against.clone(), l.currency.clone());
+        let key = (l.account, l.customer, l.supplier, l.cost_center, l.project, l.against.clone(), l.currency.clone(), l.dims.clone());
         match merged.get_mut(&key) {
             Some(m) => {
                 m.amount += l.amount;
@@ -147,7 +165,7 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, entry: Entry, precision: u32) -> Resul
                 "posting_date": entry.posting_date, "account_id": l.account, "customer_id": l.customer, "supplier_id": l.supplier,
                 "debit": dr.to_string(), "credit": cr.to_string(), "currency": l.currency,
                 "debit_txn": drt.to_string(), "credit_txn": crt.to_string(), "exchange_rate": l.exchange_rate.to_string(),
-                "cost_center_id": l.cost_center, "project_id": l.project, "dims": {},
+                "cost_center_id": l.cost_center, "project_id": l.project, "dims": l.dims,
                 "against_entity": l.against.as_ref().map(|a| a.0.clone()), "against_id": l.against.as_ref().map(|a| a.1),
                 "remarks": l.remarks, "finance_book_id": entry.finance_book,
             })
@@ -236,6 +254,7 @@ struct LineRow {
     project_id: Option<Uuid>,
     against_entity: Option<String>,
     against_id: Option<Uuid>,
+    dims: Value,
 }
 
 /// Appends reversing entries for every not-yet-reversed entry of a source document. The
@@ -273,7 +292,7 @@ async fn reversed(
     for (entry_id, company, date, number, book) in &entries {
         let lines: Vec<LineRow> = sqlx::query_as(
             "select account_id, debit, credit, currency, debit_txn, credit_txn, exchange_rate, customer_id, supplier_id, cost_center_id, \
-             project_id, against_entity, against_id from journal_line where tenant_id = $1 and entry_id = $2 and posting_date = $3 order by line_no",
+             project_id, against_entity, against_id, dims from journal_line where tenant_id = $1 and entry_id = $2 and posting_date = $3 order by line_no",
         )
         .bind(ctx.tenant)
         .bind(entry_id)
@@ -304,6 +323,8 @@ async fn reversed(
                 project: l.project_id,
                 against: l.against_entity.zip(l.against_id),
                 remarks: Some("Reversal".into()),
+                dims: crate::dimensions::of(Some(&l.dims)),
+                item: None,
             })
             .collect();
         post(

@@ -95,10 +95,16 @@ pub struct BudgetHook;
 #[async_trait]
 impl DocHook for BudgetHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        if s(doc, "budget_against") == Some("Project") {
+        let against = s(doc, "budget_against").unwrap_or("Cost Center").to_string();
+        if against != "Cost Center" {
             set(doc, "cost_center", Value::Null);
-        } else {
+        }
+        if against != "Project" {
             set(doc, "project", Value::Null);
+        }
+        if against != "Dimension" {
+            set(doc, "dimension", Value::Null);
+            set(doc, "dimension_value", Value::Null);
         }
         if !["applicable_on_material_request", "applicable_on_purchase_order", "applicable_on_booking_actual_expenses"].iter().any(|f| b(doc, f)) {
             set(doc, "applicable_on_booking_actual_expenses", true);
@@ -163,7 +169,8 @@ impl DocHook for BudgetHook {
              join e_budget__accounts a on a.tenant_id = b.tenant_id and a.parent_id = b.id \
              join e_account a2 on a2.tenant_id = a.tenant_id and a2.id = a.account \
              where b.tenant_id = $1 and b.company = $2 and b.fiscal_year = $3 and b.docstatus < 2 and b.id <> $4 and b.budget_against = $5 \
-             and b.cost_center is not distinct from $6 and b.project is not distinct from $7 and a.account = any($8) limit 1",
+             and b.cost_center is not distinct from $6 and b.project is not distinct from $7 and a.account = any($8) \
+             and b.dimension is not distinct from $9 and b.dimension_value is not distinct from $10 limit 1",
         )
         .bind(hc.ctx.tenant)
         .bind(cid)
@@ -173,6 +180,8 @@ impl DocHook for BudgetHook {
         .bind(id(doc, "cost_center"))
         .bind(id(doc, "project"))
         .bind(&ids)
+        .bind(id(doc, "dimension"))
+        .bind(s(doc, "dimension_value"))
         .fetch_optional(&mut **hc.tx)
         .await?;
         if let Some((number, account)) = clash {
@@ -186,7 +195,11 @@ impl DocHook for BudgetHook {
 }
 
 fn against_word(doc: &Doc) -> &'static str {
-    if s(doc, "budget_against") == Some("Project") { "project" } else { "cost center" }
+    match s(doc, "budget_against") {
+        Some("Project") => "project",
+        Some("Dimension") => "dimension value",
+        _ => "cost center",
+    }
 }
 
 // ───────────────────────────── checks ─────────────────────────────
@@ -223,6 +236,8 @@ pub struct Effect {
     pub account: Uuid,
     pub cost_center: Option<Uuid>,
     pub project: Option<Uuid>,
+    /// The accounting dimensions it is booked with ({code: value}).
+    pub dims: Value,
     pub day: NaiveDate,
     pub amount: Decimal,
 }
@@ -234,6 +249,9 @@ struct BudgetRow {
     budget_against: String,
     cost_center: Option<Uuid>,
     project: Option<Uuid>,
+    /// A dimension budget's {code: value}.
+    dims: Option<Value>,
+    against_name: Option<String>,
     monthly_distribution: Option<Uuid>,
     budget_owner: Option<String>,
     created_by: Option<Uuid>,
@@ -249,11 +267,13 @@ struct BudgetRow {
     budget_amount: Decimal,
 }
 
-/// Whose spending a budget limits: a cost center with its children, or a project.
+/// Whose spending a budget limits: a cost center with its children, a project, or the lines booked
+/// with one value of an accounting dimension.
 #[derive(Debug, Clone)]
 pub struct Scope {
     pub cost_centers: Option<Vec<Uuid>>,
     pub project: Option<Uuid>,
+    pub dims: Option<Value>,
 }
 
 /// Booked, ordered and requested amounts against a budget line over `[from, to]`.
@@ -276,7 +296,7 @@ pub async fn actual(tx: &mut Tx, tenant: Uuid, company: Uuid, account: Uuid, sco
         "select coalesce(sum(l.debit - l.credit), 0) from journal_line_in_book l join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id \
          where l.tenant_id = $1 and l.company_id = $2 and l.account_id = $3 and l.posting_date between $4 and $5 \
          and e.source_entity <> 'PeriodClosingVoucher' \
-         and (($6::uuid[] is not null and l.cost_center_id = any($6)) or ($7::uuid is not null and l.project_id = $7))",
+         and (($6::uuid[] is not null and l.cost_center_id = any($6)) or ($7::uuid is not null and l.project_id = $7) or ($8::jsonb is not null and l.dims @> $8))",
     )
     .bind(tenant)
     .bind(company)
@@ -285,6 +305,7 @@ pub async fn actual(tx: &mut Tx, tenant: Uuid, company: Uuid, account: Uuid, sco
     .bind(to)
     .bind(&scope.cost_centers)
     .bind(scope.project)
+    .bind(&scope.dims)
     .fetch_one(&mut **tx)
     .await?)
 }
@@ -435,10 +456,12 @@ pub async fn consumed(
 }
 
 /// The scope of a budget row (a cost center budget covers the cost centers below it).
-pub async fn scope_of(tx: &mut Tx, tenant: Uuid, against: &str, cost_center: Option<Uuid>, project: Option<Uuid>) -> Result<Scope> {
+/// Orders and requests carry no dimensions, so a dimension's budget is consumed by what is booked only.
+pub async fn scope_of(tx: &mut Tx, tenant: Uuid, against: &str, cost_center: Option<Uuid>, project: Option<Uuid>, dims: Option<Value>) -> Result<Scope> {
     Ok(match (against, cost_center) {
-        ("Cost Center", Some(cc)) => Scope { cost_centers: Some(cost_center_subtree(tx, tenant, cc).await?), project: None },
-        _ => Scope { cost_centers: None, project },
+        ("Cost Center", Some(cc)) => Scope { cost_centers: Some(cost_center_subtree(tx, tenant, cc).await?), project: None, dims: None },
+        ("Dimension", _) => Scope { cost_centers: None, project: None, dims },
+        _ => Scope { cost_centers: None, project, dims: None },
     })
 }
 
@@ -474,14 +497,18 @@ pub async fn check(hc: &mut HookCtx<'_>, company_id: Uuid, kind: Kind, effects: 
             None => vec![],
         };
         let budgets: Vec<BudgetRow> = sqlx::query_as(
-            "select b.id, b.number, b.budget_against, b.cost_center, b.project, b.monthly_distribution, b.budget_owner, b.created_by, \
+            "select b.id, b.number, b.budget_against, b.cost_center, b.project, \
+             case when b.budget_against = 'Dimension' then jsonb_build_object(dd.code, b.dimension_value) end as dims, \
+             dd.dimension_name || ' ' || b.dimension_value as against_name, b.monthly_distribution, b.budget_owner, b.created_by, \
              b.applicable_on_material_request, b.applicable_on_purchase_order, b.applicable_on_booking_actual_expenses, \
              b.action_if_annual_budget_exceeded, b.action_if_accumulated_monthly_budget_exceeded, \
              b.action_if_annual_budget_exceeded_on_po, b.action_if_accumulated_monthly_budget_exceeded_on_po, \
              b.action_if_annual_budget_exceeded_on_mr, b.action_if_accumulated_monthly_budget_exceeded_on_mr, a.budget_amount \
              from e_budget b join e_budget__accounts a on a.tenant_id = b.tenant_id and a.parent_id = b.id \
+             left join e_accounting_dimension dd on dd.tenant_id = b.tenant_id and dd.id = b.dimension \
              where b.tenant_id = $1 and b.company = $2 and b.fiscal_year = $3 and b.docstatus = 1 and a.account = $4 \
-             and ((b.budget_against = 'Cost Center' and b.cost_center = any($5)) or (b.budget_against = 'Project' and b.project = $6))",
+             and ((b.budget_against = 'Cost Center' and b.cost_center = any($5)) or (b.budget_against = 'Project' and b.project = $6) \
+             or (b.budget_against = 'Dimension' and $7::jsonb @> jsonb_build_object(dd.code, b.dimension_value)))",
         )
         .bind(tenant)
         .bind(company_id)
@@ -489,6 +516,7 @@ pub async fn check(hc: &mut HookCtx<'_>, company_id: Uuid, kind: Kind, effects: 
         .bind(e.account)
         .bind(&ancestors)
         .bind(e.project)
+        .bind(&e.dims)
         .fetch_all(&mut **hc.tx)
         .await?;
         for bud in budgets.into_iter().filter(|x| kind.applies(x)) {
@@ -507,12 +535,13 @@ pub async fn check(hc: &mut HookCtx<'_>, company_id: Uuid, kind: Kind, effects: 
     for ((budget_id, account), (bud, fy, doc_amount, mut dates)) in groups {
         // Serialize checks of one budget across concurrent submits (released at commit).
         sqlx::query("select pg_advisory_xact_lock(hashtextextended('ferrum:budget:' || $1::text, 0))").bind(budget_id).execute(&mut **hc.tx).await?;
-        let scope = scope_of(hc.tx, tenant, &bud.budget_against, bud.cost_center, bud.project).await?;
+        let scope = scope_of(hc.tx, tenant, &bud.budget_against, bud.cost_center, bud.project, bud.dims.clone()).await?;
         let tracks = (bud.applicable_on_purchase_order, bud.applicable_on_material_request && mr_shape(hc.ctx).is_some());
         let (annual_action, monthly_action) = kind.actions(&bud);
         let account_label = label(hc.tx, tenant, "e_account", "coalesce(account_number || ' - ', '') || account_name", Some(account)).await?;
         let against = match bud.budget_against.as_str() {
             "Project" => format!("project {}", label(hc.tx, tenant, "e_project", "project_name", bud.project).await?),
+            "Dimension" => bud.against_name.clone().unwrap_or_default(),
             _ => format!("cost center {}", label(hc.tx, tenant, "e_cost_center", "cost_center_name", bud.cost_center).await?),
         };
         let mut evaluate = |what: String, limit: Decimal, used: Consumed, action: Option<String>| {
@@ -589,12 +618,12 @@ impl DocHook for ActualExpenseCheck {
             return Ok(());
         }
         let effects: Vec<Effect> = sqlx::query_as(
-            "select l.account_id as account, l.cost_center_id as cost_center, l.project_id as project, l.posting_date as day, \
+            "select l.account_id as account, l.cost_center_id as cost_center, l.project_id as project, l.dims as dims, l.posting_date as day, \
              sum(l.debit - l.credit) as amount from journal_entry e \
              join journal_line_in_book l on l.tenant_id = e.tenant_id and l.entry_id = e.id and l.posting_date = e.posting_date \
              join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
              where e.tenant_id = $1 and e.source_entity = $2 and e.source_id = $3 and e.reversal_of is null and a.root_type = 'Expense' \
-             group by 1, 2, 3, 4 having sum(l.debit - l.credit) > 0",
+             group by 1, 2, 3, 4, 5 having sum(l.debit - l.credit) > 0",
         )
         .bind(hc.ctx.tenant)
         .bind(&hc.entity.def.name)
@@ -656,11 +685,11 @@ impl DocHook for PurchaseOrderHook {
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let sql = format!(
             "select nullif(i.ext->>'fin_expense_account', '')::uuid as account, nullif(i.ext->>'fin_cost_center', '')::uuid as cost_center, \
-             o.project as project, o.posting_date as day, sum({}) as amount \
+             o.project as project, '{{}}'::jsonb as dims, o.posting_date as day, sum({}) as amount \
              from e_purchase_order o join e_purchase_order__items i on i.tenant_id = o.tenant_id and i.parent_id = o.id \
              join e_account a on a.tenant_id = o.tenant_id and a.id = nullif(i.ext->>'fin_expense_account', '')::uuid \
              where o.tenant_id = $1 and o.id = $2 and a.root_type = 'Expense' and i.qty > coalesce(i.billed_qty, 0) \
-             group by 1, 2, 3, 4",
+             group by 1, 2, 3, 4, 5",
             po_open("$3")
         );
         let effects: Vec<Effect> =
@@ -693,9 +722,9 @@ impl DocHook for MaterialRequestHook {
         }
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let sql = format!(
-            "select {account} as account, {cc} as cost_center, {project} as project, {date} as day, sum(round({amount}, $3)) as amount \
+            "select {account} as account, {cc} as cost_center, {project} as project, '{{}}'::jsonb as dims, {date} as day, sum(round({amount}, $3)) as amount \
              from {from} join e_account acc on acc.tenant_id = m.tenant_id and acc.id = {account} \
-             where m.tenant_id = $1 and m.id = $2 and acc.root_type = 'Expense' and {filter} group by 1, 2, 3, 4",
+             where m.tenant_id = $1 and m.id = $2 and acc.root_type = 'Expense' and {filter} group by 1, 2, 3, 4, 5",
             account = m.account,
             cc = m.cost_center,
             project = m.project,

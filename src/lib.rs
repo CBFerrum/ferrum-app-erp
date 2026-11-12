@@ -14,6 +14,7 @@ pub mod accounting;
 pub mod change;
 pub mod credit;
 pub mod deferred;
+pub mod dimensions;
 pub mod flow;
 pub mod ledger;
 pub mod localization;
@@ -66,6 +67,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
+            .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
     });

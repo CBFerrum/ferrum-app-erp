@@ -91,7 +91,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
+    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding, report:stored_value_liability, report:stored_value_statement, report:stored_value_movement]
   - name: setup
     label: Setup
@@ -116,6 +116,7 @@ roles:
       - {entity: Account, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: CostCenter, read: true, write: true, create: true, delete: true}
       - {entity: FinanceBook, read: true, write: true, create: true, delete: true}
+      - {entity: AccountingDimension, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: Project, read: true, write: true, create: true, delete: true}
       - {entity: Currency, read: true, write: true, create: true}
       - {entity: ExchangeRate, read: true, write: true, create: true, delete: true, import: true}
@@ -149,6 +150,7 @@ roles:
       - {entity: Supplier, read: true}
       - {entity: CostCenter, read: true}
       - {entity: FinanceBook, read: true}
+      - {entity: AccountingDimension, read: true}
       - {entity: Project, read: true}
       - {entity: Currency, read: true}
 export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation, stored_value_entry]
