@@ -229,29 +229,23 @@ calling it twice does it twice.
 
 ### Purchase order approvals
 
-A purchase order can wait for approval before it is submitted, by value band. The bands are a
-settings record, **Purchase Approval Settings** (Buying menu): the order's total in company
-currency above *First Approval Above* needs a Purchase Manager, above *Second Approval Above* an
-Accounts Manager after them, above *Third Approval Above* two more Accounts Managers; an empty
-band is no step. The policy itself is ordinary configuration: the platform takes an approval on a
-document's submit only as the workspace's own customization (a package cannot ship one yet), so
-ERP ships it as [`docs/approvals/purchase_order.json`](docs/approvals/purchase_order.json), applied
-once by an administrator:
-
-```sh
-curl -X POST https://erp.example.com/api/customize \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d @docs/approvals/purchase_order.json
-```
-
-After that, the workspace edits the bands on the settings record, or the steps (roles, how many,
-reminders, escalation) in Studio, without code. Nothing in ERP's engine checks an amount.
+A purchase order can wait for approval before it is submitted, by value band, and so can a payment
+out. The package ships both policies, off: tick **Ask for Approval** on **Purchase Approval Settings**
+(Buying menu) or **Payment Approval Settings** (Setup). An order's total in company currency above
+*First Approval Above* then needs a Purchase Manager, above *Second Approval Above* an Accounts Manager
+after them, above *Third Approval Above* two more Accounts Managers; a payment to a supplier or a refund to
+a customer above its first band needs an Accounts Manager, above the second two. An empty band is no
+step, and the person who made the document never approves it. The bands are the settings records';
+the steps (roles, how many, stand-ins, reminders, escalation) are the platform's approval policy, edited
+in Studio, and a workspace that wants its own replaces the shipped one. Nothing in ERP's engine checks an
+amount.
 
 ### Carriers
 
 Delivery notes and purchase returns ship by carrier through a **Carrier Connection**: rates, the label
 (attached, its tracking number and link kept, bought once however often it is pressed), tracking by the
-upkeep and by the carrier's own signed calls, and cancelling, each a described HTTP call. No carrier is
+upkeep and by the carrier's own calls to its connection, and cancelling, each a described HTTP call made through
+the platform's connections. No carrier is
 built in; [`docs/carriers.md`](docs/carriers.md) says what a description holds and gives two worked examples.
 
 ## This repository
@@ -367,6 +361,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.25.0** | Promotions an app already applied, checked and counted once, and the conversion other apps copied made public; numbering series chosen per document; carriers called through the platform's connections, keys moved out of the carrier; stored value's code and PIN as secret parameters; purchase order and payment approvals shipped as off-by-default policies. |
 | **0.24.1, Finance 0.6.1** | The carrier upkeep's tracking query and Finance's run-line backfill, which failed on workspaces not yet updated; a test that starts this build on a workspace an older release made. |
 | **0.24.0, India 0.6.0, Stock Operations 0.2.0, Manufacturing Operations 0.2.0, Warehouse Management 0.3.0** | Carriers described as calls (rates, labels bought once, tracking pulled and pushed, cancel, label cost booked); labels for items, batches, bins, parcels and serials; a scan capability that reads barcodes, numbers and GS1 strings; transfers through transit with partial receipt and shortages; rejected goods kept and returned; by-products and co-products costed to the cent; planning by period across warehouses with transfers and action messages; India's TDS categories and GST returns as data. |
 | **0.23.0, Finance 0.6.0** | Promotions priced again on Update Items and given back by credit notes to the cent; stored value held for orders and untaxed on orders when taxed at redemption; instrument numbers from a book; erasure reaches supplier bank details and run lines; group by a dimension in every statement; early-payment discount tax in the tax summary and returns; promised dates and availability at order entry; stock held for orders under a Hold policy; purchase approvals by value band as configuration. |

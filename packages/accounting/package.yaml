@@ -97,12 +97,29 @@ modules:
     label: Setup
     icon: settings
     order: 90
-    items: [Company, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project, NumberSeries]
+    items: [Company, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project, NumberSeries, PaymentApprovalSettings]
   - name: masters
     label: Masters
     icon: database
     order: 10
     items: [Customer, CustomerGroup, Supplier, SupplierGroup, Item, ItemGroup, Warehouse, PriceList, ItemPrice, Account, TaxTemplate]
+
+# Approval before money leaves in a payment, by value band, as the package's default: off until the settings record's Ask
+# for Approval is ticked (the steps then read "skipped" and the payment is submitted at once, as before). Payments to a
+# supplier and refunds to a customer; receipts and transfers between the company's own accounts are not asked. The person
+# who made the payment never approves it; payments an app makes as the system (a payment run's, whose own approval is
+# the run's) go ahead; stand-ins and escalation are the platform's own.
+approvals:
+  - entity: PaymentEntry
+    on: submit
+    policy:
+      system_bypass: true
+      reset_on: [base_paid_amount]
+      steps:
+        - {label: Accounts Manager, approvers: {role: Accounts Manager},
+           when: "settings.PaymentApprovalSettings.enabled && doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Pay') != doc.is_refund && doc.base_paid_amount > settings.PaymentApprovalSettings.first_above"}
+        - {label: Two Accounts Managers, approvers: {role: Accounts Manager}, need: 2, not_earlier_deciders: true,
+           when: "settings.PaymentApprovalSettings.enabled && doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Pay') != doc.is_refund && settings.PaymentApprovalSettings.second_above > 0.0 && doc.base_paid_amount > settings.PaymentApprovalSettings.second_above"}
 
 roles:
   - name: Accounts Manager
@@ -144,6 +161,7 @@ roles:
       - {entity: PriceList, read: true}
       - {entity: ItemPrice, read: true}
       - {entity: NumberSeries, read: true, write: true, create: true, delete: true}
+      - {entity: PaymentApprovalSettings, read: true, write: true, create: true}
   - name: Accounts User
     description: Enters vouchers; a manager approves.
     permissions:

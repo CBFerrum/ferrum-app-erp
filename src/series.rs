@@ -47,6 +47,10 @@ pub struct SeriesHook;
 #[async_trait]
 impl DocHook for SeriesHook {
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        // A workspace whose accounting package is older than this build has no series: numbers as before.
+        if hc.ctx.schema.entity("NumberSeries").is_none() {
+            return Ok(());
+        }
         let Some(named) = id(doc, "number_series") else { return Ok(()) };
         let series = get(hc.kernel, hc.ctx, hc.tx, "NumberSeries", named).await?;
         if s(&series, "document") != Some(hc.entity.def.name.as_str()) {
@@ -70,7 +74,7 @@ impl DocHook for SeriesHook {
     }
 
     async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        if s(doc, "number").is_some_and(|n| !n.is_empty()) {
+        if s(doc, "number").is_some_and(|n| !n.is_empty()) || hc.ctx.schema.entity("NumberSeries").is_none() {
             return Ok(());
         }
         let Some(series) = series_of(hc, doc).await? else { return Ok(()) };
