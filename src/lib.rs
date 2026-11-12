@@ -88,7 +88,9 @@ pub fn register(h: &mut HookRegistry) {
             .register("MrpRun", Arc::new(manufacturing::MrpRunHook));
     });
     h.scoped(&only("selling"), |h| {
-        h.register("PromotionCode", Arc::new(promotion::CodeHook)).register("Company", Arc::new(promotion::PriceLinesHook));
+        h.register("PromotionCode", Arc::new(promotion::CodeHook))
+            .register("Company", Arc::new(promotion::PriceLinesHook))
+            .register("Company", Arc::new(reservation::AvailabilityHook));
     });
     for (side, package, order, shipment, invoice) in [
         (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),
