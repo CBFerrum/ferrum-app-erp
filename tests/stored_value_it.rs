@@ -676,6 +676,33 @@ async fn scenario() {
     assert!(e.to_string().contains("never passed"), "{e}");
     let proven = t.k.run_action(&t.ctx, "StoredValueKind", pid, "prove", json!({"operation": "redeem", "code": "STORECREDIT-0002", "pin": pin})).await.unwrap();
     let proof = proven["proof"].as_str().unwrap();
+    // The code and PIN of prove (and balance) are secret parameters: the platform shows them as redacted wherever
+    // the action is kept (the audit trail of a recorded run, an approval request), and out of its errors.
+    let kind = t.ctx.schema.entity("StoredValueKind").unwrap().clone();
+    let asked = json!({"operation": "redeem", "code": "STORECREDIT-0002", "pin": pin, "key": "k1"});
+    for action in ["prove", "balance"] {
+        let def = kind.def.actions.iter().find(|a| a.name == action).unwrap();
+        assert_eq!(def.secret_values(&asked), vec!["STORECREDIT-0002".to_string(), pin.to_string()], "{action}'s code and PIN are secret parameters");
+        let kept = def.redacted(&asked);
+        assert_eq!((kept["code"].clone(), kept["pin"].clone(), kept["operation"].clone()), (json!("[redacted]"), json!("[redacted]"), json!("redeem")));
+        assert!(!kept.to_string().contains("STORECREDIT-0002") && !kept.to_string().contains(pin));
+    }
+    // Run as a recorded action would be (a configured action's audit row is `def.redacted`), the audit trail holds none.
+    let mut tx = run().await;
+    ferrum_kernel::audit::record(
+        &mut tx,
+        &t.ctx,
+        "StoredValueKind",
+        pid,
+        "action:prove",
+        None,
+        kind.def.actions.iter().find(|a| a.name == "prove").unwrap().redacted(&asked),
+    )
+    .await
+    .unwrap();
+    let rows: Vec<String> = sqlx::query_scalar("select diff::text from audit_event where action = 'action:prove'").fetch_all(&mut *tx).await.unwrap();
+    assert!(!rows.is_empty() && rows.iter().all(|d| !d.contains("STORECREDIT-0002") && !d.contains(pin) && d.contains("[redacted]")), "{rows:?}");
+    tx.rollback().await.unwrap();
     let i14 = t.post("SalesInvoice", bill(&asha, &work, "1")).await;
     let redeem = |proof: &str| json!({"proof": proof, "invoice": uid(&i14), "amount": "5"});
     let e = t.k.run_action(&t.ctx, "StoredValueKind", sid, "redeem", redeem(proof)).await.unwrap_err();
