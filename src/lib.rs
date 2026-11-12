@@ -24,6 +24,7 @@ pub mod localization;
 pub mod manufacturing;
 pub mod opening;
 pub mod periods;
+pub mod planning;
 pub mod portal;
 pub mod pricing;
 pub mod promotion;
