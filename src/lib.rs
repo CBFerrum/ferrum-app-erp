@@ -27,6 +27,7 @@ pub mod reservation;
 pub mod setup;
 pub mod stock;
 pub mod stock_entry;
+pub mod stored_value;
 pub mod trade;
 pub mod withholding;
 
@@ -63,7 +64,9 @@ pub fn register(h: &mut HookRegistry) {
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
-            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook));
+            .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
+            .register("StoredValueKind", Arc::new(stored_value::KindHook))
+            .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
     });
     h.scoped(&only("inventory"), |h| {
         h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));
