@@ -64,6 +64,7 @@ roles:
       - {entity: CarrierConnection, read: true, write: true, create: true, delete: true}
       - {entity: CarrierShipment, read: true, write: true, create: true, delete: true, export: true}
       - {entity: Address, read: true}
+      - {entity: NumberSeries, read: true}
   - name: Stock User
     permissions:
       - {entity: StockEntry, read: true, write: true, create: true, delete: true, submit: true}
@@ -75,6 +76,7 @@ roles:
       - {entity: CarrierConnection, read: true}
       - {entity: CarrierShipment, read: true, write: true, create: true}
       - {entity: Address, read: true}
+      - {entity: NumberSeries, read: true}
 export_tables: [stock_move, stock_balance, cost_layer, serial_no]
 
 # Labels (OP-20): small pages with barcodes, or text a label printer reads; printed for many records at once

@@ -17,9 +17,12 @@
     - {name: description, type: json, required: true, label: Calls,
        description: "{rate, label, track, cancel, tracking_link, inbound}: each call a url, method, headers and a body or form as templates over the shipment, and JSON pointers to what the answer says. The README has two worked examples"}
     - {name: fixtures, type: json, visible_if: "doc.test", label: Fixtures, description: "For a test carrier: the answer to each call, {rate: …, label: …, track: …, cancel: …}"}
-    - {name: api_key, type: secret, label: API Key, description: "Read by the calls as secret.api_key"}
-    - {name: api_secret, type: secret, label: API Secret, description: "Read by the calls as secret.api_secret"}
-    - {name: webhook_secret, type: secret, label: Inbound Secret, description: "What the carrier signs its tracking calls with, or the token it sends"}
+    - {name: api_key, type: secret, label: API Key, description: "Read by the calls as secret.api_key. Type it here: saving moves it into the carrier's connection (Administration, Connections), which holds it, and clears it from here"}
+    - {name: api_secret, type: secret, label: API Secret, description: "Read by the calls as secret.api_secret; moved into the connection like the key. Typing any key replaces the connection's whole set: type every one again"}
+    - {name: webhook_secret, type: secret, label: Inbound Secret, description: "The token the carrier sends with its tracking calls (inbound auth token), moved into the connection like the key"}
+    - {name: connection, type: data, read_only: true, no_copy: true, label: Connection,
+       description: "The platform connection that makes this carrier's calls (Administration, Connections): it holds the secrets, logs each call and has the address the carrier's tracking calls go to"}
+    - {name: connection_ops, type: json, read_only: true, no_copy: true, hidden: true, description: "Which connection each call goes through"}
     - {name: from_address, type: link, to: Address, label: Ship From, description: "The sender's address the calls read as from"}
     - {name: weight_unit, type: data, default: kg, label: Weight Unit, description: "The unit parcels are weighed in, read by the calls as weight_unit"}
     - {name: dimension_unit, type: data, default: cm, label: Dimension Unit, description: "The unit parcels are measured in, read by the calls as dimension_unit"}
@@ -31,7 +34,7 @@
     - {name: freight_item, type: link, to: Item, label: Freight Item, required_if: "doc.freight == 'Charged to Customer'",
        description: "The item a delivery's label cost is charged to the customer as"}
     - {name: track_every_hours, type: int, min: "0", default: 6, label: Track Every (Hours), description: "How often labelled shipments are tracked by the upkeep; 0: only when asked or told"}
-    - {name: refused_calls, type: int, read_only: true, no_copy: true, label: Refused Inbound Calls, description: "Inbound tracking calls refused as unsigned or wrongly signed"}
+    - {name: refused_calls, type: int, read_only: true, no_copy: true, label: Refused Inbound Calls, description: "Inbound tracking calls refused as unsigned or wrongly signed, before carriers' calls went to connections; the connection counts them now"}
   unique: [[company, connection_name]]
 
 - name: CarrierPackage

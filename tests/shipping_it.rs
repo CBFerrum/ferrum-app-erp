@@ -7,7 +7,7 @@
 
 mod common;
 use common::*;
-use ferrum_kernel::{KernelSettings, Site, SiteRequest};
+use ferrum_kernel::KernelSettings;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,13 +60,6 @@ async fn carrier() -> (String, Arc<AtomicUsize>) {
     (url, labels)
 }
 
-fn signed(secret: &str, body: &[u8]) -> String {
-    use hmac::Mac;
-    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-    mac.update(body);
-    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
-}
-
 async fn scenario() {
     let url =
         std::env::var("FERRUM_ERP_SHIPPING_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_erp_shipping_test".into());
@@ -104,7 +97,7 @@ async fn scenario() {
                   "statuses": {"IN_TRANSIT": "In Transit", "DELIVERED": "Delivered", "FAILED": "Exception"}},
         "cancel": {"url": format!("{base}/v1/cancel/{{{{ provider_id }}}}")},
         "tracking_link": "https://track.carrier.example/{{ tracking_number }}",
-        "inbound": {"auth": "hmac", "header": "X-Signature", "tracking_at": "/data/tracking", "status_at": "/data/state",
+        "inbound": {"auth": "token", "header": "X-Hook-Token", "tracking_at": "/data/tracking", "status_at": "/data/state",
                     "statuses": {"DELIVERED": "Delivered", "IN_TRANSIT": "In Transit"}}
     });
     let mut bad = desc.clone();
@@ -118,8 +111,20 @@ async fn scenario() {
                    "freight": "Charged to Customer", "freight_account": freight, "freight_payable_account": owed, "freight_item": freight_item}),
         )
         .await;
-    assert_eq!(conn["api_key"], json!(true), "a secret reads only as set");
     let conn_id = uid(&conn);
+    // The secrets moved into the carrier's connection, cleared from the carrier: never in two places.
+    let sctx = ferrum_kernel::Ctx::system(t.ctx.tenant, t.ctx.schema.clone());
+    let connection_name = t.get("CarrierConnection", conn_id).await["connection"].as_str().unwrap().to_string();
+    let defs =
+        || async { t.k.connection_defs(&sctx).await.unwrap().into_iter().find(|d| d["name"] == json!(connection_name)).expect("the carrier's connection") };
+    let held = defs().await;
+    assert_eq!((held["enabled"].clone(), held["secrets"].clone()), (json!(true), json!(["api_key", "webhook_secret"])));
+    let carrier_now = t.get("CarrierConnection", conn_id).await;
+    assert_eq!((carrier_now["api_key"].clone(), carrier_now["webhook_secret"].clone()), (Value::Null, Value::Null));
+    // Typing one key again would drop the other: refused rather than lost.
+    let partial = t.k.update(&t.ctx, "CarrierConnection", conn_id, obj(json!({"api_key": "key-999"})), None).await;
+    assert!(format!("{partial:?}").contains("type every key again"), "{partial:?}");
+    assert_eq!(t.get("CarrierConnection", conn_id).await["api_key"], Value::Null);
 
     let dn =
         t.post("DeliveryNote", json!({"company": c, "customer": globex, "ship_to": dock, "set_warehouse": wh, "items": [{"item": widget, "qty": "2"}]})).await;
@@ -168,35 +173,23 @@ async fn scenario() {
     // Tracking: asked, then told by the carrier (signed), and an unsigned call refused and counted.
     let tracked = t.action("CarrierShipment", sid, "track", json!({})).await.expect("tracked");
     assert_eq!(tracked["status"], "In Transit");
-    let site = ferrum_app_erp::shipping::CarrierSite;
-    let call = |body: Value, sig: Option<String>| {
-        let raw = serde_json::to_vec(&body).unwrap();
-        let mut headers = serde_json::Map::new();
-        if let Some(s) = sig {
-            headers.insert("x-signature".into(), json!(s));
-        }
-        SiteRequest {
-            tenant: t.ctx.tenant,
-            user: None,
-            method: "POST".into(),
-            path: format!("/carriers/{conn_id}"),
-            query: Default::default(),
-            headers,
-            body: raw,
-            client_ip: "127.0.0.1".into(),
-        }
+    let inbound = |body: &Value, token: &str| {
+        let (k, id) = (t.k.clone(), held["id"].as_str().unwrap().parse().unwrap());
+        let (body, headers) = (serde_json::to_vec(body).unwrap(), std::collections::BTreeMap::from([("x-hook-token".to_string(), token.to_string())]));
+        async move { k.connection_inbound(id, &headers, &body).await }
     };
     let told = json!({"data": {"tracking": "TRK1", "state": "DELIVERED"}});
-    let unsigned = site.handle(&t.k, call(told.clone(), Some("sha256=00".into()))).await.unwrap();
-    assert_eq!(unsigned.status, 401);
+    assert!(inbound(&told, "wrong").await.is_err());
+    t.k.run_jobs_once(10).await.unwrap();
     assert_eq!(t.get("CarrierShipment", sid).await["status"], "In Transit");
-    let sig = signed("hook-456", &serde_json::to_vec(&told).unwrap());
-    let ok = site.handle(&t.k, call(told, Some(sig))).await.unwrap();
-    assert_eq!(ok.status, 200);
+    inbound(&told, "hook-456").await.expect("the carrier's own token is accepted");
+    t.k.run_jobs_once(10).await.unwrap();
     let ship = t.get("CarrierShipment", sid).await;
     assert_eq!(ship["status"], "Delivered");
     assert!(!ship["delivered_at"].is_null());
-    assert_eq!(t.get("CarrierConnection", conn_id).await["refused_calls"], json!(1));
+    assert_eq!(defs().await["refused"], json!(1), "the connection counts the refused call");
+    // The same delivery again is a replay, refused.
+    assert!(inbound(&told, "hook-456").await.is_err());
 
     // A test carrier answers from fixtures: a purchase return goes back, and cancelling takes the freight back.
     let acme = uid(&t.insert("Supplier", json!({"supplier_name": "Acme"})).await).to_string();
@@ -236,4 +229,11 @@ async fn scenario() {
         .await;
     assert_eq!(moved, vec![(dec(&json!("8.4")), dec(&json!("8.4")))], "booked, then taken back");
     assert_eq!(t.get("CarrierShipment", rid).await["status"], "Cancelled");
+
+    // The carrier's secrets are in no log, audit row, job or call record, nor any other table but sealed.
+    for table in ["audit_event", "job", "conn_call", "conn_inbound", "e_carrier_connection", "e_carrier_shipment"] {
+        let n: Vec<(i64,)> =
+            t.sql(&format!("select count(*) from {table} t where $1::uuid is not null and (t::text like '%key-123%' or t::text like '%hook-456%' or t::text like '%key-999%')"), uuid::Uuid::nil()).await;
+        assert_eq!(n, vec![(0,)], "a carrier secret rests in {table}");
+    }
 }

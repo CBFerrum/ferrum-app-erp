@@ -23,6 +23,23 @@ modules:
     order: 50
     items: [PurchaseOrder, PurchaseReceipt, PurchaseInvoice, PaymentEntry, Supplier, PurchaseApprovalSettings, report:payables, report:statement_of_account, report:purchase_register]
 
+# Approval before a purchase order is submitted, by value band (OP-21), as the package's default: off until the settings
+# record's Ask for Approval is ticked (every step then reads "skipped" and the order goes through at once, as before).
+# The person who made the order never approves it; stand-ins and escalation are the platform's own (an administrator
+# adds reminders and an escalation in Studio).
+approvals:
+  - entity: PurchaseOrder
+    on: submit
+    policy:
+      reset_on: [base_grand_total]
+      steps:
+        - {label: Purchase Manager, approvers: {role: Purchase Manager},
+           when: "settings.PurchaseApprovalSettings.enabled && doc.base_grand_total > settings.PurchaseApprovalSettings.first_above"}
+        - {label: Accounts Manager, approvers: {role: Accounts Manager}, not_earlier_deciders: true,
+           when: "settings.PurchaseApprovalSettings.enabled && settings.PurchaseApprovalSettings.second_above > 0.0 && doc.base_grand_total > settings.PurchaseApprovalSettings.second_above"}
+        - {label: Two Accounts Managers, approvers: {role: Accounts Manager}, need: 2, not_earlier_deciders: true,
+           when: "settings.PurchaseApprovalSettings.enabled && settings.PurchaseApprovalSettings.third_above > 0.0 && doc.base_grand_total > settings.PurchaseApprovalSettings.third_above"}
+
 roles:
   - name: Purchase User
     description: Day-to-day buying.
@@ -47,17 +64,20 @@ roles:
       - {entity: Project, read: true}
       - {entity: CostCenter, read: true}
       - {entity: Account, read: true}
+      - {entity: NumberSeries, read: true}
   - name: Purchase Manager
     permissions:
       - {entity: PurchaseOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseReceipt, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseApprovalSettings, read: true, write: true, create: true}
+      - {entity: NumberSeries, read: true}
   - name: Accounts Manager
     permissions:
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseOrder, read: true}
       - {entity: PurchaseReceipt, read: true}
+      - {entity: NumberSeries, read: true, write: true, create: true, delete: true}
 
 documents:
   - key: buying.serial_labels
