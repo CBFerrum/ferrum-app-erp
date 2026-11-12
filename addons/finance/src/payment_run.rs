@@ -231,7 +231,7 @@ async fn propose(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
         let taken = discount.as_ref().map(|x| x.amount).unwrap_or_default();
         let sup = get(hc.kernel, hc.ctx, hc.tx, "Supplier", supplier).await?;
         let mut line = obj(json!({
-            "pay": true, "supplier": supplier, "supplier_name": s(&sup, "supplier_name"), "iban": s(&sup, "fin_iban"), "bic": s(&sup, "fin_bic"), "invoice": item, "invoice_type": hc.ctx.schema.entity(&entity).map(|e| e.def.label.clone()).unwrap_or(entity),
+            "pay": true, "supplier": supplier, "supplier_name": s(&sup, "supplier_name"), "iban": s(&sup, "fin_iban"), "bic": s(&sup, "fin_bic"), "supplier_email": s(&sup, "email"), "invoice": item, "invoice_type": hc.ctx.schema.entity(&entity).map(|e| e.def.label.clone()).unwrap_or(entity),
             "invoice_number": number, "due_date": due, "outstanding": money(outstanding), "discount": money(taken), "amount": money(outstanding - taken),
             "state": "Proposed",
         }));
@@ -333,6 +333,7 @@ async fn pay_supplier(hc: &mut HookCtx<'_>, run: &Doc, supplier: Uuid, ls: &[Doc
         })
         .collect();
     let paid: Decimal = ls.iter().map(|l| d(l, "amount")).sum();
+    let instrument = ls.iter().find_map(|l| s(l, "instrument_no").filter(|n| !n.trim().is_empty()));
     let pe = hc
         .kernel
         .insert_tx(
@@ -342,7 +343,7 @@ async fn pay_supplier(hc: &mut HookCtx<'_>, run: &Doc, supplier: Uuid, ls: &[Doc
             obj(json!({
                 "company": s(run, "company"), "posting_date": s(run, "posting_date"), "payment_type": "Pay", "supplier": supplier,
                 "bank_account": s(run, "bank_account"), "mode_of_payment": s(run, "mode_of_payment"), "currency": s(run, "currency"),
-                "paid_amount": money(paid), "references": references, "remarks": format!("Payment run {number}"),
+                "paid_amount": money(paid), "references": references, "remarks": format!("Payment run {number}"), "reference_no": instrument,
             })),
         )
         .await?;

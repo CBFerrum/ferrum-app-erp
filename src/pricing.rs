@@ -556,6 +556,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         }
         if side == Side::Selling && has_child("stored_value_kind") {
             untaxed[i] = crate::stored_value::price_line(k, ctx, tx, &item, row, &mut stored_value_kinds).await?;
+        } else if side == Side::Selling {
+            // An order or quotation taxes a stored value line as its invoice will.
+            untaxed[i] = crate::stored_value::taxed_when_redeemed(k, ctx, tx, &item, &mut stored_value_kinds).await?;
         }
         // A line is deferred like its item when it comes with the days its service covers (without
         // them it is sold at once); once added, its own setting stands. Unset checkboxes read as

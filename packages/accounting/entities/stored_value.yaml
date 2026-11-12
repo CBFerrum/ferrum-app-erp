@@ -54,6 +54,8 @@
        description: "Stays Owed: an expired account still owes its value, and a person decides. Income at Expiry: what is left is income when it expires. Income Over Time: each use also recognises the stated share of unused value expected, and what is left is income when it expires"}
     - {name: breakage_percent, type: percent, min: "0", max: "99", visible_if: "doc.on_expiry == 'Income Over Time'", required_if: "doc.on_expiry == 'Income Over Time'",
        label: Expected Unused (%), description: "The share of value issued that experience says will never be used"}
+    - {name: hold_hours, type: int, min: "1", default: 72, label: Hours an Order Holds Value,
+       description: "Value held on an account for an order not yet invoiced is released after this many hours unless the order is invoiced first; 72 when empty"}
     - {name: disabled, type: check, description: "Nothing more is issued; what is out can still be used"}
   unique: [[company, kind_name]]
   rules:
@@ -71,7 +73,7 @@
       read_only: true
       hidden: true
       params:
-        - {name: operation, label: For, type: select, options: [issue, redeem, refund, transfer, transfer_to, new_code], required: true,
+        - {name: operation, label: For, type: select, options: [issue, redeem, refund, transfer, transfer_to, new_code, hold], required: true,
            description: "The one operation the proof is for; transfer_to is a transfer's other card"}
         - {name: code, label: Code, description: "A card's own code; one is made, and answered once, when empty"}
         - {name: pin, label: PIN}
@@ -90,8 +92,9 @@
         - {name: pin, label: PIN}
       contract:
         effect: query
-        returns: {type: object, properties: {account: {type: string, format: uuid}, balance: {type: string}, holds: {type: string}, state: {type: string}, expires_on: {type: [string, "null"]}}}
-        completion: "The account's balance, state and expiry, if the code (and PIN) are right"
+        returns: {type: object, properties: {account: {type: string, format: uuid}, balance: {type: string}, held: {type: string}, available: {type: string},
+                  holds: {type: string}, state: {type: string}, expires_on: {type: [string, "null"]}}}
+        completion: "The account's balance (and how much of it is held for orders and so not available), state and expiry, if the code (and PIN) are right"
     - name: issue
       label: Issue by Hand
       permission: read
@@ -148,6 +151,30 @@
         returns: {type: object, properties: {account: {type: string, format: uuid}, to_account: {type: string, format: uuid}, entry: {type: string, format: uuid}, balance: {type: string}}}
         completion: "The value is on the other account, committed with this receipt"
         compensate_with: reverse
+    - name: hold
+      label: Hold for an Order
+      permission: read
+      hidden: true
+      params:
+        - {name: proof, label: Proof, required: true, description: "From prove (hold): the card's code and PIN"}
+        - {name: order, label: Sales Order, type: link, to: SalesOrder, required: true}
+        - {name: amount, label: Amount, required: true}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {hold: {type: string, format: uuid}, account: {type: string, format: uuid}, amount: {type: string},
+                  held: {type: string}, available: {type: string}, expires_at: {type: string}}}
+        completion: "The amount is held on the account for the order, until the order is invoiced (then paid from it once), cancelled, or the kind's hours pass"
+        compensate_with: release
+    - name: release
+      label: Release a Hold
+      permission: read
+      hidden: true
+      params:
+        - {name: hold, label: Hold, required: true, description: "The hold that hold returned"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {hold: {type: string, format: uuid}, state: {type: string}, available: {type: string}}}
+        completion: "The hold is released and its amount available again; one already ended is left as it is"
     - name: reverse
       label: Reverse
       permission: read
@@ -175,6 +202,7 @@
     - {name: pin_hash, type: data, read_only: true, hidden: true, no_copy: true}
     - {name: holder, type: link, to: Customer, read_only: true, in_list: true, in_filter: true, description: "Empty: whoever has its code"}
     - {name: balance, type: decimal, read_only: true, in_list: true, description: "Money, or units for a kind that holds units"}
+    - {name: held, type: decimal, read_only: true, no_copy: true, label: Held for Orders, description: "Of the balance, what is held for orders not yet invoiced: nothing else may take it"}
     - {name: value, type: currency, read_only: true, description: "What the books owe on it, in the company's currency"}
     - {name: issued_on, type: date, read_only: true, in_list: true}
     - {name: last_used_on, type: date, read_only: true}
