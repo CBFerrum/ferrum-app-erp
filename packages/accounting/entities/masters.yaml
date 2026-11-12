@@ -293,3 +293,70 @@
     - {name: code_form, check: "doc.code.matches('^[a-z][a-z0-9_]*$') && doc.code != 'cost_center' && doc.code != 'project'",
        message: "The code is lower-case letters, digits and _, starting with a letter, and not cost_center or project"}
   list: {columns: [dimension_name, code, source, disabled], sort: dimension_name asc}
+
+# Tax returns as definitions (FN-38, FN-40): boxes summed from the tax each submitted invoice keeps
+# in its tax breakdown, or worked out from other boxes; a country's return is a definition its
+# add-on seeds, or an accountant makes.
+- name: TaxReturnBoxDefinition
+  label: Return Box
+  kind: child
+  fields:
+    - {name: code, type: data, required: true, max_length: 20, in_list: true}
+    - {name: label, type: data, in_list: true}
+    - {name: kind, type: select, options: [Sum, Formula, By Hand], required: true, default: Sum, in_list: true,
+       description: "Sum: of the tax ledger's rows that match. Formula: over other boxes' codes. By Hand: entered on each return"}
+    - {name: measure, type: select, options: [Tax, Base], default: Tax, in_list: true, visible_if: "doc.kind == 'Sum'", description: "The tax, or the taxable base"}
+    - {name: direction, type: select, options: [Any, Output, Input], default: Any, in_list: true, visible_if: "doc.kind == 'Sum'", description: "Output: sales. Input: purchases"}
+    - {name: tax, type: data, visible_if: "doc.kind == 'Sum'", description: "Only this tax: its account's name or the tax row's description"}
+    - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], visible_if: "doc.kind == 'Sum'"}
+    - {name: rate, type: decimal, visible_if: "doc.kind == 'Sum'", description: "Only this rate; any when empty"}
+    - {name: reverse_charge, type: select, options: [Any, Yes, No], default: Any, visible_if: "doc.kind == 'Sum'"}
+    - {name: place, type: data, max_length: 7, visible_if: "doc.kind == 'Sum'",
+       description: "Only documents delivered to this country (its ISO code, e.g. IE), or anywhere else with ! before it (!IE); a document that names none counts as anywhere"}
+    - {name: document, type: select, options: [Any, Invoice, Credit Note], default: Any, visible_if: "doc.kind == 'Sum'", description: "Credit notes count negative whatever is chosen"}
+    - {name: formula, type: data, max_length: 400, visible_if: "doc.kind == 'Formula'", required_if: "doc.kind == 'Formula'",
+       description: "Other boxes' codes with + - * / ( ), numbers, max(a, b) and min(a, b), e.g. max(T1 - T2, 0)"}
+    - {name: description, type: text}
+
+- name: TaxReturnDefinition
+  label: Tax Return Definition
+  kind: master
+  module: accounting
+  title_field: definition_name
+  description: "A tax return's boxes: each a sum of the tax ledger's base or tax filtered by tax, rate, category, direction, place and document kind, a formula over other boxes, or entered by hand."
+  fields:
+    - {name: definition_name, type: data, required: true, unique: true, in_list: true}
+    - {name: country, type: data, max_length: 2, in_list: true, in_filter: true, description: "The country whose return it is (ISO code); empty for any"}
+    - {name: frequency, type: select, options: [Monthly, Bi-monthly, Quarterly, Half-yearly, Yearly], required: true, default: Monthly, in_list: true}
+    - {name: boxes, type: table, of: TaxReturnBoxDefinition, required: true}
+    - {name: notes, type: text}
+  list: {columns: [definition_name, country, frequency], sort: definition_name asc}
+
+- name: TaxReturnBox
+  label: Return Box
+  kind: child
+  fields:
+    - {name: code, type: data, read_only: true, in_list: true}
+    - {name: label, type: data, read_only: true, in_list: true}
+    - {name: computed, type: currency, read_only: true, in_list: true, label: From the Books}
+    - {name: adjustment, type: currency, in_list: true, description: "Entered by hand, with its reason"}
+    - {name: adjustment_reason, type: data, label: Reason}
+    - {name: value, type: currency, read_only: true, in_list: true, label: Filed Value}
+
+- name: TaxReturn
+  label: Tax Return
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  numbering: {template: "TR-{FY}-{seq:4}", date_field: from_date}
+  description: "A return for a period, its boxes worked out from the books while it is a draft and adjusted by hand with a reason. Submitting it files it: its values are kept, and no invoice of its period may be submitted or cancelled after."
+  fields:
+    - {name: definition, type: link, to: TaxReturnDefinition, required: true, in_list: true, in_filter: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: from_date, type: date, required: true, in_list: true, label: Period From}
+    - {name: to_date, type: date, read_only: true, in_list: true, label: Period To}
+    - {name: boxes, type: table, of: TaxReturnBox}
+    - {name: filed_on, type: date, read_only: true, no_copy: true}
+    - {name: remarks, type: text}
+  list: {columns: [number, definition, from_date, to_date], sort: from_date desc}

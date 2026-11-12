@@ -92,7 +92,7 @@ modules:
     icon: book
     order: 20
     items: [JournalEntry, JournalTemplate, PaymentEntry, PaymentInstrument, ModeOfPayment, BadDebtWriteOff, WriteOffReason, OpeningInvoice, Account, CostCenter, AccountingDimension, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
-            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding, report:stored_value_liability, report:stored_value_statement, report:stored_value_movement]
+            report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, TaxReturn, TaxReturnDefinition, report:tax_return_documents, report:withholding, report:stored_value_liability, report:stored_value_statement, report:stored_value_movement]
   - name: setup
     label: Setup
     icon: settings
@@ -127,6 +127,8 @@ roles:
       - {entity: ExchangeRate, read: true, write: true, create: true, delete: true, import: true}
       - {entity: TaxTemplate, read: true, write: true, create: true, delete: true}
       - {entity: TaxRate, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: TaxReturnDefinition, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: TaxReturn, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: WithholdingCategory, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: WithholdingCertificate, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: StoredValueKind, read: true, write: true, create: true, delete: true, export: true}
