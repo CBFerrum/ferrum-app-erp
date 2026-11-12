@@ -433,6 +433,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         Some(pid) => Some(get(k, ctx, tx, side.party_entity(), pid).await?),
         None => None,
     };
+    crate::localization::fill_tax_registrations(ctx, ent, doc, &co.doc, party.as_ref(), side);
 
     // Currency and conversion rate.
     if id(doc, "currency").is_none() {

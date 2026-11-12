@@ -67,7 +67,10 @@
    {% set contact = [co.acc_phone, co.acc_email, co.acc_website]|select|join(" · ") %}
    {% if contact %}<div class="muted" dir="auto">{{ contact }}</div>{% endif %}
    {% if co.tax_id %}<div><span class="muted">Tax ID</span> {{ co.tax_id }}</div>{% endif %}
-   {% if co.in_gstin and co.in_gstin != co.tax_id %}<div><span class="muted">GSTIN</span> {{ co.in_gstin }}</div>{% endif %}
+   {% set regs = doc.tax_registrations or {} %}
+   {% for t in regs.seller or [] %}{% if t.value != co.tax_id %}<div><span class="muted">{{ t.label }}</span> {{ t.value }}</div>{% endif %}{% endfor %}
+   {# Documents priced before the countries' registrations were kept on them. #}
+   {% if doc.tax_registrations is none and co.in_gstin and co.in_gstin != co.tax_id %}<div><span class="muted">GSTIN</span> {{ co.in_gstin }}</div>{% endif %}
   </div>
  </div>
  <div class="title">
@@ -84,7 +87,8 @@
   <div class="strong" dir="auto">{{ cu.customer_name or doc.customer_name }}</div>
   {% if ba %}{{ addr(ba) }}{% elif cu.billing_address %}<div class="pre" dir="auto">{{ cu.billing_address }}</div>{% endif %}
   {% if cu.tax_id %}<div><span class="muted">Tax ID</span> {{ cu.tax_id }}</div>{% endif %}
-  {% if cu.in_gstin %}<div><span class="muted">GSTIN</span> {{ cu.in_gstin }}</div>{% endif %}
+  {% for t in (doc.tax_registrations or {}).buyer or [] %}{% if t.value != cu.tax_id %}<div><span class="muted">{{ t.label }}</span> {{ t.value }}</div>{% endif %}{% endfor %}
+  {% if doc.tax_registrations is none and cu.in_gstin %}<div><span class="muted">GSTIN</span> {{ cu.in_gstin }}</div>{% endif %}
   {% if cu.email %}<div dir="auto">{{ cu.email }}</div>{% endif %}
  </div>
   {% if sa and doc.ship_to != doc.customer_address %}<div><h2>Ship to</h2>{{ addr(sa) }}</div>

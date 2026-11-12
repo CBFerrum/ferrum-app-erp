@@ -157,6 +157,8 @@ async fn scenario() {
     assert_eq!((dec(&plain["net_total"]), dec(&plain["grand_total"])), (n("145"), n("159.5")));
     assert!(plain["applied_promotions"].as_array().is_none_or(Vec::is_empty));
     assert!(plain["items"].as_array().unwrap().iter().all(|l| l["promotion_percent"].is_null()));
+    // No country's add-on: no tax registrations to print.
+    assert_eq!(plain["tax_registrations"], json!({"seller": [], "buyer": [], "buyer_registered": false}));
 
     // Online with the code: 10 off the goods spread 200 : 45, delivery free, and the bulb (the
     // spend after the 10 off is 235) added as a line and taken whole.

@@ -81,6 +81,8 @@
     - {name: channel, type: data, label: Channel, description: "Where the sale is made (Web Shop, Point of Sale, ...), as promotions name it; empty: this document's kind"}
     - {name: promotion_codes, type: data, label: Promotion Codes, no_copy: true, description: "Codes the customer gives, separated by commas or spaces"}
     - {name: applied_promotions, type: table, of: AppliedPromotion, read_only: true, no_copy: true, label: Promotions Applied}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The seller's and the buyer's tax registrations (label and value) and whether the buyer is a registered business, as the countries' add-ons say, kept as the draft was last priced"}
     - {name: total, type: currency, read_only: true}
     - {name: net_total, type: currency, read_only: true}
     - {name: total_taxes, type: currency, read_only: true}
@@ -295,6 +297,8 @@
     - {name: channel, type: data, label: Channel, description: "Where the sale is made (Web Shop, Point of Sale, ...), as promotions name it; empty: this document's kind"}
     - {name: promotion_codes, type: data, label: Promotion Codes, no_copy: true, description: "Codes the customer gives, separated by commas or spaces"}
     - {name: applied_promotions, type: table, of: AppliedPromotion, read_only: true, no_copy: true, label: Promotions Applied}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The seller's and the buyer's tax registrations (label and value) and whether the buyer is a registered business, as the countries' add-ons say, kept as the draft was last priced"}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}
     - {name: net_total, type: currency, currency: currency, read_only: true}
