@@ -47,17 +47,20 @@ roles:
       - {entity: Project, read: true}
       - {entity: CostCenter, read: true}
       - {entity: Account, read: true}
+      - {entity: NumberSeries, read: true}
   - name: Purchase Manager
     permissions:
       - {entity: PurchaseOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseReceipt, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseApprovalSettings, read: true, write: true, create: true}
+      - {entity: NumberSeries, read: true}
   - name: Accounts Manager
     permissions:
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseOrder, read: true}
       - {entity: PurchaseReceipt, read: true}
+      - {entity: NumberSeries, read: true, write: true, create: true, delete: true}
 
 documents:
   - key: buying.serial_labels

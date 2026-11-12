@@ -361,3 +361,22 @@
     - {name: filed_on, type: date, read_only: true, no_copy: true}
     - {name: remarks, type: text}
   list: {columns: [number, definition, from_date, to_date], sort: from_date desc}
+
+- name: NumberSeries
+  label: Numbering Series
+  label_plural: Numbering Series
+  kind: master
+  module: masters
+  title_field: series_name
+  description: "A way of numbering one kind of document, beside the usual one: a tax invoice against a simplified receipt, a branch's own run. A document takes the series it names, else the one its country's rules or the settings give, else the usual one."
+  fields:
+    - {name: series_name, type: data, required: true, in_list: true}
+    - {name: document, type: select, required: true, in_list: true, in_filter: true, locked: true,
+       options: [SalesOrder, DeliveryNote, SalesInvoice, PurchaseOrder, PurchaseReceipt, PurchaseInvoice, StockEntry, JournalEntry, PaymentEntry], label: For}
+    - {name: company, type: link, to: Company, in_filter: true, description: "Empty: every company's"}
+    - {name: template, type: data, required: true, in_list: true, label: Number Template,
+       description: "As a document's usual number is made: SINV-{FY}-{seq:5}, {YYYY}, {YY}, {MM}, {DD}, {FY} and {field:<a field of the document>}; {seq:N} is the running number, N digits. Two series with the same text before and after {seq} share one running number"}
+    - {name: gapless, type: check, label: Gapless, description: "The running number is taken inside the submission and given back when it fails or is cancelled before it commits, so no number is skipped; the series' documents take turns"}
+    - {name: use_by_default, type: check, label: Use When a Document Names None, description: "Documents of this kind (of this company, when one is set) that name no series take this one. At most one per kind and company"}
+    - {name: disabled, type: check}
+  unique: [[company, document, series_name]]

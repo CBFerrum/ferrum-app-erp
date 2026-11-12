@@ -97,7 +97,7 @@ modules:
     label: Setup
     icon: settings
     order: 90
-    items: [Company, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project]
+    items: [Company, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project, NumberSeries]
   - name: masters
     label: Masters
     icon: database
@@ -143,6 +143,7 @@ roles:
       - {entity: Uom, read: true}
       - {entity: PriceList, read: true}
       - {entity: ItemPrice, read: true}
+      - {entity: NumberSeries, read: true, write: true, create: true, delete: true}
   - name: Accounts User
     description: Enters vouchers; a manager approves.
     permissions:
@@ -165,6 +166,7 @@ roles:
       - {entity: AccountingDimension, read: true}
       - {entity: Project, read: true}
       - {entity: Currency, read: true}
+      - {entity: NumberSeries, read: true}
 export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation, stored_value_entry]
 
 # An account a customer holds is theirs: exported with the rest, kept because the books owe it. A
