@@ -30,6 +30,7 @@ pub mod promotion;
 pub mod reports;
 pub mod reservation;
 pub mod setup;
+pub mod shipping;
 pub mod stock;
 pub mod stock_entry;
 pub mod stored_value;
@@ -65,6 +66,8 @@ pub fn register(h: &mut HookRegistry) {
     h.add_site("selling", Arc::new(portal::SellingPortal));
     // A supplier's orders and bills on the workspace's portal ("Your orders").
     h.add_site("buying", Arc::new(portal::BuyingPortal));
+    // Carriers' tracking calls, signed per connection.
+    h.add_site("inventory", Arc::new(shipping::CarrierSite));
     h.scoped(&only("accounting"), |h| {
         h.register("Company", Arc::new(setup::CompanyHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
@@ -80,7 +83,9 @@ pub fn register(h: &mut HookRegistry) {
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
     });
     h.scoped(&only("inventory"), |h| {
-        h.register("StockEntry", Arc::new(stock_entry::StockEntryHook));
+        h.register("StockEntry", Arc::new(stock_entry::StockEntryHook))
+            .register("CarrierConnection", Arc::new(shipping::CarrierHook))
+            .register("CarrierShipment", Arc::new(shipping::ShipmentHook));
     });
     h.scoped(&only("manufacturing"), |h| {
         h.register("Bom", Arc::new(manufacturing::BomHook))
@@ -154,6 +159,9 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
         if let Err(e) = stored_value::upkeep(k, &ctx, today).await {
             tracing::warn!(%tenant, "stored value expiry: {e}");
+        }
+        if let Err(e) = shipping::upkeep(k, &ctx, 100).await {
+            tracing::warn!(%tenant, "carrier tracking: {e}");
         }
     }
     Ok(())

@@ -62,6 +62,13 @@ sha2 = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+# Carrier connections (src/shipping.rs): described HTTP calls, rendered as the platform's message channels are.
+base64 = "0.22"
+hex = { workspace = true }
+hmac = "0.12"
+minijinja = { version = "2", features = ["fuel"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { workspace = true }
 
 [dev-dependencies]
 ferrum-apps = { workspace = true }
@@ -70,8 +77,6 @@ ferrum-india = { path = "addons/india" }
 ferrum-plugins = { workspace = true }
 tokio = { workspace = true }
 axum = "0.8"
-base64 = "0.22"
-hex = { workspace = true }
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 rsa = { version = "0.9", default-features = false, features = ["std", "pem"] }
 

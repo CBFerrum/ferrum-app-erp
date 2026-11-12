@@ -148,6 +148,10 @@
   actions:
     - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
     - {name: make_purchase_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: make_carrier_shipment, label: Ship by Carrier, docstatus: [1], permission: read, condition: "doc.is_return",
+       params: [{name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "The company's only enabled connection when empty"},
+                {name: weight, label: Weight, required: true, description: "Of the first parcel, in the connection's weight unit; add more parcels on the shipment"},
+                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}]}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: PurchaseInvoiceItem
