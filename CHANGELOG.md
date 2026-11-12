@@ -1,5 +1,19 @@
 # Changelog
 
+## ERP 0.21.0, India 0.5.0, EU 0.2.0, UK 0.2.0, thirteen countries 0.2.0: promotions, and tax registrations through the seam
+
+Promotions over a whole sale, for orders, invoices, the till and the web shop alike (POS PS-16, PS-40, PS-66, PS-69 to PS-71; Commerce CM-60 to CM-62; operations OP-7).
+
+- **A promotion** (`Promotion`, Selling menu) says when it applies (dates, weekdays, hours in the company's new Time Zone, customers or customer groups, channels a document names, warehouses or places an app names, a code, a first order, a minimum spend or quantity over a set of items), what it gives (percent or amount off the document or the qualifying lines, buy some and get some free or at a percent or a price, cheapest or dearest first, a bundle price, free delivery, a free item added as a line) and how it combines (priority, alone or with others, also on lines with their own discount or not, a cap).
+- **Pure and shared.** `ferrum-erp-promotions` computes it without a clock or a database (feature `wasm` for the browser, beside `ferrum-calc`), so a till prices offline exactly as the server. Item-level pricing rules come first; promotions then go by priority on what each line has left. A discount on several lines is spread by largest remainder; each line keeps its exact share (`promotion_percent`), so its taxes are on what is left and a return of part of it gives back the same share.
+- **Kept on the document.** `applied_promotions` says what each promotion took off each line, with its code. Promotions run on a draft order or invoice of its own; an invoice made from an order, a delivery, a return or a debit note keeps the shares it copied.
+- **Codes** (`PromotionCode`): one shared code or many unique ones, each with its own limit and the promotion's overall one; counted once when a document is submitted, given back when it is cancelled; of two documents taking the last use at once, one gets it. An unknown code and a used-up one get the same answer.
+- **Delivery charges** are lines of an item marked Delivery Charge: only free delivery takes them off.
+- **Report** Promotions Given: discount by promotion, month and channel, in company currency.
+- **For other apps:** `promotion::price_lines` and the read-only contracted query `core.company.price_lines` (lines, customer, channel, place, moment, codes, currency, price list in; priced lines, promotions applied, codes rejected and totals out; nothing saved, no code counted); `promotion::candidates` gives a till the promotions to take offline; `promotion::count_uses` counts a document's codes.
+
+A country's tax registrations, through the localization seam: `Localization::tax_ids` (a company's or a party's registrations, each with its label and value) and `Localization::registered` (a registered business or not), asked with `localization::tax_ids` and `localization::registered_business`; the core says nothing by itself. India answers with the GSTIN and its GST category, the EU with the VAT number, the UK with the VAT registration number and each of the thirteen countries with its registration number. A draft sales order or invoice keeps the seller's and buyer's in `tax_registrations`, which their prints read; documents priced before keep printing as they did.
+
 ## ERP 0.20.1: a card's code and PIN never come to rest
 
 The platform writes an action's parameters to the audit log and a capability's result to its receipt, so 0.20.0 logged the code, PIN and other card's code given to stored value's issue, redeem, refund and transfer and an account's New Code PIN, and kept codes made for new cards in the receipts.

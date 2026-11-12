@@ -1,12 +1,12 @@
 # ERP's add-on for Philippines: vAT at 12%, zero-rated and exempt sales, and the 2550Q figures for ERP in the Philippines. Ferrum localization.md.
 id: ph
 name: "Philippines"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "VAT at 12%, zero-rated and exempt sales, and the 2550Q figures for ERP in the Philippines"
 categories: [finance]
 runtime: native
 platform: ">=0.3.1, <0.4"
-requires: {erp: ">=0.4"}
+requires: {erp: ">=0.21"}
 parent: erp
 packages: [ph]
