@@ -10,5 +10,7 @@
     - {name: parent_warehouse, type: link, to: Warehouse, link_filters: {is_group: true}}
     - {name: is_group, type: check}
     - {name: account, type: link, to: Account, link_filters: {is_group: false}, description: Inventory account; defaults to the company inventory account}
+    - {name: warehouse_type, type: select, options: [Stock, Transit, Rejected], default: Stock, label: Holds, in_list: true, in_filter: true,
+       description: "Stock: goods to sell and use. Transit: goods on their way between warehouses. Rejected: goods refused at receipt. Only Stock is available to orders and planning"}
     - {name: disabled, type: check}
   unique: [[company, warehouse_name]]

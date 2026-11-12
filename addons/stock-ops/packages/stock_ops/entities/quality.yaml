@@ -62,6 +62,8 @@
     - {name: inspected_by, type: data, default_expr: "user.email"}
     - {name: manual_inspection, type: check, description: Set the status by hand instead of from the readings}
     - {name: status, type: select, options: [Accepted, Rejected], in_list: true, in_filter: true, description: Computed from the readings unless the inspection is manual}
+    - {name: rejected_qty, type: decimal, min: "0", label: Rejected Qty, visible_if: "doc.reference_type == 'Purchase Receipt'",
+       description: "Accepted with part refused: how much of the receipt's line is rejected (the rest accepted), moved to its Rejected Qty when the receipt is submitted. Empty: the status decides for the whole line"}
     - {name: readings, type: table, of: QualityInspectionReading}
     - {name: remarks, type: text}
   list: {columns: [number, item_name, inspection_type, report_date, status], sort: report_date desc}

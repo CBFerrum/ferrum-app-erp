@@ -91,7 +91,11 @@
     - {name: stock_qty, type: decimal, read_only: true, label: Qty in Stock Unit}
     - {name: stock_uom, type: link, to: Uom, fetch_from: item.stock_uom, read_only: true, label: Stock Unit}
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
-    - {name: rejected_qty, type: decimal, default: 0, min: "0"}
+    - {name: rejected_qty, type: decimal, default: 0, min: "0", label: Rejected Qty,
+       description: "Received and refused, beside the quantity accepted: kept in the rejected warehouse at no value, out of what can be sold or used, until returned"}
+    - {name: rejected_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Rejected}, label: Rejected Warehouse, visible_if: "doc.rejected_qty > 0.0",
+       description: "Empty: the company's rejected warehouse"}
+    - {name: rejected_returned_qty, type: decimal, read_only: true, no_copy: true, label: Rejected Returned, description: "What returns of rejected goods sent back of it"}
     - {name: price_list_rate, type: currency, min: "0", in_list: true}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: rate, type: currency, read_only: true}
@@ -125,6 +129,8 @@
     - {name: supplier_delivery_note, type: data}
     - {name: is_return, type: check, in_filter: true}
     - {name: return_against, type: link, to: PurchaseReceipt, visible_if: "doc.is_return"}
+    - {name: rejected_return, type: check, read_only: true, no_copy: true, label: Returns Rejected Goods, visible_if: "doc.is_return",
+       description: "Sends back goods refused at receipt, from the rejected warehouse; what was accepted and the order's progress stay as they were"}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
     - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
@@ -148,6 +154,12 @@
   actions:
     - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
     - {name: make_purchase_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: return_rejected, label: Return Rejected Goods, docstatus: [1], permission: read, condition: "!doc.is_return",
+       params: [{name: make, type: select, options: [Return, Debit Note], label: Make, description: "Return: a return sending the rejected goods back. Debit Note: a debit note against the supplier's invoice that billed them, at its price, with no goods moving"}]}
+    - {name: make_carrier_shipment, label: Ship by Carrier, docstatus: [1], permission: read, condition: "doc.is_return",
+       params: [{name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "The company's only enabled connection when empty"},
+                {name: weight, label: Weight, required: true, description: "Of the first parcel, in the connection's weight unit; add more parcels on the shipment"},
+                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}]}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: PurchaseInvoiceItem

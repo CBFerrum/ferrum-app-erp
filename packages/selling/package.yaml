@@ -5,6 +5,9 @@ description: Sales orders, deliveries and invoices with exact tax maths, receiva
 depends: [accounting, inventory]
 
 overlays:
+  - entity: CarrierShipment
+    ops:
+      - {op: add_field, column: true, after: reference, field: {name: delivery_note, type: link, to: DeliveryNote, read_only: true, in_filter: true}}
   - entity: Customer
     ops:
       - {op: add_field, column: true, after: payment_terms_days, field: {name: credit_limit, type: currency, min: "0", perm_group: credit, description: 0 = no limit}}

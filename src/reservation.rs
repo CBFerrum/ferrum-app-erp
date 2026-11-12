@@ -265,7 +265,9 @@ pub async fn availability(ctx: &Ctx, tx: &mut Tx, company: Uuid, item: Uuid, qty
         0
     };
     let balances: Vec<(Uuid, Decimal, Decimal)> = sqlx::query_as(
-        "select warehouse_id, qty, coalesce(reserved_qty, 0) from stock_balance where tenant_id = $1 and company_id = $2 and item_id = $3 and ($4::uuid is null or warehouse_id = $4)",
+        "select b.warehouse_id, b.qty, coalesce(b.reserved_qty, 0) from stock_balance b join e_warehouse w on w.tenant_id = b.tenant_id and w.id = b.warehouse_id \
+         where b.tenant_id = $1 and b.company_id = $2 and b.item_id = $3 and ($4::uuid is null or b.warehouse_id = $4) \
+         and ($4::uuid is not null or coalesce(w.warehouse_type, 'Stock') = 'Stock')",
     )
     .bind(ctx.tenant)
     .bind(company)

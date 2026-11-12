@@ -1,0 +1,86 @@
+# Carriers behind one interface (src/shipping.rs): a connection describes four HTTP calls (rates, label, tracking,
+# cancellation) as templates over the shipment and pointers into the answers, so no carrier's name or format is in the
+# code; a shipment holds its parcels, the rates offered, the label bought and where tracking says the goods are.
+- name: CarrierConnection
+  label: Carrier Connection
+  kind: master
+  module: inventory
+  title_field: connection_name
+  company_scoped: true
+  description: "A carrier or a multi-carrier service, described as calls: where to ask for rates, buy a label, track and cancel, and where the answer says what."
+  fields:
+    - {name: connection_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_list: true, in_filter: true}
+    - {name: enabled, type: check, default: true, in_list: true}
+    - {name: test, type: check, label: Test Carrier, in_list: true,
+       description: "Answers each call from the fixtures below and calls nobody: for trying the flow and for tests"}
+    - {name: description, type: json, required: true, label: Calls,
+       description: "{rate, label, track, cancel, tracking_link, inbound}: each call a url, method, headers and a body or form as templates over the shipment, and JSON pointers to what the answer says. The README has two worked examples"}
+    - {name: fixtures, type: json, visible_if: "doc.test", label: Fixtures, description: "For a test carrier: the answer to each call, {rate: …, label: …, track: …, cancel: …}"}
+    - {name: api_key, type: secret, label: API Key, description: "Read by the calls as secret.api_key"}
+    - {name: api_secret, type: secret, label: API Secret, description: "Read by the calls as secret.api_secret"}
+    - {name: webhook_secret, type: secret, label: Inbound Secret, description: "What the carrier signs its tracking calls with, or the token it sends"}
+    - {name: from_address, type: link, to: Address, label: Ship From, description: "The sender's address the calls read as from"}
+    - {name: weight_unit, type: data, default: kg, label: Weight Unit, description: "The unit parcels are weighed in, read by the calls as weight_unit"}
+    - {name: dimension_unit, type: data, default: cm, label: Dimension Unit, description: "The unit parcels are measured in, read by the calls as dimension_unit"}
+    - {name: freight, type: select, options: [Not Booked, Absorbed, Charged to Customer], default: Not Booked, label: Label Cost,
+       description: "Not Booked: the carrier's bill is entered as usual. Absorbed: buying a label books its cost as freight, owed until the bill comes. Charged to Customer: the same, and the invoice made from the delivery charges it on a line of the Freight Item"}
+    - {name: freight_account, type: link, to: Account, link_filters: {is_group: false}, label: Freight Account, required_if: "doc.freight != 'Not Booked'"}
+    - {name: freight_payable_account, type: link, to: Account, link_filters: {is_group: false}, label: Freight Owed Account, required_if: "doc.freight != 'Not Booked'",
+       description: "Where a label's cost waits for the carrier's bill"}
+    - {name: freight_item, type: link, to: Item, label: Freight Item, required_if: "doc.freight == 'Charged to Customer'",
+       description: "The item a delivery's label cost is charged to the customer as"}
+    - {name: track_every_hours, type: int, min: "0", default: 6, label: Track Every (Hours), description: "How often labelled shipments are tracked by the upkeep; 0: only when asked or told"}
+    - {name: refused_calls, type: int, read_only: true, no_copy: true, label: Refused Inbound Calls, description: "Inbound tracking calls refused as unsigned or wrongly signed"}
+  unique: [[company, connection_name]]
+
+- name: CarrierPackage
+  label: Parcel
+  kind: child
+  fields:
+    - {name: reference, type: data, in_list: true, description: "What is written on it, or its number"}
+    - {name: weight, type: decimal, required: true, min: "0.000000001", in_list: true}
+    - {name: length, type: decimal, min: "0", in_list: true}
+    - {name: width, type: decimal, min: "0", in_list: true}
+    - {name: height, type: decimal, min: "0", in_list: true}
+    - {name: contents, type: data}
+
+- name: CarrierShipment
+  label: Carrier Shipment
+  kind: document
+  module: inventory
+  company_scoped: true
+  numbering: {template: "SHP-{YYYY}{MM}-{seq:5}"}
+  description: "Parcels going by a carrier: the rates offered, the one chosen, the label bought and where the goods are."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: carrier, type: link, to: CarrierConnection, required: true, in_list: true, in_filter: true, read_only_if: "doc.tracking_number != null"}
+    - {name: reference, type: data, in_list: true, description: "The document the parcels carry, read by the calls as shipment.reference"}
+    - {name: ship_to, type: link, to: Address, label: Ship To, read_only_if: "doc.tracking_number != null"}
+    - {name: packages, type: table, of: CarrierPackage, label: Parcels, required: true, read_only_if: "doc.tracking_number != null"}
+    - {name: status, type: select, options: [Draft, Rated, Label Bought, In Transit, Delivered, Exception, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: rates, type: json, read_only: true, no_copy: true, label: Rates Offered}
+    - {name: service, type: data, read_only: true, no_copy: true, in_list: true}
+    - {name: rate_id, type: data, read_only: true, no_copy: true, hidden: true}
+    - {name: rate_amount, type: currency, read_only: true, no_copy: true, label: Rate}
+    - {name: rate_currency, type: data, read_only: true, no_copy: true, label: Rate Currency}
+    - {name: transit_days, type: int, read_only: true, no_copy: true}
+    - {name: tracking_number, type: data, read_only: true, no_copy: true, in_list: true}
+    - {name: tracking_url, type: data, read_only: true, no_copy: true, label: Tracking Link}
+    - {name: provider_id, type: data, read_only: true, no_copy: true, hidden: true, description: "The carrier's id for the label, read by later calls as provider_id"}
+    - {name: label_file, type: data, read_only: true, no_copy: true, hidden: true}
+    - {name: cost, type: currency, read_only: true, no_copy: true, label: Label Cost}
+    - {name: freight_booked, type: check, read_only: true, no_copy: true}
+    - {name: tracking_status, type: data, read_only: true, no_copy: true, description: "What the carrier last said, in its own words"}
+    - {name: last_tracked_at, type: datetime, read_only: true, no_copy: true}
+    - {name: delivered_at, type: datetime, read_only: true, no_copy: true}
+  actions:
+    - {name: get_rates, label: Get Rates, permission: write, condition: "doc.tracking_number == null && doc.status != 'Cancelled'"}
+    - {name: choose_rate, label: Choose Rate, permission: write, condition: "doc.status == 'Rated'",
+       params: [{name: service, label: Service, required: true, description: "One of the rates offered, by its service"}]}
+    - {name: buy_label, label: Buy Label, permission: write, condition: "doc.status == 'Rated' && doc.service != null",
+       confirm: "Buy the label? The carrier charges for it."}
+    - {name: track, label: Track, permission: read, condition: "doc.tracking_number != null && doc.status != 'Cancelled'"}
+    - {name: cancel_label, label: Cancel Label, permission: write, condition: "doc.tracking_number != null && doc.status != 'Cancelled' && doc.status != 'Delivered'",
+       confirm: "Cancel the label with the carrier, and take back its cost?"}
+  list: {columns: [number, carrier, reference, service, tracking_number, status], sort: created_at desc}
