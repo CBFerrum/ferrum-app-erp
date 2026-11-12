@@ -15,6 +15,13 @@
 //! to whoever issues it. Guessing is limited: five wrong PINs on one account in fifteen minutes, or
 //! twenty unknown codes or wrong PINs by one person, and further tries are refused for that time.
 //!
+//! Codes and PINs in flight: the platform writes an action's parameters to the audit log and a
+//! capability's result to its receipt, so no logged action takes a code or PIN and no receipt holds
+//! a code. A code (and PIN) is given to [`prove`] (the kind's `prove`, read only and not logged),
+//! which keeps only its hashes in `stored_value_proof` and answers a proof: random, for one operation
+//! on one kind, used once, gone after [`PROOF_MINUTES`]. Issue, redeem, refund and transfer take the
+//! proof; a code made for a new card is answered by `prove` and never by the operation.
+//!
 //! Concurrency: every change locks the account's row first and reads its balance under the lock, so
 //! of two tills taking from one card at once the second waits, then sees what the first left; the
 //! database also refuses any entry that would take an account below nothing.
@@ -377,6 +384,7 @@ pub(crate) async fn open(
     kind: &Kind,
     holder: Option<Uuid>,
     secret: Option<Secret>,
+    made: bool,
     on: NaiveDate,
 ) -> Result<(Account, Option<String>)> {
     if kind.disabled {
@@ -389,7 +397,7 @@ pub(crate) async fn open(
             (crate::stored_value::secret(ctx.tenant, &code, None)?, Some(code))
         }
     };
-    if kind.requires_pin && secret.pin_hash.is_none() && code.is_none() {
+    if kind.requires_pin && secret.pin_hash.is_none() && code.is_none() && !made {
         return Err(Error::invalid(format!("{} is used with a PIN: give one with its code", kind.name)));
     }
     let taken: Option<Uuid> =
@@ -421,8 +429,11 @@ pub(crate) async fn open(
 /// The account a code (and PIN) name, of `kind` when given; every miss counts against the person
 /// and, for a wrong PIN, against the account.
 pub async fn find(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, code: &str, pin: Option<&str>) -> Result<Uuid> {
-    let sec = secret(ctx.tenant, code, pin)?;
-    match lookup(k, ctx, tx, kind, &sec, true).await? {
+    found(k, ctx, tx, kind, &secret(ctx.tenant, code, pin)?).await
+}
+
+async fn found(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Option<Uuid>, sec: &Secret) -> Result<Uuid> {
+    match lookup(k, ctx, tx, kind, sec, true).await? {
         Some(acc) => Ok(acc),
         None => {
             missed(k, ctx, None).await?;
@@ -491,11 +502,111 @@ async fn post(ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDate, op: Uuid, mem
     ledger::post(tx, ctx, e, co.precision).await
 }
 
+// ───────────────────────────── proofs ─────────────────────────────
+
+/// How long a proof lasts.
+pub const PROOF_MINUTES: i32 = 5;
+
+/// What a proof may be used for: a kind's operations, `transfer_to` for a transfer's other card, and
+/// an account's `new_code`.
+pub const PROVEN: [&str; 6] = ["issue", "redeem", "refund", "transfer", "transfer_to", "new_code"];
+
+/// Proves `code` (a new one is made when empty) and `pin` for one `operation` on `kind`: keeps their
+/// hashes and answers (proof, the code when made). Nothing is checked against an account here; the
+/// operation does that when it uses the proof. Under the same effect `key`, the same code gets the
+/// same proof, so a retry repeats its receipt; a made code is not shown again.
+pub async fn prove(
+    ctx: &Ctx,
+    tx: &mut Tx,
+    kind: Uuid,
+    operation: &str,
+    key: Option<&str>,
+    code: Option<&str>,
+    pin: Option<&str>,
+) -> Result<(String, Option<String>)> {
+    if !PROVEN.contains(&operation) {
+        return Err(Error::field("operation", format!("is one of {}", PROVEN.join(", "))));
+    }
+    let made = code.is_none().then(new_code);
+    let sec = secret(ctx.tenant, code.or(made.as_deref()).unwrap_or_default(), pin)?;
+    if let Some(key) = key {
+        let kept: Option<(String, String, Option<String>, bool, bool)> = sqlx::query_as(
+            "select proof, code_hash, pin_hash, made, used_at is not null from stored_value_proof \
+             where tenant_id = $1 and kind_id = $2 and operation = $3 and effect_key = $4",
+        )
+        .bind(ctx.tenant)
+        .bind(kind)
+        .bind(operation)
+        .bind(key)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if let Some((proof, hash, pin_hash, was_made, used)) = kept {
+            if (made.is_none() && !was_made && hash == sec.hash && pin_hash == sec.pin_hash) || (made.is_some() && was_made && used) {
+                return Ok((proof, None));
+            }
+            sqlx::query("delete from stored_value_proof where tenant_id = $1 and kind_id = $2 and operation = $3 and effect_key = $4")
+                .bind(ctx.tenant)
+                .bind(kind)
+                .bind(operation)
+                .bind(key)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    let proof = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "insert into stored_value_proof (tenant_id, proof, kind_id, operation, effect_key, code_hash, code_hint, pin_hash, made, expires_at) \
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + interval '{PROOF_MINUTES} minutes')"
+    )))
+    .bind(ctx.tenant)
+    .bind(&proof)
+    .bind(kind)
+    .bind(operation)
+    .bind(key)
+    .bind(&sec.hash)
+    .bind(&sec.hint)
+    .bind(&sec.pin_hash)
+    .bind(made.is_some())
+    .execute(&mut **tx)
+    .await?;
+    Ok((proof, made))
+}
+
+/// Uses a proof for `operation` on `kind`, once: (its code's secret, whether the code was made).
+async fn take(ctx: &Ctx, tx: &mut Tx, kind: Uuid, operation: &str, field: &str, proof: &str) -> Result<(Secret, bool)> {
+    let row: Option<(String, String, Option<String>, bool)> = sqlx::query_as(
+        "update stored_value_proof set used_at = now() where tenant_id = $1 and proof = $2 and kind_id = $3 and operation = $4 \
+         and used_at is null and expires_at > now() returning code_hash, code_hint, pin_hash, made",
+    )
+    .bind(ctx.tenant)
+    .bind(proof)
+    .bind(kind)
+    .bind(operation)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let (hash, hint, pin_hash, made) =
+        row.ok_or_else(|| Error::field(field, format!("this proof is unknown, used, expired or not for {operation}: prove the code again")))?;
+    Ok((Secret { hash, hint, pin_hash }, made))
+}
+
+/// A proof named by parameter `name`, taken.
+async fn taken(ctx: &Ctx, tx: &mut Tx, kind: Uuid, operation: &str, params: &Value, name: &str) -> Result<Option<(Secret, bool)>> {
+    match param(params, name) {
+        Some(p) => Ok(Some(take(ctx, tx, kind, operation, name, p).await?)),
+        None => Ok(None),
+    }
+}
+
+/// [`prove`] for one of the public functions, which hand back a made code themselves.
+async fn proof_for(ctx: &Ctx, tx: &mut Tx, kind: Uuid, operation: &str, key: &str, code: Option<&str>, pin: Option<&str>) -> Result<(String, Option<String>)> {
+    prove(ctx, tx, kind, operation, Some(key), code, pin).await
+}
+
 // ───────────────────────────── by hand ─────────────────────────────
 
 /// Value issued without a sale (goodwill, a prize), by someone the kind allows: money is booked
 /// against the kind's Adjustment Account; units carry no value in the books until they are used.
-/// Returns the account, the entry and, when it made one, the new code.
+/// Returns the account and the entry; a card's code comes from its proof (one nobody sees without).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn issue_value(
     k: &Kernel,
@@ -505,8 +616,7 @@ pub(crate) async fn issue_value(
     amount: Decimal,
     reason: &str,
     holder: Option<Uuid>,
-    code: Option<&str>,
-    pin: Option<&str>,
+    proven: Option<(Secret, bool)>,
 ) -> Result<Value> {
     let kind = kind(k, ctx, tx, kind_id).await?;
     kind.may_issue(ctx)?;
@@ -516,8 +626,8 @@ pub(crate) async fn issue_value(
     kind.check_load(Decimal::ZERO, amount)?;
     let co = company(k, ctx, tx, kind.company).await?;
     let on = chrono::Utc::now().date_naive();
-    let sec = code.map(|c| secret(ctx.tenant, c, pin)).transpose()?;
-    let (mut acc, made) = open(k, ctx, tx, &kind, holder, sec, on).await?;
+    let made = proven.as_ref().is_some_and(|p| p.1);
+    let (mut acc, _) = open(k, ctx, tx, &kind, holder, proven.map(|p| p.0), made, on).await?;
     let value = if kind.units { Decimal::ZERO } else { round(amount, co.precision) };
     let op = Uuid::now_v7();
     let journal = if value.is_zero() {
@@ -538,7 +648,7 @@ pub(crate) async fn issue_value(
         ..Default::default()
     };
     record(k, ctx, tx, &mut acc, &kind, op, m).await?;
-    Ok(json!({"account": acc.id, "entry": op, "code": made, "balance": money(acc.balance())}))
+    Ok(json!({"account": acc.id, "entry": op, "balance": money(acc.balance())}))
 }
 
 /// A correction by hand, either way: money against the Adjustment Account; units change the count
@@ -753,7 +863,7 @@ pub(crate) async fn invoice_submitted(hc: &mut HookCtx<'_>, doc: &Doc) -> Result
             }
             None => {
                 let holder = if kd.bearer { None } else { id(doc, "customer") };
-                (open(k, ctx, hc.tx, &kd, holder, kept_secret(row, "stored_value_secret"), on).await?.0, "issue")
+                (open(k, ctx, hc.tx, &kd, holder, kept_secret(row, "stored_value_secret"), false, on).await?.0, "issue")
             }
         };
         let m = Move {
@@ -1020,7 +1130,7 @@ pub(crate) async fn payment_submitted(hc: &mut HookCtx<'_>, doc: &Doc, co: &Comp
         None => {
             let kd = kind(k, ctx, hc.tx, id(doc, "stored_value_kind").unwrap_or_default()).await?;
             // Without a code typed, the one made here is shown to no one: the account's New Code gives one.
-            (open(k, ctx, hc.tx, &kd, id(doc, "customer"), kept_secret(doc, "stored_value_secret"), on).await?.0, kd)
+            (open(k, ctx, hc.tx, &kd, id(doc, "customer"), kept_secret(doc, "stored_value_secret"), false, on).await?.0, kd)
         }
     };
     let amount = if kd.units { d(doc, "stored_value_units") } else { paid };
@@ -1059,6 +1169,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, u
     let (accounts, kinds) = (table(ctx, ACCOUNT)?, table(ctx, "StoredValueKind")?);
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     sqlx::query("delete from stored_value_attempt where tenant_id = $1 and at < now() - interval '1 day'").bind(ctx.tenant).execute(&mut *tx).await?;
+    sqlx::query("delete from stored_value_proof where tenant_id = $1 and expires_at < now() - interval '1 day'").bind(ctx.tenant).execute(&mut *tx).await?;
     let due: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, Option<Decimal>, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select a.id, a.kind, a.holder, a.code_hint, a.balance, a.expires_on from {accounts} a join {kinds} k on k.tenant_id = a.tenant_id and k.id = a.kind \
          where a.tenant_id = $1 and a.state = 'Active' and a.warned_on is null and k.warn_days is not null \
@@ -1154,8 +1265,17 @@ pub async fn issue(
     pin: Option<&str>,
     key: &str,
 ) -> Result<Value> {
-    let params = json!({"amount": amount.normalize().to_string(), "reason": reason, "holder": holder, "code": code, "pin": pin});
-    call(k, ctx, tx, kind, "issue", params, Some(key)).await
+    let (proof, made) = proof_for(ctx, tx, kind, "issue", key, code, pin).await?;
+    let params = json!({"amount": amount.normalize().to_string(), "reason": reason, "holder": holder, "proof": proof});
+    with_code(call(k, ctx, tx, kind, "issue", params, Some(key)).await?, made)
+}
+
+/// What an operation answered, with the code made for it (shown here once, never kept).
+fn with_code(mut out: Value, made: Option<String>) -> Result<Value> {
+    if let Value::Object(m) = &mut out {
+        m.insert("code".into(), json!(made));
+    }
+    Ok(out)
 }
 
 /// A sales invoice paid from the account a code names: `{payment, entry, amount, balance}`.
@@ -1172,7 +1292,9 @@ pub async fn redeem(
     units: Option<Decimal>,
     key: &str,
 ) -> Result<Value> {
-    let params = json!({"code": code, "pin": pin, "invoice": invoice, "amount": amount.map(|a| a.normalize().to_string()), "units": units.map(|u| u.normalize().to_string())});
+    let (proof, _) = proof_for(ctx, tx, kind, "redeem", key, Some(code), pin).await?;
+    let params =
+        json!({"proof": proof, "invoice": invoice, "amount": amount.map(|a| a.normalize().to_string()), "units": units.map(|u| u.normalize().to_string())});
     call(k, ctx, tx, kind, "redeem", params, Some(key)).await
 }
 
@@ -1189,8 +1311,9 @@ pub async fn refund(
     amount: Option<Decimal>,
     key: &str,
 ) -> Result<Value> {
-    let params = json!({"credit_note": credit_note, "code": code, "pin": pin, "amount": amount.map(|a| a.normalize().to_string())});
-    call(k, ctx, tx, kind, "refund", params, Some(key)).await
+    let (proof, made) = proof_for(ctx, tx, kind, "refund", key, code, pin).await?;
+    let params = json!({"credit_note": credit_note, "proof": proof, "amount": amount.map(|a| a.normalize().to_string())});
+    with_code(call(k, ctx, tx, kind, "refund", params, Some(key)).await?, made)
 }
 
 /// Value moved to another account of the kind, or to a new one: `{account, to_account, entry, code, balance}`.
@@ -1207,8 +1330,10 @@ pub async fn transfer(
     amount: Option<Decimal>,
     key: &str,
 ) -> Result<Value> {
-    let params = json!({"code": code, "pin": pin, "to_code": to_code, "holder": holder, "amount": amount.map(|a| a.normalize().to_string())});
-    call(k, ctx, tx, kind, "transfer", params, Some(key)).await
+    let (proof, _) = proof_for(ctx, tx, kind, "transfer", key, Some(code), pin).await?;
+    let (to_proof, made) = proof_for(ctx, tx, kind, "transfer_to", key, to_code, None).await?;
+    let params = json!({"proof": proof, "to_proof": to_proof, "holder": holder, "amount": amount.map(|a| a.normalize().to_string())});
+    with_code(call(k, ctx, tx, kind, "transfer", params, Some(key)).await?, made)
 }
 
 /// Undoes what an `entry` from issue, redeem, refund or transfer did: `{reversed}`.
@@ -1253,13 +1378,12 @@ async fn redeem_value(
     ctx: &Ctx,
     tx: &mut Tx,
     kind_id: Uuid,
-    code: &str,
-    pin: Option<&str>,
+    sec: &Secret,
     invoice: Uuid,
     amount: Option<Decimal>,
     units: Option<Decimal>,
 ) -> Result<Value> {
-    let found = find(k, ctx, tx, Some(kind_id), code, pin).await?;
+    let found = found(k, ctx, tx, Some(kind_id), sec).await?;
     let acc = current(ctx, tx, found).await?;
     let kd = kind(k, ctx, tx, kind_id).await?;
     let inv = k.get_tx(ctx, tx, "SalesInvoice", invoice, false).await?;
@@ -1303,8 +1427,7 @@ async fn refund_value(
     tx: &mut Tx,
     kind_id: Uuid,
     note: Uuid,
-    code: Option<&str>,
-    pin: Option<&str>,
+    proven: Option<(Secret, bool)>,
     amount: Option<Decimal>,
     units: Option<Decimal>,
 ) -> Result<Value> {
@@ -1317,28 +1440,28 @@ async fn refund_value(
     let paid = amount.unwrap_or(credit);
     let mut values = json!({"company": kd.company, "payment_type": "Pay", "is_refund": true, "customer": cn.get("customer"), "paid_amount": paid.to_string(),
         "references": [{"invoice": note, "allocated_amount": paid.to_string()}], "stored_value_units": units.map(|u| u.to_string())});
-    // A known card is loaded without its PIN (value is given, not taken); any other code is a new card's.
-    let existing = match code {
-        Some(c) => lookup(k, ctx, tx, Some(kind_id), &secret(ctx.tenant, c, None)?, false).await?,
-        None => None,
-    };
-    let made = match (existing, code) {
-        (Some(acc), _) => {
+    // A known card is loaded without its PIN (value is given, not taken); any other code is a new card's,
+    // opened here; without a proof the payment opens one whose code nobody sees (New Code gives one).
+    match proven {
+        Some((sec, made)) => {
+            let acc = match lookup(k, ctx, tx, Some(kind_id), &sec, false).await? {
+                Some(acc) => acc,
+                None if kd.requires_pin && sec.pin_hash.is_none() => {
+                    return Err(Error::field("proof", format!("{} is used with a PIN: give the new card's code and PIN", kd.name)));
+                }
+                None => {
+                    let on = chrono::Utc::now().date_naive();
+                    open(k, ctx, tx, &kd, cn.get("customer").and_then(Value::as_str).and_then(|c| c.parse().ok()), Some(sec), made, on).await?.0.id
+                }
+            };
             values["stored_value_account"] = json!(acc);
-            None
         }
-        (None, given) => {
-            let code = given.map(str::to_string).unwrap_or_else(new_code);
-            values["stored_value_kind"] = json!(kind_id);
-            values["stored_value_code"] = json!(code);
-            values["stored_value_pin"] = json!(pin);
-            given.is_none().then_some(code)
-        }
-    };
+        None => values["stored_value_kind"] = json!(kind_id),
+    }
     let pid = payment(k, ctx, tx, values).await?;
     let (op, account) = op_of(ctx, tx, pid, "refund").await?;
     let after = current(ctx, tx, account).await?;
-    Ok(json!({"payment": pid, "account": account, "entry": op, "code": made, "balance": money(after.balance())}))
+    Ok(json!({"payment": pid, "account": account, "entry": op, "balance": money(after.balance())}))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1347,9 +1470,8 @@ async fn transfer_value(
     ctx: &Ctx,
     tx: &mut Tx,
     kind_id: Uuid,
-    code: &str,
-    pin: Option<&str>,
-    to_code: Option<&str>,
+    sec: &Secret,
+    to: Option<(Secret, bool)>,
     holder: Option<Uuid>,
     amount: Option<Decimal>,
 ) -> Result<Value> {
@@ -1357,23 +1479,22 @@ async fn transfer_value(
     if !kd.transfer {
         return Err(Error::invalid(format!("{} cannot be transferred", kd.name)));
     }
-    let from = find(k, ctx, tx, Some(kind_id), code, pin).await?;
+    let from = found(k, ctx, tx, Some(kind_id), sec).await?;
     let on = chrono::Utc::now().date_naive();
-    let (to, made) = match to_code {
-        Some(c) => match lookup(k, ctx, tx, Some(kind_id), &secret(ctx.tenant, c, None)?, false).await? {
-            Some(a) => (a, None),
+    // The other card: one of the kind's by its code, or a new one (with the code made for it, if any).
+    let to = match to {
+        Some((sec, false)) => match lookup(k, ctx, tx, Some(kind_id), &sec, false).await? {
+            Some(a) => a,
             None => {
                 missed(k, ctx, None).await?;
-                return Err(Error::field("to_code", "no account of this kind has this code"));
+                return Err(Error::field("to_proof", "no account of this kind has this code"));
             }
         },
-        None => {
-            let (acc, made) = open(k, ctx, tx, &kd, holder, None, on).await?;
-            (acc.id, made)
-        }
+        Some((sec, true)) => open(k, ctx, tx, &kd, holder, Some(sec), true, on).await?.0.id,
+        None => open(k, ctx, tx, &kd, holder, None, false, on).await?.0.id,
     };
     if to == from {
-        return Err(Error::field("to_code", "it is the same account"));
+        return Err(Error::field("to_proof", "it is the same account"));
     }
     // Both locked, always in the same order, so two transfers between them cannot wait on each other.
     let (first, second) = if from < to { (from, to) } else { (to, from) };
@@ -1415,7 +1536,7 @@ async fn transfer_value(
         ..Default::default()
     };
     record(k, ctx, tx, &mut dst, &kd, op, inn).await?;
-    Ok(json!({"account": src.id, "to_account": dst.id, "entry": op, "code": made, "balance": money(src.balance())}))
+    Ok(json!({"account": src.id, "to_account": dst.id, "entry": op, "balance": money(src.balance())}))
 }
 
 /// Undoes an operation: a payment it made is cancelled (which takes its entries back); one done by
@@ -1565,7 +1686,28 @@ impl DocHook for KindHook {
         let kind_id = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let (k, ctx) = (hc.kernel, hc.ctx);
         let p = |n: &str| param(params, n);
+        // The audit log keeps these actions' parameters: a code or PIN is refused before anything runs.
+        if ["issue", "redeem", "refund", "transfer"].contains(&name)
+            && let Some(f) = ["code", "pin", "to_code"].into_iter().find(|f| params.get(*f).is_some_and(|v| !v.is_null()))
+        {
+            return Err(Error::field(f, "a code or PIN is never passed to an operation that is logged: give it to prove and pass the proof"));
+        }
         let out = match name {
+            "prove" => {
+                let operation = p("operation").ok_or_else(|| Error::field("operation", "is required"))?;
+                let (code, pin, key) = (p("code"), p("pin"), p("key"));
+                // Read only when called on its own (nothing about it is logged): the proof is kept in a transaction of its own.
+                let read_only: String = sqlx::query_scalar("select current_setting('transaction_read_only')").fetch_one(&mut **hc.tx).await?;
+                let (proof, made) = if read_only == "on" {
+                    let mut own = k.db.tenant_tx(ctx.tenant).await?;
+                    let out = prove(ctx, &mut own, kind_id, operation, key, code, pin).await?;
+                    own.commit().await?;
+                    out
+                } else {
+                    prove(ctx, hc.tx, kind_id, operation, key, code, pin).await?
+                };
+                json!({"proof": proof, "code": made, "expires_in_minutes": PROOF_MINUTES})
+            }
             "balance" => {
                 let acc = find(k, ctx, hc.tx, Some(kind_id), p("code").ok_or_else(|| Error::field("code", "is required"))?, p("pin")).await?;
                 let sql = format!("select {COLUMNS} from {} where tenant_id = $1 and id = $2", table(ctx, ACCOUNT)?);
@@ -1575,21 +1717,23 @@ impl DocHook for KindHook {
             }
             "issue" => {
                 let amount = amount_param(params, "amount")?.ok_or_else(|| Error::field("amount", "is required"))?;
-                issue_value(k, ctx, hc.tx, kind_id, amount, p("reason").unwrap_or_default(), uuid_param(params, "holder")?, p("code"), p("pin")).await?
+                let proven = taken(ctx, hc.tx, kind_id, "issue", params, "proof").await?;
+                issue_value(k, ctx, hc.tx, kind_id, amount, p("reason").unwrap_or_default(), uuid_param(params, "holder")?, proven).await?
             }
             "redeem" => {
-                let code = p("code").ok_or_else(|| Error::field("code", "is required"))?;
                 let invoice = uuid_param(params, "invoice")?.ok_or_else(|| Error::field("invoice", "is required"))?;
-                redeem_value(k, ctx, hc.tx, kind_id, code, p("pin"), invoice, amount_param(params, "amount")?, amount_param(params, "units")?).await?
+                let (sec, _) = taken(ctx, hc.tx, kind_id, "redeem", params, "proof").await?.ok_or_else(|| Error::field("proof", "is required"))?;
+                redeem_value(k, ctx, hc.tx, kind_id, &sec, invoice, amount_param(params, "amount")?, amount_param(params, "units")?).await?
             }
             "refund" => {
                 let note = uuid_param(params, "credit_note")?.ok_or_else(|| Error::field("credit_note", "is required"))?;
-                refund_value(k, ctx, hc.tx, kind_id, note, p("code"), p("pin"), amount_param(params, "amount")?, amount_param(params, "units")?).await?
+                let proven = taken(ctx, hc.tx, kind_id, "refund", params, "proof").await?;
+                refund_value(k, ctx, hc.tx, kind_id, note, proven, amount_param(params, "amount")?, amount_param(params, "units")?).await?
             }
             "transfer" => {
-                let code = p("code").ok_or_else(|| Error::field("code", "is required"))?;
-                let holder = uuid_param(params, "holder")?;
-                transfer_value(k, ctx, hc.tx, kind_id, code, p("pin"), p("to_code"), holder, amount_param(params, "amount")?).await?
+                let (sec, _) = taken(ctx, hc.tx, kind_id, "transfer", params, "proof").await?.ok_or_else(|| Error::field("proof", "is required"))?;
+                let to = taken(ctx, hc.tx, kind_id, "transfer_to", params, "to_proof").await?;
+                transfer_value(k, ctx, hc.tx, kind_id, &sec, to, uuid_param(params, "holder")?, amount_param(params, "amount")?).await?
             }
             "reverse" => reverse_op(k, ctx, hc.tx, uuid_param(params, "entry")?.ok_or_else(|| Error::field("entry", "is required"))?).await?,
             _ => return Ok(None),
@@ -1621,18 +1765,28 @@ impl DocHook for AccountHook {
             "new_code" => {
                 let acc = lock(ctx, hc.tx, account).await?;
                 let kind = kind(k, ctx, hc.tx, acc.kind).await?;
-                let pin = param(params, "pin");
-                if kind.requires_pin && pin.is_none() {
-                    return Err(Error::field("pin", format!("{} is used with a PIN: give the new one", kind.name)));
+                // Its parameters are logged: a code and PIN of the holder's choosing come as a proof; without
+                // one, both are made here and shown once.
+                if params.get("pin").is_some_and(|v| !v.is_null()) {
+                    return Err(Error::field("pin", "a PIN is never passed to an action that is logged: give it to prove (new_code) and pass the proof"));
                 }
-                let code = new_code();
-                let sec = secret(ctx.tenant, &code, pin)?;
+                let (sec, code, pin) = match taken(ctx, hc.tx, acc.kind, "new_code", params, "proof").await? {
+                    Some((sec, _)) if kind.requires_pin && sec.pin_hash.is_none() => {
+                        return Err(Error::field("proof", format!("{} is used with a PIN: prove the new code with one", kind.name)));
+                    }
+                    Some((sec, _)) => (sec, None, None),
+                    None => {
+                        let code = new_code();
+                        let pin = kind.requires_pin.then(|| format!("{:06}", Uuid::new_v4().as_u128() % 1_000_000));
+                        (secret(ctx.tenant, &code, pin.as_deref())?, Some(code), pin)
+                    }
+                };
                 let mut v = Doc::new();
                 v.insert("code_hint".into(), json!(sec.hint));
                 v.insert("code_hash".into(), json!(sec.hash));
                 v.insert("pin_hash".into(), json!(sec.pin_hash));
                 k.set_values_tx(&sys(ctx), hc.tx, ACCOUNT, account, v).await?;
-                json!({"account": account, "code": code})
+                json!({"account": account, "code": code, "pin": pin})
             }
             "cash_out" => {
                 let from = uuid_param(params, "paid_from")?.ok_or_else(|| Error::field("paid_from", "is required"))?;
