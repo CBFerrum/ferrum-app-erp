@@ -124,6 +124,7 @@ const erpRoutes = [
       { path: "desk/shipping", lazy: () => import("./Shipping").then((m) => ({ Component: m.ShippingHome })) },
       { path: "desk/shipping/:id", lazy: () => import("./Shipping").then((m) => ({ Component: m.ShipmentDesk })) },
       { path: "desk/planning", lazy: () => import("./Planning").then((m) => ({ Component: m.Planning })) },
+      { path: "desk/numbering", lazy: () => import("./Numbering").then((m) => ({ Component: m.Numbering })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
     ],
