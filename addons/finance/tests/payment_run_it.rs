@@ -51,7 +51,10 @@ async fn scenario() {
     let supplier = |name: &str| {
         let t = &t;
         let name = name.to_string();
-        async move { uid(&t.insert("Supplier", json!({"supplier_name": name, "email": format!("{}@suppliers.test", name.to_lowercase())})).await).to_string() }
+        async move {
+            uid(&t.insert("Supplier", json!({"supplier_name": name, "email": format!("{}@suppliers.test", name.to_lowercase()), "fin_iban": "DE89370400440532013000", "fin_bic": "COBADEFFXXX"})).await)
+                .to_string()
+        }
     };
     let (acme, bolt, cheap) = (supplier("Acme").await, supplier("Bolt").await, supplier("Cheap").await);
     let bill = |sup: &str, no: &str, rate: &str, extra: serde_json::Value| {
@@ -69,7 +72,12 @@ async fn scenario() {
     t.action("PurchaseInvoice", b3, "fin_hold_payment", json!({"reason": "Disputed quantity"})).await.expect("hold");
 
     // ───── proposed, adjusted, approved ─────
-    let run = uid(&t.insert("PaymentRun", json!({"company": c, "bank_account": bank, "due_by": today.to_string(), "minimum_amount": "100"})).await);
+    let house = uid(&t
+        .insert("BankAccount", json!({"account_name": "House Bank", "company": c, "account": bank, "iban": "GB82WEST12345698765432", "swift_code": "WESTGB2L"}))
+        .await)
+    .to_string();
+    let run =
+        uid(&t.insert("PaymentRun", json!({"company": c, "bank_account": bank, "bank": house, "due_by": today.to_string(), "minimum_amount": "100"})).await);
     let proposed = t.action("PaymentRun", run, "propose", json!({})).await.expect("propose");
     let lines: Vec<(String, Decimal, Decimal)> = proposed["lines"]
         .as_array()
@@ -128,6 +136,14 @@ async fn scenario() {
     assert_eq!(t.get("PurchaseInvoice", b1).await["status"], json!("Paid"));
     let advice: Vec<(i64,)> = t.sql("select count(*) from message_send where template = 'finance.remittance_advice' and record_id = $1", acme_pay).await;
     assert_eq!(advice[0].0, 1, "Acme is told what was paid");
+    // The bank's file: what was paid, kept on the run; the CSV a bank without ISO 20022 takes.
+    let xml = String::from_utf8(t.k.render_document(&t.ctx, "finance.bank_transfer_pain001", run, None, false).await.expect("pain.001").bytes).unwrap();
+    assert!(xml.contains("<NbOfTxs>1</NbOfTxs>") && xml.contains("<CtrlSum>1078.00</CtrlSum>") && xml.contains("<IBAN>DE89370400440532013000</IBAN>"), "{xml}");
+    assert!(xml.contains("<IBAN>GB82WEST12345698765432</IBAN>") && xml.contains("Ccy=\"INR\""), "{xml}");
+    let csv = String::from_utf8(t.k.render_document(&t.ctx, "finance.bank_transfer_csv", run, None, false).await.expect("csv").bytes).unwrap();
+    assert_eq!(csv.lines().count(), 2, "{csv}");
+    let kept: Vec<(i64,)> = t.sql("select count(*) from file_object where record_id = $1 and document is not null", run).await;
+    assert_eq!(kept[0].0, 1, "the file is kept on the run");
     // Pressed again: nothing is paid twice.
     let again = t.action("PaymentRun", run, "make_payments", json!({})).await.expect("again");
     assert_eq!(again["lines"][0]["payment_entry"], paid["lines"][0]["payment_entry"]);
