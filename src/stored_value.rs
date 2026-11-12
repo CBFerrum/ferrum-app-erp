@@ -1075,6 +1075,65 @@ pub(crate) async fn refund_onto(k: &Kernel, ctx: &Ctx, tx: &mut Tx, invoice: Uui
     }
 }
 
+// ───────────────────────────── expiry ─────────────────────────────
+
+/// The app's upkeep for one workspace on `today`: once per account, the warning event its kind's
+/// Days of Warning before expiry (`accounting.stored_value_expiring`, for an automation to tell the
+/// holder; nothing is sent from here), and the expiry after its last day, posting what the kind says
+/// of unused value. Each account is locked and its state read under the lock, so a second run, or
+/// another replica's, does neither twice. Returns (warned, expired).
+pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, usize)> {
+    let (accounts, kinds) = (table(ctx, ACCOUNT)?, table(ctx, "StoredValueKind")?);
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    sqlx::query("delete from stored_value_attempt where tenant_id = $1 and at < now() - interval '1 day'").bind(ctx.tenant).execute(&mut *tx).await?;
+    let due: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, Option<Decimal>, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select a.id, a.kind, a.holder, a.code_hint, a.balance, a.expires_on from {accounts} a join {kinds} k on k.tenant_id = a.tenant_id and k.id = a.kind \
+         where a.tenant_id = $1 and a.state = 'Active' and a.warned_on is null and k.warn_days is not null \
+         and a.expires_on >= $2 and a.expires_on - k.warn_days::int <= $2 for update of a skip locked"
+    )))
+    .bind(ctx.tenant)
+    .bind(today)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (acc, kind, holder, hint, balance, expires) in &due {
+        let mut v = Doc::new();
+        v.insert("warned_on".into(), json!(today));
+        k.set_values_tx(&sys(ctx), &mut tx, ACCOUNT, *acc, v).await?;
+        let payload =
+            json!({"account": acc, "kind": kind, "holder": holder, "code_hint": hint, "balance": money(balance.unwrap_or_default()), "expires_on": expires});
+        ferrum_kernel::outbox::enqueue(&mut tx, ctx.tenant, "accounting.stored_value_expiring", Some(ACCOUNT), Some(*acc), payload).await?;
+    }
+    let expired: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "select id from {accounts} where tenant_id = $1 and state in ('Active', 'Used Up') and expires_on < $2 for update skip locked"
+    )))
+    .bind(ctx.tenant)
+    .bind(today)
+    .fetch_all(&mut *tx)
+    .await?;
+    for id in &expired {
+        let mut acc = lock(ctx, &mut tx, *id).await?;
+        let kd = kind(k, ctx, &mut tx, acc.kind).await?;
+        let co = company(k, ctx, &mut tx, kd.company).await?;
+        let op = Uuid::now_v7();
+        // What stays owed keeps its balance and value; otherwise what is left becomes income.
+        let (amount, value) = if kd.on_expiry == OnExpiry::StaysOwed { (Decimal::ZERO, Decimal::ZERO) } else { (acc.balance(), acc.value()) };
+        let journal = if value.is_zero() {
+            None
+        } else {
+            let lines = vec![
+                Line::new(kd.liability, value, &co.currency_code).remarks("Expired stored value"),
+                Line::new(kd.income()?, -value, &co.currency_code).remarks("Expired stored value"),
+            ];
+            post(ctx, &mut tx, &co, today, op, &format!("{} expired", acc.label(&kd)), lines).await?
+        };
+        let m =
+            Move { entry_type: "expire", amount: -amount, value: -value, on: Some(today), source: Some((ACCOUNT.into(), *id)), journal, ..Default::default() };
+        record(k, ctx, &mut tx, &mut acc, &kd, op, m).await?;
+    }
+    tx.commit().await?;
+    Ok((due.len(), expired.len()))
+}
+
 // ───────────────────────────── the check ─────────────────────────────
 
 /// Every way the books and the accounts disagree: an account whose balance or value is not the sum

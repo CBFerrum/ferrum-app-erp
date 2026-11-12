@@ -452,4 +452,74 @@ async fn scenario() {
     assert_eq!(t.posted(uid(&p7)).await, map(&[("Gift Cards", "50"), ("Other Income", "5"), ("Debtors", "-55")]), "all of it used: the share comes back");
     assert_eq!(t.account(a6).await, (n("0"), n("0"), "Used Up".into()));
     t.agrees().await;
+    // ───────────── 5. expiry and unused value, by the app's upkeep ─────────────
+    let today = chrono::Utc::now().date_naive();
+    let days = |d: i64| today + chrono::Duration::days(d);
+    let seasonal = t
+        .insert(
+            "StoredValueKind",
+            json!({"kind_name": "Seasonal", "company": c, "liability_account": liability, "adjustment_account": goodwill, "income_account": income,
+            "expiry": "From Issue", "expiry_days": 30, "warn_days": 7, "on_expiry": "Income at Expiry"}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let kept = t
+        .insert(
+            "StoredValueKind",
+            json!({"kind_name": "Kept", "company": c, "liability_account": liability, "adjustment_account": goodwill,
+            "expiry": "From Last Use", "expiry_days": 10}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a7 = vid(&t.issue(&seasonal, "80", None, None, None, None).await.unwrap()["account"]);
+    assert_eq!(t.get("StoredValueAccount", a7).await["expires_on"], json!(days(30)));
+    let a8 = vid(&t.issue(&kept, "40", None, None, None, None).await.unwrap()["account"]);
+    assert_eq!(t.get("StoredValueAccount", a8).await["expires_on"], json!(days(10)));
+    // From last use: a use moves the expiry on.
+    let i8 = t.post("SalesInvoice", bill(&walk_in, &work, "0.1")).await;
+    t.post("PaymentEntry", pay(&walk_in, &i8, "10", json!({"stored_value_account": a8.to_string(), "posting_date": days(5)}))).await;
+    assert_eq!(t.get("StoredValueAccount", a8).await["expires_on"], json!(days(15)));
+    let events = |t: &T| {
+        let k = t.k.clone();
+        async move {
+            let mut tx = k.db.system_tx().await.unwrap();
+            let n: i64 = sqlx::query_scalar("select count(*) from outbox where topic = 'accounting.stored_value_expiring' and record_id = $1")
+                .bind(a7)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+            n
+        }
+    };
+    // Warned once, seven days before; the card kept from last use expired after day 15.
+    assert_eq!(stored_value::upkeep(&t.k, &t.ctx, days(22)).await.unwrap(), (0, 1));
+    assert_eq!(stored_value::upkeep(&t.k, &t.ctx, days(23)).await.unwrap(), (1, 0));
+    assert_eq!(stored_value::upkeep(&t.k, &t.ctx, days(24)).await.unwrap(), (0, 0));
+    assert_eq!(events(&t).await, 1);
+    // Expired once, after its last day: what is left becomes income; what stays owed stays owed.
+    assert_eq!(stored_value::upkeep(&t.k, &t.ctx, days(31)).await.unwrap(), (0, 1));
+    assert_eq!(t.account(a7).await, (n("0"), n("0"), "Expired".into()));
+    assert_eq!(t.account(a8).await, (n("30"), n("30"), "Expired".into()));
+    assert_eq!(stored_value::upkeep(&t.k, &t.ctx, days(32)).await.unwrap().1, 0, "exactly once");
+    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+    let income_at_expiry: Decimal = sqlx::query_scalar(
+        "select coalesce(sum(l.credit - l.debit), 0) from journal_line l join stored_value_entry e on e.tenant_id = l.tenant_id and e.journal_entry_id = l.entry_id \
+         where l.tenant_id = $1 and e.account_id = $2 and e.entry_type = 'expire' and l.account_id = $3",
+    )
+    .bind(tenant)
+    .bind(a7)
+    .bind(vid(&income))
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    drop(tx);
+    assert_eq!(income_at_expiry, n("80"));
+    let i9 = t.post("SalesInvoice", bill(&walk_in, &work, "0.1")).await;
+    let e = t.k.insert(&t.ctx, "PaymentEntry", obj(pay(&walk_in, &i9, "10", json!({"stored_value_account": a8.to_string()})))).await;
+    assert!(e.unwrap_err().to_string().contains("expired"));
+    t.agrees().await;
 }
