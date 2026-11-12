@@ -227,6 +227,18 @@ pub async fn post_moves(
                     need.normalize()
                 )));
             }
+            if m.reversal_of.is_none()
+                && let Some(others) = crate::reservation::check_issue(tx, ctx, source_entity, m.source_line, m.item, m.warehouse, q, need).await?
+            {
+                let wname = &warehouses[&m.warehouse].2;
+                return Err(Error::invalid(format!(
+                    "{} of {} in {wname} is held for other orders: {} is free, and {} is required",
+                    others.normalize(),
+                    item.item_code,
+                    (q - others).max(Decimal::ZERO).normalize(),
+                    need.normalize()
+                )));
+            }
             if let Some(batch) = m.batch_no.as_deref().filter(|b| !b.is_empty()) {
                 let in_batch: Decimal = sqlx::query_scalar(
                     "select coalesce(sum(qty), 0) from stock_move where tenant_id = $1 and item_id = $2 and warehouse_id = $3 and batch_no = $4",

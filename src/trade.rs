@@ -588,6 +588,9 @@ pub struct OrderHook(pub Side);
 impl DocHook for OrderHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         calculate(hc.kernel, hc.ctx, hc.tx, hc.entity, doc, self.0).await?;
+        if self.0 == Side::Selling && d(doc, "docstatus").is_zero() {
+            crate::reservation::promise_lines(hc.ctx, hc.tx, doc).await?;
+        }
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
         }
@@ -612,6 +615,9 @@ impl DocHook for OrderHook {
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         crate::promotion::count_uses(hc, doc, 1).await?;
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
+        if self.0 == Side::Selling {
+            crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, id(doc, "id").unwrap_or_default(), false).await?;
+        }
         credit::check(hc, credit, "this order", credit::released(doc)).await
     }
 
@@ -626,6 +632,9 @@ impl DocHook for OrderHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let n = names(self.0);
         crate::promotion::count_uses(hc, doc, -1).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::order_cancelled(hc, id(doc, "id").unwrap_or_default()).await?;
+        }
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await
     }
 
@@ -634,6 +643,12 @@ impl DocHook for OrderHook {
         let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         if name == "update_items" {
             return crate::change::update_items(hc, self.0, doc, params).await.map(Some);
+        }
+        if self.0 == Side::Selling && name == "reserve_stock" {
+            return crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, oid, true).await.map(Some);
+        }
+        if self.0 == Side::Selling && name == "release_stock" {
+            return crate::reservation::release_order(hc.kernel, hc.ctx, hc.tx, oid).await.map(Some);
         }
         if name == "close" || name == "reopen" {
             let number = s(doc, "number").unwrap_or_default();
@@ -1309,6 +1324,7 @@ impl DocHook for InvoiceHook {
         }
         if self.0 == Side::Selling {
             crate::stored_value::invoice_submitted(hc, doc).await?;
+            crate::stored_value::invoice_holds(hc, doc).await?;
         }
         credit::check(hc, credit, "this invoice", credit::released(doc)).await
     }

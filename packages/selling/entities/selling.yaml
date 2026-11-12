@@ -47,6 +47,13 @@
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
     - {name: delivery_date, type: date}
+    - {name: available_qty, type: decimal, read_only: true, no_copy: true, label: Available When Entered,
+       description: "In stock units, at the line's warehouse when the draft was last saved: on hand less what open orders have yet to take"}
+    - {name: promised_date, type: date, label: Promised Date, description: "The day the line can be delivered, from what is available and coming in, else the item's lead time; filled when empty, kept once set"}
+    - {name: stock_reserved_qty, type: decimal, read_only: true, no_copy: true, label: Reserved (Stock Units),
+       description: "Held for this line under the Hold reservation policy; delivering it uses the reservation up"}
+    - {name: backorder_qty, type: decimal, read_only: true, no_copy: true, label: Back-Ordered (Stock Units), description: "What could not be reserved when it was last tried"}
+    - {name: reserved_until, type: date, read_only: true, no_copy: true, label: Reserved Until}
     - {name: delivered_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "Above the quantity when more was delivered, within the over-delivery allowance"}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
     - {name: closed_qty, type: decimal, read_only: true, no_copy: true, label: Closed Short, description: "What was still open on the line when the order was closed: never delivered or billed"}
@@ -117,6 +124,8 @@
         - {name: delivery_date, type: date, label: Delivery Date, description: "Moves the order's delivery date, and its lines' that had it"}
     - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
     - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
+    - {name: reserve_stock, label: Reserve Stock, docstatus: [1], permission: submit, condition: "doc.status != 'Closed' && doc.per_delivered < 100.0"}
+    - {name: release_stock, label: Release Reservation, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: DeliveryNoteItem

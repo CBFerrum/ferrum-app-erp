@@ -273,6 +273,8 @@ pub async fn update_items(hc: &mut HookCtx<'_>, side: Side, doc: &Doc, params: &
             .filter_map(|r| Some((id(r, "item")?, id(r, "warehouse").or(id(doc, "set_warehouse"))?)))
             .collect();
         crate::reservation::refresh_pairs(hc.tx, hc.ctx.tenant, company, gone).await?;
+        // More on a line holds more, where the policy holds stock on submission.
+        crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, oid, false).await?;
     }
     let stored = hc.kernel.get_tx(&sctx, hc.tx, n.entity, oid, false).await?;
     if side == Side::Selling {
