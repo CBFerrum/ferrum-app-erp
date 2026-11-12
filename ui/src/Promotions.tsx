@@ -12,7 +12,7 @@ import { api, errorMessage, isolate, t } from "@ferrum/client";
 import { Alert, Badge, Button, Field, StatePanel, TabPanel, Tabs, useShellTitle } from "@ferrum/kit";
 import { LinkInput, LinkTitle, RecordFields, useEntityMeta, useMe, useRecord, type EntityMeta } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
-import { act, amountInput, Gate, useRights } from "./desk";
+import { act, amountInput, Gate, SetUp, useMissing, useRights } from "./desk";
 import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
@@ -71,6 +71,8 @@ function Desk() {
 
 function Editor({ id }: { id: string | null }) {
   const [priced, setPriced] = useState<Priced | null>(null);
+  const none = useMissing("Promotion");
+  if (none && !id) return <SetUp title={t("No promotion yet")} why={t("The test basket prices a sample sale against the promotions saved, and none is saved. Make one first.")} to="/f/Promotion/new" label={t("Make a promotion")} />;
   return (
     <div className="erp-two">
       <div className="erp-stack">{id ? <Fields id={id} /> : <StatePanel kind="empty" title={t("No promotion chosen")}>{t("Open a promotion from the list to see and change it here. The basket prices the company's promotions as saved.")}</StatePanel>}</div>

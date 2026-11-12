@@ -1,0 +1,1 @@
+import{t as e}from"./index-MwRU_k97.js";const n=["running","paused","met","met_late","breached"],r=()=>({running:e("Running"),paused:e("Paused"),met:e("Met"),met_late:e("Met late"),breached:e("Breached")}),s=t=>({running:"blue",paused:"amber",met:"green",met_late:"amber",breached:"red"})[t]??"neutral";export{n as S,s as a,r as s};

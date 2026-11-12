@@ -364,6 +364,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.26.1** | Desks say what they need: an absent add-on is named with a link to the app store, payment runs, tax returns and promotions with nothing to work from say what to make first and link to it, and a new numbering series lists document kinds by their labels. |
 | **0.26.0** | A whole basket priced from data alone (`ferrum-erp-pricing`): price lists, units, pricing rules, promotions with their free items, taxes, rounding, totals and the tax summary, the pieces the server prices with; a versioned snapshot ERP builds from its records for a till to price offline (`docs/pricing.md`); `priceBasket` for the browser with the Frontend's wasm-bindgen; an app's sale may give its promotion share per line, and the Promotions Given report counts every app's sales. |
 | **0.25.1** | Desks for payment runs, stored value, promotions, tax returns, withholding, shipping, planning and numbering series. |
 | **0.25.0** | Promotions an app already applied, checked and counted once, and the conversion other apps copied made public; numbering series chosen per document; carriers called through the platform's connections, keys moved out of the carrier; stored value's code and PIN as secret parameters; purchase order and payment approvals shipped as off-by-default policies. |
