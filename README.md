@@ -348,6 +348,9 @@ app.yaml         ERP's manifest: its packages, interface, launcher entry and por
 packages/        accounting, buying, inventory, manufacturing, selling
 src/             the engine (ledger, stock, pricing, trade, manufacturing, set-up, reports,
                  localization), the manifest's entry points and the embedded interface
+promotions/      promotions over a whole document: pure, for the server and the browser
+pricing/         a whole basket priced from a snapshot: pure, the server's pieces, built for the
+                 browser by scripts/pricing-wasm.sh (docs/pricing.md)
 tests/           the end-to-end scenario against a real PostgreSQL
 ui/              ERP's interface (React + Vite), built into ui/dist
 addons/          the European Union, Germany, the United Kingdom, the United States, Canada
@@ -361,6 +364,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.26.0** | A whole basket priced from data alone (`ferrum-erp-pricing`): price lists, units, pricing rules, promotions with their free items, taxes, rounding, totals and the tax summary, the pieces the server prices with; a versioned snapshot ERP builds from its records for a till to price offline (`docs/pricing.md`); `priceBasket` for the browser with the Frontend's wasm-bindgen; an app's sale may give its promotion share per line, and the Promotions Given report counts every app's sales. |
 | **0.25.1** | Desks for payment runs, stored value, promotions, tax returns, withholding, shipping, planning and numbering series. |
 | **0.25.0** | Promotions an app already applied, checked and counted once, and the conversion other apps copied made public; numbering series chosen per document; carriers called through the platform's connections, keys moved out of the carrier; stored value's code and PIN as secret parameters; purchase order and payment approvals shipped as off-by-default policies. |
 | **0.24.1, Finance 0.6.1** | The carrier upkeep's tracking query and Finance's run-line backfill, which failed on workspaces not yet updated; a test that starts this build on a workspace an older release made. |

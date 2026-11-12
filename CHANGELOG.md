@@ -1,5 +1,40 @@
 # Changelog
 
+## ERP 0.26.0: one basket pricing for the server and the till
+
+A till must price a basket offline exactly as the server does, promotions included; Point of Sale carried its own replay
+of ERP's pricing to do it, which its browser could not run. The money logic now exists once.
+
+- **`ferrum-erp-pricing`** (`pricing/`, pure: no database, no clock, no floats, no country) prices a whole basket from
+  data: a line's unit (`unit_factor`), its price list price by day and unit (`list_price`), its pricing rule
+  (`best_rule`), its rates for the tax rows (`line_tax_rates`), what lines come to before promotions
+  (`before_promotions`), the promotions engine with the free items it adds, `ferrum-calc` for taxes, discount and
+  rounding, and the tax summary per rate (`tax_summary`). `price_basket` puts them together in the server's order.
+  The server's `pricing::calculate`, `promotion::apply` and the given-promotions check now call these pieces instead
+  of their own copies: the existing pricing, promotion, tax and rounding tests pass unchanged; ERP 0.25's tax
+  breakdown is kept only inside a unit test that holds the summary to it on 300 generated documents, and Point of
+  Sale 0.7.1's replay only inside a test that holds `price_basket` to it on 400 generated baskets (it differs in one
+  place, where the server was right: a free item now takes its pricing rule as the server's lines do).
+- **A versioned snapshot.** `pricing::snapshot` builds what a till keeps (`schema` 1, written down in
+  `docs/pricing.md`): the days it prices for, currency and rounding, tax rows with their labels, items with units and
+  their own rates, the price list's prices in force on some of the days, pricing rules without a condition (a
+  condition stays the server's), the promotions without a code or a first order, the walk-in customer, channel and
+  place. A test prices five baskets through the server's draft and through the crate with a snapshot of the same
+  records: line amounts, totals and promotions agree.
+- **In the browser.** `priceBasket` (JSON in, JSON out). The workspace pins wasm-bindgen 0.2.129, the version
+  Ferrum-Frontend's `@ferrum/calc` is built with, so one `wasm-bindgen-cli` builds both. `scripts/pricing-wasm.sh`
+  builds it (local paths remapped) and prints the files' SHA-256 digests; `--check` prices 60 fixture baskets through
+  the WebAssembly in Node and compares the answers byte for byte with what the native crate gives (the fixtures and
+  their answers are kept in `pricing/tests/`, held by a native test).
+- **Promotions an app applied, as a share.** With `given_promotions`, a line's `promotion_percent` as the app priced
+  it is kept (the line carries the discount as ERP's own pricing would) instead of being cleared; lowering the price
+  as before still works. The check against the promotion records is unchanged.
+- **The Promotions Given report** reads every entity with promotions applied and a company, date, channel and
+  conversion rate, not only sales orders and invoices: a till's sales are counted.
+
+Not done: `price_lines` (the contracted query) still prices through the server's draft, not the crate; the browser
+package `@ferrum/pricing` in Ferrum-Frontend (the files this script builds, committed beside `@ferrum/calc`). Seen and
+left: a bundle that names one item in two parts can take more than that item's line (the engine counts the line twice).
 ## ERP 0.25.1: the screens 0.19.0 to 0.25.0 asked for
 
 Eight desks in ERP's own interface, for server features that were only generic forms until now. Each loads when first opened, shows only where its package is installed and only to people who can read what it works on, and names no country, tax, form or currency: labels and choices are the server's (the localization seam, return definitions, withholding categories, templates). The server is unchanged.
