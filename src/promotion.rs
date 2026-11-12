@@ -89,9 +89,12 @@ fn list(raw: Option<&str>) -> Vec<String> {
     raw.unwrap_or_default().split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
-/// A promotion record as the computation takes it; amounts from the company's currency into the
-/// document's (`rate`: document to company).
-fn to_engine(p: &Doc, rate: Decimal) -> Option<Promotion> {
+/// A promotion record (a `Promotion` with its lines, as `get` gives it) as the computation takes it, or `None` when
+/// its `gives` is one this build does not know. Amounts of the record are in the company's currency and are taken
+/// into the document's: `rate` is the document's `conversion_rate` (document to company), `Decimal::ONE` when the
+/// sale is in the company's currency, as a till's is. This is the one conversion every app prices promotions with:
+/// a stable signature, kept across releases.
+pub fn to_engine(p: &Doc, rate: Decimal) -> Option<Promotion> {
     let doc_money = |v: Decimal| if rate == Decimal::ONE { v } else { (v / rate).round_dp(9) };
     let (percent, amount) = (d(p, "percent"), doc_money(d(p, "amount")));
     let gives = match s(p, "gives")? {
@@ -142,6 +145,27 @@ fn to_engine(p: &Doc, rate: Decimal) -> Option<Promotion> {
         with_line_discounts: p.get("with_line_discounts").and_then(Value::as_bool).unwrap_or(true),
         max_discount: p.get("max_discount").filter(|v| !v.is_null()).map(|_| doc_money(d(p, "max_discount"))),
     })
+}
+
+/// A document line as the computation takes it: `row` is the line, `item` its item record (for the item group and
+/// whether it is a delivery charge) and `amount` what the line comes to before promotions, in the document's
+/// currency (what `ferrum_calc` gives for it with no promotion). The line's `id` is its key.
+pub fn engine_line(row: &Doc, item: Option<&Doc>, amount: Decimal) -> Line {
+    Line {
+        key: s(row, "id").unwrap_or_default().to_string(),
+        item: id(row, "item").map(|i| i.to_string()),
+        item_group: item.and_then(|i| id(i, "item_group")).map(|g| g.to_string()),
+        qty: d(row, "qty"),
+        amount,
+        line_discount: d(row, "discount_percent") > Decimal::ZERO,
+        delivery: item.is_some_and(|i| b(i, "is_delivery_charge")),
+        added_by: s(row, "added_by_promotion").map(str::to_string),
+    }
+}
+
+/// The ISO weekday (1 Monday to 7) of a `YYYY-MM-DD` date, for [`engine::When::weekday`].
+pub fn iso_weekday(date: &str) -> Option<u8> {
+    chrono::NaiveDate::parse_from_str(date.get(..10)?, "%Y-%m-%d").ok().map(|d| d.weekday().number_from_monday() as u8)
 }
 
 /// The promotions that could apply to a company's sale on `on` (`YYYY-MM-DD`), whole: enabled,
@@ -230,7 +254,14 @@ pub(crate) async fn apply(
     precision: u32,
     rate: Decimal,
 ) -> Result<bool> {
+    let given = given_of(ent, doc)?;
     if !evaluates(ent, doc, Side::Selling) {
+        if given.is_some() && d(doc, "docstatus").is_zero() {
+            return Err(Error::field(
+                "given_promotions",
+                "promotions already applied can be passed only on a sale of its own, not on a return, a debit note or lines made from another document",
+            ));
+        }
         return Ok(false);
     }
     for row in items.iter_mut() {
@@ -239,7 +270,17 @@ pub(crate) async fn apply(
             set(row, "id", Uuid::now_v7().to_string());
         }
     }
-    let (date, weekday, time) = moment(ctx, co, doc)?;
+    let (date, weekday, time) = match given.as_ref().and_then(|g| g.at.as_deref()) {
+        Some(at) => {
+            let (day, time) = at.split_once([' ', 'T']).unwrap_or((at, ""));
+            let weekday = iso_weekday(day).ok_or_else(|| Error::field("given_promotions", "at is a moment as YYYY-MM-DD HH:MM"))?;
+            (day.to_string(), weekday, time.get(..5).unwrap_or(time).to_string())
+        }
+        None => moment(ctx, co, doc)?,
+    };
+    if let Some(given) = given {
+        return record_given(k, ctx, tx, ent, doc, items, item_docs, co, precision, rate, (date, weekday, time), given).await;
+    }
     // A submitted order priced again holds the codes and promotions it counted.
     let (held_codes, held_promotions) = if d(doc, "docstatus").is_zero() { Default::default() } else { held(doc) };
     let found = candidates_holding(k, ctx, tx, co.id, &date, &held_promotions).await?;
@@ -270,23 +311,7 @@ pub(crate) async fn apply(
     // The lines' amounts before promotions, as the engine works them out.
     let before = ferrum_calc::compute(&calc_input(items, &[], Decimal::ZERO, co, precision, rate, false))
         .map_err(|e| Error::Validation(vec![ferrum_kernel::FieldError::new("items", e.to_string())]))?;
-    let lines: Vec<Line> = items
-        .iter()
-        .zip(&before.lines)
-        .map(|(r, out)| {
-            let item = id(r, "item").and_then(|i| item_docs.get(&i));
-            Line {
-                key: s(r, "id").unwrap_or_default().to_string(),
-                item: id(r, "item").map(|i| i.to_string()),
-                item_group: item.and_then(|i| id(i, "item_group")).map(|g| g.to_string()),
-                qty: d(r, "qty"),
-                amount: out.amount,
-                line_discount: d(r, "discount_percent") > Decimal::ZERO,
-                delivery: item.is_some_and(|i| b(i, "is_delivery_charge")),
-                added_by: s(r, "added_by_promotion").map(str::to_string),
-            }
-        })
-        .collect();
+    let lines: Vec<Line> = items.iter().zip(&before.lines).map(|(r, out)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), out.amount)).collect();
     let promotions: Vec<Promotion> = found.iter().filter_map(|p| to_engine(p, rate)).collect();
     let input = engine::Input { lines, promotions, when, precision, rounding: co.rounding };
     let out = engine::apply(&input).map_err(|e| Error::field("items", e))?;
@@ -315,9 +340,221 @@ pub(crate) async fn apply(
     Ok(removed || !out.add.is_empty())
 }
 
+/// Promotions an app already applied to a sale it passes to ERP (a till's, priced from its own snapshot): the
+/// document's `given_promotions` (a JSON object, kept as given),
+///
+/// ```json
+/// {"snapshot": "<version the till priced with>", "source": "pos:<the app's own id for the sale>", "counted": true,
+///  "at": "2026-11-12 10:31", "applied": [{"promotion": "<id>", "line": 0, "amount": "12.50", "code": null}]}
+/// ```
+///
+/// `applied`: each promotion's amount off each line (`line`: the line's place in `items` from 0, or its id), as the
+/// lines are priced *after* it (their rates already carry the discount). `source` (optional) names the sale: the same
+/// source is recorded on one submitted document only. `counted: true` says the app already counted the promotions'
+/// and codes' uses, so ERP records them for the report but counts none. `at` (optional) is the sale's moment in the
+/// company's time zone, else the document's date and time. The set the document is priced with is not looked for
+/// again: what is given is checked ([`record_given`]) and kept in `applied_promotions`.
+struct Given {
+    source: Option<String>,
+    counted: bool,
+    at: Option<String>,
+    applied: Vec<(Uuid, Value, Decimal, Option<String>)>,
+}
+
+fn given_of(ent: &EffEntity, doc: &Doc) -> Result<Option<Given>> {
+    let Some(v) = doc.get("given_promotions").filter(|v| !v.is_null()).filter(|_| ent.field("given_promotions").is_some()) else { return Ok(None) };
+    let bad = |m: &str| Error::field("given_promotions", m.to_string());
+    let o = v.as_object().ok_or_else(|| bad("is a JSON object: {snapshot, source, counted, at, applied: [{promotion, line, amount, code}]}"))?;
+    let text = |k: &str| o.get(k).and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string);
+    let mut applied = Vec::new();
+    for a in o.get("applied").and_then(Value::as_array).ok_or_else(|| bad("applied is a list of {promotion, line, amount}"))? {
+        let promotion = a.get("promotion").and_then(Value::as_str).and_then(|p| p.parse().ok()).ok_or_else(|| bad("a promotion is its id"))?;
+        let amount = match a.get("amount") {
+            Some(Value::String(x)) => x.parse().ok(),
+            Some(Value::Number(x)) => x.to_string().parse().ok(),
+            _ => None,
+        }
+        .filter(|x: &Decimal| *x > Decimal::ZERO)
+        .ok_or_else(|| bad("an amount is a number above zero"))?;
+        let code = a.get("code").and_then(Value::as_str).map(normalize_code).filter(|c| !c.is_empty());
+        applied.push((promotion, a.get("line").cloned().unwrap_or(Value::Null), amount, code));
+    }
+    Ok(Some(Given { source: text("source"), counted: o.get("counted").and_then(Value::as_bool).unwrap_or(false), at: text("at"), applied }))
+}
+
+/// Checks what an app says it applied against the promotion records and records it. Each promotion must exist, be the
+/// company's (or every company's), have been in force at the sale's moment (dates, weekdays, hours, customer,
+/// channel, place and, when it needs one, a good code: [`engine::admits`]; a promotion switched off since still counts,
+/// the sale was made while it ran), and no amount may be more than the computation gives for that promotion on that
+/// line, working over the lines as they were before the promotion (their amounts now, plus what was given), with only
+/// the promotions given, plus one smallest unit of the document's currency for the rounding the computation does. What is
+/// given becomes the document's `applied_promotions` (so the report counts them and a credit note gives back its share);
+/// the lines are not discounted again.
+#[allow(clippy::too_many_arguments)]
+async fn record_given(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    ent: &EffEntity,
+    doc: &mut Doc,
+    items: &mut [Doc],
+    item_docs: &HashMap<Uuid, Doc>,
+    co: &Company,
+    precision: u32,
+    rate: Decimal,
+    (date, weekday, time): (String, u8, String),
+    given: Given,
+) -> Result<bool> {
+    let bad = |m: String| Error::field("given_promotions", m);
+    if !d(doc, "docstatus").is_zero() {
+        return Err(bad("a sale with promotions given by an app is not priced again".into()));
+    }
+    let mut at_line = Vec::new();
+    for (_, line, _, _) in &given.applied {
+        let place = match line {
+            Value::Number(n) => n.as_u64().map(|n| n as usize).filter(|n| *n < items.len()),
+            Value::String(x) => items.iter().position(|r| s(r, "id") == Some(x.as_str())),
+            _ => None,
+        };
+        at_line.push(place.ok_or_else(|| bad(format!("line {line} is not a line of this document")))?);
+    }
+    let before = ferrum_calc::compute(&calc_input(items, &[], Decimal::ZERO, co, precision, rate, false))
+        .map_err(|e| Error::Validation(vec![ferrum_kernel::FieldError::new("items", e.to_string())]))?;
+    let mut again = vec![Decimal::ZERO; items.len()];
+    for ((.., amount, _), at) in given.applied.iter().zip(&at_line) {
+        again[*at] += amount;
+    }
+    let lines: Vec<Line> = items
+        .iter()
+        .zip(&before.lines)
+        .zip(&again)
+        .map(|((r, out), more)| engine_line(r, id(r, "item").and_then(|i| item_docs.get(&i)), out.amount + more))
+        .collect();
+    let mut promotions: Vec<Promotion> = Vec::new();
+    let mut titles: HashMap<Uuid, String> = HashMap::new();
+    for (p, ..) in &given.applied {
+        if titles.contains_key(p) {
+            continue;
+        }
+        let rec = get(k, ctx, tx, "Promotion", *p).await.map_err(|_| bad(format!("promotion {p} does not exist here")))?;
+        if id(&rec, "company").is_some_and(|c| c != co.id) {
+            return Err(bad(format!("{} is another company's promotion", s(&rec, "title").unwrap_or_default())));
+        }
+        titles.insert(*p, s(&rec, "title").unwrap_or_default().to_string());
+        promotions
+            .push(to_engine(&rec, rate).ok_or_else(|| bad(format!("{} gives something this version does not know", s(&rec, "title").unwrap_or_default())))?);
+    }
+    let customer = id(doc, "customer");
+    let party = match customer {
+        Some(c) => Some(get(k, ctx, tx, "Customer", c).await?),
+        None => None,
+    };
+    let wanted: Vec<String> = given.applied.iter().filter_map(|a| a.3.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    let all: BTreeSet<String> = if given.counted { wanted.iter().cloned().collect() } else { BTreeSet::new() };
+    let (codes, refused_codes) = check_codes_holding(k, ctx, tx, &wanted, &all).await?;
+    if !refused_codes.is_empty() {
+        return Err(bad(refused_codes.iter().map(|c| refused(c)).collect::<Vec<_>>().join("; ")));
+    }
+    let first = match customer {
+        Some(c) if promotions.iter().any(|p| p.first_order_only) => first_order(ctx, tx, c, id(doc, "id")).await?,
+        _ => false,
+    };
+    let when = When {
+        date,
+        weekday,
+        time,
+        customer: customer.map(|c| c.to_string()),
+        customer_group: party.as_ref().and_then(|p| id(p, "customer_group")).map(|g| g.to_string()),
+        channel: Some(s(doc, "channel").unwrap_or(&ent.def.label).to_string()),
+        place: s(doc, "set_warehouse").map(str::to_string),
+        first_order: first,
+        codes,
+    };
+    for p in &promotions {
+        if !engine::admits(p, &when) {
+            return Err(bad(format!(
+                "{} was not in force at {} {} for this sale (its dates, hours, customers, channel, place or code)",
+                p.title, when.date, when.time
+            )));
+        }
+    }
+    let input = engine::Input { lines, promotions, when, precision, rounding: co.rounding };
+    let out = engine::apply(&input).map_err(|e| Error::field("items", e))?;
+    // The engine's own rounding spreads a whole by largest remainder: a part may differ from an app's by a unit.
+    let unit = Decimal::new(1, precision);
+    let mut asked: HashMap<(Uuid, usize), Decimal> = HashMap::new();
+    for ((p, _, amount, _), at) in given.applied.iter().zip(&at_line) {
+        *asked.entry((*p, *at)).or_default() += amount;
+    }
+    for ((p, at), amount) in &asked {
+        let key = s(&items[*at], "id").unwrap_or_default();
+        let most: Decimal = out.applied.iter().filter(|a| a.promotion == p.to_string() && a.line == key).map(|a| a.amount).sum();
+        if *amount > most + unit {
+            return Err(bad(format!(
+                "{} took {} off line {}; the most it can there is {}",
+                titles.get(p).map(String::as_str).unwrap_or_default(),
+                amount.normalize(),
+                at + 1,
+                most.normalize()
+            )));
+        }
+    }
+    let applied: Vec<Value> = given
+        .applied
+        .iter()
+        .zip(&at_line)
+        .map(|((p, _, amount, code), at)| {
+            json!({"id": Uuid::now_v7().to_string(), "promotion": p.to_string(), "title": titles.get(p), "line": s(&items[*at], "id"), "amount": money(*amount),
+                   "code": code, "source": given.source, "counted_elsewhere": given.counted})
+        })
+        .collect();
+    set(doc, "applied_promotions", Value::Array(applied));
+    Ok(false)
+}
+
+/// A sale's promotions an app passed are recorded on one submitted document: holding a lock on the source for the
+/// rest of the transaction, so two documents made from the same sale at once take turns, and the second, seeing the
+/// first's, is refused. Called on submission, before the uses are counted.
+async fn claim_sources(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    let own = id(doc, "id");
+    for source in rows(doc, "applied_promotions").iter().filter_map(|a| s(a, "source")).collect::<BTreeSet<_>>() {
+        sqlx::query("select pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("promotions:{}:{source}", hc.ctx.tenant))
+            .execute(&mut **hc.tx)
+            .await?;
+        for entity in ["SalesOrder", "SalesInvoice"] {
+            let Some(e) = hc.ctx.schema.entity(entity) else { continue };
+            let Some(lines) = e.children.get("applied_promotions") else { continue };
+            let other: Option<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "select i.id from {docs} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
+                 where i.tenant_id = $1 and i.docstatus = 1 and l.source = $2 and i.id is distinct from $3 limit 1",
+                docs = ferrum_kernel::ddl::q(&e.table),
+                lines = ferrum_kernel::ddl::q(&lines.table),
+            )))
+            .bind(hc.ctx.tenant)
+            .bind(source)
+            .bind(own)
+            .fetch_optional(&mut **hc.tx)
+            .await?;
+            if other.is_some() {
+                return Err(Error::field("given_promotions", format!("the promotions of {source} are already recorded on another submitted document")));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The codes and the promotions a document's `applied_promotions` count.
 fn held(doc: &Doc) -> (BTreeSet<String>, BTreeSet<Uuid>) {
-    let applied = rows(doc, "applied_promotions");
+    held_of(rows(doc, "applied_promotions"))
+}
+
+/// What ERP counts the use of: the promotions an app passed and counted itself are left out.
+fn counted(doc: &Doc) -> (BTreeSet<String>, BTreeSet<Uuid>) {
+    held_of(rows(doc, "applied_promotions").into_iter().filter(|a| !b(a, "counted_elsewhere")).collect())
+}
+
+fn held_of(applied: Vec<Doc>) -> (BTreeSet<String>, BTreeSet<Uuid>) {
     (applied.iter().filter_map(|a| s(a, "code")).map(str::to_string).collect(), applied.iter().filter_map(|a| id(a, "promotion")).collect())
 }
 
@@ -329,14 +566,17 @@ pub async fn count_uses(hc: &mut HookCtx<'_>, doc: &Doc, step: i64) -> Result<()
     if b(doc, "is_return") {
         return Ok(());
     }
-    let (codes, promotions) = held(doc);
+    if step > 0 {
+        claim_sources(hc, doc).await?;
+    }
+    let (codes, promotions) = counted(doc);
     count(hc, &codes, &promotions, step).await
 }
 
 /// After a submitted order is priced again (Update Items): a code or promotion it now applies and
 /// did not is counted, one it no longer applies is given back, and those it keeps are left alone.
 pub async fn recount(hc: &mut HookCtx<'_>, was: &Doc, now: &Doc) -> Result<()> {
-    let ((c0, p0), (c1, p1)) = (held(was), held(now));
+    let ((c0, p0), (c1, p1)) = (counted(was), counted(now));
     count(hc, &c0.difference(&c1).cloned().collect(), &p0.difference(&p1).copied().collect(), -1).await?;
     count(hc, &c1.difference(&c0).cloned().collect(), &p1.difference(&p0).copied().collect(), 1).await
 }
