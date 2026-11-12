@@ -1,0 +1,16 @@
+# The amounts a purchase order's approval reads (OP-21). A package cannot ship an approval policy on a
+# document's submit (the platform takes `set_approval` only as a workspace's customization), so the
+# policy is in docs/approvals/purchase_order.json, applied as the README says, and its
+# value bands are here, for the workspace to change without touching the policy.
+- name: PurchaseApprovalSettings
+  label: Purchase Approval Settings
+  kind: settings
+  module: buying
+  description: "The value bands a purchase order's approval reads, in company currency: above each, its step must approve before the order is submitted"
+  fields:
+    - {name: first_above, type: currency, min: "0", default: 0, label: First Approval Above,
+       description: "Orders whose total in company currency is above this need the first step's approval (the Purchase Manager in the shipped policy)"}
+    - {name: second_above, type: currency, min: "0", label: Second Approval Above,
+       description: "Orders above this need the second step's approval too (the Accounts Manager in the shipped policy); empty or 0: no second step"}
+    - {name: third_above, type: currency, min: "0", label: Third Approval Above,
+       description: "Orders above this need the third step's approval too (two Accounts Managers in the shipped policy); empty or 0: no third step"}

@@ -18,7 +18,7 @@ modules:
     label: Buying
     icon: truck
     order: 50
-    items: [PurchaseOrder, PurchaseReceipt, PurchaseInvoice, PaymentEntry, Supplier, report:payables, report:statement_of_account, report:purchase_register]
+    items: [PurchaseOrder, PurchaseReceipt, PurchaseInvoice, PaymentEntry, Supplier, PurchaseApprovalSettings, report:payables, report:statement_of_account, report:purchase_register]
 
 roles:
   - name: Purchase User
@@ -49,6 +49,7 @@ roles:
       - {entity: PurchaseOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseReceipt, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
+      - {entity: PurchaseApprovalSettings, read: true, write: true, create: true}
   - name: Accounts Manager
     permissions:
       - {entity: PurchaseInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
