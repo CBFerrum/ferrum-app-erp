@@ -12,6 +12,7 @@ Faults from the first browser walk (the Create menu, the numbering form, three d
   metadata; the entries keep their `entity` so the shell can hide them once it reads it.
 - **Empty desks.** Payment run with no bank or cash account, tax return with no return definition, and promotions with
   none saved show what is missing and a link to where it is made, instead of a form or basket the server would refuse.
+- **Routes tested as mounted.** The route table moved to `ui/src/routes.tsx`; a test mounts it and opens a new and an existing record of each desk entity and of one without a screen of its own (answers copied from a running server), failing on the loading state. ERP did not have CRM's fault: its desks send a new record to `/f/<Entity>/new`, which names the entity.
 - **Numbering.** A new series is made on a form of the desk that offers each document kind by its label from the
   metadata (the plain form listed type names such as `SalesOrder`).
 
