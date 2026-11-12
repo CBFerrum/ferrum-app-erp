@@ -399,6 +399,7 @@ async fn discount_lines(
     account: Uuid,
     reduces_tax: bool,
     co: &crate::util::Company,
+    taken: &mut Vec<Value>,
 ) -> Result<Vec<Line>> {
     let sign = if receive { Decimal::ONE } else { -Decimal::ONE };
     let mut lines = Vec::new();
@@ -407,12 +408,23 @@ async fn discount_lines(
         let inv = get(hc.kernel, hc.ctx, hc.tx, entity, invoice).await?;
         let total = d(&inv, "base_grand_total");
         if !total.is_zero() {
+            let breakdown = rows(&inv, "tax_breakdown");
             for t in rows(&inv, "taxes").iter().filter(|t| !b(t, "reverse_charge") && !b(t, "deduct")) {
                 let (Some(acc), tax) = (id(t, "account"), d(t, "base_tax_amount")) else { continue };
                 let share = round(base * tax / total, co.precision);
                 if !share.is_zero() {
                     taxed += share;
                     lines.push(Line::new(acc, sign * share, &co.currency_code).remarks("Early-payment discount: tax taken back"));
+                    // For the tax ledger: the tax taken back and the base it was on, as the invoice's breakdown has them for this account.
+                    let mine: Vec<&Doc> = breakdown.iter().filter(|r| id(r, "account") == Some(acc)).collect();
+                    let taxable: Decimal = mine.iter().map(|r| d(r, "base_taxable_amount")).sum();
+                    let rate = d(t, "rate");
+                    let category = s(t, "category")
+                        .map(str::to_string)
+                        .or_else(|| mine.first().and_then(|r| s(r, "category")).map(str::to_string))
+                        .unwrap_or_else(|| if rate > Decimal::ZERO { "Standard".into() } else { "Zero Rated".into() });
+                    taken.push(json!({"invoice_type": entity, "invoice": invoice, "account": acc, "description": s(t, "description"), "category": category,
+                        "rate": money(rate), "taxable": money(round(base * taxable / total, co.precision)), "tax": money(share)}));
                 }
             }
         }
@@ -613,6 +625,11 @@ impl DocHook for PaymentEntryHook {
         crate::stored_value::check_payment(hc, doc, &co).await
     }
 
+    async fn before_submit(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+        let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        crate::instruments::fill(hc, doc, &co).await
+    }
+
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
@@ -651,6 +668,7 @@ impl DocHook for PaymentEntryHook {
         let item_sign = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
         let mut lines = Vec::new();
         let mut touched = Vec::new();
+        let mut discount_taxes = Vec::new();
         for r in rows(doc, "references") {
             let discount = d(&r, "discount_amount").max(Decimal::ZERO);
             // What it settles: the money allocated and the discount taken.
@@ -663,7 +681,7 @@ impl DocHook for PaymentEntryHook {
             if discount > Decimal::ZERO {
                 let account = id(&r, "discount_account").ok_or_else(|| Error::field("discount_account", "is required"))?;
                 let base = round(discount * rate, co.precision);
-                lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co).await?);
+                lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co, &mut discount_taxes).await?);
             }
             let base_at_invoice = round(amount * item.exchange_rate, co.precision);
             ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
@@ -676,6 +694,11 @@ impl DocHook for PaymentEntryHook {
                     .against(&item.entity, inv),
             );
             touched.push((item.entity.clone(), inv));
+        }
+        if !discount_taxes.is_empty() {
+            let mut v = Doc::new();
+            v.insert("discount_taxes".into(), Value::Array(discount_taxes));
+            hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
         }
         let unallocated = d(doc, "unallocated_amount");
         if unallocated > Decimal::ZERO {

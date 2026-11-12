@@ -103,6 +103,20 @@ overlays:
     ops:
       - {op: add_field, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
 
+# A supplier's bank details are theirs: an erasure blanks the lines of payment runs that copied them
+# (found by the email the line copied too) and, through the app's own part of the erasure
+# (src/lib.rs, FinancePersonal), the IBAN and BIC Finance adds to the supplier, which a declaration
+# cannot name (the platform checks declarations against the entity before overlays). The bank file a
+# run kept is the instruction the bank was given: it stays with the run.
+personal_data:
+  - {entity: PaymentRun, match: lines.supplier_email, erase: [lines.supplier_name, lines.iban, lines.bic, lines.supplier_email]}
+
+# Lines proposed before 0.6 have no supplier email: copied from the supplier, so erasure reaches them.
+backfills:
+  - {name: run_line_supplier_email, entity: PaymentRunLine,
+     needs: "t.supplier_email is null and exists (select 1 from e_supplier s where s.tenant_id = t.tenant_id and s.id = t.supplier and s.email is not null)",
+     set: "supplier_email = (select s.email from e_supplier s where s.tenant_id = t.tenant_id and s.id = t.supplier)"}
+
 messages:
   - key: finance.remittance_advice
     label: Remittance advice to a supplier
