@@ -10,7 +10,7 @@
 mod common;
 use common::*;
 use rust_decimal::Decimal;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 #[test]
@@ -134,6 +134,12 @@ async fn scenario() {
         "1,100 settled by 1,078 paid and 22 of discount, 2 of it the tax taken back"
     );
     assert_eq!(t.get("PurchaseInvoice", b1).await["status"], json!("Paid"));
+    // The tax the discount took back reaches the tax summary, as less input tax on the payment's day.
+    let day = today.to_string();
+    let summary = t.report("tax_summary", &[("from_date", &day), ("to_date", &day)]).await;
+    let back = summary["rows"].as_array().unwrap().iter().find(|r| r["voucher_id"] == json!(acme_pay.to_string())).cloned().expect("the payment's row");
+    assert_eq!((back["direction"].clone(), dec(&back["tax"]), dec(&back["taxable"])), (json!("Input"), Decimal::from(-2), Decimal::from(-20)), "{back}");
+    assert_eq!(dec(&summary["totals"]["input_tax"]), Decimal::from(98), "100 on A-1 less 2 taken back");
     let advice: Vec<(i64,)> = t.sql("select count(*) from message_send where template = 'finance.remittance_advice' and record_id = $1", acme_pay).await;
     assert_eq!(advice[0].0, 1, "Acme is told what was paid");
     // The bank's file: what was paid, kept on the run; the CSV a bank without ISO 20022 takes.
@@ -157,4 +163,39 @@ async fn scenario() {
         .await;
     assert_eq!(dec(&pe["references"][0]["discount_amount"]), Decimal::from(20));
     assert_eq!(t.get("PurchaseInvoice", b6).await["status"], json!("Paid"));
+
+    // ───── by cheque: a number given on a supplier's line, the next from the mode's book otherwise ─────
+    let liabilities = t.find_one("Account", json!({"account_name": "Current Liabilities", "company": c})).await["id"].clone();
+    let issued =
+        uid(&t.insert("Account", json!({"account_name": "Cheques Issued", "company": c, "root_type": "Liability", "parent_account": liabilities})).await);
+    let cheque = uid(&t
+        .insert(
+            "ModeOfPayment",
+            json!({"mode_name": "Cheque", "uses_instruments": true,
+            "accounts": [{"company": c, "issued_account": issued.to_string(), "next_instrument_no": 501, "last_instrument_no": 502, "instrument_digits": 6}]}),
+        )
+        .await)
+    .to_string();
+    let later = (today + chrono::Duration::days(60)).to_string();
+    let run = uid(&t.insert("PaymentRun", json!({"company": c, "bank_account": bank, "bank": house, "mode_of_payment": cheque, "due_by": later})).await);
+    let proposed = t.action("PaymentRun", run, "propose", json!({})).await.expect("propose");
+    let mut lines = proposed["lines"].as_array().unwrap().clone();
+    assert_eq!(lines.len(), 2, "A-2 and Cheap's C-1: {lines:?}");
+    let cheap_line = lines.iter().position(|l| l["supplier"] == json!(cheap)).unwrap();
+    lines[cheap_line]["instrument_no"] = json!("777001");
+    t.k.update(&t.ctx, "PaymentRun", run, obj(json!({"lines": lines})), None).await.expect("a cheque number by hand");
+    t.k.submit(&admin, "PaymentRun", run, None).await.expect("asks");
+    t.k.decide_approval(&approver, "PaymentRun", run, true, None).await.expect("approve");
+    let paid = t.action("PaymentRun", run, "make_payments", json!({})).await.expect("make payments");
+    assert_eq!(paid["run_status"], json!("Paid"), "{paid}");
+    let number = |l: &Value| {
+        let t = &t;
+        let pe: Uuid = l["payment_entry"].as_str().unwrap().parse().unwrap();
+        async move { t.get("PaymentEntry", pe).await["reference_no"].as_str().unwrap().to_string() }
+    };
+    let ls = paid["lines"].as_array().unwrap();
+    let (by_hand, from_book) = if ls[0]["supplier"] == json!(cheap) { (&ls[0], &ls[1]) } else { (&ls[1], &ls[0]) };
+    assert_eq!((number(by_hand).await, number(from_book).await), ("777001".to_string(), "000501".to_string()));
+    let modes = t.get("ModeOfPayment", cheque.parse().unwrap()).await;
+    assert_eq!(modes["accounts"][0]["next_instrument_no"], json!(502), "one number taken from the book");
 }

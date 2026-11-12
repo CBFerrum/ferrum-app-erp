@@ -39,10 +39,13 @@ pub async fn check_payment(hc: &mut HookCtx<'_>, doc: &Doc, co: &crate::util::Co
     if s(doc, "payment_type") == Some("Internal Transfer") {
         return Err(Error::field("mode_of_payment", format!("{name} is paid by instrument: a transfer between the company's own accounts is not")));
     }
-    if s(doc, "reference_no").is_none_or(|r| r.trim().is_empty()) {
+    // A payment out takes its number from the mode's book, and its posting date, on submission.
+    let out = s(doc, "payment_type") == Some("Pay");
+    let book = out && row.get("next_instrument_no").is_some_and(|v| !v.is_null());
+    if !book && s(doc, "reference_no").is_none_or(|r| r.trim().is_empty()) {
         return Err(Error::field("reference_no", format!("{name} is paid by instrument: give its number")));
     }
-    if date(doc, "reference_date").is_err() {
+    if !out && date(doc, "reference_date").is_err() {
         return Err(Error::field("reference_date", format!("{name} is paid by instrument: give the date written on it")));
     }
     let (field, what) =
@@ -50,6 +53,42 @@ pub async fn check_payment(hc: &mut HookCtx<'_>, doc: &Doc, co: &crate::util::Co
     if id(&row, field).is_none() {
         return Err(Error::field("mode_of_payment", format!("{name} has no {what} account for this company: add it to the mode's accounts")));
     }
+    Ok(())
+}
+
+/// On submission, a payment out by instrument without a number takes the next from its mode's book
+/// for the company (one locked update, so two payments never take the same number; the book used
+/// up is refused), and one without a date is dated its posting date.
+pub async fn fill(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &crate::util::Company) -> Result<()> {
+    if s(doc, "payment_type") != Some("Pay") {
+        return Ok(());
+    }
+    let Some((m, row)) = mode(hc, doc, co.id).await? else { return Ok(()) };
+    if date(doc, "reference_date").is_err()
+        && let Some(on) = doc.get("posting_date").cloned()
+    {
+        doc.insert("reference_date".into(), on);
+    }
+    if s(doc, "reference_no").is_some_and(|r| !r.trim().is_empty()) || row.get("next_instrument_no").is_none_or(Value::is_null) {
+        return Ok(());
+    }
+    let table = ferrum_kernel::ddl::q(
+        &hc.ctx.schema.entity("ModeOfPayment").and_then(|e| e.children.get("accounts")).ok_or_else(|| Error::internal("no mode accounts"))?.table,
+    );
+    let drawn: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "update {table} set next_instrument_no = next_instrument_no + 1 where tenant_id = $1 and id = $2 \
+         and next_instrument_no is not null and (last_instrument_no is null or next_instrument_no <= last_instrument_no) returning (next_instrument_no - 1)::bigint"
+    )))
+    .bind(hc.ctx.tenant)
+    .bind(id(&row, "id"))
+    .fetch_optional(&mut **hc.tx)
+    .await?;
+    let Some(n) = drawn else {
+        let name = s(&m, "mode_name").unwrap_or("this mode");
+        return Err(Error::field("reference_no", format!("{name}'s book of numbers is used up: give the number, or start the next book on the mode")));
+    };
+    let width = row.get("instrument_digits").and_then(Value::as_i64).unwrap_or(0).clamp(0, 20) as usize;
+    doc.insert("reference_no".into(), json!(format!("{}{:0width$}", s(&row, "instrument_prefix").unwrap_or_default(), n)));
     Ok(())
 }
 
@@ -72,7 +111,7 @@ pub async fn payment_submitted(hc: &mut HookCtx<'_>, doc: &Doc, co: &crate::util
             ENTITY,
             obj(json!({
                 "company": co.id, "direction": direction, "instrument_no": s(doc, "reference_no"), "instrument_date": s(doc, "reference_date"),
-                "bank": s(doc, "instrument_bank"), "mode_of_payment": s(doc, "mode_of_payment"), "payment_entry": pid, "party_name": s(doc, "party_name"),
+                "bank": s(doc, "instrument_bank"), "mode_of_payment": s(doc, "mode_of_payment"), "payment_entry": pid, "party_name": s(doc, "party_name"), "customer": s(doc, "customer"), "supplier": s(doc, "supplier"),
                 "currency": s(doc, "currency"), "amount": money(d(doc, "paid_amount")), "status": direction,
                 "holding_account": holding,
             })),

@@ -169,8 +169,26 @@ export_tables: [accounting_period, journal_entry, journal_line, open_item, alloc
 
 # An account a customer holds is theirs: exported with the rest, kept because the books owe it. A
 # bearer account names no one, and its code is kept only as a hash.
+#
+# Payments, the instruments they were made by, withholding certificates and write-offs are the books:
+# exported, kept, and named in the answer. The party's own details are erased on the customer or the
+# supplier, which these records only link to; an instrument also keeps the payee or drawer's name as
+# written on it, because the bank clears or returns it by that name.
+# Instruments made before 0.23 name their party only through their payment: copied, so a person's
+# request finds them.
+backfills:
+  - {name: instrument_party, entity: PaymentInstrument, needs: "t.customer is null and t.supplier is null and exists (select 1 from e_payment_entry p where p.tenant_id = t.tenant_id and p.id = t.payment_entry and (p.customer is not null or p.supplier is not null))",
+     set: "customer = (select p.customer from e_payment_entry p where p.tenant_id = t.tenant_id and p.id = t.payment_entry), supplier = (select p.supplier from e_payment_entry p where p.tenant_id = t.tenant_id and p.id = t.payment_entry)"}
+
 personal_data:
   - {entity: StoredValueAccount, match: holder, retain: "A stored-value account is money or units the books still owe or owed; the customer's own details are erased on the customer"}
+  - {entity: PaymentEntry, match: customer, retain: "A payment is part of the books, kept as long as they are; the customer's own details are erased on the customer"}
+  - {entity: PaymentEntry, match: supplier, retain: "A payment is part of the books, kept as long as they are; the supplier's own details are erased on the supplier"}
+  - {entity: PaymentInstrument, match: customer, retain: "A cheque or other instrument is a payment the books record until it clears or bounces, and the name on it is what the bank cleared or returned it by"}
+  - {entity: PaymentInstrument, match: supplier, retain: "A cheque or other instrument is a payment the books record until it clears or bounces, and the name on it is what the bank cleared or returned it by"}
+  - {entity: WithholdingCertificate, match: supplier, retain: "A certificate is the evidence for tax withheld at a lower rate or none, kept as long as the books it was applied in"}
+  - {entity: WithholdingCertificate, match: customer, retain: "A certificate is the evidence for tax collected at a lower rate or none, kept as long as the books it was applied in"}
+  - {entity: BadDebtWriteOff, match: customer, retain: "A write-off is part of the books, and the relief claimed on it may be examined"}
 
 events:
   - name: instrument_bounced
