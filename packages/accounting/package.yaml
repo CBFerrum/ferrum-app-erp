@@ -87,7 +87,7 @@ modules:
     label: Accounting
     icon: book
     order: 20
-    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
+    items: [JournalEntry, PaymentEntry, OpeningInvoice, Account, CostCenter, FinanceBook, FiscalYear, TaxTemplate, TaxRate, WithholdingCategory, WithholdingCertificate, StoredValueKind, StoredValueAccount, report:trial_balance, report:consolidated_trial_balance, report:general_ledger, report:deferred_revenue_and_expense,
             report:profit_and_loss, report:balance_sheet, report:cash_flow, report:receivables, report:payables, report:statement_of_account, report:tax_summary, report:withholding]
   - name: setup
     label: Setup
@@ -119,6 +119,8 @@ roles:
       - {entity: TaxRate, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: WithholdingCategory, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: WithholdingCertificate, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: StoredValueKind, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: StoredValueAccount, read: true, write: true, export: true}
       - {entity: Customer, read: true, write: true, create: true, delete: true, export: true, import: true, read_groups: [credit], write_groups: [credit]}
       - {entity: CustomerGroup, read: true, write: true, create: true, delete: true}
       - {entity: Supplier, read: true, write: true, create: true, delete: true, export: true, import: true}
@@ -136,6 +138,8 @@ roles:
       - {entity: PaymentEntry, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: Account, read: true}
       - {entity: WithholdingCategory, read: true}
+      - {entity: StoredValueKind, read: true}
+      - {entity: StoredValueAccount, read: true}
       - {entity: Company, read: true}
       - {entity: Customer, read: true}
       - {entity: Supplier, read: true}
@@ -143,7 +147,19 @@ roles:
       - {entity: FinanceBook, read: true}
       - {entity: Project, read: true}
       - {entity: Currency, read: true}
-export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation]
+export_tables: [accounting_period, journal_entry, journal_line, open_item, allocation, stored_value_entry]
+
+# An account a customer holds is theirs: exported with the rest, kept because the books owe it. A
+# bearer account names no one, and its code is kept only as a hash.
+personal_data:
+  - {entity: StoredValueAccount, match: holder, retain: "A stored-value account is money or units the books still owe or owed; the customer's own details are erased on the customer"}
+
+events:
+  - name: stored_value_expiring
+    label: Stored value expiring
+    description: "Raised once per account, its kind's Days of Warning before it expires, for an automation to tell its holder"
+    entity: StoredValueAccount
+    payload: {type: object, properties: {account: {type: string, format: uuid}, kind: {type: string, format: uuid}, holder: {type: [string, "null"], format: uuid}, code_hint: {type: string}, balance: {type: string}, expires_on: {type: string, format: date}}}
 merge_links:
   - {table: open_item, column: customer_id, to: Customer}
   - {table: open_item, column: supplier_id, to: Supplier}
