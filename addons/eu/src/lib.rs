@@ -92,6 +92,7 @@ mod tests {
         let boxes: Vec<ferrum_kernel::Doc> = seed.records[0]["boxes"].as_array().unwrap().iter().map(|b| b.as_object().cloned().unwrap()).collect();
         let row = |entity: &'static str, category: &str, reverse: bool, base: i64, tax: i64| TaxRow {
             entity,
+            voucher: entity,
             id: uuid::Uuid::nil(),
             number: None,
             date: chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
