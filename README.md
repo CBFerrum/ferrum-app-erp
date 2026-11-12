@@ -72,8 +72,8 @@ and CRM build on its engine.
 | 📋 | **Procurement** | `0.1.4` | material requests, requests for quotation, supplier quotations and scorecards |
 | 🏷️ | **Stock Operations** | `0.1.2` | stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles |
 | ⚙️ | **Manufacturing Operations** | `0.1.2` | workstations, operations, routings, job cards, production planning and subcontracting |
-| 🏭 | **Warehouse Management** | `0.2.2` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
-| 🛠️ | **Manufacturing Execution** | `0.2.2` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
+| 🏭 | **Warehouse Management** | `0.2.3` | bins, positions by lot and owner, receiving to returns, people and robots on one task list, never a second balance |
+| 🛠️ | **Manufacturing Execution** | `0.2.3` | release gates, an operator's terminal, lot genealogy and OEE on work orders |
 | ✅ | **Quality** | `0.1.0` | holds that stop stock everywhere it could go, nonconformances and corrective action |
 
 <details>
@@ -340,6 +340,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.19.1, Warehouse 0.2.3, Shop Floor 0.2.3** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.19.0, India 0.4.0, Canada 0.1.1** | A delivery country and region on sales and purchase documents that every country's rules read (India's place of supply follows it), a tax summary report by tax, category and rate, and withholding by category with thresholds, certificates and a report. |
 | **0.18.2, Finance 0.4.2, Stock Operations 0.1.2, Manufacturing Operations 0.1.2** | Item groups' accounts are read, and expired or disabled batches no longer leave for use. |
 | **0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
