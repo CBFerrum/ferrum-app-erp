@@ -70,6 +70,8 @@
   numbering: {template: "SO-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+       description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
     - {name: posting_date, type: date, required: true, default_expr: today, label: Order Date, in_list: true, in_filter: true}
@@ -172,6 +174,8 @@
   numbering: {template: "DN-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+       description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
@@ -282,6 +286,8 @@
   search_fields: [po_no]
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+       description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
     - {name: customer_company, type: link, to: Company, fetch_from: customer.represents_company, read_only: true, label: Group Company, in_filter: true,

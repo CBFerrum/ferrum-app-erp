@@ -99,6 +99,7 @@ roles:
       - {entity: Project, read: true}
       - {entity: CostCenter, read: true}
       - {entity: Account, read: true}
+      - {entity: NumberSeries, read: true}
   - name: Sales Manager
     permissions:
       - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
@@ -107,9 +108,11 @@ roles:
       - {entity: PricingRule, read: true, write: true, create: true, delete: true}
       - {entity: Promotion, read: true, write: true, create: true, delete: true}
       - {entity: PromotionCode, read: true, write: true, create: true, delete: true}
+      - {entity: NumberSeries, read: true}
   - name: Accounts Manager
     permissions:
       # Releasing a document over a customer's credit limit (its Credit Release Reason) is theirs.
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit], write_groups: [credit]}
       - {entity: SalesOrder, read: true, write: true, read_groups: [credit], write_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, read_groups: [credit], write_groups: [credit]}
+      - {entity: NumberSeries, read: true, write: true, create: true, delete: true}
