@@ -114,6 +114,8 @@ const erpRoutes = [
       // The desks: each loads when first opened, and answers where the record's own page would (a new record) or beside it.
       { path: "e/PaymentRun/new", lazy: () => import("./PaymentRun").then((m) => ({ Component: m.PaymentRunNew })) },
       { path: "desk/payment-run/:id", lazy: () => import("./PaymentRun").then((m) => ({ Component: m.PaymentRunDesk })) },
+      { path: "desk/stored-value", lazy: () => import("./StoredValue").then((m) => ({ Component: m.StoredValue })) },
+      { path: "e/StoredValueAccount/new", lazy: () => import("./StoredValue").then((m) => ({ Component: m.StoredValue })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
     ],
