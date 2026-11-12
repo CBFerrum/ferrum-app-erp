@@ -64,8 +64,22 @@ impl T {
         T::boot_with(url, KernelSettings::default(), extra).await
     }
 
+    /// [`T::boot`] with the workspace also given manufacturing.
+    pub async fn boot_manufacturing(url: String) -> T {
+        T::boot_inner(url, KernelSettings::default(), |_, _| {}, true).await
+    }
+
     /// [`T::boot`] with the kernel's settings given (a secret key, private addresses allowed).
     pub async fn boot_with(url: String, settings: KernelSettings, extra: impl FnOnce(&mut Vec<ferrum_meta::Package>, &mut HookRegistry)) -> T {
+        T::boot_inner(url, settings, extra, false).await
+    }
+
+    async fn boot_inner(
+        url: String,
+        settings: KernelSettings,
+        extra: impl FnOnce(&mut Vec<ferrum_meta::Package>, &mut HookRegistry),
+        manufacturing: bool,
+    ) -> T {
         let pool = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
         sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&pool.pool).await.expect("reset");
         let mut packages = ferrum_domain::packages().expect("the shared packages");
@@ -80,7 +94,7 @@ impl T {
         let names: Vec<String> = packages
             .iter()
             .map(|p| p.name().to_string())
-            .filter(|n| !["contacts", "project_records", "parties", "products", "manufacturing"].contains(&n.as_str()))
+            .filter(|n| !["contacts", "project_records", "parties", "products"].contains(&n.as_str()) && (manufacturing || n != "manufacturing"))
             .collect();
         let k: Arc<Kernel> = Kernel::boot(pool, Catalog::from_packages(packages).unwrap(), hooks, settings, None).await.expect("boot");
         k.set_file_store(Arc::new(MemFiles::default()));

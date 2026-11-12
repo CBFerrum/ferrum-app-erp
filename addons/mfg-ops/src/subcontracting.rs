@@ -708,15 +708,35 @@ impl DocHook for SubcontractingReceiptHook {
         let shares = ferrum_calc::allocate(round(additional, co.precision), &weights, co.precision, co.rounding).map_err(|e| Error::invalid(e.to_string()))?;
         let mut values = Vec::new();
         let mut receipts = Vec::new();
+        let mut side_value = Decimal::ZERO;
         for (i, r) in items.iter().enumerate() {
             let rm = rm_cost.get(s(r, "id").unwrap_or_default()).copied().unwrap_or_default();
             let service = round(d(r, "qty") * d(r, "service_rate"), co.precision);
             let extra = shares.get(i).copied().unwrap_or_default();
-            let value = rm + service + extra;
+            let mut value = rm + service + extra;
+            let warehouse = id(r, "warehouse").ok_or_else(|| Error::Validation(vec![FieldError::new("warehouse", "is required").in_row("items", i)]))?;
+            // The BOM's by-products and co-products come back with the goods and take their share of the cost.
+            if let Some(bom) = id(r, "bom") {
+                let (basis, main_weight, defs) = ferrum_app_erp::manufacturing::outputs(hc.tx, hc.ctx, bom).await?;
+                if !defs.is_empty() {
+                    let outs: Vec<(&ferrum_app_erp::manufacturing::Output, Decimal)> =
+                        defs.iter().map(|o| (o, (o.per_unit * d(r, "qty")).round_dp(9))).collect();
+                    let (main, each) =
+                        ferrum_app_erp::manufacturing::split_cost(value, d(r, "qty"), main_weight, basis == "Quantity", &outs, co.precision, co.rounding)?;
+                    for ((o, q), v) in outs.iter().zip(each) {
+                        if q.is_zero() {
+                            continue;
+                        }
+                        side_value += v;
+                        receipts.push(MoveIn { item: o.item, warehouse, qty: *q, exact_value: Some(v), ..Default::default() });
+                    }
+                    value = main;
+                }
+            }
             values.push((rm, service, extra, value));
             receipts.push(MoveIn {
                 item: id(r, "item").unwrap_or_default(),
-                warehouse: id(r, "warehouse").ok_or_else(|| Error::Validation(vec![FieldError::new("warehouse", "is required").in_row("items", i)]))?,
+                warehouse,
                 qty: d(r, "qty"),
                 exact_value: Some(value),
                 batch_no: s(r, "batch_no").map(str::to_string),
@@ -772,7 +792,7 @@ impl DocHook for SubcontractingReceiptHook {
         }
         let mut v = Doc::new();
         v.insert("rm_cost_total".into(), money(values.iter().map(|x| x.0).sum()));
-        v.insert("total_amount".into(), money(values.iter().map(|x| x.3).sum()));
+        v.insert("total_amount".into(), money(values.iter().map(|x| x.3).sum::<Decimal>() + side_value));
         hc.kernel.set_values_tx(&sctx, hc.tx, "SubcontractingReceipt", rid, v).await
     }
 

@@ -191,11 +191,11 @@ impl DocHook for StockEntryHook {
 
         let outputs: Vec<&Doc> = lines.iter().filter(|r| id(r, "target_warehouse").is_some()).collect();
         let additional = if p == MANUFACTURE { d(doc, "mfg_additional_cost") } else { Decimal::ZERO };
-        // Manufacture: the output carries consumed value + additional cost, split by quantity.
+        // Manufacture: the outputs carry consumed value + additional cost, by-products first, the rest by the BOM's
+        // basis (by quantity without one).
         let shares = if p == MANUFACTURE {
-            let weights: Vec<Decimal> = outputs.iter().map(|r| d(r, "qty")).collect();
-            ferrum_calc::allocate(round(issued_value + additional, co.precision), &weights, co.precision, co.rounding)
-                .map_err(|e| Error::invalid(e.to_string()))?
+            let wo = id(doc, "mfg_work_order").ok_or_else(|| Error::field("mfg_work_order", "is required"))?;
+            crate::manufacturing::output_shares(hc, wo, &outputs, round(issued_value + additional, co.precision), &co).await?
         } else {
             vec![]
         };
