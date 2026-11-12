@@ -120,6 +120,7 @@ const erpRoutes = [
       { path: "e/TaxReturn/new", lazy: () => import("./TaxReturn").then((m) => ({ Component: m.TaxReturnStart })) },
       { path: "desk/tax-return", lazy: () => import("./TaxReturn").then((m) => ({ Component: m.TaxReturnStart })) },
       { path: "desk/tax-return/:id", lazy: () => import("./TaxReturn").then((m) => ({ Component: m.TaxReturnDesk })) },
+      { path: "desk/withholding", lazy: () => import("./Withholding").then((m) => ({ Component: m.Withholding })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
     ],
