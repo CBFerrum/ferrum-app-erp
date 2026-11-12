@@ -4,9 +4,11 @@
 // is installed and only to people who can read what it works on.
 
 import type { ReactNode } from "react";
-import { api, docPath, newKey, t } from "@ferrum/client";
+import { Link } from "react-router";
+import { useQuery } from "@tanstack/react-query";
+import { api, docPath, isolate, newKey, t } from "@ferrum/client";
 import { StatePanel } from "@ferrum/kit";
-import { can, useMetaIndex, type Perms } from "@ferrum/records";
+import { can, useMe, useMetaIndex, type Perms } from "@ferrum/records";
 import { Loading } from "./states";
 
 export { newKey };
@@ -18,13 +20,50 @@ export function useRights(entity: string): { known: boolean; installed: boolean;
   return { known: !!q.data, installed: !!found, perms: found?.permissions, may: (k) => can(found?.permissions, k) };
 }
 
+/** The add-on that brings an entity, for those that are not ERP's own packages (an absent entity has no metadata to say). */
+const ADDON: Record<string, () => string> = { PaymentRun: () => t("Finance") };
+
 /** Holds a desk's content back until the entity it works on is known to be installed and readable. */
 export function Gate({ entity, children }: { entity: string; children: ReactNode }) {
   const r = useRights(entity);
+  const admin = useMe().data?.user.is_admin;
   if (!r.known) return <Loading shape="form" label={t("Loading")} />;
-  if (!r.installed) return <StatePanel kind="empty" title={t("Not available here")}>{t("The add-on that serves this screen is not installed in this workspace.")}</StatePanel>;
+  if (!r.installed) {
+    const addon = ADDON[entity]?.();
+    return (
+      <StatePanel
+        kind="empty"
+        title={t("Not available here")}
+        action={admin ? <a className="btn btn-primary btn-md" href="/store/">{t("Open the app store")}</a> : undefined}
+      >
+        {addon ? t("This screen comes with the {addon} add-on, which is not installed in this workspace.", { addon }) : t("The add-on that serves this screen is not installed in this workspace.")}{" "}
+        {admin ? t("Install it from the app store.") : t("Ask an administrator to install it.")}
+      </StatePanel>
+    );
+  }
   if (!r.may("read")) return <StatePanel kind="denied" />;
   return <>{children}</>;
+}
+
+/**
+ * Whether a desk lacks what it works from: true once the answer is in and no record of `entity` matches
+ * `filters`; a pending or failed question never says so, so the desk shows as before.
+ */
+export function useMissing(entity: string, filters?: unknown): boolean {
+  const q = useQuery({
+    queryKey: ["erp", "any", entity, filters ?? null],
+    queryFn: ({ signal }) => api.get<{ rows: { id: string }[] }>(docPath(entity), { fields: "id", limit: 1, ...(filters ? { filters: JSON.stringify(filters) } : {}) }, signal),
+  });
+  return !!q.data && q.data.rows.length === 0;
+}
+
+/** A desk's empty state when what it needs was never made: what is missing, and where it is made. */
+export function SetUp({ title, why, to, label }: { title: string; why: string; to: string; label: string }) {
+  return (
+    <StatePanel kind="empty" title={isolate(title)} action={<Link className="btn btn-primary btn-md" to={to}>{label}</Link>}>
+      {why}
+    </StatePanel>
+  );
 }
 
 /** A record's action, as the generic form calls it; `key` makes it safe to send again. */

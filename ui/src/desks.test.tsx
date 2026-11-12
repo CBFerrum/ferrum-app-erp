@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { DeskTabs } from "./DeskTabs";
 import { DESKS, formPath, isDesk, listPath, recordPath } from "./desks";
 
-const main = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+const main = readFileSync(new URL("./routes.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../../app.yaml", import.meta.url), "utf8");
 
 describe("the desks' routes", () => {
