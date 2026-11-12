@@ -1,0 +1,23 @@
+[package]
+name = "ferrum-erp-promotions"
+description = "Promotions over a whole document: pure and I/O-free, so a till's browser build and the server price alike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# A plain rlib, as ferrum-calc. For the browser:
+#   cargo rustc -p ferrum-erp-promotions --release --features wasm --target wasm32-unknown-unknown --crate-type cdylib
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen"]
+
+[dependencies]
+ferrum-calc = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[lints]
+workspace = true

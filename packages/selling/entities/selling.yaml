@@ -37,6 +37,9 @@
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
     - {name: price_list_rate, type: currency, read_only_if: "doc.item != null", description: "From the price list for an item; entered for a line without one"}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
+       description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
@@ -75,6 +78,9 @@
     - {name: items, type: table, of: SalesOrderItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100", label: Additional Discount %}
+    - {name: channel, type: data, label: Channel, description: "Where the sale is made (Web Shop, Point of Sale, ...), as promotions name it; empty: this document's kind"}
+    - {name: promotion_codes, type: data, label: Promotion Codes, no_copy: true, description: "Codes the customer gives, separated by commas or spaces"}
+    - {name: applied_promotions, type: table, of: AppliedPromotion, read_only: true, no_copy: true, label: Promotions Applied}
     - {name: total, type: currency, read_only: true}
     - {name: net_total, type: currency, read_only: true}
     - {name: total_taxes, type: currency, read_only: true}
@@ -123,6 +129,9 @@
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
     - {name: price_list_rate, type: currency, read_only: true}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
+       description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
@@ -201,6 +210,9 @@
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
     - {name: price_list_rate, type: currency, read_only_if: "doc.item != null", description: "From the price list for an item; entered for a line without one"}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
+       description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
@@ -280,6 +292,9 @@
     - {name: withholdings, type: table, of: WithholdingLine, read_only: true, label: Withholding}
     - {name: withholding_amount, type: currency, currency: currency, read_only: true, label: Collected, description: "Added to what the customer owes and booked to the category's account"}
     - {name: discount_percent, type: percent, min: "0", max: "100", label: Additional Discount %}
+    - {name: channel, type: data, label: Channel, description: "Where the sale is made (Web Shop, Point of Sale, ...), as promotions name it; empty: this document's kind"}
+    - {name: promotion_codes, type: data, label: Promotion Codes, no_copy: true, description: "Codes the customer gives, separated by commas or spaces"}
+    - {name: applied_promotions, type: table, of: AppliedPromotion, read_only: true, no_copy: true, label: Promotions Applied}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}
     - {name: net_total, type: currency, currency: currency, read_only: true}
@@ -307,6 +322,7 @@
     - {label: Currency & Price, collapsible: true, fields: [currency, conversion_rate, price_list, update_stock, set_warehouse]}
     - {label: Items, fields: [items]}
     - {label: Taxes, fields: [tax_template, taxes, tax_breakdown, discount_percent, withholding_category, withholdings, withholding_amount]}
+    - {label: Promotions, collapsible: true, fields: [channel, promotion_codes, applied_promotions]}
     - {label: Totals, fields: [total, discount_amount, net_total, total_taxes, grand_total, rounding_adjustment, rounded_total, outstanding_amount, debit_noted, status]}
     - {label: More, collapsible: true, fields: [debit_to, base_net_total, base_grand_total, base_rounded_total, project, cost_center, terms, remarks, credit_release_reason]}
   rules:
@@ -328,3 +344,92 @@
                  description: "Empty: the lines as invoiced, to change to what was charged short. A figure (5): that share of each line's price is charged on top"}]}
     - {name: make_inter_company_invoice, label: Create Purchase Invoice in the Group Company, docstatus: [1], permission: read, condition: "doc.customer_company != null && !doc.is_return"}
   list: {columns: [number, customer_name, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}
+
+- name: AppliedPromotion
+  label: Applied Promotion
+  kind: child
+  description: "What one promotion took off one line of the document: for its receipt, and summed by the promotions report"
+  fields:
+    - {name: promotion, type: link, to: Promotion, in_list: true}
+    - {name: title, type: data, in_list: true}
+    - {name: line, type: data, hidden: true, description: "The line's id"}
+    - {name: amount, type: currency, in_list: true, description: "Taken off the line, in the document's currency"}
+    - {name: code, type: data, in_list: true}
+
+- name: PromotionItem
+  label: Promotion Item
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, in_list: true}
+    - {name: item_group, type: link, to: ItemGroup, in_list: true}
+    - {name: qty, type: decimal, default: 1, min: "0", label: Units, in_list: true, description: "In a bundle: how many of the item it holds"}
+
+- name: PromotionCustomer
+  label: Promotion Customer
+  kind: child
+  fields:
+    - {name: customer, type: link, to: Customer, in_list: true}
+    - {name: customer_group, type: link, to: CustomerGroup, in_list: true}
+
+- name: PromotionPlace
+  label: Promotion Place
+  kind: child
+  fields:
+    - {name: warehouse, type: link, to: Warehouse, in_list: true}
+    - {name: place, type: data, in_list: true, description: "Another place an app names a sale by (a register's id): it fills the place on the sale"}
+
+- name: Promotion
+  label: Promotion
+  kind: master
+  module: selling
+  title_field: title
+  description: "A discount over a whole sale: when it applies, what it gives and how it combines. Each line's pricing rules come first; promotions then go by priority on what is left"
+  fields:
+    - {name: title, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, in_filter: true, description: "Empty: every company"}
+    - {name: disabled, type: check, in_filter: true}
+    - {name: priority, type: int, default: 1, min: 0, max: 100, in_list: true, description: "Higher applies first; each on what earlier ones left"}
+    - {name: valid_from, type: date, in_list: true}
+    - {name: valid_upto, type: date, in_list: true}
+    - {name: weekdays, type: data, description: "Days it applies, as numbers from 1 (Monday) to 7 (Sunday), e.g. 6,7; empty: every day"}
+    - {name: from_time, type: data, label: From Time, description: "HH:MM, in the company's time zone"}
+    - {name: to_time, type: data, label: To Time, description: "HH:MM; before From Time, the hours run past midnight"}
+    - {name: channels, type: data, description: "Where the sale is made, as documents name it (Sales Order, Sales Invoice, Web Shop, Point of Sale), separated by commas; empty: everywhere"}
+    - {name: customers, type: table, of: PromotionCustomer, description: "Customers or customer groups; empty: every customer"}
+    - {name: places, type: table, of: PromotionPlace, description: "Warehouses or places an app names; empty: everywhere"}
+    - {name: requires_code, type: check, label: Needs a Code, description: "Applies only with one of its Promotion Codes"}
+    - {name: max_uses, type: int, default: 0, min: 0, label: Uses Allowed, description: "Over all its codes, counted when a document is submitted; 0: no limit"}
+    - {name: used_count, type: int, default: 0, read_only: true, no_copy: true, label: Used}
+    - {name: first_order_only, type: check, label: First Order Only, description: "Only for a customer with no submitted order or invoice yet"}
+    - {name: min_amount, type: currency, min: "0", label: Minimum Spend, description: "On the qualifying lines, after their own discounts"}
+    - {name: min_qty, type: decimal, min: "0", label: Minimum Quantity, description: "Of the qualifying lines"}
+    - {name: qualifying_items, type: table, of: PromotionItem, label: Qualifying Items, description: "What counts towards the minimums, what lines-only discounts take off and what is bought; empty: everything"}
+    - {name: gives, type: select, required: true, in_list: true, options: [Percent Off the Document, Amount Off the Document, Percent Off Qualifying Lines, Amount Off Qualifying Lines, Buy and Get, Bundle Price, Free Delivery, Free Item]}
+    - {name: percent, type: percent, min: "0", max: "100", visible_if: "doc.gives.startsWith('Percent') || (doc.gives == 'Buy and Get' && doc.get_at == 'Percent Off')"}
+    - {name: amount, type: currency, min: "0", visible_if: "doc.gives.startsWith('Amount') || doc.gives == 'Bundle Price' || (doc.gives == 'Buy and Get' && doc.get_at == 'Price')",
+       description: "The amount off, the bundle's price, or what each unit got costs; in the company's currency"}
+    - {name: buy_qty, type: decimal, min: "0", label: Buy, visible_if: "doc.gives == 'Buy and Get'", description: "Units of the qualifying items"}
+    - {name: get_qty, type: decimal, min: "0", label: Get, visible_if: "doc.gives == 'Buy and Get'"}
+    - {name: get_items, type: table, of: PromotionItem, label: Got From, visible_if: "doc.gives == 'Buy and Get'", description: "Empty: the qualifying items"}
+    - {name: get_at, type: select, options: [Free, Percent Off, Price], default: Free, label: Got At, visible_if: "doc.gives == 'Buy and Get'"}
+    - {name: cheapest_first, type: check, default: 1, label: Cheapest Got First, visible_if: "doc.gives == 'Buy and Get'", description: "Unticked: the dearest first"}
+    - {name: bundle_items, type: table, of: PromotionItem, label: Bundle, visible_if: "doc.gives == 'Bundle Price'"}
+    - {name: free_item, type: link, to: Item, visible_if: "doc.gives == 'Free Item'", required_if: "doc.gives == 'Free Item'"}
+    - {name: free_qty, type: decimal, default: 1, min: "0", label: Free Quantity, visible_if: "doc.gives == 'Free Item'"}
+    - {name: combinable, type: check, default: 1, label: Combines With Other Promotions, description: "Unticked: it applies only if none has yet, and then alone"}
+    - {name: with_line_discounts, type: check, default: 1, label: Also On Discounted Lines, description: "Unticked: lines with a discount of their own (a pricing rule's) neither count nor are discounted"}
+    - {name: max_discount, type: currency, min: "0", label: Most Taken Off, description: "On one document, in the company's currency; empty: no cap"}
+  list: {columns: [title, gives, priority, valid_from, valid_upto], sort: priority desc}
+
+- name: PromotionCode
+  label: Promotion Code
+  kind: master
+  module: selling
+  title_field: code
+  description: "A code that opens a promotion: one shared code, or many unique ones, each with its own limit"
+  fields:
+    - {name: code, type: data, required: true, unique: true, in_list: true, description: "Letters, digits, '-' or '_'; kept in capitals"}
+    - {name: promotion, type: link, to: Promotion, required: true, in_list: true, in_filter: true}
+    - {name: max_uses, type: int, default: 0, min: 0, label: Uses Allowed, description: "Counted when a document using it is submitted, given back when it is cancelled; 0: no limit"}
+    - {name: used_count, type: int, default: 0, read_only: true, no_copy: true, label: Used, in_list: true}
+    - {name: disabled, type: check, in_filter: true}
