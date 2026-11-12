@@ -48,6 +48,13 @@ of the order as submitted. A closed order's lines carry `closed_qty`. Progress o
 allowance. Submitting a `SalesOrder`, `DeliveryNote` or `SalesInvoice` may be refused for the
 customer's credit (limit or hold) unless it carries a `credit_release_reason`.
 
+Since 0.24.0, the company's read-only capability `core.company.scan` (`{text}`) says what a scanned text is:
+`{text, gs1, matches, ambiguous}`, each match `{kind, entity, id, title, item, item_name, uom, qty, batch_no, expiry,
+serial_no, warehouse}` with `kind` one of `item` (by barcode or code), `gs1` (an element string's item by its GTIN,
+with its batch, expiry, serial and quantity), `batch`, `serial`, `bin` or `document` (by its number; a carrier
+shipment by its tracking number too). Read with the caller's rights, at most 20 matches, a text of at most 200
+characters; `ambiguous` when more than one record answers, nothing when none does. The unit is the item's stock unit.
+
 ## Through the engine
 
 Apps that post their own documents' effects (Point of Sale's sales, Commerce's orders, Assets'

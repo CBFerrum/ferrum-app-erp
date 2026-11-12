@@ -29,6 +29,7 @@ pub mod pricing;
 pub mod promotion;
 pub mod reports;
 pub mod reservation;
+pub mod scan;
 pub mod setup;
 pub mod shipping;
 pub mod stock;
@@ -85,7 +86,8 @@ pub fn register(h: &mut HookRegistry) {
     h.scoped(&only("inventory"), |h| {
         h.register("StockEntry", Arc::new(stock_entry::StockEntryHook))
             .register("CarrierConnection", Arc::new(shipping::CarrierHook))
-            .register("CarrierShipment", Arc::new(shipping::ShipmentHook));
+            .register("CarrierShipment", Arc::new(shipping::ShipmentHook))
+            .register("Company", Arc::new(scan::ScanHook));
     });
     h.scoped(&only("manufacturing"), |h| {
         h.register("Bom", Arc::new(manufacturing::BomHook))
