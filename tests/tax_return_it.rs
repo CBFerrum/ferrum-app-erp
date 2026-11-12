@@ -8,7 +8,7 @@ mod common;
 use chrono::{Datelike, NaiveDate};
 use common::*;
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::HashMap;
 
 #[test]
@@ -105,4 +105,6 @@ async fn scenario() {
     let again = t.try_post("TaxReturn", json!({"definition": def, "company": c, "from_date": first.to_string()})).await.unwrap_err();
     assert!(again.contains("is filed for this period"), "{again}");
     assert_eq!(boxes(&t.get("TaxReturn", rid).await)["NET"], n(13), "kept as filed");
+    let csv = String::from_utf8(t.k.render_document(&t.ctx, "accounting.tax_return_csv", rid, None, false).await.expect("export").bytes).unwrap();
+    assert!(csv.lines().any(|l| l == "NET,Payable,13.00,0.00,,13.00") && csv.contains("MAN,Entered by hand,0.00,3.00,Margin scheme sales,3.00"), "{csv}");
 }

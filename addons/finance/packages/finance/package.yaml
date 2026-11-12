@@ -72,6 +72,10 @@ overlays:
                  params: [{name: reason, label: Why, type: text, required: true}]}
       - op: add_action
         action: {name: fin_release_payment, label: Release Payment, docstatus: [1], permission: submit, condition: "doc.fin_payment_hold"}
+  - entity: Supplier
+    ops:
+      - {op: add_field, column: true, field: {name: fin_iban, type: data, max_length: 42, label: IBAN / Account No, description: "Where payment runs pay them"}}
+      - {op: add_field, column: true, after: fin_iban, field: {name: fin_bic, type: data, max_length: 20, label: BIC / Bank Code}}
   - entity: SalesOrder
     ops:
       - {op: add_field, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
@@ -112,3 +116,29 @@ messages:
         inapp:
           title: "Payment {{ doc.number }} of {{ doc.paid_amount }}"
           text: "It settles: {{ values.bills }}"
+
+documents:
+  - key: finance.bank_transfer_pain001
+    label: Credit transfer file (ISO 20022 pain.001)
+    entity: PaymentRun
+    output: xml
+    languages:
+      en:
+        body: |-
+          <?xml version="1.0" encoding="UTF-8"?>
+          {% set paid = doc.lines|selectattr("state", "eq", "Paid")|list %}<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><CstmrCdtTrfInitn>
+          <GrpHdr><MsgId>{{ doc.number }}</MsgId><CreDtTm>{{ now }}</CreDtTm><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><InitgPty><Nm>{{ links.company.company_name }}</Nm></InitgPty></GrpHdr>
+          <PmtInf><PmtInfId>{{ doc.number }}</PmtInfId><PmtMtd>TRF</PmtMtd><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><ReqdExctnDt>{{ doc.posting_date }}</ReqdExctnDt>
+          <Dbtr><Nm>{{ links.company.company_name }}</Nm></Dbtr><DbtrAcct><Id><IBAN>{{ links.bank.iban }}</IBAN></Id></DbtrAcct><DbtrAgt><FinInstnId><BIC>{{ links.bank.swift_code }}</BIC></FinInstnId></DbtrAgt>
+          {% for l in paid %}<CdtTrfTxInf><PmtId><EndToEndId>{{ l.invoice_number }}</EndToEndId></PmtId><Amt><InstdAmt Ccy="{{ doc.currency_code }}">{{ l.amount|fixed(2) }}</InstdAmt></Amt><CdtrAgt><FinInstnId><BIC>{{ l.bic }}</BIC></FinInstnId></CdtrAgt><Cdtr><Nm>{{ l.supplier_name }}</Nm></Cdtr><CdtrAcct><Id><IBAN>{{ l.iban }}</IBAN></Id></CdtrAcct><RmtInf><Ustrd>{{ l.invoice_number }}</Ustrd></RmtInf></CdtTrfTxInf>
+          {% endfor %}</PmtInf></CstmrCdtTrfInitn></Document>
+  - key: finance.bank_transfer_csv
+    label: Payments file (CSV)
+    entity: PaymentRun
+    output: csv
+    languages:
+      en:
+        body: |-
+          Supplier,Account,Bank Code,Amount,Currency,Reference,Pay On
+          {% for l in doc.lines %}{% if l.state == "Paid" %}{{ l.supplier_name }},{{ l.iban }},{{ l.bic }},{{ l.amount|fixed(2) }},{{ doc.currency_code }},{{ l.invoice_number }},{{ doc.posting_date }}
+          {% endif %}{% endfor %}

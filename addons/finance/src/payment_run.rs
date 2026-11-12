@@ -229,8 +229,9 @@ async fn propose(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
             continue;
         }
         let taken = discount.as_ref().map(|x| x.amount).unwrap_or_default();
+        let sup = get(hc.kernel, hc.ctx, hc.tx, "Supplier", supplier).await?;
         let mut line = obj(json!({
-            "pay": true, "supplier": supplier, "invoice": item, "invoice_type": hc.ctx.schema.entity(&entity).map(|e| e.def.label.clone()).unwrap_or(entity),
+            "pay": true, "supplier": supplier, "supplier_name": s(&sup, "supplier_name"), "iban": s(&sup, "fin_iban"), "bic": s(&sup, "fin_bic"), "invoice": item, "invoice_type": hc.ctx.schema.entity(&entity).map(|e| e.def.label.clone()).unwrap_or(entity),
             "invoice_number": number, "due_date": due, "outstanding": money(outstanding), "discount": money(taken), "amount": money(outstanding - taken),
             "state": "Proposed",
         }));
@@ -252,6 +253,7 @@ async fn propose(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
     hc.kernel.set_child_rows_tx(&sctx, hc.tx, "PaymentRun", "lines", rid, chosen).await?;
     let mut v = Doc::new();
     v.insert("total_amount".into(), money(total));
+    v.insert("currency_code".into(), json!(code));
     hc.kernel.set_values_tx(&sctx, hc.tx, "PaymentRun", rid, v).await
 }
 
@@ -302,7 +304,22 @@ async fn make_payments(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
     v.insert("paid_amount".into(), money(paid));
     v.insert("failed_count".into(), json!(failed));
     v.insert("run_status".into(), json!(if done { "Paid" } else { "Partly Paid" }));
-    hc.kernel.set_values_tx(&sctx, hc.tx, "PaymentRun", rid, v).await
+    hc.kernel.set_values_tx(&sctx, hc.tx, "PaymentRun", rid, v).await?;
+    // The bank's file of what was paid, kept on the run (made again, replacing it, when it pays more).
+    if let Some(template) = s(&run, "bank_file").map(str::trim).filter(|t| !t.is_empty())
+        && !paid.is_zero()
+    {
+        let g = ferrum_kernel::documents::Generate {
+            template: template.to_string(),
+            record: rid,
+            name: Some(format!("{number} bank file")),
+            language: None,
+            replace: true,
+            values: Default::default(),
+        };
+        ferrum_kernel::documents::generate(hc.kernel, hc.tx, &sctx, &g).await?;
+    }
+    Ok(())
 }
 
 /// One payment entry for a supplier's lines, made and submitted as the person making the run's

@@ -199,3 +199,15 @@ messages:
         inapp:
           title: "Deposit {{ doc.instrument_no }} from {{ doc.party_name }}"
           text: "{{ doc.amount }}, dated {{ doc.instrument_date }}"
+
+documents:
+  - key: accounting.tax_return_csv
+    label: Tax return (CSV)
+    entity: TaxReturn
+    output: csv
+    languages:
+      en:
+        body: |-
+          Box,Label,From the Books,Adjustment,Reason,Value
+          {% for b in doc.boxes %}{{ b.code }},{{ b.label }},{{ b.computed|fixed(2) }},{{ b.adjustment|fixed(2) }},{{ b.adjustment_reason }},{{ b.value|fixed(2) }}
+          {% endfor %}

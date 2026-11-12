@@ -12,6 +12,25 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Files kept in memory: what documents generated are stored in.
+#[derive(Default)]
+pub struct MemFiles(std::sync::Mutex<HashMap<String, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl ferrum_kernel::files::FileStore for MemFiles {
+    async fn put(&self, key: &str, data: &[u8]) -> ferrum_kernel::Result<()> {
+        self.0.lock().unwrap().insert(key.to_string(), data.to_vec());
+        Ok(())
+    }
+    async fn get(&self, key: &str) -> ferrum_kernel::Result<Vec<u8>> {
+        self.0.lock().unwrap().get(key).cloned().ok_or_else(|| ferrum_kernel::Error::NotFound("object".into()))
+    }
+    async fn delete(&self, key: &str) -> ferrum_kernel::Result<()> {
+        self.0.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+
 pub fn obj(v: Value) -> Doc {
     v.as_object().cloned().unwrap()
 }
@@ -59,6 +78,7 @@ impl T {
             .filter(|n| !["contacts", "project_records", "parties", "products", "manufacturing"].contains(&n.as_str()))
             .collect();
         let k: Arc<Kernel> = Kernel::boot(pool, Catalog::from_packages(packages).unwrap(), hooks, KernelSettings::default(), None).await.expect("boot");
+        k.set_file_store(Arc::new(MemFiles::default()));
         ferrum_domain::maintenance(&k).await.expect("maintenance");
         ferrum_app_erp::maintenance(&k).await.expect("partitions");
         let tenant = k
