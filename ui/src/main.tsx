@@ -116,6 +116,7 @@ const erpRoutes = [
       { path: "desk/payment-run/:id", lazy: () => import("./PaymentRun").then((m) => ({ Component: m.PaymentRunDesk })) },
       { path: "desk/stored-value", lazy: () => import("./StoredValue").then((m) => ({ Component: m.StoredValue })) },
       { path: "e/StoredValueAccount/new", lazy: () => import("./StoredValue").then((m) => ({ Component: m.StoredValue })) },
+      { path: "desk/promotions/:id?", lazy: () => import("./Promotions").then((m) => ({ Component: m.Promotions })) },
       ...recordsRoutes,
       { path: "*", element: <NotFound /> },
     ],
