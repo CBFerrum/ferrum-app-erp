@@ -522,4 +522,33 @@ async fn scenario() {
     let e = t.k.insert(&t.ctx, "PaymentEntry", obj(pay(&walk_in, &i9, "10", json!({"stored_value_account": a8.to_string()})))).await;
     assert!(e.unwrap_err().to_string().contains("expired"));
     t.agrees().await;
+    // ───────────── 6. reports ─────────────
+    let report = |name: &'static str, params: Vec<(&'static str, String)>| {
+        let t = &t;
+        async move {
+            let params: std::collections::HashMap<String, String> = params.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            ferrum_domain::reports::run(&t.k, &t.ctx, name, &params).await.unwrap_or_else(|e| panic!("{name}: {e:?}"))
+        }
+    };
+    let row = |r: &Value, kind: &str| r["rows"].as_array().unwrap().iter().find(|x| x["kind"] == json!(kind)).cloned().unwrap_or(Value::Null);
+    let owed = report("stored_value_liability", vec![("company", c.clone()), ("as_of", days(40).to_string())]).await;
+    // Gift Card: a1 400, a3 450 and the 200 and 50 issued by hand, all issued forty days before.
+    let g = row(&owed, "Gift Card");
+    assert_eq!((dec(&g["value"]), dec(&g["age_31_90"]), g["accounts"].clone()), (n("1100"), n("1100"), json!(4)), "{owed}");
+    assert_eq!(dec(&row(&owed, "Classes")["balance"]), n("8"));
+    assert_eq!(row(&owed, "Seasonal"), Value::Null, "nothing owed once expired into income");
+    let span = vec![("company", c.clone()), ("from_date", today.to_string()), ("to_date", days(40).to_string())];
+    let moved = report("stored_value_movement", span.clone()).await;
+    let s7 = row(&moved, "Seasonal");
+    assert_eq!((dec(&s7["issued"]), dec(&s7["expired"]), dec(&s7["net"])), (n("80"), n("80"), n("0")));
+    let g = row(&moved, "Gift Card");
+    // Issued 500 + 200 + 50 by hand, 500 sold and 500 topped up (then cancelled: a reversal counts against it).
+    assert_eq!((dec(&g["issued"]), dec(&g["redeemed"]), dec(&g["refunded"])), (n("1250"), n("300"), n("300")), "{g}");
+    let mut sp = span.clone();
+    sp.push(("stored_value_account", a3.to_string()));
+    let st = report("stored_value_statement", sp).await;
+    let last = st["rows"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!((dec(&last["balance"]), dec(&st["totals"]["balance"])), (n("450"), n("450")));
+    assert_eq!(st["rows"][1]["entry_type"], json!("issue"));
+    t.agrees().await;
 }
