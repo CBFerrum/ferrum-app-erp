@@ -635,4 +635,97 @@ async fn scenario() {
     assert!(t.find(&shared, "SHARED-CARD-0001", None).await.is_err());
     assert_eq!(t.find(&shared, fresh["code"].as_str().unwrap(), None).await.unwrap(), s1);
     t.agrees().await;
+
+    // ───────────── 8. a code or PIN comes to rest nowhere ─────────────
+    // Every operation with a card's code and PIN, then every table searched for them: the audit log,
+    // the capability receipts, record history, the outbox and events, and whatever else is stored.
+    let pin = "Pq-2468-z";
+    let pid: Uuid = pinned.parse().unwrap();
+    let asha = json!(customer.to_string());
+    t.issue(&pinned, "80", Some(customer), Some("STORECREDIT-0002"), Some(pin), None).await.unwrap();
+    let mut tx = run().await;
+    let bal = stored_value::balance(&t.k, &t.ctx, &mut tx, pid, "STORECREDIT-0002", Some(pin)).await.unwrap();
+    assert_eq!(dec(&bal["balance"]), n("80"));
+    drop(tx);
+    let i12 = t.post("SalesInvoice", bill(&asha, &work, "1")).await;
+    let mut tx = run().await;
+    stored_value::redeem(&t.k, &t.ctx, &mut tx, pid, "STORECREDIT-0002", Some(pin), uid(&i12), Some(n("10")), None, "pin:redeem").await.unwrap();
+    tx.commit().await.unwrap();
+    let i13 = t.post("SalesInvoice", bill(&asha, &work, "1")).await;
+    t.post("PaymentEntry", pay(&asha, &i13, "10", json!({"stored_value_code": "STORECREDIT-0002", "stored_value_pin": pin}))).await;
+    let note2 = t
+        .post("SalesInvoice", json!({"company": c, "customer": asha, "is_return": true, "return_reason": "no receipt", "items": [{"item": work, "qty": "-1"}]}))
+        .await;
+    let mut tx = run().await;
+    stored_value::refund(&t.k, &t.ctx, &mut tx, pid, uid(&note2), Some("STORECREDIT-0003"), Some(pin), None, "pin:refund").await.unwrap();
+    tx.commit().await.unwrap();
+    t.issue(&shared, "30", None, Some("SHARED-CARD-0002"), Some(pin), None).await.unwrap();
+    let mut tx = run().await;
+    let to_new = stored_value::transfer(&t.k, &t.ctx, &mut tx, sid, "SHARED-CARD-0002", Some(pin), None, None, Some(n("5")), "pin:transfer").await.unwrap();
+    stored_value::transfer(&t.k, &t.ctx, &mut tx, sid, "SHARED-CARD-0002", Some(pin), fresh["code"].as_str(), None, Some(n("5")), "pin:transfer-2")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    // A logged action that is handed a code or PIN refuses it before anything runs; a proof is used once,
+    // for its one operation; the account's New Code takes a proof, or makes its code and PIN itself.
+    let mut tx = run().await;
+    let e = stored_value::call(&t.k, &t.ctx, &mut tx, pid, "redeem", json!({"code": "STORECREDIT-0002", "pin": pin, "invoice": uid(&i12)}), Some("leak"));
+    assert!(e.await.is_err());
+    drop(tx);
+    let e = t.k.run_action(&t.ctx, "StoredValueKind", pid, "issue", json!({"amount": "1", "reason": "x", "pin": pin})).await.unwrap_err();
+    assert!(e.to_string().contains("never passed"), "{e}");
+    let proven = t.k.run_action(&t.ctx, "StoredValueKind", pid, "prove", json!({"operation": "redeem", "code": "STORECREDIT-0002", "pin": pin})).await.unwrap();
+    let proof = proven["proof"].as_str().unwrap();
+    let i14 = t.post("SalesInvoice", bill(&asha, &work, "1")).await;
+    let redeem = |proof: &str| json!({"proof": proof, "invoice": uid(&i14), "amount": "5"});
+    let e = t.k.run_action(&t.ctx, "StoredValueKind", sid, "redeem", redeem(proof)).await.unwrap_err();
+    assert!(e.to_string().contains("prove the code again"), "another kind's: {e}");
+    t.k.run_action(&t.ctx, "StoredValueKind", pid, "redeem", redeem(proof)).await.unwrap();
+    let e = t.k.run_action(&t.ctx, "StoredValueKind", pid, "redeem", redeem(proof)).await.unwrap_err();
+    assert!(e.to_string().contains("used"), "once: {e}");
+    let mut tx = run().await;
+    sqlx::query("update stored_value_proof set expires_at = now() - interval '1 second' where tenant_id = $1").bind(tenant).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let pinned_acc = t.find(&pinned, "STORECREDIT-0002", Some(pin)).await.unwrap();
+    let made_pin = t.k.run_action(&t.ctx, "StoredValueAccount", pinned_acc, "new_code", json!({})).await.unwrap();
+    let (new_code, new_pin) = (made_pin["code"].as_str().unwrap(), made_pin["pin"].as_str().unwrap());
+    assert_eq!(t.find(&pinned, new_code, Some(new_pin)).await.unwrap(), pinned_acc, "a kind that needs a PIN gets one made with its code");
+    assert!(t.k.run_action(&t.ctx, "StoredValueAccount", pinned_acc, "new_code", json!({"pin": pin})).await.unwrap_err().to_string().contains("never passed"));
+    let chosen = t.k.run_action(&t.ctx, "StoredValueKind", pid, "prove", json!({"operation": "new_code", "pin": pin})).await.unwrap();
+    let mine = t.k.run_action(&t.ctx, "StoredValueAccount", pinned_acc, "new_code", json!({"proof": chosen["proof"]})).await.unwrap();
+    assert_eq!(mine["code"], Value::Null, "the code came from prove, not again from here");
+    assert_eq!(t.find(&pinned, chosen["code"].as_str().unwrap(), Some(pin)).await.unwrap(), pinned_acc);
+    let mut secrets: Vec<String> =
+        ["4000-1234-5678-9ABC", "STORECREDIT-0001", "STORECREDIT-0002", "STORECREDIT-0003", "GIFT-0000-0000-0001", "SHARED-CARD-0001", "SHARED-CARD-0002"]
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+    secrets.extend(
+        [&second["code"], &back["code"], &fresh["code"], &to_new["code"], &made_pin["code"], &chosen["code"]]
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::to_string),
+    );
+    secrets.extend(secrets.clone().iter().map(|c| c.replace('-', "")));
+    secrets.push(pin.into());
+    let like: Vec<String> = secrets.iter().map(|s| format!("%{s}%")).collect();
+    let mut tx = t.k.db.pool.begin().await.unwrap();
+    sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();
+    let tables: Vec<String> =
+        sqlx::query_scalar("select table_name::text from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1")
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+    let mut rests = Vec::new();
+    for table in tables {
+        let hits: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("select count(*) from \"{table}\" x where x::text ilike any($1)")))
+            .bind(&like)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        if hits > 0 {
+            rests.push(format!("{table}: {hits}"));
+        }
+    }
+    assert_eq!(rests, Vec::<String>::new(), "a card's code or PIN rests in these tables");
 }
