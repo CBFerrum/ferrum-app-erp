@@ -13,7 +13,7 @@ import { api, docPath, download, errorMessage, formatDate, formatDateTime, isola
 import { Alert, Badge, Button, confirmDialog, StatePanel, toast, useShellTitle, type Tone } from "@ferrum/kit";
 import { LinkInput, LinkTitle, useMe } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
-import { act, amountInput, Gate, useRights } from "./desk";
+import { act, amountInput, Gate, SetUp, useMissing, useRights } from "./desk";
 import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
@@ -77,6 +77,8 @@ function Setup() {
   // One key for the draft this form makes: a double press or a retry after a lost answer makes one run.
   const draftKey = useRef(newKey());
   const ready = !!company && !!f.bank_account && !!f.posting_date && !!f.due_by;
+  // A run is paid from a bank or cash account; with none made, the server would refuse every run.
+  const noBank = useMissing("Account", [["account_type", "in", ["Bank", "Cash"]], ["is_group", "=", false]]);
 
   const propose = async () => {
     if (busy || !ready) return;
@@ -97,6 +99,7 @@ function Setup() {
     }
   };
 
+  if (noBank) return <SetUp title={t("No bank or cash account yet")} why={t("A payment run is paid from a bank or cash account, and this workspace has none. Make one, then come back.")} to="/e/Account/new" label={t("Make an account")} />;
   return (
     <div className="erp-page">
       <PageHead

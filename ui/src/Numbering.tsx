@@ -4,9 +4,9 @@
 // no route shows it, so the last number given is shown instead.
 
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useSearchParams } from "react-router";
-import { api, docPath, errorMessage, isolate, t } from "@ferrum/client";
+import { useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { api, docPath, errorMessage, isolate, newKey, t } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, StatePanel, TabPanel, Tabs, toast, useShellTitle } from "@ferrum/kit";
 import { LinkInput, LinkTitle, useEntityMeta, useMetaIndex } from "@ferrum/records";
 import { Ctl, Meta, PageHead } from "./chrome";
@@ -36,6 +36,77 @@ function Desk() {
       />
       <Tabs id="num" value={tab} onChange={(x) => setSp(x === "series" ? {} : { tab: x }, { replace: true })} tabs={[{ id: "series", label: t("Series") }, { id: "document", label: t("A document's series") }]} />
       <TabPanel id="num" tab={tab}>{tab === "document" ? <Which /> : <List />}</TabPanel>
+    </div>
+  );
+}
+
+/** `/e/NumberSeries/new`: a new series, its kind chosen by the kind's label (the plain form lists the type names). */
+export function NewSeries() {
+  useShellTitle(t("New series"));
+  return (
+    <Gate entity="NumberSeries">
+      <NewForm />
+    </Gate>
+  );
+}
+
+function NewForm() {
+  const navigate = useNavigate();
+  const name = useKindName();
+  const may = useRights("NumberSeries").may;
+  const meta = useEntityMeta("NumberSeries").data;
+  const kinds = (meta?.fields.find((f) => f.name === "document")?.options as string[] | undefined) ?? [];
+  const [f, setF] = useState({ series_name: "", document: "", company: "", template: "", gapless: false, use_by_default: false });
+  const set = (k: keyof typeof f, v: string | boolean) => setF((x) => ({ ...x, [k]: v }));
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const key = useRef(newKey());
+  const ready = !!f.series_name.trim() && !!f.document && !!f.template.trim();
+  const save = async () => {
+    if (busy || !ready) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api.post(docPath("NumberSeries"), { ...f, series_name: f.series_name.trim(), template: f.template.trim(), company: f.company || null }, { idempotencyKey: key.current });
+      navigate("/desk/numbering");
+    } catch (e) {
+      setProblem(errorMessage(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="erp-page">
+      <PageHead title={t("New series")} meta={<Meta items={[t("A way of numbering one kind of document, beside its usual numbering.")]} />} actions={<Link className="btn btn-ghost btn-md" to="/desk/numbering">{t("Numbering series")}</Link>} />
+      <form className="erp-bar" onSubmit={(e) => e.preventDefault()} aria-label={t("The new series")}>
+        <Ctl label={t("Series")} htmlFor="ns-name">
+          <input id="ns-name" className="input" value={f.series_name} onChange={(e) => set("series_name", e.target.value)} />
+        </Ctl>
+        <Ctl label={t("For")} htmlFor="ns-for">
+          <select id="ns-for" className="select" value={f.document} onChange={(e) => set("document", e.target.value)}>
+            <option value="">{t("Choose a kind")}</option>
+            {kinds.map((k) => <option key={k} value={k}>{isolate(name(k))}</option>)}
+          </select>
+        </Ctl>
+        <Ctl label={t("Company")} htmlFor="ns-company" title={t("Empty: every company's")}>
+          <LinkInput to="Company" id="ns-company" value={f.company || null} onChange={(id) => set("company", id ?? "")} />
+        </Ctl>
+        <Ctl label={t("Template")} htmlFor="ns-template" title={t("As a document's usual number is made, for example SINV-{FY}-{seq:5}; {seq:N} is the running number, N digits.")}>
+          <input id="ns-template" className="input" value={f.template} onChange={(e) => set("template", e.target.value)} />
+        </Ctl>
+        <label className="check-field erp-check">
+          <input type="checkbox" checked={f.gapless} onChange={(e) => set("gapless", e.target.checked)} />
+          <span>{t("Gapless")}</span>
+        </label>
+        <label className="check-field erp-check">
+          <input type="checkbox" checked={f.use_by_default} onChange={(e) => set("use_by_default", e.target.checked)} />
+          <span>{t("Use by default")}</span>
+        </label>
+      </form>
+      {problem && <Alert tone="error">{isolate(problem)}</Alert>}
+      <div className="erp-sticky-foot">
+        <span className="muted">{may("create") ? "" : t("You can look at numbering series. An Accounts Manager makes one.")}</span>
+        <Button variant="primary" loading={busy} disabled={!ready || !may("create")} onClick={() => void save()}>{t("Save the series")}</Button>
+      </div>
     </div>
   );
 }
