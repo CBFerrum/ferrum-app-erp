@@ -14,6 +14,13 @@
     - {name: serial_no, type: text, description: One serial number per line}
     - {name: expense_account, type: link, to: Account, link_filters: {is_group: false}, description: Offset account for receipts and issues}
     - {name: cost_center, type: link, to: CostCenter}
+    - {name: transfer_line, type: data, read_only: true, hidden: true, no_copy: true, description: "On a receipt of a transfer: the line of the shipping entry it receives"}
+    - {name: received_qty, type: decimal, read_only: true, no_copy: true, label: Received or Settled, description: "On a transfer through transit: what its receipts took in or wrote off so far"}
+    - {name: short_qty, type: decimal, min: "0", no_copy: true, label: Short or Damaged, description: "On a receipt of a transfer: what did not arrive in a usable state, beside the quantity received"}
+    - {name: short_action, type: select, options: [Written Off, Claimed], label: Shortage, no_copy: true,
+       description: "Written Off: its value is a loss (the stock adjustment account unless an account is given). Claimed: its value is owed by whoever is claimed from, to the account given"}
+    - {name: short_account, type: link, to: Account, link_filters: {is_group: false}, label: Shortage Account, no_copy: true}
+    - {name: short_reason, type: data, label: Why, no_copy: true}
 
 - name: StockEntry
   label: Stock Entry
@@ -28,9 +35,17 @@
     - {name: purpose, type: select, options: [Material Receipt, Material Issue, Material Transfer, Opening Stock], required: true, default: Material Receipt, in_list: true, in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: posting_time, type: data, default_expr: time, description: "HH:MM:SS, local time (orders entries on the same day)"}
+    - {name: through_transit, type: check, label: "Ship Now, Receive Later", visible_if: "doc.purpose == 'Material Transfer' && doc.transfer_of == null",
+       description: "The goods leave the source and wait in a transit warehouse, valued, until a receipt takes them into the target; partly, with shortages written off or claimed"}
+    - {name: transit_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Transit}, label: Transit Warehouse, visible_if: "doc.through_transit",
+       description: "Empty: the company's, else its first transit warehouse (made when it has none)"}
+    - {name: transfer_of, type: link, to: StockEntry, read_only: true, no_copy: true, label: Receives Transfer}
+    - {name: transit_status, type: select, options: [In Transit, Partly Received, Received], read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: items, type: table, of: StockEntryItem, required: true}
     - {name: total_amount, type: currency, read_only: true, in_list: true}
     - {name: remarks, type: text}
   rules:
     - {name: time_format, check: "doc.posting_time == null || doc.posting_time.matches('^[0-2][0-9]:[0-5][0-9](:[0-5][0-9])?$')", message: "Posting time must be HH:MM or HH:MM:SS"}
-  list: {columns: [number, purpose, posting_date, total_amount], sort: posting_date desc}
+  actions:
+    - {name: receive_transfer, label: Receive, docstatus: [1], permission: read, condition: "doc.through_transit && doc.transit_status != 'Received'"}
+  list: {columns: [number, purpose, posting_date, total_amount, transit_status], sort: posting_date desc}
