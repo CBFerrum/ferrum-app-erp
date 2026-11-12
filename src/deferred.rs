@@ -161,8 +161,16 @@ async fn recognise_invoice(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kd: &Kind, iid: U
         // Revenue leaves the liability for income; an expense leaves the asset for the expense.
         let sign = if kd.selling { Decimal::ONE } else { -Decimal::ONE };
         let cost_center = id(row, "cost_center");
-        e.lines.push(Line::new(deferred, sign * due, &co.currency_code).cost_center(cost_center).remarks("Deferred"));
-        e.lines.push(Line::new(own, -sign * due, &co.currency_code).cost_center(cost_center).project(id(&doc, "project")).remarks("Recognised"));
+        let dims = crate::dimensions::of_line(&doc, row);
+        e.lines.push(Line::new(deferred, sign * due, &co.currency_code).cost_center(cost_center).dims(dims.clone()).remarks("Deferred"));
+        e.lines.push(
+            Line::new(own, -sign * due, &co.currency_code)
+                .cost_center(cost_center)
+                .project(id(&doc, "project"))
+                .dims(dims)
+                .item(id(row, "item"))
+                .remarks("Recognised"),
+        );
         updates.push((line_id, booked + due, till));
     }
     let Some((mut e, _)) = entry else { return Ok(0) };

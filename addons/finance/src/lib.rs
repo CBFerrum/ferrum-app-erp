@@ -16,6 +16,7 @@ mod budget;
 mod closing;
 mod common;
 mod dunning;
+pub mod payment_run;
 mod reports;
 mod revaluation;
 mod rules;
@@ -59,6 +60,9 @@ pub fn register(h: &mut HookRegistry) {
         .register("SalesInvoice", Arc::new(advances::AdvanceHook))
         .register("PurchaseInvoice", Arc::new(advances::AdvanceHook))
         .register("PaymentEntry", Arc::new(advances::AdvancePaymentHook))
+        .register("PaymentEntry", Arc::new(payment_run::DiscountHook))
+        .register("PurchaseInvoice", Arc::new(payment_run::HoldHook))
+        .register("PaymentRun", Arc::new(payment_run::RunHook))
         .register("PaymentAllocation", Arc::new(allocation::AllocationHook))
         .register("ExchangeRevaluation", Arc::new(revaluation::RevaluationHook))
         .register("SalesInvoice", Arc::new(allocation::AllocationGuard))

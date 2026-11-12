@@ -112,7 +112,8 @@ impl DocHook for JournalEntryHook {
                 .customer(id(&l, "customer").filter(|_| s(&l, "party_type") == Some("Customer")))
                 .supplier(id(&l, "supplier").filter(|_| s(&l, "party_type") == Some("Supplier")))
                 .cost_center(id(&l, "cost_center"))
-                .project(id(&l, "project"));
+                .project(id(&l, "project"))
+                .dims(crate::dimensions::of(l.get("dimensions")));
             if let Some(r) = s(&l, "remarks") {
                 line = line.remarks(r);
             }
@@ -240,6 +241,26 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
 
 pub struct PaymentEntryHook;
 
+/// Takes back what a submitted payment did, dated `on`: its allocations, its credit left open, its
+/// ledger entries and its stored value. What was taken back already is not taken back twice, so a
+/// payment whose instrument bounced (taken back on the bounce's day) is then cancelled as it stands.
+pub async fn undo_payment(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, on: chrono::NaiveDate) -> Result<()> {
+    let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let co = company(k, ctx, tx, id(doc, "company").unwrap_or_default()).await?;
+    let items = ledger::unallocate(tx, ctx, "PaymentEntry", pid, on).await?;
+    if ledger::load_open_item(tx, ctx.tenant, pid, true).await?.is_some_and(|i| i.status != "cancelled") {
+        ledger::cancel_open_item(tx, ctx, pid).await?;
+    }
+    ledger::reverse(tx, ctx, "PaymentEntry", pid, on, co.precision).await?;
+    crate::stored_value::reverse_entries(k, ctx, tx, "PaymentEntry", pid, on, "this payment").await?;
+    for inv in items {
+        if let Some(item) = ledger::load_open_item(tx, ctx.tenant, inv, false).await? {
+            sync_invoice_outstanding(k, ctx, tx, &item.entity, inv).await?;
+        }
+    }
+    Ok(())
+}
+
 /// What an open item is, for people: its entity's label ("Sales Invoice", "Journal Entry").
 fn item_kind(ctx: &ferrum_kernel::Ctx, entity: &str) -> String {
     ctx.schema.entity(entity).map(|e| e.def.label.clone()).unwrap_or_else(|| entity.to_string())
@@ -363,6 +384,41 @@ async fn check_transfer(hc: &mut HookCtx<'_>, doc: &Doc, cid: Uuid) -> Result<()
         return Err(Error::field("received_amount", "what reached the other account is needed"));
     }
     Ok(())
+}
+
+/// The early-payment discount on one invoice, `base` in company currency: discount allowed (a debit)
+/// on money received, discount received (a credit) on money paid. When it reduces the tax, each of the
+/// invoice's taxes takes back its share of the discount, in the proportion the invoice charged it
+/// (reverse-charge and withheld rows are not charged to the party, so they take none).
+async fn discount_lines(
+    hc: &mut HookCtx<'_>,
+    entity: &str,
+    invoice: Uuid,
+    base: Decimal,
+    receive: bool,
+    account: Uuid,
+    reduces_tax: bool,
+    co: &crate::util::Company,
+) -> Result<Vec<Line>> {
+    let sign = if receive { Decimal::ONE } else { -Decimal::ONE };
+    let mut lines = Vec::new();
+    let mut taxed = Decimal::ZERO;
+    if reduces_tax && matches!(entity, "SalesInvoice" | "PurchaseInvoice") {
+        let inv = get(hc.kernel, hc.ctx, hc.tx, entity, invoice).await?;
+        let total = d(&inv, "base_grand_total");
+        if !total.is_zero() {
+            for t in rows(&inv, "taxes").iter().filter(|t| !b(t, "reverse_charge") && !b(t, "deduct")) {
+                let (Some(acc), tax) = (id(t, "account"), d(t, "base_tax_amount")) else { continue };
+                let share = round(base * tax / total, co.precision);
+                if !share.is_zero() {
+                    taxed += share;
+                    lines.push(Line::new(acc, sign * share, &co.currency_code).remarks("Early-payment discount: tax taken back"));
+                }
+            }
+        }
+    }
+    lines.push(Line::new(account, sign * (base - taxed), &co.currency_code).remarks("Early-payment discount"));
+    Ok(lines)
 }
 
 /// What a payment settles with its parties: the bank amount, plus deductions (debits) on a receipt
@@ -531,6 +587,21 @@ impl DocHook for PaymentEntryHook {
                 ]));
             }
             let open = item.outstanding.abs();
+            let discount = d(r, "discount_amount");
+            if discount > Decimal::ZERO {
+                let bad = |f: &str, m: String| Err(Error::Validation(vec![FieldError::new(f, m).in_row("references", i)]));
+                if refund {
+                    return bad("discount_amount", "a refund takes no discount".into());
+                }
+                let Some(acc) = id(r, "discount_account") else { return bad("discount_account", format!("say where the discount on {what} is booked")) };
+                let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
+                if id(&a, "company") != id(doc, "company") || matches!(s(&a, "account_type"), Some("Receivable" | "Payable" | "Bank" | "Cash")) {
+                    return bad("discount_account", "an income or expense account of the company".into());
+                }
+                if d(r, "allocated_amount") + discount > open {
+                    return bad("discount_amount", format!("the allocation and the discount settle more than is outstanding on {what} ({})", open.normalize()));
+                }
+            }
             if d(r, "allocated_amount") > open {
                 let msg =
                     if refund { format!("more than the credit left on {what} ({})", open.normalize()) } else { "more than the outstanding amount".to_string() };
@@ -538,6 +609,7 @@ impl DocHook for PaymentEntryHook {
             }
         }
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        crate::instruments::check_payment(hc, doc, &co).await?;
         crate::stored_value::check_payment(hc, doc, &co).await
     }
 
@@ -567,6 +639,10 @@ impl DocHook for PaymentEntryHook {
                 v.insert("exchange_difference".into(), money(diff));
                 hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
             }
+            let header = crate::dimensions::of(doc.get("dimensions"));
+            for l in entry.lines.iter_mut() {
+                l.dims = header.clone();
+            }
             ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
             return Ok(());
         }
@@ -576,12 +652,19 @@ impl DocHook for PaymentEntryHook {
         let mut lines = Vec::new();
         let mut touched = Vec::new();
         for r in rows(doc, "references") {
-            let amount = d(&r, "allocated_amount");
+            let discount = d(&r, "discount_amount").max(Decimal::ZERO);
+            // What it settles: the money allocated and the discount taken.
+            let amount = d(&r, "allocated_amount") + discount;
             if amount.is_zero() {
                 continue;
             }
             let inv = id(&r, "invoice").ok_or_else(|| Error::internal("allocation without invoice"))?;
             let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::invalid("invoice is no longer open"))?;
+            if discount > Decimal::ZERO {
+                let account = id(&r, "discount_account").ok_or_else(|| Error::field("discount_account", "is required"))?;
+                let base = round(discount * rate, co.precision);
+                lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co).await?);
+            }
             let base_at_invoice = round(amount * item.exchange_rate, co.precision);
             ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
@@ -627,6 +710,8 @@ impl DocHook for PaymentEntryHook {
             .await?;
         }
         let bank = id(doc, "bank_account").ok_or_else(|| Error::field("bank_account", "is required"))?;
+        // Paid by instrument: it waits in the instruments account until it clears into the bank.
+        let bank = crate::instruments::holding_account(hc, doc, &co, receive).await?.unwrap_or(bank);
         let bank_sign = if receive { Decimal::ONE } else { -Decimal::ONE };
         lines.push(Line::new(bank, bank_sign * base_paid, &co.currency_code).txn(bank_sign * paid, &code, rate));
         for r in rows(doc, "deductions") {
@@ -635,6 +720,7 @@ impl DocHook for PaymentEntryHook {
                 Line::new(account, round(amount * rate, co.precision), &co.currency_code)
                     .txn(amount, &code, rate)
                     .cost_center(id(&r, "cost_center"))
+                    .dims(crate::dimensions::of(r.get("dimensions")))
                     .remarks(s(&r, "remarks").unwrap_or("Payment deduction")),
             );
         }
@@ -649,10 +735,15 @@ impl DocHook for PaymentEntryHook {
             v.insert("exchange_difference".into(), money(diff));
             hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
         }
+        let header = crate::dimensions::of(doc.get("dimensions"));
+        for l in lines.iter_mut() {
+            l.dims = crate::dimensions::over(&header, &l.dims);
+        }
         let mut entry = Entry::new(co.id, on, "PaymentEntry", pid, s(doc, "number").map(str::to_string));
         entry.lines = lines;
         entry.memo = s(doc, "remarks").map(str::to_string);
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        crate::instruments::payment_submitted(hc, doc, &co, receive).await?;
         crate::stored_value::payment_submitted(hc, doc, &co).await?;
         for (entity, inv) in touched {
             sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, inv).await?;
@@ -661,22 +752,11 @@ impl DocHook for PaymentEntryHook {
     }
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        crate::instruments::payment_cancelled(hc, doc).await?;
         // Allocations, ledger and receivables all reverse on the same date, so as-of reports agree.
         let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
-        let items = ledger::unallocate(hc.tx, hc.ctx, "PaymentEntry", pid, on).await?;
-        if ledger::load_open_item(hc.tx, hc.ctx.tenant, pid, true).await?.is_some() {
-            ledger::cancel_open_item(hc.tx, hc.ctx, pid).await?;
-        }
-        ledger::reverse(hc.tx, hc.ctx, "PaymentEntry", pid, on, co.precision).await?;
-        crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, "PaymentEntry", pid, on, "this payment").await?;
-        for inv in items {
-            if let Some(item) = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, false).await? {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await?;
-            }
-        }
-        Ok(())
+        undo_payment(hc.kernel, hc.ctx, hc.tx, doc, on).await
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {

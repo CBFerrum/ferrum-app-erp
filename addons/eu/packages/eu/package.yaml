@@ -43,6 +43,31 @@ seed:
       - {member_state: SK, kind: Standard, rate: "20", valid_from: "2024-01-01", source: "TEDB, 2024-01-01"}
       - {member_state: SK, kind: Standard, rate: "23", valid_from: "2025-01-01", source: "TEDB, 2025-01-01"}
 
+  # A country's return is content, not code: Ireland's VAT3, the simplest of the members' returns,
+  # as a definition over ERP's tax ledger (ERP's TaxReturnDefinition). E1 and E2 count every
+  # intra-Community supply and acquisition at their base; ERP's tax ledger does not tell goods from
+  # services, so services are moved to ES1 and ES2 by hand on the return, as is postponed accounting
+  # (PA1). Revenue rounds the figures to whole euros when they are entered.
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: Ireland VAT3
+        country: IE
+        frequency: Bi-monthly
+        notes: "Revenue's VAT3, bi-monthly. ES1, ES2 and PA1 are entered by hand; move intra-Community services out of E1 and E2 into them by adjustment."
+        boxes:
+          - {code: T1A, label: "VAT on sales", kind: Sum, measure: Tax, direction: Output, reverse_charge: "No"}
+          - {code: T1B, label: "VAT due on reverse-charge purchases and intra-Community acquisitions", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: T1, label: "T1 VAT on sales", kind: Formula, formula: "T1A + T1B"}
+          - {code: T2, label: "T2 VAT on purchases", kind: Sum, measure: Tax, direction: Input}
+          - {code: T3, label: "T3 Net payable", kind: Formula, formula: "max(T1 - T2, 0)"}
+          - {code: T4, label: "T4 Net repayable", kind: Formula, formula: "max(T2 - T1, 0)"}
+          - {code: E1, label: "E1 Goods to other EU countries", kind: Sum, measure: Base, direction: Output, category: Intra-Community}
+          - {code: E2, label: "E2 Goods from other EU countries", kind: Sum, measure: Base, direction: Input, category: Intra-Community}
+          - {code: ES1, label: "ES1 Services to other EU countries", kind: By Hand}
+          - {code: ES2, label: "ES2 Services from other EU countries", kind: By Hand}
+          - {code: PA1, label: "PA1 Postponed accounting", kind: By Hand}
+
 overlays:
   - entity: Company
     ops:

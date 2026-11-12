@@ -18,6 +18,7 @@
     - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
     - {name: project, type: link, to: Project}
+    - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}"}
     - {name: remarks, type: data}
   rules:
     - {name: one_side, check: "(doc.debit > 0.0) != (doc.credit > 0.0)", message: "Each line needs either a debit or a credit"}
@@ -43,6 +44,9 @@
     - {name: auto_reverse, type: check, label: Reverse It, description: "An accrual or a prepayment: taken out again on its reversal day, when the invoice or payment it stood in for is booked"}
     - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", no_copy: true, description: "The day after, when empty"}
     - {name: reversed_on, type: date, read_only: true, no_copy: true, visible_if: "doc.auto_reverse"}
+    - {name: journal_template, type: link, to: JournalTemplate, read_only: true, no_copy: true, in_filter: true, label: Made From}
+    - {name: template_period, type: date, read_only: true, no_copy: true, label: For the Period Of}
+  unique: [[journal_template, template_period]]
   rules:
     - {name: balanced, check: "doc.total_debit == doc.total_credit", message: "Total debit must equal total credit", on: submit}
     - {name: not_empty, check: "doc.total_debit > 0.0", message: "The entry has no amounts", on: submit}
@@ -58,6 +62,12 @@
     - {name: due_date, type: date, read_only: true, in_list: true}
     - {name: outstanding, type: currency, read_only: true, in_list: true}
     - {name: allocated_amount, type: currency, required: true, min: "0", in_list: true}
+    - {name: discount_amount, type: currency, min: "0", in_list: true, label: Discount Taken,
+       description: "An early-payment discount: settles the invoice by this much on top of what is allocated"}
+    - {name: discount_account, type: link, to: Account, link_filters: {is_group: false}, label: Discount Account,
+       description: "Where the discount is booked: discount allowed on money received, discount received on money paid"}
+    - {name: discount_reduces_tax, type: check, label: Discount Reduces the Tax,
+       description: "Part of the discount takes back the invoice's tax, in the proportion the invoice charged it"}
 
 - name: PaymentDeduction
   label: Payment Deduction
@@ -66,6 +76,7 @@
     - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}, in_list: true}
     - {name: amount, type: currency, required: true, in_list: true, description: "In the payment currency. Positive amounts are debited (bank charges, discount allowed, tax the customer withheld); negative ones are credited (tax you withhold from a supplier)."}
+    - {name: dimensions, type: json, description: "Its accounting dimensions by code, over the payment's"}
     - {name: remarks, type: data, in_list: true}
 
 - name: PaymentEntry
@@ -109,8 +120,12 @@
     - {name: base_received_amount, type: currency, read_only: true, visible_if: "doc.payment_type == 'Internal Transfer'"}
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true}
     - {name: exchange_difference, type: currency, read_only: true}
-    - {name: reference_no, type: data, label: Cheque / Reference No}
-    - {name: reference_date, type: date}
+    - {name: mode_of_payment, type: link, to: ModeOfPayment, in_filter: true, visible_if: "doc.payment_type != 'Internal Transfer'",
+       description: "How it is paid. A mode paid by instrument (a cheque, a draft) records the instrument and reaches the bank account only when it clears"}
+    - {name: reference_no, type: data, label: Cheque / Reference No, description: "For a mode paid by instrument, the instrument's number"}
+    - {name: reference_date, type: date, description: "For a mode paid by instrument, the date written on it: it cannot clear before"}
+    - {name: instrument_bank, type: data, max_length: 140, label: Drawn On, visible_if: "doc.mode_of_payment != null", description: "The bank the instrument is drawn on"}
+    - {name: payment_instrument, type: link, to: PaymentInstrument, read_only: true, no_copy: true, label: Instrument}
     - {name: references, type: table, of: PaymentReference, label: Allocations}
     - {name: deductions, type: table, of: PaymentDeduction, label: Deductions and Charges, description: "Settles more (or less) than the bank moved: bank charges, early-payment discounts, tax withheld"}
     - {name: total_deductions, type: currency, currency: currency, read_only: true}
@@ -129,6 +144,7 @@
        description: "A refund onto a new account of this kind, held by the customer, when no account is named"}
     - {name: stored_value_units, type: decimal, min: "0", label: Units, no_copy: true, visible_if: "doc.stored_value_account != null",
        description: "For a kind that holds units: how many are taken (or given back); they pay for its items' lines on the invoice"}
+    - {name: dimensions, type: json, description: "Accounting dimensions by code for every line the payment books, e.g. {\"department\": \"Sales\"}"}
     - {name: remarks, type: text}
   rules:
     - {name: positive, check: "doc.paid_amount > 0.0", message: "Paid amount must be greater than zero", on: submit}
@@ -170,3 +186,169 @@
   rules:
     - {name: due_after_invoice, check: "doc.due_date == null || doc.due_date >= doc.invoice_date", message: "Due date cannot be before the invoice date"}
   list: {columns: [party_name, invoice_no, invoice_date, due_date, amount, outstanding_amount, status], sort: invoice_date desc}
+
+# Payment instruments (FN-34): a cheque, a draft, a promissory note. A payment whose mode uses them
+# records one; it waits in the instruments received (or issued) account until it clears into the bank
+# account, and a bounce takes the payment back so its invoices are open again.
+- name: ModeOfPaymentAccount
+  label: Mode of Payment Account
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: in_hand_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Received Account,
+       description: "An asset: what customers paid by instrument until it clears"}
+    - {name: issued_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Issued Account,
+       description: "A liability: what the company paid by instrument until it clears"}
+    - {name: bounce_charge_account, type: link, to: Account, link_filters: {is_group: false}, label: Bounce Charge Account,
+       description: "Income a customer's charge for a bounced instrument is credited to"}
+
+- name: ModeOfPayment
+  label: Mode of Payment
+  label_plural: Modes of Payment
+  kind: master
+  module: accounting
+  title_field: mode_name
+  fields:
+    - {name: mode_name, type: data, required: true, unique: true, in_list: true}
+    - {name: uses_instruments, type: check, in_list: true, label: Paid by Instrument,
+       description: "A cheque, a draft, a promissory note: a payment records the instrument (its number, the date written on it, its bank) and books to the instruments received or issued account until it clears"}
+    - {name: bounce_charge, type: currency, min: "0", visible_if: "doc.uses_instruments", label: Charge for a Bounce,
+       description: "What a customer is charged when an instrument they gave bounces (empty: nothing); whoever records the bounce may leave it off"}
+    - {name: accounts, type: table, of: ModeOfPaymentAccount, label: Accounts by Company}
+    - {name: disabled, type: check, in_filter: true}
+  list: {columns: [mode_name, uses_instruments, disabled], sort: mode_name asc}
+
+- name: PaymentInstrument
+  label: Payment Instrument
+  kind: master
+  module: accounting
+  company_scoped: true
+  title_field: instrument_no
+  description: "A cheque, a draft or another instrument a payment was made with: received or issued, deposited, cleared, bounced, cancelled or replaced. Made by the payment; its state moves by its actions."
+  fields:
+    - {name: company, type: link, to: Company, read_only: true, in_filter: true}
+    - {name: direction, type: select, options: [Received, Issued], read_only: true, in_list: true, in_filter: true}
+    - {name: instrument_no, type: data, read_only: true, in_list: true, label: Number}
+    - {name: instrument_date, type: date, read_only: true, in_list: true, in_filter: true, label: Dated, description: "The date written on it: it does not clear before"}
+    - {name: bank, type: data, read_only: true, label: Drawn On}
+    - {name: mode_of_payment, type: link, to: ModeOfPayment, read_only: true}
+    - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_filter: true}
+    - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: currency, type: link, to: Currency, read_only: true}
+    - {name: amount, type: currency, currency: currency, read_only: true, in_list: true}
+    - {name: holding_account, type: link, to: Account, read_only: true, label: Waits In, description: "The instruments account it is booked to until it clears"}
+    - {name: status, type: select, options: [Received, Issued, Deposited, Cleared, Bounced, Cancelled, Replaced], read_only: true, in_list: true, in_filter: true}
+    - {name: deposited_on, type: date, read_only: true}
+    - {name: cleared_on, type: date, read_only: true}
+    - {name: bounced_on, type: date, read_only: true}
+    - {name: reason, type: text, read_only: true, description: "Why it bounced, was cancelled or replaced"}
+    - {name: charge_entry, type: link, to: JournalEntry, read_only: true, label: Charge, description: "The customer's charge for the bounce"}
+    - {name: replaces, type: link, to: PaymentInstrument, read_only: true}
+    - {name: replaced_by, type: link, to: PaymentInstrument, read_only: true}
+    - {name: reminded_on, type: date, read_only: true, description: "When those who deposit were told it can be deposited"}
+  actions:
+    - {name: deposit, label: Deposit, permission: write, condition: "doc.status == 'Received'",
+       params: [{name: on, label: Deposited On, type: date, description: "Today when empty"}]}
+    - {name: clear, label: Cleared, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       params: [{name: on, label: Cleared On, type: date, description: "Today when empty; not before the date written on it"}]}
+    - {name: bounce, label: Bounced, permission: write, condition: "doc.status != 'Bounced' && doc.status != 'Cancelled' && doc.status != 'Replaced'",
+       confirm: "The payment is taken back and what it paid is owed again.",
+       params: [{name: on, label: Bounced On, type: date, description: "Today when empty"}, {name: reason, label: Reason, type: text, required: true},
+                {name: no_charge, label: Do Not Charge the Customer, type: check, description: "Leave off the mode's charge for a bounce"}]}
+    - {name: cancel_instrument, label: Cancel Instrument, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       confirm: "The payment is taken back and what it paid is owed again.",
+       params: [{name: on, label: Cancelled On, type: date}, {name: reason, label: Reason, type: text, required: true}]}
+    - {name: replace, label: Replace, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
+       params: [{name: instrument_no, label: New Number, type: data, required: true}, {name: instrument_date, label: Dated, type: date, required: true},
+                {name: bank, label: Drawn On, type: data}, {name: reason, label: Reason, type: text}]}
+  list: {columns: [instrument_no, instrument_date, direction, party_name, amount, status], sort: instrument_date asc}
+
+# Bad-debt write-off (FN-13): a customer's invoice that will not be paid, written off in one action to
+# the account its reason names, with the tax relief a country gives through the localization seam,
+# and what is recovered later booked against it.
+- name: WriteOffReasonAccount
+  label: Write-off Account
+  kind: child
+  fields:
+    - {name: company, type: link, to: Company, required: true, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true, label: Written Off To, description: "An expense: bad debts"}
+    - {name: recovery_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Recovered To,
+       description: "Income: bad debts recovered; the write-off account when empty"}
+
+- name: WriteOffReason
+  label: Write-off Reason
+  kind: master
+  module: accounting
+  title_field: reason_name
+  fields:
+    - {name: reason_name, type: data, required: true, unique: true, in_list: true}
+    - {name: accounts, type: table, of: WriteOffReasonAccount, label: Accounts by Company}
+    - {name: description, type: text}
+  list: {columns: [reason_name], sort: reason_name asc}
+
+- name: BadDebtRelief
+  label: Tax Relief
+  kind: child
+  fields:
+    - {name: account, type: link, to: Account, read_only: true, in_list: true}
+    - {name: amount, type: currency, read_only: true, in_list: true}
+    - {name: description, type: data, read_only: true, in_list: true}
+
+- name: BadDebtWriteOff
+  label: Bad Debt Write-off
+  kind: document
+  module: accounting
+  submittable: true
+  company_scoped: true
+  title_field: customer_name
+  numbering: {template: "BDW-{FY}-{seq:4}", gapless: true, on: submit, date_field: posting_date}
+  description: "A customer's invoice written off as a bad debt: to the account its reason names, less the tax relief the company's country gives; submitting it is the approval (the workspace's approval policy, when it sets one). A later recovery is booked against it."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, in_list: true}
+    - {name: customer, type: link, to: Customer, required: true, in_filter: true}
+    - {name: customer_name, type: data, read_only: true, in_list: true}
+    - {name: invoice, type: data, required: true, label: Open Item ID, description: "The customer's open invoice (or other open item) written off"}
+    - {name: invoice_type, type: data, read_only: true, label: Document Type}
+    - {name: invoice_number, type: data, read_only: true, in_list: true}
+    - {name: currency, type: data, read_only: true}
+    - {name: outstanding, type: currency, read_only: true}
+    - {name: amount, type: currency, min: "0", in_list: true, description: "In the invoice's currency; all that is outstanding when empty"}
+    - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
+    - {name: reason, type: link, to: WriteOffReason, required: true, in_filter: true}
+    - {name: write_off_account, type: link, to: Account, read_only: true}
+    - {name: relief, type: table, of: BadDebtRelief, read_only: true, label: Tax Relief}
+    - {name: recovered_amount, type: currency, read_only: true, no_copy: true, label: Recovered (Company Currency)}
+    - {name: remarks, type: text}
+  actions:
+    - {name: record_recovery, label: Record Recovery, docstatus: [1], permission: submit,
+       params: [{name: amount, label: Amount Recovered (Company Currency), type: currency, required: true}, {name: on, label: Received On, type: date},
+                {name: bank_account, label: Into, type: link, to: Account, required: true}]}
+  list: {columns: [number, posting_date, customer_name, invoice_number, amount, recovered_amount], sort: posting_date desc}
+
+# Recurring journals (FN-06, FN-07): a template's lines made into a journal entry every period.
+- name: JournalTemplate
+  label: Journal Template
+  kind: master
+  module: accounting
+  company_scoped: true
+  title_field: template_name
+  description: "A journal entry's lines kept to be made again: by hand from a copy, or every period by the upkeep from its start until its end date or its count, as a draft or submitted. Its next date says what is due; the journal entries made from it list what was made."
+  fields:
+    - {name: template_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: accounts, type: table, of: JournalEntryAccount, required: true, label: Lines}
+    - {name: remark, type: text, description: "The made entries' remark; the template's name when empty"}
+    - {name: repeat, type: check, in_list: true, label: Make It Every Period}
+    - {name: frequency, type: select, options: [Monthly, Quarterly, Half-yearly, Yearly], default: Monthly, visible_if: "doc.repeat"}
+    - {name: start_date, type: date, visible_if: "doc.repeat", required_if: "doc.repeat", description: "The first entry's day; later ones fall on the same day of their month (or its last day)"}
+    - {name: end_date, type: date, visible_if: "doc.repeat", description: "None after it; empty: no end"}
+    - {name: occurrences, type: int, min: 0, visible_if: "doc.repeat", label: How Many, description: "Stops after this many; empty: no limit"}
+    - {name: submit, type: check, visible_if: "doc.repeat", label: Submit Them, description: "Made submitted; left as drafts to check when not ticked"}
+    - {name: auto_reverse, type: check, label: Reverse Each, description: "An accrual: each entry made is taken out again the day after"}
+    - {name: next_date, type: date, read_only: true, no_copy: true, in_list: true, in_filter: true, label: Next Due}
+    - {name: last_made, type: date, read_only: true, no_copy: true}
+    - {name: made_count, type: int, read_only: true, no_copy: true, label: Made So Far}
+    - {name: disabled, type: check, in_filter: true}
+  unique: [[company, template_name]]
+  list: {columns: [template_name, frequency, next_date, made_count], sort: next_date asc}
