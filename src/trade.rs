@@ -980,6 +980,9 @@ impl DocHook for InvoiceHook {
             }
         }
         crate::withholding::invoice(hc, doc, self.0, &co).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::mask_lines(hc.ctx, doc)?;
+        }
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
             // What is withheld comes off what the supplier is owed; what is collected is added to what the customer owes.
@@ -1015,6 +1018,9 @@ impl DocHook for InvoiceHook {
             return Err(Error::Validation(errors));
         }
         check_lines(hc, doc, Some(if self.0 == Side::Selling { "income_account" } else { "expense_account" })).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::check_invoice(hc, doc).await?;
+        }
         if self.0 == Side::Buying
             && let (Some(supplier), Some(bill)) = (id(doc, "supplier"), s(doc, "bill_no"))
         {
@@ -1282,6 +1288,9 @@ impl DocHook for InvoiceHook {
                 }
             }
         }
+        if self.0 == Side::Selling {
+            crate::stored_value::invoice_submitted(hc, doc).await?;
+        }
         credit::check(hc, credit, "this invoice", credit::released(doc)).await
     }
 
@@ -1323,6 +1332,9 @@ impl DocHook for InvoiceHook {
             stock::reverse_moves(hc.tx, hc.ctx, &co, n.invoice, iid, on, ts).await?;
         }
         ledger::reverse(hc.tx, hc.ctx, n.invoice, iid, on, co.precision).await?;
+        if self.0 == Side::Selling {
+            crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, n.invoice, iid, on, "this sale").await?;
+        }
         for t in touched {
             if t != iid {
                 sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, t).await?;
@@ -1395,6 +1407,17 @@ impl DocHook for InvoiceHook {
                     input.insert("bank_account".into(), json!(bank.to_string()));
                 }
                 input.insert("references".into(), json!([{"invoice": iid.to_string(), "allocated_amount": credit.to_string()}]));
+                if self.0 == Side::Selling {
+                    // Onto new store credit when asked, else back onto the stored value that paid the sale, when its kind says so.
+                    let onto = match (crate::stored_value::uuid_param(params, "store_credit")?, id(doc, "return_against")) {
+                        (Some(kind), _) => Some(("stored_value_kind", kind)),
+                        (None, Some(orig)) => crate::stored_value::refund_onto(hc.kernel, hc.ctx, hc.tx, orig).await?.map(|a| ("stored_value_account", a)),
+                        _ => None,
+                    };
+                    if let Some((field, v)) = onto {
+                        input.insert(field.into(), json!(v.to_string()));
+                    }
+                }
                 let p = create_for_user(hc, "PaymentEntry", input).await?;
                 return Ok(Some(created("PaymentEntry", &p)));
             }

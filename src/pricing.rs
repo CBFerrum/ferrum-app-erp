@@ -474,6 +474,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let mut items = rows(doc, "items");
     // Each line's item tax rates (by tax account), for the tax breakdown's categories.
     let mut line_rates: Vec<Vec<Doc>> = Vec::with_capacity(items.len());
+    // Lines that sell stored value taxed when it is redeemed, not now.
+    let mut untaxed = vec![false; items.len()];
+    let mut stored_value_kinds = HashMap::new();
     for (i, row) in items.iter_mut().enumerate() {
         let Some(item_id) = id(row, "item") else {
             // A line without an item (rent, a fee, a one-off charge): its own description, price and
@@ -549,6 +552,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             }
             _ => {}
         }
+        if side == Side::Selling && has_child("stored_value_kind") {
+            untaxed[i] = crate::stored_value::price_line(k, ctx, tx, &item, row, &mut stored_value_kinds).await?;
+        }
         // A line is deferred like its item when it comes with the days its service covers (without
         // them it is sold at once); once added, its own setting stands. Unset checkboxes read as
         // unchecked by now, so a new line is what tells the item's say from the line's.
@@ -590,6 +596,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     // the country whose VAT applies, for the line's category).
     let item_docs: Vec<Doc> = items.iter().map(|row| id(row, "item").and_then(|it| item_cache.get(&it)).cloned().unwrap_or_default()).collect();
     crate::localization::line_rates(k, ctx, tx, doc, &items, &item_docs, &taxes, &mut line_rates, side).await?;
+    for (rates, _) in line_rates.iter_mut().zip(&untaxed).filter(|(_, u)| **u) {
+        *rates = crate::stored_value::untaxed_rates(&taxes);
+    }
     for (i, row) in items.iter_mut().enumerate() {
         if has_child("item_tax_rates") {
             let own: Map<String, Value> =

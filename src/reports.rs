@@ -81,6 +81,27 @@ const DEFS: &[Def] = &[
         params: &["company", "from_date", "to_date", "customer", "supplier", "currency"],
     },
     Def { name: "withholding", label: "Withholding", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
+    Def {
+        name: "stored_value_liability",
+        label: "Stored Value Outstanding",
+        module: "accounting",
+        entity: "StoredValueAccount",
+        params: &["company", "as_of"],
+    },
+    Def {
+        name: "stored_value_statement",
+        label: "Stored Value Statement",
+        module: "accounting",
+        entity: "StoredValueAccount",
+        params: &["company", "stored_value_account", "from_date", "to_date"],
+    },
+    Def {
+        name: "stored_value_movement",
+        label: "Stored Value Issued and Used",
+        module: "accounting",
+        entity: "StoredValueAccount",
+        params: &["company", "from_date", "to_date"],
+    },
     Def { name: "tax_summary", label: "Tax Summary", module: "accounting", entity: "JournalEntry", params: &["company", "from_date", "to_date"] },
     Def { name: "receivables", label: "Accounts Receivable", module: "selling", entity: "SalesInvoice", params: &["company", "as_of", "customer"] },
     Def { name: "payables", label: "Accounts Payable", module: "buying", entity: "PurchaseInvoice", params: &["company", "as_of", "supplier"] },
@@ -115,6 +136,7 @@ fn param(name: &str) -> Value {
         "periods" => json!({"name": name, "label": "How Many To Compare", "type": "select", "options": ["1", "2", "3"], "default": "1"}),
         "cost_center" => json!({"name": name, "label": "Cost Center", "type": "link", "to": "CostCenter"}),
         "project" => json!({"name": name, "label": "Project", "type": "link", "to": "Project"}),
+        "stored_value_account" => json!({"name": name, "label": "Account", "type": "link", "to": "StoredValueAccount", "required": true}),
         "exclude_closing" => json!({"name": name, "label": "Leave Out The Year-End Closing", "type": "check"}),
         "deferred" => json!({"name": name, "label": "Deferred", "type": "select", "options": ["Revenue", "Expense"], "default": "Revenue"}),
         "currency" => json!({"name": name, "label": "Currency", "type": "link", "to": "Currency", "description": "The party's own currency when empty"}),
@@ -176,6 +198,9 @@ impl ReportSource for ErpReports {
             "purchase_register" => register(&mut tx, ctx, &co, &p, "supplier").await?,
             "tax_summary" => tax_summary(&mut tx, ctx, &co, &p).await?,
             "withholding" => withholding(&mut tx, ctx, &co, &p).await?,
+            "stored_value_liability" => stored_value_liability(&mut tx, ctx, &co, &p).await?,
+            "stored_value_statement" => stored_value_statement(&mut tx, ctx, &co, &p).await?,
+            "stored_value_movement" => stored_value_movement(&mut tx, ctx, &co, &p).await?,
             _ => return Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;
@@ -2085,6 +2110,134 @@ async fn withholding(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>)
         "rows": rows,
         "totals": {"amount": money(total)},
         "meta": {"from_date": from, "to_date": to, "truncated": truncated},
+    }))
+}
+
+// ───────────────────────────── stored value ─────────────────────────────
+
+fn stored_value_tables(ctx: &Ctx) -> Result<(String, String)> {
+    let t = |e: &str| ctx.schema.entity(e).map(|x| ferrum_kernel::ddl::q(&x.table)).ok_or_else(|| Error::NotFound(e.into()));
+    Ok((t("StoredValueAccount")?, t("StoredValueKind")?))
+}
+
+/// What the company's stored value owes on a day, by kind and by how long ago each account was
+/// issued: its balance (money or units) and the value the books owe, from the entries to that day.
+async fn stored_value_liability(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let as_of = p.date("as_of")?.unwrap_or_else(today);
+    let (accounts, kinds) = stored_value_tables(ctx)?;
+    let data: Vec<(String, String, i64, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "with held as (select a.kind, $3::date - a.issued_on as age, sum(e.amount) as balance, sum(e.value) as value \
+           from {accounts} a join stored_value_entry e on e.tenant_id = a.tenant_id and e.account_id = a.id and e.posting_date <= $3 \
+           where a.tenant_id = $1 and a.company = $2 group by a.id, a.kind, a.issued_on having sum(e.amount) <> 0 or sum(e.value) <> 0) \
+         select k.kind_name, coalesce(k.holds, 'Money'), count(*), sum(h.balance), sum(h.value), \
+           coalesce(sum(h.value) filter (where h.age <= 30), 0), coalesce(sum(h.value) filter (where h.age between 31 and 90), 0), \
+           coalesce(sum(h.value) filter (where h.age between 91 and 365), 0), coalesce(sum(h.value) filter (where h.age > 365), 0) \
+         from held h join {kinds} k on k.tenant_id = $1 and k.id = h.kind group by k.kind_name, k.holds order by k.kind_name"
+    )))
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(as_of)
+    .fetch_all(&mut **tx)
+    .await?;
+    let total: Decimal = data.iter().map(|r| r.4).sum();
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(kind, holds, n, bal, value, a, b, c, d)| {
+            json!({"kind": kind, "holds": holds, "accounts": n, "balance": money(bal), "value": money(value),
+                   "age_0_30": money(a), "age_31_90": money(b), "age_91_365": money(c), "age_over_365": money(d)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("kind", "Kind", "data"), col("holds", "Holds", "data"), col("accounts", "Accounts", "int"), col("balance", "Balance", "decimal"),
+            col("value", "Owed", "currency"), col("age_0_30", "Issued 0-30 Days Ago", "currency"), col("age_31_90", "31-90 Days", "currency"),
+            col("age_91_365", "91-365 Days", "currency"), col("age_over_365", "Over a Year", "currency")],
+        "rows": rows,
+        "totals": {"value": money(total)},
+        "meta": {"as_of": as_of},
+    }))
+}
+
+/// One account's entries in a period, after what it held before: each with its document, what it
+/// changed and the balance after.
+async fn stored_value_statement(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let account = p.uuid("stored_value_account")?.ok_or_else(|| Error::field("stored_value_account", "choose the account"))?;
+    let (accounts, _) = stored_value_tables(ctx)?;
+    let (opening, opening_value): (Decimal, Decimal) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select coalesce(sum(e.amount), 0), coalesce(sum(e.value), 0) from stored_value_entry e join {accounts} a on a.tenant_id = e.tenant_id and a.id = e.account_id \
+         where e.tenant_id = $1 and e.account_id = $2 and a.company = $3 and e.posting_date < $4"
+    )))
+    .bind(ctx.tenant)
+    .bind(account)
+    .bind(co.id)
+    .bind(from)
+    .fetch_one(&mut **tx)
+    .await?;
+    let data: Vec<(NaiveDate, String, Option<String>, Option<Uuid>, Decimal, Decimal, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select e.posting_date, e.entry_type, e.source_entity, e.source_id, e.amount, e.value, e.remarks from stored_value_entry e \
+         join {accounts} a on a.tenant_id = e.tenant_id and a.id = e.account_id \
+         where e.tenant_id = $1 and e.account_id = $2 and a.company = $3 and e.posting_date between $4 and $5 order by e.posting_date, e.created_at limit $6"
+    )))
+    .bind(ctx.tenant)
+    .bind(account)
+    .bind(co.id)
+    .bind(from)
+    .bind(to)
+    .bind(MAX_ROWS + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    let truncated = data.len() as i64 > MAX_ROWS;
+    let (mut balance, mut value) = (opening, opening_value);
+    let mut rows = vec![json!({"entry_type": "Opening", "balance": money(balance), "value_after": money(value)})];
+    for (day, kind, entity, source, amount, v, remarks) in data.into_iter().take(MAX_ROWS as usize) {
+        balance += amount;
+        value += v;
+        rows.push(json!({"posting_date": day, "entry_type": kind, "voucher_type": entity, "voucher_id": source, "amount": money(amount),
+                         "value": money(v), "balance": money(balance), "value_after": money(value), "remarks": remarks}));
+    }
+    Ok(json!({
+        "columns": [col("posting_date", "Date", "date"), col("entry_type", "Entry", "data"), col("voucher_type", "Document", "data"), col("amount", "Amount", "decimal"),
+            col("balance", "Balance", "decimal"), col("value", "Value", "currency"), col("value_after", "Owed", "currency"), col("remarks", "Remarks", "data")],
+        "rows": rows,
+        "totals": {"balance": money(balance), "value": money(value)},
+        "meta": {"from_date": from, "to_date": to, "truncated": truncated},
+    }))
+}
+
+/// What each kind issued, had redeemed, took back, lost to expiry and had adjusted in a period, as
+/// value in the company's currency; a reversal counts against what it reverses.
+async fn stored_value_movement(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
+    let (from, to) = period(p, co)?;
+    let (accounts, kinds) = stored_value_tables(ctx)?;
+    let data: Vec<(String, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select k.kind_name, \
+           coalesce(sum(e.value) filter (where t.kind in ('issue', 'top_up')), 0), coalesce(-sum(e.value) filter (where t.kind = 'redeem'), 0), \
+           coalesce(sum(e.value) filter (where t.kind = 'refund'), 0), coalesce(-sum(e.value) filter (where t.kind in ('expire', 'breakage')), 0), \
+           coalesce(sum(e.value) filter (where t.kind in ('adjust', 'transfer')), 0), sum(e.value) \
+         from stored_value_entry e join {accounts} a on a.tenant_id = e.tenant_id and a.id = e.account_id join {kinds} k on k.tenant_id = a.tenant_id and k.id = a.kind \
+         left join stored_value_entry o on o.tenant_id = e.tenant_id and o.id = e.reversal_of \
+         cross join lateral (select coalesce(o.entry_type, e.entry_type) as kind) t \
+         where e.tenant_id = $1 and a.company = $2 and e.posting_date between $3 and $4 group by k.kind_name order by k.kind_name"
+    )))
+    .bind(ctx.tenant)
+    .bind(co.id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await?;
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(kind, issued, redeemed, refunded, expired, adjusted, net)| {
+            json!({"kind": kind, "issued": money(issued), "redeemed": money(redeemed), "refunded": money(refunded), "expired": money(expired),
+                   "adjusted": money(adjusted), "net": money(net)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("kind", "Kind", "data"), col("issued", "Issued and Topped Up", "currency"), col("redeemed", "Redeemed", "currency"),
+            col("refunded", "Refunded Onto", "currency"), col("expired", "Expired and Unused", "currency"), col("adjusted", "Adjusted", "currency"),
+            col("net", "Change in What Is Owed", "currency")],
+        "rows": rows,
+        "meta": {"from_date": from, "to_date": to},
     }))
 }
 
