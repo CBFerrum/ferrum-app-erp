@@ -122,11 +122,13 @@
     - {name: exchange_difference, type: currency, read_only: true}
     - {name: mode_of_payment, type: link, to: ModeOfPayment, in_filter: true, visible_if: "doc.payment_type != 'Internal Transfer'",
        description: "How it is paid. A mode paid by instrument (a cheque, a draft) records the instrument and reaches the bank account only when it clears"}
-    - {name: reference_no, type: data, label: Cheque / Reference No, description: "For a mode paid by instrument, the instrument's number"}
-    - {name: reference_date, type: date, description: "For a mode paid by instrument, the date written on it: it cannot clear before"}
+    - {name: reference_no, type: data, label: Cheque / Reference No, description: "For a mode paid by instrument, the instrument's number; a payment out takes the next from the mode's book when it gives none"}
+    - {name: reference_date, type: date, description: "For a mode paid by instrument, the date written on it: it cannot clear before. A payment out is dated its posting date when empty"}
     - {name: instrument_bank, type: data, max_length: 140, label: Drawn On, visible_if: "doc.mode_of_payment != null", description: "The bank the instrument is drawn on"}
     - {name: payment_instrument, type: link, to: PaymentInstrument, read_only: true, no_copy: true, label: Instrument}
     - {name: references, type: table, of: PaymentReference, label: Allocations}
+    - {name: discount_taxes, type: json, read_only: true, no_copy: true, label: Tax Taken Back on Discounts,
+       description: "Each early-payment discount's tax taken back, by invoice and tax, with the base it was on, in company currency: what the tax summary and tax returns count"}
     - {name: deductions, type: table, of: PaymentDeduction, label: Deductions and Charges, description: "Settles more (or less) than the bank moved: bank charges, early-payment discounts, tax withheld"}
     - {name: total_deductions, type: currency, currency: currency, read_only: true}
     - {name: withholding_category, type: link, to: WithholdingCategory, label: Withholding Category, visible_if: "doc.payment_type == 'Pay' && !doc.is_refund",
@@ -201,6 +203,11 @@
        description: "A liability: what the company paid by instrument until it clears"}
     - {name: bounce_charge_account, type: link, to: Account, link_filters: {is_group: false}, label: Bounce Charge Account,
        description: "Income a customer's charge for a bounced instrument is credited to"}
+    - {name: next_instrument_no, type: int, min: "0", label: Next Number Issued,
+       description: "A book of instruments (a cheque book): a payment out by this mode that gives no number takes this one, and the next is one more. Empty: each payment gives its own"}
+    - {name: last_instrument_no, type: int, min: "0", label: Last Number in the Book, description: "The book's last number; empty: no end"}
+    - {name: instrument_prefix, type: data, max_length: 20, label: Number Prefix, description: "Put before each number drawn from the book"}
+    - {name: instrument_digits, type: int, min: "0", max: "20", label: Digits, description: "Numbers drawn are padded with zeros to this many digits"}
 
 - name: ModeOfPayment
   label: Mode of Payment
@@ -234,6 +241,8 @@
     - {name: mode_of_payment, type: link, to: ModeOfPayment, read_only: true}
     - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_filter: true}
     - {name: party_name, type: data, read_only: true, in_list: true}
+    - {name: customer, type: link, to: Customer, read_only: true, in_filter: true, description: "Who gave it, from its payment"}
+    - {name: supplier, type: link, to: Supplier, read_only: true, in_filter: true, description: "Who it was paid to, from its payment"}
     - {name: currency, type: link, to: Currency, read_only: true}
     - {name: amount, type: currency, currency: currency, read_only: true, in_list: true}
     - {name: holding_account, type: link, to: Account, read_only: true, label: Waits In, description: "The instruments account it is booked to until it clears"}

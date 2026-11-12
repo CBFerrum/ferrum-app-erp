@@ -39,7 +39,60 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
 
 /// Registers this app's document hooks (and web endpoints). Hooks on platform documents run
 /// after the platform's own (registered first), so they see totals, postings and open items.
+/// The supplier bank details Finance adds (`fin_iban`, `fin_bic`), erased with the supplier: the
+/// platform's declarations cannot name a field another package's overlay adds, so the app does it in
+/// the erasure's transaction, after the declared records are erased: the suppliers erased in it (by
+/// their history's erasure events, as the email that found them is blank by then).
+pub struct FinancePersonal;
+
+#[async_trait::async_trait]
+impl ferrum_kernel::privacy::PersonalHeld for FinancePersonal {
+    fn app(&self) -> &'static str {
+        "finance"
+    }
+    async fn report(
+        &self,
+        tx: &mut ferrum_kernel::Tx,
+        tenant: uuid::Uuid,
+        _: Option<uuid::Uuid>,
+        emails: &[String],
+    ) -> ferrum_kernel::Result<Vec<serde_json::Value>> {
+        if !installed(tx).await? {
+            return Ok(vec![]);
+        }
+        let held: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "select supplier_name, fin_iban, fin_bic from e_supplier where tenant_id = $1 and lower(email::text) = any($2) and (fin_iban is not null or fin_bic is not null)",
+        )
+        .bind(tenant)
+        .bind(emails)
+        .fetch_all(&mut **tx)
+        .await?;
+        Ok(held.into_iter().map(|(n, iban, bic)| serde_json::json!({"what": "Supplier bank details", "supplier": n, "iban": iban, "bic": bic})).collect())
+    }
+    async fn erase(&self, tx: &mut ferrum_kernel::Tx, tenant: uuid::Uuid, _: Option<uuid::Uuid>, _: &[String], _: &str) -> ferrum_kernel::Result<u64> {
+        if !installed(tx).await? {
+            return Ok(0);
+        }
+        let gone = sqlx::query(
+            "update e_supplier s set fin_iban = null, fin_bic = null where s.tenant_id = $1 and (s.fin_iban is not null or s.fin_bic is not null) \
+             and exists (select 1 from audit_event a where a.tenant_id = s.tenant_id and a.entity = 'Supplier' and a.record_id = s.id \
+             and a.action = 'erase_personal_data' and a.at >= now())",
+        )
+        .bind(tenant)
+        .execute(&mut **tx)
+        .await?;
+        Ok(gone.rows_affected())
+    }
+}
+
+async fn installed(tx: &mut ferrum_kernel::Tx) -> ferrum_kernel::Result<bool> {
+    Ok(sqlx::query_scalar("select exists (select 1 from information_schema.columns where table_name = 'e_supplier' and column_name = 'fin_iban')")
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
 pub fn register(h: &mut HookRegistry) {
+    h.add_personal_held(Arc::new(FinancePersonal));
     let schedule = Arc::new(terms::ScheduleHook);
     h.register("MonthlyDistribution", Arc::new(budget::DistributionHook))
         .register("Budget", Arc::new(budget::BudgetHook))

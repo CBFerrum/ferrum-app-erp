@@ -43,14 +43,20 @@ fn refused(code: &str) -> String {
 
 /// Splits `codes` into those that open a promotion now (code, promotion) and those that do not.
 pub async fn check_codes(k: &Kernel, ctx: &Ctx, tx: &mut Tx, codes: &[String]) -> Result<(Vec<Code>, Vec<String>)> {
+    check_codes_holding(k, ctx, tx, codes, &BTreeSet::new()).await
+}
+
+/// [`check_codes`], where the codes in `held` are the document's own already (a submitted order
+/// priced again): their use is counted, so being used up does not refuse them.
+async fn check_codes_holding(k: &Kernel, ctx: &Ctx, tx: &mut Tx, codes: &[String], held: &BTreeSet<String>) -> Result<(Vec<Code>, Vec<String>)> {
     let (mut good, mut bad) = (Vec::new(), Vec::new());
     for code in codes {
         let found = if valid_code(code) { find(k, ctx, tx, "PromotionCode", vec![Filter::eq("code", code.as_str())], None, 1).await? } else { vec![] };
         let open = match found.first() {
-            Some(c) if !b(c, "disabled") && has_uses(c) => match id(c, "promotion") {
+            Some(c) if !b(c, "disabled") && (held.contains(code) || has_uses(c)) => match id(c, "promotion") {
                 Some(p) => {
                     let promo = get(k, ctx, tx, "Promotion", p).await?;
-                    (!b(&promo, "disabled") && has_uses(&promo)).then_some(p)
+                    (!b(&promo, "disabled") && (held.contains(code) || has_uses(&promo))).then_some(p)
                 }
                 None => None,
             },
@@ -141,25 +147,36 @@ fn to_engine(p: &Doc, rate: Decimal) -> Option<Promotion> {
 /// The promotions that could apply to a company's sale on `on` (`YYYY-MM-DD`), whole: enabled,
 /// for the company or every company, in their dates, not used up. What the till takes when it opens.
 pub async fn candidates(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, on: &str) -> Result<Vec<Doc>> {
+    candidates_holding(k, ctx, tx, company, on, &BTreeSet::new()).await
+}
+
+/// [`candidates`], keeping the promotions in `held` (a submitted order's own, already counted) even
+/// when they are used up since.
+async fn candidates_holding(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, on: &str, held: &BTreeSet<Uuid>) -> Result<Vec<Doc>> {
     if ctx.schema.entity("Promotion").is_none() {
         return Ok(vec![]);
     }
     let mut out = Vec::new();
     for p in find(k, ctx, tx, "Promotion", vec![Filter::eq("disabled", false)], Some("priority desc"), 500).await? {
         let dated = s(&p, "valid_from").is_none_or(|f| f <= on) && s(&p, "valid_upto").is_none_or(|u| u >= on);
-        if dated && id(&p, "company").is_none_or(|c| c == company) && has_uses(&p) {
+        if dated && id(&p, "company").is_none_or(|c| c == company) && (has_uses(&p) || id(&p, "id").is_some_and(|i| held.contains(&i))) {
             out.push(get(k, ctx, tx, "Promotion", id(&p, "id").unwrap_or_default()).await?);
         }
     }
     Ok(out)
 }
 
-/// Whether the computation runs on this document: a draft sale of its own.
+/// Set (in memory only) on a submitted order whose lines Update Items changes, so its promotions
+/// are worked out again; never stored.
+pub const REPRICE: &str = "__reprice_promotions";
+
+/// Whether the computation runs on this document: a draft sale of its own, or a submitted order
+/// whose lines are being changed ([`REPRICE`]).
 fn evaluates(ent: &EffEntity, doc: &Doc, side: Side) -> bool {
     let derived = rows(doc, "items").iter().any(|r| ["so_line", "dn_line", "return_line"].iter().any(|f| s(r, f).is_some()));
     side == Side::Selling
         && ent.field("applied_promotions").is_some()
-        && d(doc, "docstatus").is_zero()
+        && (d(doc, "docstatus").is_zero() || b(doc, REPRICE))
         && !b(doc, "is_return")
         && !b(doc, "is_debit_note")
         && !derived
@@ -223,8 +240,10 @@ pub(crate) async fn apply(
         }
     }
     let (date, weekday, time) = moment(ctx, co, doc)?;
-    let found = candidates(k, ctx, tx, co.id, &date).await?;
-    let (codes, bad) = check_codes(k, ctx, tx, &given_codes(s(doc, "promotion_codes"))).await?;
+    // A submitted order priced again holds the codes and promotions it counted.
+    let (held_codes, held_promotions) = if d(doc, "docstatus").is_zero() { Default::default() } else { held(doc) };
+    let found = candidates_holding(k, ctx, tx, co.id, &date, &held_promotions).await?;
+    let (codes, bad) = check_codes_holding(k, ctx, tx, &given_codes(s(doc, "promotion_codes")), &held_codes).await?;
     if !bad.is_empty() {
         return Err(Error::field("promotion_codes", bad.iter().map(|c| refused(c)).collect::<Vec<_>>().join("; ")));
     }
@@ -296,18 +315,38 @@ pub(crate) async fn apply(
     Ok(removed || !out.add.is_empty())
 }
 
+/// The codes and the promotions a document's `applied_promotions` count.
+fn held(doc: &Doc) -> (BTreeSet<String>, BTreeSet<Uuid>) {
+    let applied = rows(doc, "applied_promotions");
+    (applied.iter().filter_map(|a| s(a, "code")).map(str::to_string).collect(), applied.iter().filter_map(|a| id(a, "promotion")).collect())
+}
+
 /// Counts each code a submitted document used, and each promotion it applied, once (`step` 1), or
 /// gives them back when it is cancelled (`step` -1). Counting refuses a code or promotion that is
 /// used up meanwhile: of two documents taking the last use at once, the first to commit has it.
+/// A return counts nothing: its promotions are what it gives back of its original's.
 pub async fn count_uses(hc: &mut HookCtx<'_>, doc: &Doc, step: i64) -> Result<()> {
-    let applied = rows(doc, "applied_promotions");
-    if applied.is_empty() {
+    if b(doc, "is_return") {
+        return Ok(());
+    }
+    let (codes, promotions) = held(doc);
+    count(hc, &codes, &promotions, step).await
+}
+
+/// After a submitted order is priced again (Update Items): a code or promotion it now applies and
+/// did not is counted, one it no longer applies is given back, and those it keeps are left alone.
+pub async fn recount(hc: &mut HookCtx<'_>, was: &Doc, now: &Doc) -> Result<()> {
+    let ((c0, p0), (c1, p1)) = (held(was), held(now));
+    count(hc, &c0.difference(&c1).cloned().collect(), &p0.difference(&p1).copied().collect(), -1).await?;
+    count(hc, &c1.difference(&c0).cloned().collect(), &p1.difference(&p0).copied().collect(), 1).await
+}
+
+async fn count(hc: &mut HookCtx<'_>, used: &BTreeSet<String>, promotions: &BTreeSet<Uuid>, step: i64) -> Result<()> {
+    if used.is_empty() && promotions.is_empty() {
         return Ok(());
     }
     let table = |e: &str| hc.ctx.schema.entity(e).map(|x| ferrum_kernel::ddl::q(&x.table));
     let (Some(codes), Some(promos)) = (table("PromotionCode"), table("Promotion")) else { return Ok(()) };
-    let used: BTreeSet<String> = applied.iter().filter_map(|a| s(a, "code")).map(str::to_string).collect();
-    let promotions: BTreeSet<Uuid> = applied.iter().filter_map(|a| id(a, "promotion")).collect();
     for (table, key, column) in used.iter().map(|c| (&codes, Value::from(c.as_str()), "code")).chain(promotions.iter().map(|p| (&promos, json!(p), "id"))) {
         let sql = if step > 0 {
             format!(
@@ -323,6 +362,77 @@ pub async fn count_uses(hc: &mut HookCtx<'_>, doc: &Doc, step: i64) -> Result<()
             let what = if column == "code" { refused(&text) } else { "a promotion on it is used up: save it again to price it without".to_string() };
             return Err(Error::field("promotion_codes", what));
         }
+    }
+    Ok(())
+}
+
+/// What a credit note gives back of the promotions on the lines it returns, on its submission
+/// (`sign` 1) or cancellation (-1). `taken`: each original line and the quantity returned of it.
+/// The promotions are the original invoice's on the line, else its order's; each part returned
+/// takes the promotion's amount in proportion, rounded, and the part that returns the rest of the
+/// line takes exactly what is left, so the parts sum to the line's amount to the cent. What was
+/// given back is kept on that line (`promotion_returned`), and the credit note's
+/// `applied_promotions` carry it, negative, for the promotions report to net.
+pub async fn give_back(hc: &mut HookCtx<'_>, doc: &Doc, original: &Doc, taken: &[(Uuid, Decimal)], sign: Decimal, precision: u32) -> Result<()> {
+    let sctx = crate::util::sys(hc.ctx);
+    let rid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let lines = rows(doc, "items");
+    let mine = rows(doc, "applied_promotions");
+    let mut out: Vec<Doc> = Vec::new();
+    for (line, q) in taken {
+        let Some(o) = rows(original, "items").into_iter().find(|o| id(o, "id") == Some(*line)) else { continue };
+        // Where the line's promotions are kept: the invoice's own, else its order's.
+        let (entity, parent, src) = if rows(original, "applied_promotions").iter().any(|a| id(a, "line") == Some(*line)) {
+            ("SalesInvoice", original.clone(), o)
+        } else if let (Some(so), Some(sl)) = (id(&o, "sales_order"), id(&o, "so_line")) {
+            let order = hc.kernel.get_tx(&sctx, hc.tx, "SalesOrder", so, true).await?;
+            let Some(src) = rows(&order, "items").into_iter().find(|r| id(r, "id") == Some(sl)) else { continue };
+            ("SalesOrder", order, src)
+        } else {
+            continue;
+        };
+        let sid = id(&src, "id").unwrap_or_default();
+        let applied: Vec<Doc> = rows(&parent, "applied_promotions").into_iter().filter(|a| id(a, "line") == Some(sid)).collect();
+        if applied.is_empty() {
+            continue;
+        }
+        let mut back: Doc = src.get("promotion_returned").and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut amounts: Doc = back.get("amounts").and_then(Value::as_object).cloned().unwrap_or_default();
+        let (had, done) = (d(&src, "qty"), d(&back, "qty"));
+        // The credit note's lines for this original line.
+        let here: Vec<String> = lines.iter().filter(|r| id(r, "return_line") == Some(*line)).filter_map(|r| s(r, "id").map(str::to_string)).collect();
+        let mut seen = BTreeSet::new();
+        for a in &applied {
+            let Some(p) = id(a, "promotion") else { continue };
+            if !seen.insert(p) {
+                continue;
+            }
+            let key = p.to_string();
+            let total: Decimal = applied.iter().filter(|x| id(x, "promotion") == Some(p)).map(|x| d(x, "amount")).sum();
+            let given = d(&amounts, &key);
+            let share = if sign > Decimal::ZERO {
+                let share = if done + q >= had - crate::flow::QTY_TOLERANCE { total - given } else { (total * q / had).round_dp(precision).min(total - given) };
+                let row = json!({"id": Uuid::now_v7().to_string(), "promotion": key, "title": a.get("title"), "line": here.first(), "amount": money(-share), "code": a.get("code")});
+                out.push(row.as_object().cloned().unwrap_or_default());
+                share
+            } else {
+                // Cancelled: what this credit note gave back of it comes back.
+                -mine
+                    .iter()
+                    .filter(|x| id(x, "promotion") == Some(p) && s(x, "line").is_some_and(|l| here.iter().any(|h| h == l)))
+                    .map(|x| -d(x, "amount"))
+                    .sum::<Decimal>()
+            };
+            amounts.insert(key, money(given + share));
+        }
+        back.insert("qty".into(), money((done + sign * q).max(Decimal::ZERO)));
+        back.insert("amounts".into(), Value::Object(amounts));
+        let mut v = Doc::new();
+        v.insert("promotion_returned".into(), Value::Object(back));
+        hc.kernel.set_child_values_tx(&sctx, hc.tx, entity, "items", sid, v).await?;
+    }
+    if sign > Decimal::ZERO && !out.is_empty() {
+        hc.kernel.set_child_rows_tx(&sctx, hc.tx, "SalesInvoice", "applied_promotions", rid, out).await?;
     }
     Ok(())
 }

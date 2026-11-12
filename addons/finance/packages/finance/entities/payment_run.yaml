@@ -8,6 +8,7 @@
     - {name: supplier_name, type: data, read_only: true}
     - {name: iban, type: data, read_only: true, label: IBAN / Account, description: "The supplier's, when the run was proposed: what the bank file pays to"}
     - {name: bic, type: data, read_only: true, label: BIC / Bank Code}
+    - {name: supplier_email, type: email, read_only: true, hidden: true, label: Supplier Email, description: "The supplier's, when the run was proposed: how a request about their personal data finds this line"}
     - {name: invoice, type: data, read_only: true, label: Open Item ID}
     - {name: invoice_type, type: data, read_only: true, label: Document Type}
     - {name: invoice_number, type: data, read_only: true, in_list: true}
@@ -18,6 +19,8 @@
     - {name: discount_account, type: link, to: Account, read_only: true}
     - {name: discount_reduces_tax, type: check, read_only: true}
     - {name: amount, type: currency, min: "0", in_list: true, label: To Pay, description: "What the bank pays on it: the outstanding less the discount, or less to pay part of it"}
+    - {name: instrument_no, type: data, label: Cheque / Instrument No,
+       description: "For a mode paid by instrument: the number of the one paying this supplier (the first given among the supplier's lines); empty, the next from the mode's book"}
     - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_list: true}
     - {name: state, type: select, options: [Proposed, Paid, Failed], read_only: true, in_list: true}
     - {name: error, type: text, read_only: true}

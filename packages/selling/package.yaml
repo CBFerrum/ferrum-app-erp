@@ -20,6 +20,25 @@ overlays:
     ops:
       - {op: add_field, column: true, after: fy_start_month, field: {name: time_zone, type: data, max_length: 64, label: Time Zone,
           description: "IANA time zone (Europe/Berlin) promotions' days and hours are read in; empty: the workspace's"}}
+      - {op: add_field, column: true, after: time_zone, field: {name: reservation_policy, type: select, options: [Count Only, Hold], default: Count Only, label: Stock Reservation,
+          description: "Count Only: open orders count against what can be promised, and anyone may take the stock. Hold: stock is held for an order's lines (as much as is free; the rest back-ordered), and no delivery or other order may take it. An item group may say otherwise"}}
+      - {op: add_field, column: true, after: reservation_policy, field: {name: reserve_on, type: select, options: [Submit, On Demand], default: Submit, label: Reserve When,
+          description: "With Hold: when an order is submitted (and changed), or only when someone presses Reserve Stock on it"}}
+      - {op: add_field, column: true, after: reserve_on, field: {name: reservation_days, type: int, min: "1", label: Reservation Lasts (Days),
+          description: "With Hold: a reservation lapses this many days after it is made unless renewed; empty: until the order is delivered, closed or cancelled"}}
+      - {op: add_action, action: {name: availability, label: Availability, permission: read, read_only: true, hidden: true,
+          params: [{name: item, type: link, to: Item, label: Item, required: true},
+                   {name: qty, label: Quantity, description: "In the item's stock unit; 1 when empty"},
+                   {name: warehouse, type: link, to: Warehouse, label: Warehouse, description: "Every warehouse of the company with stock or stock coming when empty"},
+                   {name: date, type: date, label: From, description: "Today when empty"}],
+          contract: {effect: query,
+            returns: {type: object, properties: {
+              item: {type: string, format: uuid}, qty: {type: string}, lead_time_days: {type: integer}, promise_date: {type: [string, "null"]},
+              warehouses: {type: array, items: {type: object, properties: {
+                warehouse: {type: string, format: uuid}, on_hand: {type: string}, reserved: {type: string}, held: {type: string}, available_now: {type: string},
+                incoming: {type: array, items: {type: object, properties: {date: {type: string}, qty: {type: string}, from: {type: string}, id: {type: string, format: uuid}}}},
+                promise_date: {type: [string, "null"]}}}}}},
+            completion: "What is available of the item now and by date, per warehouse, and the day the quantity can be promised; nothing is saved"}}}
       - {op: add_action, action: {name: price_lines, label: Price Lines With Promotions, permission: read, read_only: true, hidden: true,
           params: [{name: lines, type: text, label: Lines, required: true, description: "JSON: [{item, qty, uom?, price_list_rate?, discount_percent?}], as on a sales order"},
                    {name: customer, type: link, to: Customer, label: Customer, required: true},
@@ -36,6 +55,11 @@ overlays:
               rejected_codes: {type: array, items: {type: string}},
               total: {type: string}, net_total: {type: string}, total_taxes: {type: string}, grand_total: {type: string}, rounded_total: {type: string}, currency: {type: string, format: uuid}}},
             completion: "The lines priced as a sales order would be, with the company's pricing rules and promotions, without saving anything or counting a code"}}}
+
+  - entity: ItemGroup
+    ops:
+      - {op: add_field, column: true, field: {name: reservation_policy, type: select, options: [Count Only, Hold], label: Stock Reservation,
+          description: "For its items, over the company's: empty, the company's"}}
 
 modules:
   - name: selling

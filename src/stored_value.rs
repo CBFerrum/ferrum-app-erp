@@ -82,6 +82,8 @@ pub struct Kind {
     /// The expected unused share, 0 to 0.99.
     pub breakage: Decimal,
     pub disabled: bool,
+    /// How long value held for an order stays held.
+    pub hold_hours: i64,
 }
 
 fn opt(doc: &Doc, f: &str) -> Option<Decimal> {
@@ -130,6 +132,7 @@ pub async fn kind(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid) -> Result<Kind
         },
         breakage: (d(&doc, "breakage_percent") / Decimal::ONE_HUNDRED).clamp(Decimal::ZERO, Decimal::new(99, 2)),
         disabled: b(&doc, "disabled"),
+        hold_hours: int(&doc, "hold_hours").filter(|n| *n > 0).unwrap_or(72),
     })
 }
 
@@ -316,6 +319,19 @@ pub(crate) async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, acc: &mut Account
     let balance = acc.balance() + m.amount;
     if balance < Decimal::ZERO {
         return Err(acc.short(kind, -m.amount));
+    }
+    if m.amount < Decimal::ZERO && matches!(m.entry_type, "redeem" | "transfer") {
+        // What is held for orders is not anyone else's to take.
+        let held = held_on(ctx, tx, acc.id).await?;
+        if balance < held {
+            return Err(Error::invalid(format!(
+                "{} holds {}, of which {} is held for orders: {} cannot be taken from it",
+                acc.label(kind),
+                acc.balance().normalize(),
+                held.normalize(),
+                (-m.amount).normalize()
+            )));
+        }
     }
     let value = acc.value() + m.value;
     let entry = Uuid::now_v7();
@@ -509,7 +525,7 @@ pub const PROOF_MINUTES: i32 = 5;
 
 /// What a proof may be used for: a kind's operations, `transfer_to` for a transfer's other card, and
 /// an account's `new_code`.
-pub const PROVEN: [&str; 6] = ["issue", "redeem", "refund", "transfer", "transfer_to", "new_code"];
+pub const PROVEN: [&str; 7] = ["issue", "redeem", "refund", "transfer", "transfer_to", "new_code", "hold"];
 
 /// Proves `code` (a new one is made when empty) and `pin` for one `operation` on `kind`: keeps their
 /// hashes and answers (proof, the code when made). Nothing is checked against an account here; the
@@ -709,6 +725,16 @@ pub(crate) async fn price_line(
     crate::util::set(row, "income_account", kd.liability.to_string());
     crate::util::set(row, "enable_deferred_revenue", false);
     Ok(kd.tax_at_redemption)
+}
+
+/// Whether an item sells stored value whose tax is charged when it is redeemed, for a document whose
+/// lines do not record the kind (an order, a quotation).
+pub(crate) async fn taxed_when_redeemed(k: &Kernel, ctx: &Ctx, tx: &mut Tx, item: &Doc, kinds: &mut std::collections::HashMap<Uuid, Kind>) -> Result<bool> {
+    let Some(kid) = id(item, "stored_value_kind") else { return Ok(false) };
+    if let std::collections::hash_map::Entry::Vacant(e) = kinds.entry(kid) {
+        e.insert(kind(k, ctx, tx, kid).await?);
+    }
+    Ok(kinds[&kid].tax_at_redemption)
 }
 
 /// A line's own rates when its tax is charged on redemption: nothing for each of the document's taxes.
@@ -1194,6 +1220,15 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, u
     .bind(today)
     .fetch_all(&mut *tx)
     .await?;
+    // Holds whose hours have passed: their value is free again.
+    let lapsed: Vec<Uuid> =
+        sqlx::query_scalar("select id from stored_value_hold where tenant_id = $1 and state = 'held' and expires_at < now() for update skip locked")
+            .bind(ctx.tenant)
+            .fetch_all(&mut *tx)
+            .await?;
+    for h in lapsed {
+        end_holds(k, ctx, &mut tx, "h.id = $2", h, "expired", None).await?;
+    }
     for id in &expired {
         let mut acc = lock(ctx, &mut tx, *id).await?;
         let kd = kind(k, ctx, &mut tx, acc.kind).await?;
@@ -1216,6 +1251,181 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, u
     }
     tx.commit().await?;
     Ok((due.len(), expired.len()))
+}
+
+// ───────────────────────────── holds ─────────────────────────────
+//
+// A hold sets part of an account's balance aside for a sales order before it is invoiced (a web
+// shop's order paid by gift card). Nothing is booked; the account's `held` shows it and no redemption
+// or transfer may take it. A hold ends once, by one update from 'held' (so two ends racing leave
+// one): released, by hand or when its order is cancelled; expired, by the upkeep after the kind's
+// hours; or redeemed, when an invoice of its order is submitted, as a payment from the account
+// against that invoice (up to what the invoice leaves to pay; the rest is free again).
+
+/// What is held for orders on an account.
+pub(crate) async fn held_on(ctx: &Ctx, tx: &mut Tx, account: Uuid) -> Result<Decimal> {
+    Ok(sqlx::query_scalar("select coalesce(sum(amount), 0) from stored_value_hold where tenant_id = $1 and account_id = $2 and state = 'held'")
+        .bind(ctx.tenant)
+        .bind(account)
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
+/// Brings an account's `held` up to its open holds.
+async fn show_held(k: &Kernel, ctx: &Ctx, tx: &mut Tx, account: Uuid) -> Result<Decimal> {
+    let held = held_on(ctx, tx, account).await?;
+    let mut v = Doc::new();
+    v.insert("held".into(), money(held));
+    k.set_values_tx(&sys(ctx), tx, ACCOUNT, account, v).await?;
+    Ok(held)
+}
+
+async fn hold_value(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind_id: Uuid, sec: &Secret, order: Uuid, amount: Decimal) -> Result<Value> {
+    let kd = kind(k, ctx, tx, kind_id).await?;
+    if kd.units {
+        return Err(Error::invalid(format!("{} holds units: they pay an invoice's lines, so nothing is held before it", kd.name)));
+    }
+    if amount <= Decimal::ZERO {
+        return Err(Error::field("amount", "is more than nothing"));
+    }
+    let so = k.get_tx(ctx, tx, "SalesOrder", order, false).await?;
+    if d(&so, "docstatus") != Decimal::ONE || matches!(s(&so, "status"), Some("Closed" | "Completed" | "Cancelled")) {
+        return Err(Error::field("order", "value is held for a submitted order still open"));
+    }
+    if id(&so, "company") != Some(kd.company) {
+        return Err(Error::field("order", format!("the order is another company's than {}'s", kd.name)));
+    }
+    let found = found(k, ctx, tx, Some(kind_id), sec).await?;
+    let acc = lock(ctx, tx, found).await?;
+    acc.usable(&kd, chrono::Utc::now().date_naive())?;
+    if acc.holder.is_some_and(|h| Some(h) != id(&so, "customer")) {
+        return Err(Error::invalid("it is held by another customer"));
+    }
+    let held = held_on(ctx, tx, acc.id).await?;
+    if amount > acc.balance() - held {
+        return Err(Error::invalid(format!(
+            "{} holds {}, of which {} is held for orders: {} cannot be held",
+            acc.label(&kd),
+            acc.balance().normalize(),
+            held.normalize(),
+            amount.normalize()
+        )));
+    }
+    if !kd.partial && amount != acc.balance() {
+        return Err(Error::invalid(format!("{} is used whole: hold {} of it", acc.label(&kd), acc.balance().normalize())));
+    }
+    let hid = Uuid::now_v7();
+    let expires: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "insert into stored_value_hold (tenant_id, id, account_id, order_entity, order_id, amount, expires_at, created_by) \
+         values ($1, $2, $3, 'SalesOrder', $4, $5::numeric, now() + make_interval(hours => $6::int), $7) returning expires_at",
+    )
+    .bind(ctx.tenant)
+    .bind(hid)
+    .bind(acc.id)
+    .bind(order)
+    .bind(amount.to_string())
+    .bind(kd.hold_hours as i32)
+    .bind((!ctx.user.is_nil()).then_some(ctx.user))
+    .fetch_one(&mut **tx)
+    .await?;
+    let held = show_held(k, ctx, tx, acc.id).await?;
+    Ok(json!({"hold": hid, "account": acc.id, "amount": money(amount), "held": money(held), "available": money(acc.balance() - held), "expires_at": expires}))
+}
+
+/// Ends open holds matched by `filter` (on `h`, binding $1 tenant and $2), as `state`, under their
+/// accounts' locks: (hold, account, amount) of each ended here.
+async fn end_holds(k: &Kernel, ctx: &Ctx, tx: &mut Tx, filter: &str, key: Uuid, state: &str, invoice: Option<Uuid>) -> Result<Vec<(Uuid, Uuid, Decimal)>> {
+    let accounts: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "select distinct account_id from stored_value_hold h where h.tenant_id = $1 and {filter} and h.state = 'held'"
+    )))
+    .bind(ctx.tenant)
+    .bind(key)
+    .fetch_all(&mut **tx)
+    .await?;
+    for a in &accounts {
+        lock(ctx, tx, *a).await?;
+    }
+    let ended: Vec<(Uuid, Uuid, Decimal)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "update stored_value_hold h set state = $3, closed_at = now(), invoice_id = $4 where h.tenant_id = $1 and {filter} and h.state = 'held' \
+         returning h.id, h.account_id, h.amount"
+    )))
+    .bind(ctx.tenant)
+    .bind(key)
+    .bind(state)
+    .bind(invoice)
+    .fetch_all(&mut **tx)
+    .await?;
+    for a in &accounts {
+        show_held(k, ctx, tx, *a).await?;
+    }
+    Ok(ended)
+}
+
+async fn release_hold(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind_id: Uuid, hold: Uuid) -> Result<Value> {
+    let row: Option<(Uuid, String)> = sqlx::query_as("select h.account_id, h.state from stored_value_hold h where h.tenant_id = $1 and h.id = $2")
+        .bind(ctx.tenant)
+        .bind(hold)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let (account, _) = row.ok_or_else(|| Error::field("hold", "there is no such hold"))?;
+    if current(ctx, tx, account).await?.kind != kind_id {
+        return Err(Error::field("hold", "is on an account of another kind"));
+    }
+    end_holds(k, ctx, tx, "h.id = $2", hold, "released", None).await?;
+    let state: String =
+        sqlx::query_scalar("select state from stored_value_hold where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(hold).fetch_one(&mut **tx).await?;
+    let acc = current(ctx, tx, account).await?;
+    let held = held_on(ctx, tx, account).await?;
+    Ok(json!({"hold": hold, "state": state, "available": money(acc.balance() - held)}))
+}
+
+/// A cancelled sales order's holds are released.
+pub(crate) async fn order_cancelled(hc: &mut HookCtx<'_>, order: Uuid) -> Result<()> {
+    if hc.ctx.schema.entity(ACCOUNT).is_none() {
+        return Ok(());
+    }
+    end_holds(hc.kernel, hc.ctx, hc.tx, "h.order_id = $2", order, "released", None).await?;
+    Ok(())
+}
+
+/// A submitted sales invoice redeems the holds on the orders it bills, each once: a payment from the
+/// account against the invoice, for the hold's amount or what the invoice leaves to pay if less.
+pub(crate) async fn invoice_holds(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    if b(doc, "is_return") || hc.ctx.schema.entity(ACCOUNT).is_none() {
+        return Ok(());
+    }
+    let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let mut orders: Vec<Uuid> = rows(doc, "items").iter().filter_map(|r| id(r, "sales_order")).collect();
+    orders.sort();
+    orders.dedup();
+    let (k, ctx) = (hc.kernel, hc.ctx);
+    for order in orders {
+        for (hold, account, amount) in end_holds(k, ctx, hc.tx, "h.order_id = $2", order, "redeemed", Some(iid)).await? {
+            let left = d(&k.get_tx(&sys(ctx), hc.tx, "SalesInvoice", iid, false).await?, "outstanding_amount");
+            let paid = amount.min(left);
+            if paid <= Decimal::ZERO {
+                continue;
+            }
+            let kid = current(ctx, hc.tx, account).await?.kind;
+            let kd = kind(k, ctx, hc.tx, kid).await?;
+            let pid = payment(
+                k,
+                &sys(ctx),
+                hc.tx,
+                json!({"company": kd.company, "posting_date": s(doc, "posting_date"), "payment_type": "Receive", "customer": doc.get("customer"),
+                       "paid_amount": paid.to_string(), "references": [{"invoice": iid, "allocated_amount": paid.to_string()}],
+                       "stored_value_account": account, "remarks": format!("Held for order, hold {hold}")}),
+            )
+            .await?;
+            sqlx::query("update stored_value_hold set payment_id = $3 where tenant_id = $1 and id = $2")
+                .bind(ctx.tenant)
+                .bind(hold)
+                .bind(pid)
+                .execute(&mut **hc.tx)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 // ───────────────────────────── for other apps ─────────────────────────────
@@ -1339,6 +1549,19 @@ pub async fn transfer(
 /// Undoes what an `entry` from issue, redeem, refund or transfer did: `{reversed}`.
 pub async fn reverse(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, entry: Uuid, key: &str) -> Result<Value> {
     call(k, ctx, tx, kind, "reverse", json!({"entry": entry}), Some(key)).await
+}
+
+/// Value held on the account a code names for a sales order not yet invoiced:
+/// `{hold, account, amount, held, available, expires_at}`.
+#[allow(clippy::too_many_arguments)]
+pub async fn hold(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, code: &str, pin: Option<&str>, order: Uuid, amount: Decimal, key: &str) -> Result<Value> {
+    let (proof, _) = proof_for(ctx, tx, kind, "hold", key, Some(code), pin).await?;
+    call(k, ctx, tx, kind, "hold", json!({"proof": proof, "order": order, "amount": amount.normalize().to_string()}), Some(key)).await
+}
+
+/// A hold released: `{hold, state, available}`.
+pub async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind: Uuid, hold: Uuid, key: &str) -> Result<Value> {
+    call(k, ctx, tx, kind, "release", json!({"hold": hold}), Some(key)).await
 }
 
 async fn current(ctx: &Ctx, tx: &mut Tx, account: Uuid) -> Result<Account> {
@@ -1687,7 +1910,7 @@ impl DocHook for KindHook {
         let (k, ctx) = (hc.kernel, hc.ctx);
         let p = |n: &str| param(params, n);
         // The audit log keeps these actions' parameters: a code or PIN is refused before anything runs.
-        if ["issue", "redeem", "refund", "transfer"].contains(&name)
+        if ["issue", "redeem", "refund", "transfer", "hold"].contains(&name)
             && let Some(f) = ["code", "pin", "to_code"].into_iter().find(|f| params.get(*f).is_some_and(|v| !v.is_null()))
         {
             return Err(Error::field(f, "a code or PIN is never passed to an operation that is logged: give it to prove and pass the proof"));
@@ -1712,8 +1935,9 @@ impl DocHook for KindHook {
                 let acc = find(k, ctx, hc.tx, Some(kind_id), p("code").ok_or_else(|| Error::field("code", "is required"))?, p("pin")).await?;
                 let sql = format!("select {COLUMNS} from {} where tenant_id = $1 and id = $2", table(ctx, ACCOUNT)?);
                 let a: Account = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(ctx.tenant).bind(acc).fetch_one(&mut **hc.tx).await?;
-                json!({"account": a.id, "balance": money(a.balance()), "holds": if s(doc, "holds") == Some("Units") { "Units" } else { "Money" },
-                       "state": a.state(), "expires_on": a.expires_on})
+                let held = held_on(ctx, hc.tx, a.id).await?;
+                json!({"account": a.id, "balance": money(a.balance()), "held": money(held), "available": money(a.balance() - held),
+                       "holds": if s(doc, "holds") == Some("Units") { "Units" } else { "Money" }, "state": a.state(), "expires_on": a.expires_on})
             }
             "issue" => {
                 let amount = amount_param(params, "amount")?.ok_or_else(|| Error::field("amount", "is required"))?;
@@ -1734,6 +1958,16 @@ impl DocHook for KindHook {
                 let (sec, _) = taken(ctx, hc.tx, kind_id, "transfer", params, "proof").await?.ok_or_else(|| Error::field("proof", "is required"))?;
                 let to = taken(ctx, hc.tx, kind_id, "transfer_to", params, "to_proof").await?;
                 transfer_value(k, ctx, hc.tx, kind_id, &sec, to, uuid_param(params, "holder")?, amount_param(params, "amount")?).await?
+            }
+            "hold" => {
+                let order = uuid_param(params, "order")?.ok_or_else(|| Error::field("order", "is required"))?;
+                let amount = amount_param(params, "amount")?.ok_or_else(|| Error::field("amount", "is required"))?;
+                let (sec, _) = taken(ctx, hc.tx, kind_id, "hold", params, "proof").await?.ok_or_else(|| Error::field("proof", "is required"))?;
+                hold_value(k, ctx, hc.tx, kind_id, &sec, order, amount).await?
+            }
+            "release" => {
+                let hold = uuid_param(params, "hold")?.ok_or_else(|| Error::field("hold", "is required"))?;
+                release_hold(k, ctx, hc.tx, kind_id, hold).await?
             }
             "reverse" => reverse_op(k, ctx, hc.tx, uuid_param(params, "entry")?.ok_or_else(|| Error::field("entry", "is required"))?).await?,
             _ => return Ok(None),
