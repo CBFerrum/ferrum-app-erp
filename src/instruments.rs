@@ -72,7 +72,9 @@ pub async fn fill(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &crate::util::Company
     if s(doc, "reference_no").is_some_and(|r| !r.trim().is_empty()) || row.get("next_instrument_no").is_none_or(Value::is_null) {
         return Ok(());
     }
-    let table = ferrum_kernel::ddl::q(&hc.ctx.schema.entity("ModeOfPaymentAccount").ok_or_else(|| Error::internal("no mode accounts"))?.table);
+    let table = ferrum_kernel::ddl::q(
+        &hc.ctx.schema.entity("ModeOfPayment").and_then(|e| e.children.get("accounts")).ok_or_else(|| Error::internal("no mode accounts"))?.table,
+    );
     let drawn: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "update {table} set next_instrument_no = next_instrument_no + 1 where tenant_id = $1 and id = $2 \
          and next_instrument_no is not null and (last_instrument_no is null or next_instrument_no <= last_instrument_no) returning (next_instrument_no - 1)::bigint"
