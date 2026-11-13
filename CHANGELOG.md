@@ -1,5 +1,9 @@
 # Changelog
 
+## ERP 0.26.3: the interface resolves a link's filter from the record
+
+* **Pickers offer only the record's company's records in ERP's own screens.** 0.26.2 declared the filters; the interface built into it was older than the Frontend that resolves them, so a picker sent the filter unresolved and listed nothing. Rebuilt on Ferrum-Frontend d470c42. Nothing changes on the server. Found by a browser walk.
+
 ## ERP 0.26.2, Finance 0.6.2, Manufacturing Operations 0.2.1, Procurement 0.1.5, Stock Operations 0.2.1, Warehouse Management 0.3.1, MES 0.2.4: a link offers only its own company's records
 
 Fault from the second browser walk: Store Settings could not be saved by following the form, because the warehouse
