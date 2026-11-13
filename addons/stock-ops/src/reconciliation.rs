@@ -7,7 +7,7 @@
 //! counted stock is reset to `qty × rate`: the current stock leaves at its book value and the count
 //! comes back at the given rate (one fresh FIFO layer), as ERPNext's reconciliation does.
 
-use crate::common::{ItemInfo, batch_qty, items, opt_dec, row_error, serials, serials_in_stock, validation, warehouse_companies};
+use crate::common::{ItemInfo, batch_qty, items, opt_dec, row_error, serials, serials_in_stock, validation};
 use async_trait::async_trait;
 use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_app_erp::stock::{self, MoveIn};
@@ -211,9 +211,6 @@ impl DocHook for ReconciliationHook {
         let lines = rows(doc, "items");
         let ids: Vec<Uuid> = lines.iter().filter_map(|r| id(r, "item")).collect();
         let infos = items(hc.tx, hc.ctx.tenant, &ids).await?;
-        let whs: Vec<Uuid> = lines.iter().filter_map(|r| id(r, "warehouse")).collect();
-        let wh_company = warehouse_companies(hc.tx, hc.ctx.tenant, &whs).await?;
-        let cid = id(doc, "company");
         let mut errors = Vec::new();
         let mut seen = HashSet::new();
         for (i, r) in lines.iter().enumerate() {
@@ -221,11 +218,6 @@ impl DocHook for ReconciliationHook {
             let Some(info) = id(r, "item").and_then(|x| infos.get(&x)) else { continue };
             if !info.is_stock {
                 err("item", format!("{} is not a stock item", info.code));
-            }
-            if let Some(wh) = id(r, "warehouse")
-                && wh_company.get(&wh).map(|w| w.0) != cid
-            {
-                err("warehouse", "belongs to another company".into());
             }
             let batch = batch_of(r);
             match (info.batch, batch) {
@@ -251,9 +243,6 @@ impl DocHook for ReconciliationHook {
         }
         if let Some(acc) = id(doc, "expense_account") {
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != cid {
-                errors.push(FieldError::new("expense_account", "belongs to another company"));
-            }
             let opening = s(doc, "purpose") == Some(OPENING);
             if opening && !matches!(s(&a, "root_type"), Some("Asset" | "Liability" | "Equity")) {
                 errors.push(FieldError::new("expense_account", "opening stock needs a balance sheet account (e.g. Opening Balance Equity)"));

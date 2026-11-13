@@ -33,7 +33,7 @@
   numbering: {template: "JV-{FY}-{seq:5}", gapless: true, on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_list: true, in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: entry_type, type: select, options: [Journal Entry, Opening Entry, Adjustment, Depreciation, Exchange Revaluation], default: Journal Entry, in_filter: true}
@@ -92,7 +92,7 @@
   title_field: party_name
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: payment_type, type: select, options: [Receive, Pay, Internal Transfer], required: true, default: Receive, in_list: true, in_filter: true,

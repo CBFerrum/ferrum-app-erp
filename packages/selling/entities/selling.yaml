@@ -39,7 +39,7 @@
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
-    - {name: added_by_promotion, type: link, to: Promotion, link_filters: {company: {from: parent.company}}, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: promotion_returned, type: json, hidden: true, read_only: true, no_copy: true, label: Promotions Given Back,
        description: "What credit notes gave back of the promotions on this line so far: the quantity and the amount per promotion, so the last part returned takes exactly what is left"}
     - {name: rate, type: currency, read_only: true, in_list: true}
@@ -70,7 +70,7 @@
   numbering: {template: "SO-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
@@ -148,7 +148,7 @@
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
-    - {name: added_by_promotion, type: link, to: Promotion, link_filters: {company: {from: parent.company}}, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
@@ -174,7 +174,7 @@
   numbering: {template: "DN-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
@@ -235,7 +235,7 @@
     - {name: discount_percent, type: percent, min: "0", max: "100"}
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
-    - {name: added_by_promotion, type: link, to: Promotion, link_filters: {company: {from: parent.company}}, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
+    - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
     - {name: promotion_returned, type: json, hidden: true, read_only: true, no_copy: true, label: Promotions Given Back,
        description: "What credit notes gave back of the promotions on this line so far: the quantity and the amount per promotion, so the last part returned takes exactly what is left"}
     - {name: rate, type: currency, read_only: true, in_list: true}
@@ -286,7 +286,7 @@
   search_fields: [po_no]
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
@@ -384,7 +384,7 @@
   kind: child
   description: "What one promotion took off one line of the document: for its receipt, and summed by the promotions report"
   fields:
-    - {name: promotion, type: link, to: Promotion, link_filters: {company: {from: parent.company}}, in_list: true}
+    - {name: promotion, type: link, to: Promotion, in_list: true}
     - {name: title, type: data, in_list: true}
     - {name: line, type: data, hidden: true, description: "The line's id"}
     - {name: amount, type: currency, in_list: true, description: "Taken off the line, in the document's currency"}

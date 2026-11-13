@@ -11,7 +11,7 @@
 use crate::material_request::days_after;
 use crate::{installed, settings};
 use async_trait::async_trait;
-use ferrum_domain::util::{b, get, id, money, rows, s};
+use ferrum_domain::util::{b, id, money, rows, s};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -49,15 +49,8 @@ impl DocHook for ItemReorderHook {
                 Some(from) if from == wh => {
                     errors.push(FieldError::new("from_warehouse", "must differ from the warehouse being replenished").in_row("proc_reorder_levels", i));
                 }
-                Some(from) => {
-                    // The raised request lives in one company: both warehouses must be its.
-                    let company = |w: Doc| id(&w, "company");
-                    let to = company(get(hc.kernel, hc.ctx, hc.tx, "Warehouse", wh).await?);
-                    if company(get(hc.kernel, hc.ctx, hc.tx, "Warehouse", from).await?) != to {
-                        errors.push(FieldError::new("from_warehouse", "belongs to another company").in_row("proc_reorder_levels", i));
-                    }
-                }
-                None => {}
+                // The raised request lives in one company: a row's warehouses are limited to the reorder rule's by their links.
+                Some(_) | None => {}
             }
         }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }

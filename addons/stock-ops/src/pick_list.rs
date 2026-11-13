@@ -451,12 +451,6 @@ impl DocHook for PickListHook {
                 }
             }
         }
-        if let Some(w) = target {
-            let wd = get(hc.kernel, hc.ctx, hc.tx, "Warehouse", w).await?;
-            if id(&wd, "company") != id(doc, "company") {
-                errors.push(FieldError::new("target_warehouse", "belongs to another company"));
-            }
-        }
         validation(errors)
     }
 
@@ -499,9 +493,6 @@ impl DocHook for PickListHook {
                 err("warehouse", "say where the picked stock is".into());
                 continue;
             };
-            if wh_company.get(&wh).map(|w| w.0) != Some(cid) {
-                err("warehouse", "belongs to another company".into());
-            }
             if !info.is_stock {
                 err("item", format!("{} is not a stock item", info.code));
             }
