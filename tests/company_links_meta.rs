@@ -86,10 +86,12 @@ pub fn faults(pkgs: &[Package], others: &[Package], exempt: &[(&str, &str, &str)
         }
     }
     let mut bad = Vec::new();
-    for (n, (kind, fields)) in &mine {
+    for (n, (_, fields)) in &mine {
+        // Whether the record has a company is known from every package's fields, not only these.
+        let (kind, whole) = (&ents[n].0, &ents[n].1);
         let source = if *kind != EntityKind::Child {
-            has_company(fields).then_some("company")
-        } else if has_company(fields) {
+            has_company(whole).then_some("company")
+        } else if has_company(whole) {
             Some("company")
         } else {
             let ps = parents.get(n.as_str()).cloned().unwrap_or_default();
