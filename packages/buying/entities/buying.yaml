@@ -16,7 +16,7 @@
     - {name: rate, type: currency, read_only: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: schedule_date, type: date, label: Required By}
     - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "Above the quantity when more was received, within the over-receipt allowance"}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
@@ -34,7 +34,7 @@
   numbering: {template: "PO-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: supplier, type: link, to: Supplier, required: true, in_filter: true}
     - {name: supplier_name, type: data, fetch_from: supplier.supplier_name, read_only: true, in_list: true}
@@ -46,8 +46,8 @@
     - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: PurchaseOrderItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
@@ -95,7 +95,7 @@
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
     - {name: rejected_qty, type: decimal, default: 0, min: "0", label: Rejected Qty,
        description: "Received and refused, beside the quantity accepted: kept in the rejected warehouse at no value, out of what can be sold or used, until returned"}
-    - {name: rejected_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Rejected}, label: Rejected Warehouse, visible_if: "doc.rejected_qty > 0.0",
+    - {name: rejected_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false, warehouse_type: Rejected}, label: Rejected Warehouse, visible_if: "doc.rejected_qty > 0.0",
        description: "Empty: the company's rejected warehouse"}
     - {name: rejected_returned_qty, type: decimal, read_only: true, no_copy: true, label: Rejected Returned, description: "What returns of rejected goods sent back of it"}
     - {name: price_list_rate, type: currency, min: "0", in_list: true}
@@ -103,7 +103,7 @@
     - {name: rate, type: currency, read_only: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: purchase_order, type: link, to: PurchaseOrder, read_only: true}
     - {name: po_line, type: data, read_only: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
@@ -124,7 +124,7 @@
   numbering: {template: "PR-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: supplier, type: link, to: Supplier, required: true, in_filter: true}
     - {name: supplier_name, type: data, fetch_from: supplier.supplier_name, read_only: true, in_list: true}
@@ -141,8 +141,8 @@
     - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: PurchaseReceiptItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
@@ -185,16 +185,16 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: base_net_amount, type: currency, read_only: true}
-    - {name: expense_account, type: link, to: Account, link_filters: {is_group: false}}
+    - {name: expense_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: enable_deferred_expense, type: check, label: Deferred Expense, description: "Recognised day by day over the service period; a line added with its service period is deferred as its item is"}
     - {name: service_start_date, type: date}
     - {name: service_end_date, type: date}
-    - {name: deferred_expense_account, type: link, to: Account, link_filters: {is_group: false}, description: "Where it waits; the company's default deferred expense account when empty"}
+    - {name: deferred_expense_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, description: "Where it waits; the company's default deferred expense account when empty"}
     - {name: deferred_booked, type: currency, read_only: true, no_copy: true, label: Recognised So Far}
     - {name: deferred_booked_till, type: date, read_only: true, no_copy: true, label: Recognised Through}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: purchase_order, type: link, to: PurchaseOrder, read_only: true}
     - {name: po_line, type: data, read_only: true}
     - {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true}
@@ -218,7 +218,7 @@
   search_fields: [bill_no]
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: number_series, type: link, to: NumberSeries, no_copy: true, label: Numbering Series, in_filter: true,
+    - {name: number_series, type: link, to: NumberSeries, link_filters: {company: {from: company}}, no_copy: true, label: Numbering Series, in_filter: true,
        description: "The series this document is numbered from when it is submitted: one of those set up for it (a tax invoice, a branch). Empty: the series the company's settings or its country's rules give, else the usual one"}
     - {name: supplier, type: link, to: Supplier, required: true, in_filter: true}
     - {name: supplier_name, type: data, fetch_from: supplier.supplier_name, read_only: true, in_list: true}
@@ -238,10 +238,10 @@
     - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
     - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: update_stock, type: check, description: Receive stock with this invoice}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.update_stock"}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, visible_if: "doc.update_stock"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: PurchaseInvoiceItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: tax_breakdown, type: table, of: TaxBreakdown, read_only: true, label: Tax Breakdown}
@@ -260,10 +260,10 @@
     - {name: base_grand_total, type: currency, read_only: true}
     - {name: base_rounded_total, type: currency, read_only: true}
     - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
-    - {name: credit_to, type: link, to: Account, read_only: true, label: Payable Account}
+    - {name: credit_to, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Payable Account}
     - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Return, Debit Note Issued, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: project, type: link, to: Project}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}}
     - {name: dimensions, type: json, description: "Accounting dimensions by code for every line it books, each line's own over these"}
     - {name: remarks, type: text}
   rules:

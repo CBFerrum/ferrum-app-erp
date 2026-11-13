@@ -65,7 +65,7 @@
     - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
     - {name: qty, type: decimal, read_only: true, in_list: true}
     - {name: uom, type: link, to: Uom, fetch_from: item.stock_uom, read_only: true, label: Unit}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: batch_no, type: data, in_list: true}
     - {name: serial_no, type: text, description: One serial number per line}
     - {name: valuation_rate, type: currency, read_only: true, no_copy: true}

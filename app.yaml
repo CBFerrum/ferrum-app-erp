@@ -5,7 +5,7 @@
 # Recorded as installed in every workspace that has accounting; India is its add-on (addons/india).
 id: erp
 name: ERP
-version: 0.26.1
+version: 0.26.2
 publisher: cbferrum
 summary: Accounting, selling, buying, stock and manufacturing
 description: README.md
@@ -14,7 +14,7 @@ license: AGPL-3.0-or-later
 homepage: https://github.com/CBFerrum/ferrum-app-erp
 support: https://github.com/CBFerrum/ferrum-app-erp/issues
 runtime: native
-platform: ">=0.3.1, <0.4"
+platform: ">=0.3.6, <0.4"
 packages: [accounting, inventory, buying, selling, manufacturing]
 ui:
   dist: ui/dist

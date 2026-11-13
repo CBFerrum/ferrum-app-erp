@@ -1,13 +1,13 @@
 id: procurement
 name: Procurement
-version: 0.1.4
+version: 0.1.5
 publisher: cbferrum
 summary: Material requests, requests for quotation, supplier quotations and scorecards
 description: README.md
 categories: [inventory, finance]
 license: AGPL-3.0-only
 runtime: native
-platform: ">=0.3, <0.4"
+platform: ">=0.3.6, <0.4"
 requires: {erp: ">=0.1"}
 parent: erp
 packages: [procurement]
