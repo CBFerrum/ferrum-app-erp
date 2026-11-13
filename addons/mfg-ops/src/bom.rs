@@ -96,16 +96,9 @@ impl DocHook for BomOperationsHook {
         }
         let ops = rows(doc, "mfo_operations");
         let mut errors = Vec::new();
-        let mut cache = HashMap::new();
         for (i, r) in ops.iter().enumerate() {
-            match id(r, "workstation") {
-                None => errors.push(FieldError::new("workstation", "is required (the operation has no default workstation)").in_row("mfo_operations", i)),
-                Some(ws) => {
-                    let w = workstation(hc, &mut cache, ws).await?;
-                    if id(&w, "company") != id(doc, "company") {
-                        errors.push(FieldError::new("workstation", "belongs to another company").in_row("mfo_operations", i));
-                    }
-                }
+            if id(r, "workstation").is_none() {
+                errors.push(FieldError::new("workstation", "is required (the operation has no default workstation)").in_row("mfo_operations", i));
             }
         }
         let used: HashSet<Uuid> = ops.iter().filter_map(|r| id(r, "operation")).collect();

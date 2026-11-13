@@ -22,8 +22,8 @@
   kind: child
   fields:
     - {name: company, type: link, to: Company, required: true, in_list: true}
-    - {name: allowed_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Discount Allowed Account, description: "Customers' early-payment discounts: an expense"}
-    - {name: received_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Discount Received Account, description: "Suppliers' early-payment discounts: income"}
+    - {name: allowed_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Discount Allowed Account, description: "Customers' early-payment discounts: an expense"}
+    - {name: received_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Discount Received Account, description: "Suppliers' early-payment discounts: income"}
 
 - name: PaymentTermsTemplate
   label: Payment Terms Template

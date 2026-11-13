@@ -230,9 +230,7 @@ impl DocHook for WorkOrderOperationsHook {
                 continue;
             };
             let w = workstation(hc, &mut cache, ws).await?;
-            if id(&w, "company") != id(doc, "company") {
-                errors.push(FieldError::new("workstation", "belongs to another company").in_row("mfo_operations", i));
-            } else if b(&w, "disabled") {
+            if b(&w, "disabled") {
                 errors.push(FieldError::new("workstation", "is disabled").in_row("mfo_operations", i));
             }
         }

@@ -43,8 +43,8 @@
     - {name: days_until_due, type: int, default: 0, min: 0, max: 3650, description: Unless the customer's payment terms template sets the due dates}
     - {name: submit_invoices, type: check, default: true}
     - {name: prorate, type: check, default: true, description: "Partial periods, plan changes and immediate cancellations are charged or credited by the day"}
-    - {name: tax_template, type: link, to: TaxTemplate}
-    - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}, is_group: false}}
     - {name: status, type: select, options: [Trialling, Active, Past Due, Cancelled, Completed], default: Active, read_only: true, no_copy: true,
        in_list: true, in_filter: true}
     - {name: current_period_start, type: date, read_only: true, no_copy: true}

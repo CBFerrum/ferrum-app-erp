@@ -516,14 +516,6 @@ impl DocHook for LandedCostHook {
                 ));
             }
         }
-        let mut accounts: Vec<Uuid> = rows(doc, "charges").iter().filter_map(|c| id(c, "expense_account")).collect();
-        accounts.extend(id(doc, "consumed_cost_account"));
-        for acc in accounts {
-            let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != cid {
-                errors.push(FieldError::new("charges", format!("account {} belongs to another company", s(&a, "account_name").unwrap_or_default())));
-            }
-        }
         validation(errors)
     }
 

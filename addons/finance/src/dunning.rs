@@ -72,7 +72,7 @@ pub struct DunningTypeHook;
 
 #[async_trait]
 impl DocHook for DunningTypeHook {
-    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let mut errors = Vec::new();
         let all = levels(doc);
         let mut seen = HashSet::new();
@@ -83,14 +83,6 @@ impl DocHook for DunningTypeHook {
         }
         if all.windows(2).any(|w| w[1].days <= w[0].days) {
             errors.push(FieldError::new("levels", "each higher level must start at more days overdue than the one before"));
-        }
-        for field in ["income_account", "interest_income_account", "cost_center"] {
-            if let Some(x) = id(doc, field) {
-                let entity = if field == "cost_center" { "CostCenter" } else { "Account" };
-                if id(&get(hc.kernel, hc.ctx, hc.tx, entity, x).await?, "company") != id(doc, "company") {
-                    errors.push(FieldError::new(field, "belongs to another company"));
-                }
-            }
         }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
@@ -273,9 +265,6 @@ impl DocHook for DunningHook {
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         if let Some(t) = id(doc, "dunning_type") {
             let dt = get(hc.kernel, hc.ctx, hc.tx, "DunningType", t).await?;
-            if id(&dt, "company") != id(doc, "company") {
-                return Err(Error::field("dunning_type", "belongs to another company"));
-            }
             let overdue = rows(doc, "overdue_payments");
             if !overdue.is_empty() && doc.get("dunning_level").is_none_or(Value::is_null) {
                 let max = overdue.iter().map(|r| crate::common::int(r, "overdue_days")).max().unwrap_or(0);

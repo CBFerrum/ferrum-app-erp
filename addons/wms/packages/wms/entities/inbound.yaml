@@ -24,7 +24,7 @@
   numbering: {template: "ASN-{FY}-{seq:5}", date_field: expected_on}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: supplier, type: link, to: Supplier, in_list: true, in_filter: true, description: "Empty for a customer's goods: see Owner"}
     - {name: owner, type: link, to: Customer, in_list: true, in_filter: true, description: "A customer's stock, held for them. It stays off this company's books"}
     - {name: reference, type: data, in_list: true, description: "The sender's advice note"}

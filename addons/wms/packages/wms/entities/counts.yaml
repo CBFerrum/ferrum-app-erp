@@ -21,8 +21,8 @@
   description: Counts freeze their bins. A difference needs a recount and someone other than the counter to approve it.
   fields:
     - {name: reference, type: data, read_only: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: zone, type: link, to: StorageZone, description: "Every bin of this zone"}
     - {name: blind, type: check, default: true, in_list: true, description: "Counters do not see what the system expects"}
     - {name: status, type: select, options: [Draft, Counting, Review, Applied, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
@@ -41,7 +41,7 @@
   description: What a customer pays for holding their stock.
   fields:
     - {name: customer, type: link, to: Customer, required: true, unique: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company"}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company"}
     - {name: service_item, type: link, to: Item, required: true, description: "The line on the invoice"}
     - {name: rate_per_bin_day, type: currency, required: true, min: "0", in_list: true, label: Rate per Bin per Day}
     - {name: rate_per_unit_moved, type: currency, default: 0, min: "0", in_list: true, label: Rate per Unit Handled}

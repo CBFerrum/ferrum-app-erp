@@ -25,7 +25,7 @@
     - {name: operation, type: link, to: Operation, required: true, in_list: true, in_filter: true}
     - {name: wo_operation, type: data, hidden: true, label: Work Order Operation Row}
     - {name: sequence, type: int, read_only: true, description: Position of the operation in the work order}
-    - {name: workstation, type: link, to: Workstation, in_list: true, in_filter: true, description: Defaults to the work order operation's workstation}
+    - {name: workstation, type: link, to: Workstation, link_filters: {company: {from: company}}, in_list: true, in_filter: true, description: Defaults to the work order operation's workstation}
     - {name: employee, type: data, in_filter: true, label: Operator, description: "Free text, or an employee (id, number or name) when the HR app is installed"}
     - {name: employee_name, type: data, read_only: true, label: Operator Name}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}

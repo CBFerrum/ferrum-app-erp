@@ -5,21 +5,21 @@
     - {name: item, type: link, to: Item, required: true, in_list: true}
     - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
     - {name: uom, type: link, to: Uom, fetch_from: item.stock_uom, read_only: true, label: Unit}
-    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
-    - {name: target_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
+    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
+    - {name: target_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: basic_rate, type: currency, min: "0", in_list: true, description: Incoming rate for receipts; computed for issues and transfers}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: batch_no, type: data}
     - {name: serial_no, type: text, description: One serial number per line}
-    - {name: expense_account, type: link, to: Account, link_filters: {is_group: false}, description: Offset account for receipts and issues}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: expense_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, description: Offset account for receipts and issues}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: transfer_line, type: data, read_only: true, hidden: true, no_copy: true, description: "On a receipt of a transfer: the line of the shipping entry it receives"}
     - {name: received_qty, type: decimal, read_only: true, no_copy: true, label: Received or Settled, description: "On a transfer through transit: what its receipts took in or wrote off so far"}
     - {name: short_qty, type: decimal, min: "0", no_copy: true, label: Short or Damaged, description: "On a receipt of a transfer: what did not arrive in a usable state, beside the quantity received"}
     - {name: short_action, type: select, options: [Written Off, Claimed], label: Shortage, no_copy: true,
        description: "Written Off: its value is a loss (the stock adjustment account unless an account is given). Claimed: its value is owed by whoever is claimed from, to the account given"}
-    - {name: short_account, type: link, to: Account, link_filters: {is_group: false}, label: Shortage Account, no_copy: true}
+    - {name: short_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, label: Shortage Account, no_copy: true}
     - {name: short_reason, type: data, label: Why, no_copy: true}
 
 - name: StockEntry
@@ -39,7 +39,7 @@
     - {name: posting_time, type: data, default_expr: time, description: "HH:MM:SS, local time (orders entries on the same day)"}
     - {name: through_transit, type: check, label: "Ship Now, Receive Later", visible_if: "doc.purpose == 'Material Transfer' && doc.transfer_of == null",
        description: "The goods leave the source and wait in a transit warehouse, valued, until a receipt takes them into the target; partly, with shortages written off or claimed"}
-    - {name: transit_warehouse, type: link, to: Warehouse, link_filters: {is_group: false, warehouse_type: Transit}, label: Transit Warehouse, visible_if: "doc.through_transit",
+    - {name: transit_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false, warehouse_type: Transit}, label: Transit Warehouse, visible_if: "doc.through_transit",
        description: "Empty: the company's, else its first transit warehouse (made when it has none)"}
     - {name: transfer_of, type: link, to: StockEntry, read_only: true, no_copy: true, label: Receives Transfer}
     - {name: transit_status, type: select, options: [In Transit, Partly Received, Received], read_only: true, no_copy: true, in_list: true, in_filter: true}

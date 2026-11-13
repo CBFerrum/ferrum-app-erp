@@ -18,11 +18,11 @@
   description: Escalation levels for overdue customers - days overdue, fee, yearly interest and the letter to send.
   fields:
     - {name: dunning_type, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: is_default, type: check, in_list: true, description: Used for customers without a dunning type of their own}
-    - {name: income_account, type: link, to: Account, link_filters: {is_group: false}, description: Credited with dunning fees (the company's default income account when empty)}
-    - {name: interest_income_account, type: link, to: Account, link_filters: {is_group: false}, description: Credited with interest (the income account when empty)}
-    - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
+    - {name: income_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, description: Credited with dunning fees (the company's default income account when empty)}
+    - {name: interest_income_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, description: Credited with interest (the income account when empty)}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}, is_group: false}}
     - {name: levels, type: table, of: DunningLevel, required: true}
   unique: [[company, dunning_type]]
   list: {columns: [dunning_type, company, is_default], sort: dunning_type asc}
@@ -54,7 +54,7 @@
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
-    - {name: dunning_type, type: link, to: DunningType, required: true, description: The customer's or the company's default when empty}
+    - {name: dunning_type, type: link, to: DunningType, link_filters: {company: {from: company}}, required: true, description: The customer's or the company's default when empty}
     - {name: dunning_level, type: int, read_only: true, in_list: true}
     - {name: currency, type: link, to: Currency, description: Invoices in this currency are dunned (the company currency when empty)}
     - {name: conversion_rate, type: decimal, read_only: true}
@@ -67,7 +67,7 @@
     - {name: grand_total, type: currency, currency: currency, read_only: true, label: Total Due}
     - {name: base_dunning_amount, type: currency, read_only: true}
     - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, label: Fee and Interest Outstanding}
-    - {name: debit_to, type: link, to: Account, read_only: true, label: Receivable Account}
+    - {name: debit_to, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Receivable Account}
     - {name: status, type: select, options: [Draft, Unresolved, Resolved, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: letter_subject, type: data, read_only: true}
     - {name: letter, type: text, read_only: true}

@@ -253,11 +253,9 @@ impl DocHook for MaterialRequestHook {
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let k = kind(doc).to_string();
         let moves_stock = matches!(k.as_str(), TRANSFER | ISSUE | CUSTOMER_PROVIDED);
-        let company = id(doc, "company");
         let requested_on = s(doc, "transaction_date").unwrap_or_default().to_string();
         let mut errors = Vec::new();
         let mut items: HashMap<Uuid, Doc> = HashMap::new();
-        let mut warehouses: HashMap<Uuid, Doc> = HashMap::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
             let mut err = |f: &str, m: String| errors.push(FieldError::new(f, m).in_row("items", i));
             if let Some(item) = id(r, "item") {
@@ -275,15 +273,6 @@ impl DocHook for MaterialRequestHook {
                 err("warehouse", "is required".into());
                 continue;
             };
-            for w in [Some(wh), id(r, "from_warehouse")].into_iter().flatten() {
-                if let Entry::Vacant(e) = warehouses.entry(w) {
-                    e.insert(get(hc.kernel, hc.ctx, hc.tx, "Warehouse", w).await?);
-                }
-                if id(&warehouses[&w], "company") != company {
-                    let f = if w == wh { "warehouse" } else { "from_warehouse" };
-                    err(f, format!("{} belongs to another company", s(&warehouses[&w], "warehouse_name").unwrap_or("this warehouse")));
-                }
-            }
             if id(r, "from_warehouse") == Some(wh) {
                 err("from_warehouse", "must differ from the target warehouse".into());
             }

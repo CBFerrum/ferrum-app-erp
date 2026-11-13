@@ -22,8 +22,8 @@
   fields:
     - {name: reference, type: data, read_only: true, in_list: true}
     - {name: wave, type: link, to: PickWave, read_only: true, no_copy: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: customer, type: link, to: Customer, required: true, in_list: true}
     - {name: owner, type: link, to: Customer, description: "A customer's own stock leaving for them: no delivery note"}
     - {name: items, type: table, of: ShipmentItem, required: true}
@@ -61,7 +61,7 @@
   numbering: {template: "RMA-{FY}-{seq:5}", date_field: authorized_on}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: customer, type: link, to: Customer, required: true, in_list: true, in_filter: true}
     - {name: authorized_on, type: date, required: true, default_expr: today, in_list: true}
     - {name: items, type: table, of: ReturnLine, required: true}

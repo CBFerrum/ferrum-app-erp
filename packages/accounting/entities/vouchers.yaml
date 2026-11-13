@@ -2,7 +2,7 @@
   label: Journal Entry Line
   kind: child
   fields:
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: party_type, type: select, options: [Customer, Supplier], in_list: true}
     - {name: customer, type: link, to: Customer, visible_if: "doc.party_type == 'Customer'", required_if: "doc.party_type == 'Customer'", in_list: true}
     - {name: supplier, type: link, to: Supplier, visible_if: "doc.party_type == 'Supplier'", required_if: "doc.party_type == 'Supplier'", in_list: true}
@@ -16,7 +16,7 @@
     - {name: exchange_rate, type: decimal, min: "0", visible_if: "doc.currency != null", description: "Party currency → company currency"}
     - {name: debit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Debit (Party Currency)}
     - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
-    - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: project, type: link, to: Project}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}"}
     - {name: remarks, type: data}
@@ -46,7 +46,7 @@
     - {name: auto_reverse, type: check, label: Reverse It, description: "An accrual or a prepayment: taken out again on its reversal day, when the invoice or payment it stood in for is booked"}
     - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", no_copy: true, description: "The day after, when empty"}
     - {name: reversed_on, type: date, read_only: true, no_copy: true, visible_if: "doc.auto_reverse"}
-    - {name: journal_template, type: link, to: JournalTemplate, read_only: true, no_copy: true, in_filter: true, label: Made From}
+    - {name: journal_template, type: link, to: JournalTemplate, link_filters: {company: {from: company}}, read_only: true, no_copy: true, in_filter: true, label: Made From}
     - {name: template_period, type: date, read_only: true, no_copy: true, label: For the Period Of}
   unique: [[journal_template, template_period]]
   rules:
@@ -66,7 +66,7 @@
     - {name: allocated_amount, type: currency, required: true, min: "0", in_list: true}
     - {name: discount_amount, type: currency, min: "0", in_list: true, label: Discount Taken,
        description: "An early-payment discount: settles the invoice by this much on top of what is allocated"}
-    - {name: discount_account, type: link, to: Account, link_filters: {is_group: false}, label: Discount Account,
+    - {name: discount_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, label: Discount Account,
        description: "Where the discount is booked: discount allowed on money received, discount received on money paid"}
     - {name: discount_reduces_tax, type: check, label: Discount Reduces the Tax,
        description: "Part of the discount takes back the invoice's tax, in the proportion the invoice charged it"}
@@ -75,8 +75,8 @@
   label: Payment Deduction
   kind: child
   fields:
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
-    - {name: cost_center, type: link, to: CostCenter, link_filters: {is_group: false}, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: amount, type: currency, required: true, in_list: true, description: "In the payment currency. Positive amounts are debited (bank charges, discount allowed, tax the customer withheld); negative ones are credited (tax you withhold from a supplier)."}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, over the payment's"}
     - {name: remarks, type: data, in_list: true}
@@ -106,10 +106,10 @@
        visible_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') == doc.is_refund",
        required_if: "doc.payment_type != 'Internal Transfer' && (doc.payment_type == 'Receive') == doc.is_refund"}
     - {name: party_name, type: data, read_only: true, in_list: true}
-    - {name: party_account, type: link, to: Account, read_only: true}
-    - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Bank / Cash Account,
+    - {name: party_account, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true}
+    - {name: bank_account, type: link, to: Account, required: true, link_filters: {company: {from: company}, is_group: false}, label: Bank / Cash Account,
        description: "For a transfer, the account the money leaves"}
-    - {name: paid_to, type: link, to: Account, link_filters: {is_group: false}, label: To Bank / Cash Account,
+    - {name: paid_to, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, label: To Bank / Cash Account,
        visible_if: "doc.payment_type == 'Internal Transfer'", required_if: "doc.payment_type == 'Internal Transfer'", description: "The account the money goes to"}
     - {name: currency, type: link, to: Currency, required: true, in_list: true, description: "On a transfer, the currency of the account the money leaves"}
     - {name: exchange_rate, type: decimal, default: 1, min: "0.000000001", description: Payment currency → company currency}
@@ -129,7 +129,7 @@
     - {name: reference_no, type: data, label: Cheque / Reference No, description: "For a mode paid by instrument, the instrument's number; a payment out takes the next from the mode's book when it gives none"}
     - {name: reference_date, type: date, description: "For a mode paid by instrument, the date written on it: it cannot clear before. A payment out is dated its posting date when empty"}
     - {name: instrument_bank, type: data, max_length: 140, label: Drawn On, visible_if: "doc.mode_of_payment != null", description: "The bank the instrument is drawn on"}
-    - {name: payment_instrument, type: link, to: PaymentInstrument, read_only: true, no_copy: true, label: Instrument}
+    - {name: payment_instrument, type: link, to: PaymentInstrument, link_filters: {company: {from: company}}, read_only: true, no_copy: true, label: Instrument}
     - {name: references, type: table, of: PaymentReference, label: Allocations}
     - {name: discount_taxes, type: json, read_only: true, no_copy: true, label: Tax Taken Back on Discounts,
        description: "Each early-payment discount's tax taken back, by invoice and tax, with the base it was on, in company currency: what the tax summary and tax returns count"}
@@ -140,13 +140,13 @@
     - {name: withholdings, type: table, of: WithholdingLine, read_only: true, label: Withholding, visible_if: "doc.payment_type == 'Pay' && !doc.is_refund"}
     - {name: withholding_amount, type: currency, currency: currency, read_only: true, label: Withheld, visible_if: "doc.payment_type == 'Pay' && !doc.is_refund",
        description: "Settles the supplier's bills on top of the money paid, booked to the categories' accounts"}
-    - {name: stored_value_account, type: link, to: StoredValueAccount, label: Stored Value Account, no_copy: true, visible_if: "doc.payment_type != 'Internal Transfer'",
+    - {name: stored_value_account, type: link, to: StoredValueAccount, link_filters: {company: {from: company}}, label: Stored Value Account, no_copy: true, visible_if: "doc.payment_type != 'Internal Transfer'",
        description: "Received: the invoices are paid from it. A refund: the credit goes back onto it. Its kind's liability account takes the bank account's place"}
     - {name: stored_value_code, type: data, label: Stored Value Code, no_copy: true, visible_if: "doc.payment_type != 'Internal Transfer'",
        description: "A card's code, typed or scanned, finds its account; kept only as its last four characters"}
     - {name: stored_value_pin, type: data, label: Stored Value PIN, no_copy: true, visible_if: "doc.payment_type != 'Internal Transfer'", description: "Never kept as typed"}
     - {name: stored_value_secret, type: data, read_only: true, hidden: true, no_copy: true}
-    - {name: stored_value_kind, type: link, to: StoredValueKind, label: Into New Store Credit, no_copy: true, visible_if: "doc.payment_type == 'Pay' && doc.is_refund",
+    - {name: stored_value_kind, type: link, to: StoredValueKind, link_filters: {company: {from: company}}, label: Into New Store Credit, no_copy: true, visible_if: "doc.payment_type == 'Pay' && doc.is_refund",
        description: "A refund onto a new account of this kind, held by the customer, when no account is named"}
     - {name: stored_value_units, type: decimal, min: "0", label: Units, no_copy: true, visible_if: "doc.stored_value_account != null",
        description: "For a kind that holds units: how many are taken (or given back); they pay for its items' lines on the invoice"}
@@ -185,8 +185,8 @@
        description: "What is still owed on it, in its currency; negative for an open credit"}
     - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
     - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
-    - {name: party_account, type: link, to: Account, read_only: true, label: Receivable / Payable Account}
-    - {name: opening_account, type: link, to: Account, read_only: true, label: Opening Balance Account, description: "The company's Opening Balance Account, which the balance is carried against"}
+    - {name: party_account, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Receivable / Payable Account}
+    - {name: opening_account, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Opening Balance Account, description: "The company's Opening Balance Account, which the balance is carried against"}
     - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Credit, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: remarks, type: text}
   rules:
@@ -201,11 +201,11 @@
   kind: child
   fields:
     - {name: company, type: link, to: Company, required: true, in_list: true}
-    - {name: in_hand_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Received Account,
+    - {name: in_hand_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Instruments Received Account,
        description: "An asset: what customers paid by instrument until it clears"}
-    - {name: issued_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Instruments Issued Account,
+    - {name: issued_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Instruments Issued Account,
        description: "A liability: what the company paid by instrument until it clears"}
-    - {name: bounce_charge_account, type: link, to: Account, link_filters: {is_group: false}, label: Bounce Charge Account,
+    - {name: bounce_charge_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, label: Bounce Charge Account,
        description: "Income a customer's charge for a bounced instrument is credited to"}
     - {name: next_instrument_no, type: int, min: "0", label: Next Number Issued,
        description: "A book of instruments (a cheque book): a payment out by this mode that gives no number takes this one, and the next is one more. Empty: each payment gives its own"}
@@ -237,7 +237,7 @@
   title_field: instrument_no
   description: "A cheque, a draft or another instrument a payment was made with: received or issued, deposited, cleared, bounced, cancelled or replaced. Made by the payment; its state moves by its actions."
   fields:
-    - {name: company, type: link, to: Company, read_only: true, in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, read_only: true, in_filter: true}
     - {name: direction, type: select, options: [Received, Issued], read_only: true, in_list: true, in_filter: true}
     - {name: instrument_no, type: data, read_only: true, in_list: true, label: Number}
     - {name: instrument_date, type: date, read_only: true, in_list: true, in_filter: true, label: Dated, description: "The date written on it: it does not clear before"}
@@ -249,15 +249,15 @@
     - {name: supplier, type: link, to: Supplier, read_only: true, in_filter: true, description: "Who it was paid to, from its payment"}
     - {name: currency, type: link, to: Currency, read_only: true}
     - {name: amount, type: currency, currency: currency, read_only: true, in_list: true}
-    - {name: holding_account, type: link, to: Account, read_only: true, label: Waits In, description: "The instruments account it is booked to until it clears"}
+    - {name: holding_account, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Waits In, description: "The instruments account it is booked to until it clears"}
     - {name: status, type: select, options: [Received, Issued, Deposited, Cleared, Bounced, Cancelled, Replaced], read_only: true, in_list: true, in_filter: true}
     - {name: deposited_on, type: date, read_only: true}
     - {name: cleared_on, type: date, read_only: true}
     - {name: bounced_on, type: date, read_only: true}
     - {name: reason, type: text, read_only: true, description: "Why it bounced, was cancelled or replaced"}
     - {name: charge_entry, type: link, to: JournalEntry, read_only: true, label: Charge, description: "The customer's charge for the bounce"}
-    - {name: replaces, type: link, to: PaymentInstrument, read_only: true}
-    - {name: replaced_by, type: link, to: PaymentInstrument, read_only: true}
+    - {name: replaces, type: link, to: PaymentInstrument, link_filters: {company: {from: company}}, read_only: true}
+    - {name: replaced_by, type: link, to: PaymentInstrument, link_filters: {company: {from: company}}, read_only: true}
     - {name: reminded_on, type: date, read_only: true, description: "When those who deposit were told it can be deposited"}
   actions:
     - {name: deposit, label: Deposit, permission: write, condition: "doc.status == 'Received'",
@@ -284,8 +284,8 @@
   kind: child
   fields:
     - {name: company, type: link, to: Company, required: true, in_list: true}
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true, label: Written Off To, description: "An expense: bad debts"}
-    - {name: recovery_account, type: link, to: Account, link_filters: {is_group: false}, in_list: true, label: Recovered To,
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Written Off To, description: "An expense: bad debts"}
+    - {name: recovery_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, in_list: true, label: Recovered To,
        description: "Income: bad debts recovered; the write-off account when empty"}
 
 - name: WriteOffReason
@@ -303,7 +303,7 @@
   label: Tax Relief
   kind: child
   fields:
-    - {name: account, type: link, to: Account, read_only: true, in_list: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: description, type: data, read_only: true, in_list: true}
 
@@ -329,7 +329,7 @@
     - {name: amount, type: currency, min: "0", in_list: true, description: "In the invoice's currency; all that is outstanding when empty"}
     - {name: base_amount, type: currency, read_only: true, label: Amount (Company Currency)}
     - {name: reason, type: link, to: WriteOffReason, required: true, in_filter: true}
-    - {name: write_off_account, type: link, to: Account, read_only: true}
+    - {name: write_off_account, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true}
     - {name: relief, type: table, of: BadDebtRelief, read_only: true, label: Tax Relief}
     - {name: recovered_amount, type: currency, read_only: true, no_copy: true, label: Recovered (Company Currency)}
     - {name: remarks, type: text}
@@ -349,7 +349,7 @@
   description: "A journal entry's lines kept to be made again: by hand from a copy, or every period by the upkeep from its start until its end date or its count, as a draft or submitted. Its next date says what is due; the journal entries made from it list what was made."
   fields:
     - {name: template_name, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: accounts, type: table, of: JournalEntryAccount, required: true, label: Lines}
     - {name: remark, type: text, description: "The made entries' remark; the template's name when empty"}
     - {name: repeat, type: check, in_list: true, label: Make It Every Period}

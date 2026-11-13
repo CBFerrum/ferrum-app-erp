@@ -247,18 +247,7 @@ impl DocHook for SubcontractingOrderHook {
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let cid = id(doc, "company");
         let mut errors = Vec::new();
-        let mut warehouses = HashMap::new();
-        for (k, wh) in [
-            ("supplier_warehouse", id(doc, "supplier_warehouse")),
-            ("set_warehouse", id(doc, "set_warehouse")),
-            ("set_reserve_warehouse", id(doc, "set_reserve_warehouse")),
-        ] {
-            if let Some(w) = wh
-                && id(&cached(hc, &mut warehouses, "Warehouse", w).await?, "company") != cid
-            {
-                errors.push(FieldError::new(k, "belongs to another company"));
-            }
-        }
+        // The warehouses and accounts are limited to the order's company by their links.
         let mut sc_boms = HashMap::new();
         let mut boms = HashMap::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
@@ -278,13 +267,8 @@ impl DocHook for SubcontractingOrderHook {
             {
                 errors.push(FieldError::new("subcontracting_bom", "its BOM belongs to another company").in_row("items", i));
             }
-            match id(r, "warehouse") {
-                None => errors.push(FieldError::new("warehouse", "is required (or set Receive Into on the order)").in_row("items", i)),
-                Some(w) => {
-                    if id(&cached(hc, &mut warehouses, "Warehouse", w).await?, "company") != cid {
-                        errors.push(FieldError::new("warehouse", "belongs to another company").in_row("items", i));
-                    }
-                }
+            if id(r, "warehouse").is_none() {
+                errors.push(FieldError::new("warehouse", "is required (or set Receive Into on the order)").in_row("items", i));
             }
         }
         if let Some(po) = id(doc, "purchase_order") {
@@ -625,30 +609,16 @@ impl DocHook for SubcontractingReceiptHook {
         if d(&order, "docstatus") != Decimal::ONE {
             return Err(Error::field("subcontracting_order", "must be a submitted order"));
         }
-        let cid = id(doc, "company");
         let lines = rows(&order, "items");
         let mut errors = Vec::new();
-        let mut warehouses = HashMap::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
             match s(r, "sco_line").and_then(|l| lines.iter().find(|x| s(x, "id") == Some(l))) {
                 None => errors.push(FieldError::new("item", "is not on the subcontracting order").in_row("items", i)),
                 Some(l) if id(l, "item") != id(r, "item") => errors.push(FieldError::new("item", "differs from the order line").in_row("items", i)),
                 Some(_) => {}
             }
-            match id(r, "warehouse") {
-                None => errors.push(FieldError::new("warehouse", "is required").in_row("items", i)),
-                Some(w) => {
-                    if id(&cached(hc, &mut warehouses, "Warehouse", w).await?, "company") != cid {
-                        errors.push(FieldError::new("warehouse", "belongs to another company").in_row("items", i));
-                    }
-                }
-            }
-        }
-        for (i, r) in rows(doc, "additional_costs").iter().enumerate() {
-            if let Some(a) = id(r, "account")
-                && id(&get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?, "company") != cid
-            {
-                errors.push(FieldError::new("account", "belongs to another company").in_row("additional_costs", i));
+            if id(r, "warehouse").is_none() {
+                errors.push(FieldError::new("warehouse", "is required").in_row("items", i));
             }
         }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }

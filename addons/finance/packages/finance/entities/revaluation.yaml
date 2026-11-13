@@ -2,7 +2,7 @@
   label: Revalued Balance
   kind: child
   fields:
-    - {name: account, type: link, to: Account, read_only: true, in_list: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
     - {name: party_type, type: select, options: [Customer, Supplier], read_only: true}
     - {name: customer, type: link, to: Customer, read_only: true, in_list: true}
     - {name: supplier, type: link, to: Supplier, read_only: true, in_list: true}
@@ -24,7 +24,7 @@
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true, label: Revalue At, description: "The day whose rates the balances are carried at: usually a period's last day"}
-    - {name: gain_loss_account, type: link, to: Account, link_filters: {is_group: false}, label: Exchange Gain/Loss Account, description: "The company's exchange gain/loss account when empty"}
+    - {name: gain_loss_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, label: Exchange Gain/Loss Account, description: "The company's exchange gain/loss account when empty"}
     - {name: auto_reverse, type: check, default: true, label: Reverse Afterwards, description: "The difference is not realised: it is taken out again on the reversal day, and the real difference is booked when the balance is settled"}
     - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", description: "The day after, when empty"}
     - {name: rows, type: table, of: ExchangeRevaluationRow, read_only: true, label: Balances to Revalue}

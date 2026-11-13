@@ -16,7 +16,7 @@
     - {name: outstanding, type: currency, read_only: true, in_list: true}
     - {name: discount, type: currency, min: "0", in_list: true, label: Discount Taken,
        description: "The early-payment discount still open on the pay date; lower or clear it to pay more"}
-    - {name: discount_account, type: link, to: Account, read_only: true}
+    - {name: discount_account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true}
     - {name: discount_reduces_tax, type: check, read_only: true}
     - {name: amount, type: currency, min: "0", in_list: true, label: To Pay, description: "What the bank pays on it: the outstanding less the discount, or less to pay part of it"}
     - {name: instrument_no, type: data, label: Cheque / Instrument No,
@@ -36,9 +36,9 @@
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, label: Pay On}
-    - {name: bank_account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: Pay From}
+    - {name: bank_account, type: link, to: Account, required: true, link_filters: {company: {from: company}, is_group: false}, label: Pay From}
     - {name: mode_of_payment, type: link, to: ModeOfPayment}
-    - {name: bank, type: link, to: BankAccount, label: Bank Account (for the File), description: "The company's bank account the bank file is drawn on"}
+    - {name: bank, type: link, to: BankAccount, link_filters: {company: {from: company}}, label: Bank Account (for the File), description: "The company's bank account the bank file is drawn on"}
     - {name: bank_file, type: data, max_length: 140, default: finance.bank_transfer_pain001, label: Bank File Template,
        description: "The document template the bank's file is made with when the payments are made: finance.bank_transfer_pain001 (ISO 20022 credit transfer), finance.bank_transfer_csv, or a bank's own a workspace or add-on adds; empty: none"}
     - {name: currency_code, type: data, read_only: true, max_length: 3}

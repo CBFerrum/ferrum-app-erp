@@ -24,7 +24,7 @@
     - {name: subcontracting_bom, type: link, to: SubcontractingBom, description: Defaults to the active one for the item and supplier}
     - {name: bom, type: link, to: Bom, read_only: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Receive Into}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, label: Receive Into}
     - {name: schedule_date, type: date, label: Required By}
     - {name: service_rate, type: currency, required: true, default: 0, min: "0", in_list: true, description: Subcontracting charge per finished unit}
     - {name: service_amount, type: currency, read_only: true, in_list: true}
@@ -41,7 +41,7 @@
     - {name: rm_item, type: link, to: Item, read_only: true, in_list: true, label: Raw Material}
     - {name: rm_item_name, type: data, read_only: true}
     - {name: required_qty, type: decimal, read_only: true, in_list: true}
-    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Send From}
+    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, label: Send From}
     - {name: supplied_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: consumed_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
     - {name: returned_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
@@ -61,9 +61,9 @@
     - {name: supplier_name, type: data, read_only: true, fetch_from: supplier.supplier_name, in_list: true}
     - {name: posting_date, type: date, required: true, default_expr: today, label: Order Date, in_list: true, in_filter: true}
     - {name: schedule_date, type: date, label: Required By}
-    - {name: supplier_warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, description: Our stock held at the subcontractor}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Receive Into}
-    - {name: set_reserve_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Send Materials From}
+    - {name: supplier_warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: company}, is_group: false}, description: Our stock held at the subcontractor}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, label: Receive Into}
+    - {name: set_reserve_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, label: Send Materials From}
     - {name: items, type: table, of: SubcontractingOrderItem, required: true}
     - {name: supplied_items, type: table, of: SubcontractingOrderSuppliedItem, label: Materials to Supply}
     - {name: total_qty, type: decimal, read_only: true}
@@ -92,7 +92,7 @@
     - {name: item_name, type: data, read_only: true, fetch_from: item.item_name}
     - {name: sco_line, type: data, hidden: true, label: Subcontracting Order Line}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true, label: Accepted Warehouse}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true, label: Accepted Warehouse}
     - {name: service_rate, type: currency, read_only: true}
     - {name: service_cost, type: currency, read_only: true}
     - {name: rm_cost, type: currency, read_only: true, no_copy: true, label: Materials Cost}
@@ -122,7 +122,7 @@
   kind: child
   fields:
     - {name: description, type: data, required: true, in_list: true}
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true, description: Credited; the cost is added to the goods' value}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true, description: Credited; the cost is added to the goods' value}
     - {name: amount, type: currency, required: true, min: "0", in_list: true}
 
 - name: SubcontractingReceipt
@@ -139,7 +139,7 @@
     - {name: subcontracting_order, type: link, to: SubcontractingOrder, required: true, in_list: true, in_filter: true}
     - {name: supplier, type: link, to: Supplier, read_only: true, in_filter: true}
     - {name: supplier_name, type: data, read_only: true, in_list: true}
-    - {name: supplier_warehouse, type: link, to: Warehouse, read_only: true}
+    - {name: supplier_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, read_only: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: posting_time, type: data, default: "23:59:59", description: "HH:MM:SS (orders entries on the same day)"}
     - {name: supplier_delivery_note, type: data}

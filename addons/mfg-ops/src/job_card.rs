@@ -244,9 +244,7 @@ impl DocHook for JobCardHook {
             None => errors.push(FieldError::new("workstation", "is required")),
             Some(ws) => {
                 let w = get(hc.kernel, hc.ctx, hc.tx, "Workstation", ws).await?;
-                if id(&w, "company") != id(doc, "company") {
-                    errors.push(FieldError::new("workstation", "belongs to another company"));
-                } else if b(&w, "disabled") {
+                if b(&w, "disabled") {
                     errors.push(FieldError::new("workstation", "is disabled"));
                 }
             }

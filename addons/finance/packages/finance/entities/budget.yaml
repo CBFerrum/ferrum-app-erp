@@ -22,7 +22,7 @@
   label: Budget Account
   kind: child
   fields:
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: budget_amount, type: currency, required: true, min: "0", in_list: true, label: Annual Budget}
 
 - name: Budget
@@ -36,9 +36,9 @@
   owner_fields: [budget_owner]
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: fiscal_year, type: link, to: FiscalYear, required: true, in_list: true, in_filter: true}
+    - {name: fiscal_year, type: link, to: FiscalYear, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: budget_against, type: select, options: [Cost Center, Project, Dimension], required: true, default: Cost Center, in_list: true, in_filter: true}
-    - {name: cost_center, type: link, to: CostCenter, in_list: true, in_filter: true,
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}, in_list: true, in_filter: true,
        visible_if: "doc.budget_against == 'Cost Center'", required_if: "doc.budget_against == 'Cost Center'"}
     - {name: project, type: link, to: Project, in_list: true, in_filter: true,
        visible_if: "doc.budget_against == 'Project'", required_if: "doc.budget_against == 'Project'"}
