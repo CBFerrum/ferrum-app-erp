@@ -2,7 +2,7 @@
 
 ## ERP 0.26.3: the interface resolves a link's filter from the record
 
-* **Pickers offer only the record's company's records in ERP's own screens.** 0.26.2 declared the filters; the interface built into it was older than the Frontend that resolves them, so a picker sent the filter unresolved and listed nothing. Rebuilt on Ferrum-Frontend d470c42. Nothing changes on the server. Found by a browser walk.
+* **Pickers offer only the record's company's records in ERP's own screens.** 0.26.2 declared the filters; the interface built into it was older than the Frontend that resolves them, so a picker sent the filter unresolved and listed nothing. Rebuilt on Ferrum-Frontend 6d0bd1f. Nothing changes on the server. Found by a browser walk.
 
 ## ERP 0.26.2, Finance 0.6.2, Manufacturing Operations 0.2.1, Procurement 0.1.5, Stock Operations 0.2.1, Warehouse Management 0.3.1, MES 0.2.4: a link offers only its own company's records
 
@@ -109,7 +109,7 @@ Both were in code released in 0.23.0 and 0.24.0 and neither showed in a test, be
 
 - **Carrier tracking logged a database error on every start, for every workspace.** The upkeep asked Postgres for `make_interval(hours => c.track_every_hours)`, and the column is a bigint where `make_interval` takes an integer. Shipments were never tracked by the upkeep. The hours are now cast. The same mistake was searched for in every crate (`make_interval`, interval arithmetic on bound values, dates against mismatched types); the other `make_interval` already cast.
 - **Finance's backfill of the payment run lines' supplier email failed and was queued again, for ever.** It named the child entity `PaymentRunLine`, which has no table of its own, so the platform built SQL with an empty table name. It now names the lines' table, `e_payment_run__lines`. Workspaces with Finance 0.5 or older fill the email the next time backfills run, with or without the update applied (the schema is synced when the server starts; only seeds and versions wait for the administrator). No other backfill or upkeep of ERP or its add-ons assumes a table, column or seeded row the workspace may not have.
-- **An upgrade test** (`addons/finance/tests/upgrade_it.rs`) installs ERP 0.22.0 and Finance 0.5.0 from their package files at commit `51cefe5`, makes documents, boots this build on the same database, runs every upkeep and backfill before and after the update, and asserts that nothing is logged at warning level, no job fails and the documents are intact. CI now fetches the whole history for it. The carrier test now runs the upkeep's tracking.
+- **An upgrade test** (`addons/finance/tests/upgrade_it.rs`) installs ERP 0.22.0 and Finance 0.5.0 from their package files at commit `ebb1931`, makes documents, boots this build on the same database, runs every upkeep and backfill before and after the update, and asserts that nothing is logged at warning level, no job fails and the documents are intact. CI now fetches the whole history for it. The carrier test now runs the upkeep's tracking.
 
 No administrator action; nothing in `ui/` changed.
 
@@ -190,7 +190,7 @@ Gift cards, store credit and prepaid packages, built once beside the ledger so t
 
 ## ERP 0.19.1, Warehouse 0.2.3, Shop Floor 0.2.3: the tuned design system
 
-Rebuilt with Ferrum-Frontend 45dad7f, the design system as tuned after the landed build was reviewed. The left menu's icons are chosen so that none repeats on more than three rows and each fits its row; their drawings load beside the first page instead of inside it, so the page starts lighter; a row that scrolls sideways fades at the edge where there is more, in every browser and with reduced motion; a printed record leaves out empty fields and keeps its totals with the table; menus and popovers sit inside the page's landmarks for assistive technology; a selection bar folds what does not fit into More on a narrow screen. Nothing else changes.
+Rebuilt with Ferrum-Frontend 9e7190c, the design system as tuned after the landed build was reviewed. The left menu's icons are chosen so that none repeats on more than three rows and each fits its row; their drawings load beside the first page instead of inside it, so the page starts lighter; a row that scrolls sideways fades at the edge where there is more, in every browser and with reduced motion; a printed record leaves out empty fields and keeps its totals with the table; menus and popovers sit inside the page's landmarks for assistive technology; a selection bar folds what does not fit into More on a narrow screen. Nothing else changes.
 
 ## ERP 0.19.0, India 0.4.0, Canada 0.1.1: delivery region, tax summary and withholding
 
@@ -230,7 +230,7 @@ Rebuilt with Ferrum-Frontend 45dad7f, the design system as tuned after the lande
 
 ## ERP 0.18.1, Warehouse 0.2.2, Shop Floor 0.2.2: the redesigned interface
 
-The interface follows the upgraded design system, rebuilt with Ferrum-Frontend 0a47157. Text uses the kit's type roles (nothing under 12px) and controls its height tokens; loading shows skeletons shaped like what is coming; empty, no matches, denied, offline and failed are told apart; status colours come from stored state ids. The interface check now runs the UI lint against an empty baseline. ERP's own pages are recomposed: the home strip is linked counts by urgency, Accounts today is a prioritised queue, and statements name their company, period and currency and mark groups and totals with weight and rules; a negative no longer flips its sign right to left. Warehouse and Shop Floor are rebuilt on the kit's frame, tabs, page heads and states (they had been built before the redesign); scan and confirm buttons are 44px on touch; a failed queue says so.
+The interface follows the upgraded design system, rebuilt with Ferrum-Frontend 76c4fad. Text uses the kit's type roles (nothing under 12px) and controls its height tokens; loading shows skeletons shaped like what is coming; empty, no matches, denied, offline and failed are told apart; status colours come from stored state ids. The interface check now runs the UI lint against an empty baseline. ERP's own pages are recomposed: the home strip is linked counts by urgency, Accounts today is a prioritised queue, and statements name their company, period and currency and mark groups and totals with weight and rules; a negative no longer flips its sign right to left. Warehouse and Shop Floor are rebuilt on the kit's frame, tabs, page heads and states (they had been built before the redesign); scan and confirm buttons are 44px on touch; a failed queue says so.
 
 ## ERP 0.18.0, Finance 0.4.1, Procurement 0.1.4: orders that change, and credit that holds
 
@@ -444,43 +444,43 @@ The reports it defines in code (their titles and parameters) have names in Arabi
 
 ## 0.14.12
 
-Rebuilt with Ferrum-Frontend c59c9a2: the names of its models, fields and manifest in Arabic and Hindi (551 each in ui/src/locales/names, which the platform serves to every page of the workspace, so a record's labels, the launcher and the bar read in the person's language), and the sentences its pages still showed in English (split around a link or a figure, built in code from a template or word by word) whole and translated (383 words each in ui/src/locales). Translated by the model, to be reviewed by native speakers.
+Rebuilt with Ferrum-Frontend 43d7779: the names of its models, fields and manifest in Arabic and Hindi (551 each in ui/src/locales/names, which the platform serves to every page of the workspace, so a record's labels, the launcher and the bar read in the person's language), and the sentences its pages still showed in English (split around a link or a figure, built in code from a template or word by word) whole and translated (383 words each in ui/src/locales). Translated by the model, to be reviewed by native speakers.
 
 ## 0.14.11
 
-Rebuilt with Ferrum-Frontend 5b22e7b: its own words carry built-in Arabic and Hindi (317 words each, ui/src/locales, translated by the model and to be reviewed by native speakers), fetched for the page's language only. The labels it keeps in objects, its dialogs, its page titles and the words it keeps in variables go through t() as well, and the names and sizes it shows as they are keep their order right to left. Its pages are drawn once their words are in, and its entry carries only the parts of the kit it uses.
+Rebuilt with Ferrum-Frontend 389b2af: its own words carry built-in Arabic and Hindi (317 words each, ui/src/locales, translated by the model and to be reviewed by native speakers), fetched for the page's language only. The labels it keeps in objects, its dialogs, its page titles and the words it keeps in variables go through t() as well, and the names and sizes it shows as they are keep their order right to left. Its pages are drawn once their words are in, and its entry carries only the parts of the kit it uses.
 
 ## 0.14.10
 
-Rebuilt with Ferrum-Frontend 6537d65: an action's link, code or token shown once is kept in a dialog to copy, and on a page that reads right to left, English left untranslated keeps its own order. Its own words go through the kit's t() (289 places), so a workspace's own words for its language reach them, and Admin, Interface words lists them under it (dist/words.json).
+Rebuilt with Ferrum-Frontend 1f5981d: an action's link, code or token shown once is kept in a dialog to copy, and on a page that reads right to left, English left untranslated keeps its own order. Its own words go through the kit's t() (289 places), so a workspace's own words for its language reach them, and Admin, Interface words lists them under it (dist/words.json).
 
 ## 0.14.9
 
-Rebuilt with Ferrum-Frontend d5d98f2: a workspace's own words for its interface (Admin, Interface words) reach its pages as they load; an attachment field that holds a picture shows it; and a value another record already has is said so, where the form said the record had been changed by someone else. Its own screens' margins, paddings, borders, alignment and insets go by the line's start and end, so they mirror right to left as the kit's do; what it places by coordinates (boards, timelines, charts, handles) stays as it was.
+Rebuilt with Ferrum-Frontend 8a1c2e7: a workspace's own words for its interface (Admin, Interface words) reach its pages as they load; an attachment field that holds a picture shows it; and a value another record already has is said so, where the form said the record had been changed by someone else. Its own screens' margins, paddings, borders, alignment and insets go by the line's start and end, so they mirror right to left as the kit's do; what it places by coordinates (boards, timelines, charts, handles) stays as it was.
 
 ## 0.14.8
 
-Rebuilt with Ferrum-Frontend 63280d3: right to left, its pages mirror as they read (icons that point along the line, margins and alignment by the line's start and end, arrow keys along it), and the records pages' words are in Arabic and Hindi.
+Rebuilt with Ferrum-Frontend 9d80f4f: right to left, its pages mirror as they read (icons that point along the line, margins and alignment by the line's start and end, arrow keys along it), and the records pages' words are in Arabic and Hindi.
 
 ## 0.14.7
 
-Rebuilt with Ferrum-Frontend a64416a: a new record's box whose default is 1 shows ticked, as it is saved.
+Rebuilt with Ferrum-Frontend 204b713: a new record's box whose default is 1 shows ticked, as it is saved.
 
 ## 0.14.6
 
-Rebuilt with Ferrum-Frontend 922fcfb: an action's dialog says every refusal, the errors on what the action made (another record's rows) among them, and an action with parameters and a confirmation asks once.
+Rebuilt with Ferrum-Frontend 6cfda39: an action's dialog says every refusal, the errors on what the action made (another record's rows) among them, and an action with parameters and a confirmation asks once.
 
 ## 0.14.5
 
-Rebuilt with Ferrum-Frontend a76295e: its pages show times on a person's own clock when they chose one on their Account page, while today and due dates stay on the workspace's day.
+Rebuilt with Ferrum-Frontend b39fffb: its pages show times on a person's own clock when they chose one on their Account page, while today and due dates stay on the workspace's day.
 
 ## 0.14.4
 
-Rebuilt with Ferrum-Frontend 24c3951: its pages show times on the workspace's clock, naming the zone when it is not the browser's, a draft numbered on submit is headed as a draft, and a record of an app that is not installed says so.
+Rebuilt with Ferrum-Frontend d350579: its pages show times on the workspace's clock, naming the zone when it is not the browser's, a draft numbered on submit is headed as a draft, and a record of an app that is not installed says so.
 
 ## 0.14.3
 
-Rebuilt with Ferrum-Frontend bb60115: a record page reads an empty number or check as the server does, so an action whose condition needs one shows, and a workspace's settings open as their one record.
+Rebuilt with Ferrum-Frontend 20d08e5: a record page reads an empty number or check as the server does, so an action whose condition needs one shows, and a workspace's settings open as their one record.
 
 ## ERP 0.14.2, Procurement 0.1.3, Finance 0.3.2: record pages' actions ask for what they need
 
@@ -509,7 +509,7 @@ them; two of them could not work from a page at all.
   each guarantee: a posting balances or writes nothing, a reversal reverses once, an invoice's item
   opens once and takes no more than it is owed, stock is not issued beyond what is there.
 
-## ERP 0.14.1: rebuilt with Ferrum-Frontend 00dea07
+## ERP 0.14.1: rebuilt with Ferrum-Frontend ae13c69
 
 - In a workflow state that names what may change, the other fields show read-only, and the fields
   the state needs show required.
@@ -578,7 +578,7 @@ them; two of them could not work from a page at all.
   was a draft, so the form's preview filled it from the first date given and kept it when the date
   changed: an accrual drafted on 5 November and moved to 31 October would have reversed on
   6 November. Found walking an accrual in a browser. A reversal day someone chooses is kept as before.
-- Interface rebuilt with Ferrum-Frontend a110af4: an action says what it did ("1 deferred line
+- Interface rebuilt with Ferrum-Frontend f62c200: an action says what it did ("1 deferred line
   recognised through 2026-10-31") rather than "done".
 
 ## ERP 0.10.1: the standard chart reaches companies made before it grew
@@ -639,7 +639,7 @@ them; two of them could not work from a page at all.
   answer before their deadline, each with the link the supplier was e-mailed (signed alike, so
   the same page); answered, a request leaves the list (`/api/app/procurement/portal/rfqs`).
 - ERP's interface and the Warehouse and Shop Floor interfaces are rebuilt with Ferrum-Frontend
-  d4efeca: a field's label names its control for assistive technology, and a record whose title
+  2e0e132: a field's label names its control for assistive technology, and a record whose title
   is a link shows that record's title, not its id.
 
 ## India 0.2.2: e-invoices checked against the IRP's own rules
@@ -1075,7 +1075,7 @@ server and its figures worked out by hand in the tests.
 
 ## 0.3.0
 
-What every country's rules build on (Ferrum docs/plan/localization.md, L0); needs Ferrum b5b2d3f
+What every country's rules build on (Ferrum docs/plan/localization.md, L0); needs Ferrum 4226865
 or later.
 
 - Tax categories and exemption reasons: tax rows and items' tax rates carry a category (Standard,
