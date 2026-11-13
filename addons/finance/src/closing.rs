@@ -39,10 +39,7 @@ const POSTING: &[&str] = &[
 
 async fn year(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<FiscalYear> {
     let fy = id(doc, "fiscal_year").ok_or_else(|| Error::field("fiscal_year", "is required"))?;
-    let (owner, fy) = fiscal_year(hc.tx, hc.ctx.tenant, fy).await?.ok_or_else(|| Error::field("fiscal_year", "does not exist"))?;
-    if Some(owner) != id(doc, "company") {
-        return Err(Error::field("fiscal_year", "belongs to another company"));
-    }
+    let (_, fy) = fiscal_year(hc.tx, hc.ctx.tenant, fy).await?.ok_or_else(|| Error::field("fiscal_year", "does not exist"))?;
     Ok(fy)
 }
 
@@ -106,9 +103,6 @@ impl DocHook for ClosingHook {
         year(hc, doc).await?;
         if let Some(acc) = id(doc, "closing_account") {
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != id(doc, "company") {
-                return Err(Error::field("closing_account", "belongs to another company"));
-            }
             if !matches!(s(&a, "root_type"), Some("Equity" | "Liability")) {
                 return Err(Error::field("closing_account", "close the year into an equity (retained earnings) or liability account"));
             }

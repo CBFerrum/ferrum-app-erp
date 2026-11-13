@@ -53,14 +53,13 @@ impl DocHook for JournalEntryHook {
     }
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
+        if id(doc, "company").is_none() {
+            return Err(Error::field("company", "is required"));
+        }
         let mut errors = Vec::new();
         for (i, l) in rows(doc, "accounts").iter().enumerate() {
             let Some(acc) = id(l, "account") else { continue };
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != Some(cid) {
-                errors.push(FieldError::new("account", "belongs to another company").in_row("accounts", i));
-            }
             let typ = s(&a, "account_type").unwrap_or_default();
             // What customers and suppliers owe is the same in every book.
             if id(doc, "finance_book").is_some() && (s(l, "party_type").is_some() || matches!(typ, "Receivable" | "Payable")) {
@@ -552,16 +551,8 @@ impl DocHook for PaymentEntryHook {
                 return bad("account", "use an account other than the bank and party accounts");
             }
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != Some(cid) {
-                return bad("account", "belongs to another company");
-            }
             if matches!(s(&a, "account_type"), Some("Receivable" | "Payable")) {
                 return bad("account", "receivable and payable accounts need a party; allocate to an invoice instead");
-            }
-            if let Some(cc) = id(r, "cost_center")
-                && id(&get(hc.kernel, hc.ctx, hc.tx, "CostCenter", cc).await?, "company") != Some(cid)
-            {
-                return bad("cost_center", "belongs to another company");
             }
         }
         let (customer, supplier, _) = party(doc);

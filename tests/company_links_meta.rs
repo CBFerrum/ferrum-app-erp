@@ -10,8 +10,12 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// `(entity, field, why the filter cannot apply)`. Empty: nothing in ERP needs an exemption.
-const EXEMPT: &[(&str, &str, &str)] = &[];
+/// `(entity, field, why the filter cannot apply)`. `*` is every field of the entity.
+const EXEMPT: &[(&str, &str, &str)] = &[(
+    "Company",
+    "*",
+    "the record is the company: its default accounts and cost centres are the ones of its own books, and a company is saved before its chart of accounts exists, so there is no field of the record to filter by",
+)];
 
 fn package_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
     if dir.join("package.yaml").is_file() {
@@ -74,7 +78,13 @@ pub fn faults(pkgs: &[Package], others: &[Package], exempt: &[(&str, &str, &str)
     let mut all: Vec<Package> = others.to_vec();
     all.extend(pkgs.iter().cloned());
     let ents = entities(&all);
-    let masters: Vec<&String> = ents.iter().filter(|(_, (k, f))| *k == EntityKind::Master && has_company(f)).map(|(n, _)| n).collect();
+    // A master whose company may be empty ("Empty: every company": a numbering series, a promotion) is
+    // for every company's records at once, and a filter by equality would refuse it.
+    let masters: Vec<&String> = ents
+        .iter()
+        .filter(|(_, (k, f))| *k == EntityKind::Master && has_company(f) && f.iter().any(|f| f.name == "company" && (f.required || f.read_only)))
+        .map(|(n, _)| n)
+        .collect();
     let mine = entities(pkgs);
     // Who holds each child entity as a table.
     let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
@@ -89,7 +99,9 @@ pub fn faults(pkgs: &[Package], others: &[Package], exempt: &[(&str, &str, &str)
     for (n, (_, fields)) in &mine {
         // Whether the record has a company is known from every package's fields, not only these.
         let (kind, whole) = (&ents[n].0, &ents[n].1);
-        let source = if *kind != EntityKind::Child {
+        let source = if n == "Company" {
+            Some("id")
+        } else if *kind != EntityKind::Child {
             has_company(whole).then_some("company")
         } else if has_company(whole) {
             Some("company")
@@ -100,7 +112,7 @@ pub fn faults(pkgs: &[Package], others: &[Package], exempt: &[(&str, &str, &str)
         let Some(source) = source else { continue };
         for f in fields.iter().filter(|f| f.ftype == FieldType::Link && f.name != "company") {
             let Some(to) = f.to.as_deref() else { continue };
-            if !masters.iter().any(|m| m.as_str() == to) || exempt.iter().any(|(e, fl, why)| *e == n && *fl == f.name && !why.is_empty()) {
+            if !masters.iter().any(|m| m.as_str() == to) || exempt.iter().any(|(e, fl, why)| *e == n && (*fl == f.name || *fl == "*") && !why.is_empty()) {
                 continue;
             }
             let want = json!({"from": source});

@@ -57,9 +57,7 @@ impl DocHook for BankAccountHook {
         let mut errors = Vec::new();
         if let Some(a) = id(doc, "account") {
             let acc = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
-            if id(&acc, "company") != id(doc, "company") {
-                errors.push(FieldError::new("account", "belongs to another company"));
-            } else if s(&acc, "account_type") != Some("Bank") {
+            if s(&acc, "account_type") != Some("Bank") {
                 errors.push(FieldError::new("account", "choose a GL account of type Bank"));
             }
         }
