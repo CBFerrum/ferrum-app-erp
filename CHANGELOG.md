@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.26.2: a link offers only its own company's records
+
+Fault from the second browser walk: Store Settings could not be saved by following the form, because the warehouse
+pickers listed every company's warehouses by bare name (four each of "Stores", "Finished Goods") and the save was
+then refused with "belongs to another company". The same held for every link to a company's master.
+
+- **Links limited to the record's company.** 164 link fields (warehouses, accounts, cost centres, number series, tax
+  templates, fiscal years, bank accounts, workstations, promotions, stored value, payment instruments ...) on a record
+  with a company carry `link_filters: {company: {from: company}}`, `{from: parent.company}` in a child table's row. An
+  empty company means the filter does not apply, so a single-company workspace sees no change. Needs platform 0.3.6
+  (`>=0.3.6, <0.4`), which reads `{from: ...}`; the add-ons Finance 0.6.2, Manufacturing Operations 0.2.1,
+  Procurement 0.1.5, Stock Operations 0.2.1, WMS 0.3.1 and MES 0.2.4 changed likewise.
+- **The company is in the list.** Every master that belongs to a company (Warehouse, Account, Cost Center, Tax
+  Template, Number Series, Bank Account ...) shows it as a list column.
+- **A test that walks the metadata** (`tests/company_links_meta.rs`) of every package and add-on: a link to such a
+  master on a record with a company, without the filter, fails it, unless it is listed with a reason (none are).
+- The hand-written "belongs to another company" checks stay; the platform's refusal now names the records and they
+  can go later.
+
 ## ERP 0.26.1: desks say what they need
 
 Faults from the first browser walk (the Create menu, the numbering form, three desks that offered a refused action).

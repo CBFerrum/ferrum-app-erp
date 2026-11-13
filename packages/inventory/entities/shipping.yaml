@@ -28,8 +28,8 @@
     - {name: dimension_unit, type: data, default: cm, label: Dimension Unit, description: "The unit parcels are measured in, read by the calls as dimension_unit"}
     - {name: freight, type: select, options: [Not Booked, Absorbed, Charged to Customer], default: Not Booked, label: Label Cost,
        description: "Not Booked: the carrier's bill is entered as usual. Absorbed: buying a label books its cost as freight, owed until the bill comes. Charged to Customer: the same, and the invoice made from the delivery charges it on a line of the Freight Item"}
-    - {name: freight_account, type: link, to: Account, link_filters: {is_group: false}, label: Freight Account, required_if: "doc.freight != 'Not Booked'"}
-    - {name: freight_payable_account, type: link, to: Account, link_filters: {is_group: false}, label: Freight Owed Account, required_if: "doc.freight != 'Not Booked'",
+    - {name: freight_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, label: Freight Account, required_if: "doc.freight != 'Not Booked'"}
+    - {name: freight_payable_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, label: Freight Owed Account, required_if: "doc.freight != 'Not Booked'",
        description: "Where a label's cost waits for the carrier's bill"}
     - {name: freight_item, type: link, to: Item, label: Freight Item, required_if: "doc.freight == 'Charged to Customer'",
        description: "The item a delivery's label cost is charged to the customer as"}
@@ -57,7 +57,7 @@
   description: "Parcels going by a carrier: the rates offered, the one chosen, the label bought and where the goods are."
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: carrier, type: link, to: CarrierConnection, required: true, in_list: true, in_filter: true, read_only_if: "doc.tracking_number != null"}
+    - {name: carrier, type: link, to: CarrierConnection, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true, read_only_if: "doc.tracking_number != null"}
     - {name: reference, type: data, in_list: true, description: "The document the parcels carry, read by the calls as shipment.reference"}
     - {name: ship_to, type: link, to: Address, label: Ship To, read_only_if: "doc.tracking_number != null"}
     - {name: packages, type: table, of: CarrierPackage, label: Parcels, required: true, read_only_if: "doc.tracking_number != null"}

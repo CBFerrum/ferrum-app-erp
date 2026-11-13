@@ -23,7 +23,7 @@
     - {name: bom, type: link, to: Bom, in_list: true, description: Defaults to the item's default BOM}
     - {name: planned_qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: pending_qty, type: decimal, read_only: true, description: Open on the source document when fetched}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Finished Goods Warehouse}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, label: Finished Goods Warehouse}
     - {name: planned_start_date, type: date}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true, hidden: true}
@@ -41,7 +41,7 @@
     - {name: bom, type: link, to: Bom, required: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: bom_level, type: int, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, description: Produced into; defaults to the raw material warehouse}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, description: Produced into; defaults to the raw material warehouse}
     - {name: planned_start_date, type: date}
     - {name: ordered_qty, type: decimal, read_only: true, no_copy: true, in_list: true, label: Work Order Qty}
     - {name: produced_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
@@ -68,7 +68,7 @@
   label: Production Plan Warehouse
   kind: child
   fields:
-    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
 
 - name: ProductionPlan
   label: Production Plan
@@ -88,8 +88,8 @@
     - {name: material_requests, type: table, of: ProductionPlanMaterialRequest}
     - {name: po_items, type: table, of: ProductionPlanItem, label: Items to Manufacture}
     - {name: sub_assemblies, type: table, of: ProductionPlanSubAssembly, label: Sub-assemblies}
-    - {name: for_warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, label: Raw Material Warehouse, description: Where materials and sub-assemblies are needed}
-    - {name: fg_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, label: Finished Goods Warehouse}
+    - {name: for_warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: company}, is_group: false}, label: Raw Material Warehouse, description: Where materials and sub-assemblies are needed}
+    - {name: fg_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, label: Finished Goods Warehouse}
     - {name: warehouses, type: table, of: ProductionPlanWarehouse, label: Stock Considered In, description: Warehouses whose projected stock nets the raw materials; empty means the raw material warehouse}
     - {name: include_safety_stock, type: check, default: true}
     - {name: raw_materials, type: table, of: ProductionPlanMaterial}

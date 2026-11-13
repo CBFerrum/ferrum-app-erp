@@ -20,7 +20,7 @@
     - {name: scrap_percent, type: percent, default: 0, min: "0", max: "99"}
     - {name: rate, type: currency, read_only: true, description: Valuation rate used for costing}
     - {name: amount, type: currency, read_only: true, in_list: true}
-    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
+    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: reference_designators, type: text, description: "e.g. R1-R12, C3"}
 
 - name: BomOutput
@@ -82,8 +82,8 @@
     - {name: bom, type: link, to: Bom, required: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: produced_qty, type: decimal, read_only: true, no_copy: true, in_list: true}
-    - {name: source_warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, label: Raw Material Warehouse}
-    - {name: target_warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, label: Finished Goods Warehouse}
+    - {name: source_warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: company}, is_group: false}, label: Raw Material Warehouse}
+    - {name: target_warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: company}, is_group: false}, label: Finished Goods Warehouse}
     - {name: planned_start_date, type: date, required: true, default_expr: today}
     - {name: expected_end_date, type: date}
     - {name: sales_order, type: link, to: SalesOrder}
@@ -105,7 +105,7 @@
     - {name: item, type: link, to: Item, in_list: true}
     - {name: item_name, type: data, read_only: true, in_list: true}
     - {name: action, type: select, options: [Purchase, Manufacture, Transfer], in_list: true}
-    - {name: source_warehouse, type: link, to: Warehouse, label: From Warehouse, description: "A transfer's: the warehouse with more than it needs"}
+    - {name: source_warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}}, label: From Warehouse, description: "A transfer's: the warehouse with more than it needs"}
     - {name: bucket_start, type: date, read_only: true, in_list: true, label: Needed In, description: "The first day of the period it is needed in"}
     - {name: gross_requirement, type: decimal, read_only: true}
     - {name: available, type: decimal, read_only: true}
@@ -114,7 +114,7 @@
     - {name: net_requirement, type: decimal, read_only: true, in_list: true}
     - {name: suggested_qty, type: decimal, in_list: true}
     - {name: supplier, type: link, to: Supplier}
-    - {name: warehouse, type: link, to: Warehouse}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}}}
     - {name: required_by, type: date}
     - {name: created_document, type: data, read_only: true}
 
@@ -122,7 +122,7 @@
   label: Planning Warehouse
   kind: child
   fields:
-    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
 
 - name: MrpMessage
   label: Action Message
@@ -132,7 +132,7 @@
     - {name: document_type, type: data, read_only: true, in_list: true}
     - {name: document, type: data, read_only: true, in_list: true, description: "The order's number and line"}
     - {name: item, type: link, to: Item, read_only: true, in_list: true}
-    - {name: warehouse, type: link, to: Warehouse, read_only: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}}, read_only: true}
     - {name: current_date, type: date, read_only: true}
     - {name: current_qty, type: decimal, read_only: true}
     - {name: suggested_date, type: date, read_only: true, in_list: true}
@@ -146,7 +146,7 @@
   numbering: {template: "MRP-{YYYY}{MM}-{seq:4}"}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, description: Planning warehouse}
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: company}, is_group: false}, description: Planning warehouse}
     - {name: include_sales_orders, type: check, default: true}
     - {name: demand_until, type: date, description: Sales orders with delivery dates up to this date}
     - {name: bucket, type: select, options: [Day, Week, Month], label: Plan By,

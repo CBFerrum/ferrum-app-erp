@@ -38,8 +38,8 @@
   company_scoped: true
   fields:
     - {name: cost_center_name, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, in_filter: true}
-    - {name: parent_cost_center, type: link, to: CostCenter, link_filters: {is_group: true}}
+    - {name: company, type: link, to: Company, in_list: true, required: true, in_filter: true}
+    - {name: parent_cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}, is_group: true}}
     - {name: is_group, type: check}
     - {name: disabled, type: check}
   unique: [[company, cost_center_name]]
@@ -54,8 +54,8 @@
   fields:
     - {name: account_name, type: data, required: true, in_list: true}
     - {name: account_number, type: data, in_list: true}
-    - {name: company, type: link, to: Company, required: true, locked: true, in_filter: true}
-    - {name: parent_account, type: link, to: Account, link_filters: {is_group: true}, in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, locked: true, in_filter: true}
+    - {name: parent_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: true}, in_filter: true}
     - {name: is_group, type: check, in_list: true, in_filter: true}
     - {name: root_type, type: select, options: [Asset, Liability, Equity, Income, Expense], required: true, locked: true, in_list: true, in_filter: true}
     - name: account_type
@@ -88,7 +88,7 @@
   fields:
     - {name: charge_type, type: select, options: [On Net Total, On Previous Row Amount, On Previous Row Total, Actual, On Item Quantity], required: true, default: On Net Total, in_list: true,
        description: "On Item Quantity: the rate is an amount per stock unit (excise, eco and packaging fees)"}
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: description, type: data, in_list: true}
     - {name: rate, type: percent, min: "0", in_list: true, description: "A percentage (at most 1000); for On Item Quantity, the amount per stock unit"}
     - {name: amount, type: currency, description: Fixed amount for Actual charges}
@@ -96,10 +96,10 @@
     - {name: included_in_price, type: check, label: Included in Rate}
     - {name: deduct, type: check, description: Withholding taxes are deducted}
     - {name: reverse_charge, type: check, description: "The buyer accounts for this tax: worked out and reported, never charged to the party. A purchase posts it to this row's account and to the reverse-charge account; a sale posts nothing"}
-    - {name: reverse_charge_account, type: link, to: Account, link_filters: {is_group: false}, visible_if: "doc.reverse_charge", description: "Purchases: the tax owed account the reverse charge is credited to"}
+    - {name: reverse_charge_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, visible_if: "doc.reverse_charge", description: "Purchases: the tax owed account the reverse charge is credited to"}
     - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], description: "For tax reports and e-invoices. When empty: Reverse Charge for a reverse charge, Standard above a zero rate, Zero Rated at zero"}
     - {name: exemption_reason, type: data, description: "Why it is exempt or zero-rated: a code (VATEX-EU-132-1I) or the law's words"}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: tax_amount, type: currency, read_only: true, in_list: true}
     - {name: total, type: currency, read_only: true, in_list: true}
     - {name: base_tax_amount, type: currency, read_only: true}
@@ -111,7 +111,7 @@
   kind: child
   fields:
     - {name: description, type: data, read_only: true, in_list: true}
-    - {name: account, type: link, to: Account, read_only: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true}
     - {name: category, type: select, options: [Standard, Reduced, Zero Rated, Exempt, Reverse Charge, Intra-Community, Export, Out of Scope], read_only: true, in_list: true}
     - {name: rate, type: decimal, read_only: true, in_list: true, description: "A percentage, or an amount per stock unit for On Item Quantity taxes"}
     - {name: exemption_reason, type: data, read_only: true}
@@ -129,7 +129,7 @@
   company_scoped: true
   fields:
     - {name: title, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, in_filter: true}
     - {name: kind, type: select, options: [Sales, Purchase], required: true, in_list: true, in_filter: true}
     - {name: is_default, type: check, in_list: true}
     - {name: condition, type: code, description: "Optional CEL condition on the document, e.g. doc.place_of_supply == 'Karnataka'"}
@@ -176,7 +176,7 @@
   kind: child
   fields:
     - {name: company, type: link, to: Company, required: true, in_list: true}
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, in_list: true,
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: company}, is_group: false}, in_list: true,
        description: "Where the company books what it withholds or collects: a liability it pays over"}
 
 - name: WithholdingCategory
@@ -264,7 +264,7 @@
   kind: child
   fields:
     - {name: company, type: link, to: Company, in_list: true}
-    - {name: cost_center, type: link, to: CostCenter, in_list: true}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}, in_list: true}
     - {name: project, type: link, to: Project, in_list: true}
     - {name: customer, type: link, to: Customer, in_list: true}
     - {name: supplier, type: link, to: Supplier, in_list: true}
@@ -373,7 +373,7 @@
     - {name: series_name, type: data, required: true, in_list: true}
     - {name: document, type: select, required: true, in_list: true, in_filter: true, locked: true,
        options: [SalesOrder, DeliveryNote, SalesInvoice, PurchaseOrder, PurchaseReceipt, PurchaseInvoice, StockEntry, JournalEntry, PaymentEntry], label: For}
-    - {name: company, type: link, to: Company, in_filter: true, description: "Empty: every company's"}
+    - {name: company, type: link, to: Company, in_list: true, in_filter: true, description: "Empty: every company's"}
     - {name: template, type: data, required: true, in_list: true, label: Number Template,
        description: "As a document's usual number is made: SINV-{FY}-{seq:5}, {YYYY}, {YY}, {MM}, {DD}, {FY} and {field:<a field of the document>}; {seq:N} is the running number, N digits. Two series with the same text before and after {seq} share one running number"}
     - {name: gapless, type: check, label: Gapless, description: "The running number is taken inside the submission and given back when it fails or is cancelled before it commits, so no number is skipped; the series' documents take turns"}

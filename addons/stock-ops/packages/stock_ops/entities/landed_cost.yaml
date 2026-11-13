@@ -15,7 +15,7 @@
   fields:
     - {name: item, type: link, to: Item, read_only: true, in_list: true}
     - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, read_only: true, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
     - {name: receipt_type, type: data, read_only: true}
     - {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true}
     - {name: purchase_invoice, type: link, to: PurchaseInvoice, read_only: true}
@@ -32,9 +32,9 @@
   kind: child
   fields:
     - {name: description, type: data, required: true, in_list: true}
-    - {name: expense_account, type: link, to: Account, label: Account, required: true, link_filters: {is_group: false}, in_list: true, description: Credited with the charge (e.g. freight or expenses included in valuation)}
+    - {name: expense_account, type: link, to: Account, label: Account, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true, description: Credited with the charge (e.g. freight or expenses included in valuation)}
     - {name: amount, type: currency, required: true, min: "0.01", in_list: true}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
 
 - name: LandedCostVoucher
   label: Landed Cost Voucher
@@ -53,7 +53,7 @@
     - {name: items, type: table, of: LandedCostItem}
     - {name: charges, type: table, of: LandedCostCharge, label: Taxes and Charges, required: true}
     - {name: total_charges, type: currency, read_only: true, in_list: true}
-    - {name: consumed_cost_account, type: link, to: Account, link_filters: {is_group: false}, description: "Landed cost of stock already sold or used (default: cost of goods sold)"}
+    - {name: consumed_cost_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, description: "Landed cost of stock already sold or used (default: cost of goods sold)"}
     - {name: remarks, type: text}
   rules:
     - {name: time_format, check: "doc.posting_time == null || doc.posting_time.matches('^[0-2][0-9]:[0-5][0-9](:[0-5][0-9])?$')", message: "Posting time must be HH:MM or HH:MM:SS"}

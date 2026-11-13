@@ -82,13 +82,13 @@ overlays:
       - {op: add_field, field: {name: fin_payment_schedule, type: table, of: PaymentSchedule, label: Payment Schedule}}
   - entity: PurchaseOrder
     ops:
-      - {op: add_field, field: {name: fin_cost_center, type: link, to: CostCenter, link_filters: {is_group: false}, label: Cost Center, description: Default cost center of the lines (budget commitments)}}
+      - {op: add_field, field: {name: fin_cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}, is_group: false}, label: Cost Center, description: Default cost center of the lines (budget commitments)}}
       - {op: add_field, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
       - {op: add_field, field: {name: fin_payment_schedule, type: table, of: PaymentSchedule, label: Payment Schedule}}
   - entity: PurchaseOrderItem
     ops:
-      - {op: add_field, field: {name: fin_expense_account, type: link, to: Account, link_filters: {is_group: false}, label: Expense Account, description: Budget account this line commits (non-stock items default to the item's or company's expense account)}}
-      - {op: add_field, field: {name: fin_cost_center, type: link, to: CostCenter, link_filters: {is_group: false}, label: Cost Center}}
+      - {op: add_field, field: {name: fin_expense_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, label: Expense Account, description: Budget account this line commits (non-stock items default to the item's or company's expense account)}}
+      - {op: add_field, field: {name: fin_cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}, is_group: false}, label: Cost Center}}
   - entity: PaymentEntry
     ops:
       - {op: add_field, field: {name: fin_clearance_date, type: date, read_only: true, no_copy: true, label: Clearance Date, description: Set when bank reconciliation clears the whole amount}}

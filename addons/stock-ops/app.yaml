@@ -1,13 +1,13 @@
 id: stock-ops
 name: Stock Operations
-version: 0.2.0
+version: 0.2.1
 publisher: cbferrum
 summary: Stock reconciliation, landed costs, pick lists, packing, quality inspection, item variants and product bundles
 description: README.md
 categories: [inventory]
 license: AGPL-3.0-only
 runtime: native
-platform: ">=0.3, <0.4"
+platform: ">=0.3.6, <0.4"
 requires: {erp: ">=0.1"}
 parent: erp
 packages: [stock_ops]
