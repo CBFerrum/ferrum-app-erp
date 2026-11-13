@@ -5,7 +5,7 @@
   <img alt="Ferrum ERP" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.5.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.1%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
+[![CI](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/CBFerrum/ferrum-app-erp/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-0.5.0-2f5bea?style=flat-square) ![Ferrum](https://img.shields.io/badge/Ferrum-%3E%3D0.3.6%2C%20%3C0.4-2f5bea?style=flat-square) ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-3b82f6?style=flat-square) ![Rust](https://img.shields.io/badge/Rust-native%20app-b7410e?style=flat-square&logo=rust&logoColor=white) ![Interface](https://img.shields.io/badge/interface-React%20%2B%20Vite-0ea5e9?style=flat-square&logo=react&logoColor=white) ![MCP](https://img.shields.io/badge/AI%20agents-MCP-8b5cf6?style=flat-square)
 
 **A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
 
@@ -32,7 +32,7 @@ and CRM build on its engine.
 | At a glance | |
 |---|---|
 | 📦 Version | `0.5.0`, with each add-on's own version in [the add-ons table](#add-ons) |
-| 🧱 Platform | Ferrum `>=0.3.1, <0.4` |
+| 🧱 Platform | Ferrum `>=0.3.6, <0.4` |
 | 🖥️ Interface | its own, at `/erp/`: bank reconciliation, applying payments, the financial statements, accounts today and exchange revaluation hand-crafted, the rest in the records frame; and the portal's invoices at `/portal/invoices/` |
 | 🗃️ Packages | accounting, selling, buying, inventory, manufacturing (`packages/`) |
 | 🧩 Add-ons | Finance, Procurement, Stock Operations and Manufacturing Operations, and every country's (`addons/`) |
@@ -364,6 +364,7 @@ CHANGELOG.md     what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.26.2** | A link offers only its own company's records: warehouses, accounts, cost centres and every other company master in a picker are limited to the company of the record, and the company is a column of their lists. Needs Ferrum 0.3.6. |
 | **0.26.1** | Desks say what they need: an absent add-on is named with a link to the app store, payment runs, tax returns and promotions with nothing to work from say what to make first and link to it, and a new numbering series lists document kinds by their labels. |
 | **0.26.0** | A whole basket priced from data alone (`ferrum-erp-pricing`): price lists, units, pricing rules, promotions with their free items, taxes, rounding, totals and the tax summary, the pieces the server prices with; a versioned snapshot ERP builds from its records for a till to price offline (`docs/pricing.md`); `priceBasket` for the browser with the Frontend's wasm-bindgen; an app's sale may give its promotion share per line, and the Promotions Given report counts every app's sales. |
 | **0.25.1** | Desks for payment runs, stored value, promotions, tax returns, withholding, shipping, planning and numbering series. |

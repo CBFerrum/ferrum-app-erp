@@ -26,7 +26,7 @@
   fields:
     - {name: item, type: link, to: Item, required: true, in_list: true}
     - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: qty, type: decimal, label: Qty to Pick, required: true, min: "0.000000001", in_list: true}
     - {name: picked_qty, type: decimal, min: "0", in_list: true, description: Defaults to the quantity to pick}
     - {name: uom, type: link, to: Uom, fetch_from: item.stock_uom, read_only: true, label: Unit}
@@ -51,8 +51,8 @@
     - {name: purpose, type: select, options: [Delivery, Material Transfer], required: true, default: Delivery, in_list: true, in_filter: true}
     - {name: customer, type: link, to: Customer, in_list: true, in_filter: true, visible_if: "doc.purpose == 'Delivery'"}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true}
-    - {name: parent_warehouse, type: link, to: Warehouse, label: Pick From, description: Warehouses under this one (empty for every warehouse of the company)}
-    - {name: target_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.purpose == 'Material Transfer'", required_if: "doc.purpose == 'Material Transfer'"}
+    - {name: parent_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, label: Pick From, description: Warehouses under this one (empty for every warehouse of the company)}
+    - {name: target_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, visible_if: "doc.purpose == 'Material Transfer'", required_if: "doc.purpose == 'Material Transfer'"}
     - {name: locations, type: table, of: PickListItem, label: Item Locations, required: true}
     - {name: status, type: select, options: [Draft, Open, Completed, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: per_delivered, type: percent, read_only: true, no_copy: true, in_list: true}

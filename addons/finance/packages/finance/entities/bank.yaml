@@ -8,8 +8,8 @@
   description: A company's account at a bank, tied to its GL account; statements are imported against it and reconciled.
   fields:
     - {name: account_name, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: account, type: link, to: Account, required: true, link_filters: {is_group: false}, label: GL Account, in_list: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: account, type: link, to: Account, required: true, link_filters: {company: {from: company}, is_group: false}, label: GL Account, in_list: true}
     - {name: bank, type: data, in_list: true, label: Bank}
     - {name: branch, type: data}
     - {name: swift_code, type: data, max_length: 11, label: SWIFT / BIC}
@@ -50,7 +50,7 @@
   search_fields: [reference_number]
   description: One line of a bank statement, reconciled against payment entries and journal entries on the bank's GL account.
   fields:
-    - {name: bank_account, type: link, to: BankAccount, required: true, in_list: true, in_filter: true}
+    - {name: bank_account, type: link, to: BankAccount, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: company, type: link, to: Company, fetch_from: bank_account.company, read_only: true, in_filter: true}
     - {name: date, type: date, required: true, in_list: true, in_filter: true}
     - {name: description, type: text}

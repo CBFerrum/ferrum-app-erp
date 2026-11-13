@@ -10,7 +10,7 @@
 //! sees exactly what was posted, a billed order is never counted twice, and a refused document
 //! leaves nothing behind. A transaction lock per budget makes concurrent submits check in turn.
 
-use crate::common::{FiscalYear, cost_center_ancestors, cost_center_subtree, fiscal_year, fiscal_year_of, fmt, installed, is_new, notify_user};
+use crate::common::{FiscalYear, cost_center_ancestors, cost_center_subtree, fiscal_year_of, fmt, installed, is_new, notify_user};
 use crate::rules::{self, MONTHS};
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -120,17 +120,11 @@ impl DocHook for BudgetHook {
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let cid = id(doc, "company").ok_or_else(|| Error::field("company", "is required"))?;
         let mut errors = Vec::new();
-        if let Some(fy) = id(doc, "fiscal_year")
-            && fiscal_year(hc.tx, hc.ctx.tenant, fy).await?.is_some_and(|(c, _)| c != cid)
-        {
-            errors.push(FieldError::new("fiscal_year", "belongs to another company"));
-        }
-        for (field, entity) in [("cost_center", "CostCenter"), ("project", "Project")] {
-            if let Some(x) = id(doc, field) {
-                let target = get(hc.kernel, hc.ctx, hc.tx, entity, x).await?;
-                if id(&target, "company") != Some(cid) {
-                    errors.push(FieldError::new(field, "belongs to another company"));
-                }
+        // The fiscal year, cost centre and accounts are limited to the budget's company by their links; a project is another app's.
+        if let Some(x) = id(doc, "project") {
+            let target = get(hc.kernel, hc.ctx, hc.tx, "Project", x).await?;
+            if id(&target, "company") != Some(cid) {
+                errors.push(FieldError::new("project", "belongs to another company"));
             }
         }
         let mut accounts = HashSet::new();
@@ -141,9 +135,7 @@ impl DocHook for BudgetHook {
                 continue;
             }
             let a = get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?;
-            if id(&a, "company") != Some(cid) {
-                errors.push(FieldError::new("account", "belongs to another company").in_row("accounts", i));
-            } else if b(&a, "is_group") {
+            if b(&a, "is_group") {
                 errors.push(FieldError::new("account", "budgets are set on ledger accounts, not groups").in_row("accounts", i));
             } else if !matches!(s(&a, "root_type"), Some("Income" | "Expense")) {
                 errors.push(FieldError::new("account", "budgets are set on income or expense accounts").in_row("accounts", i));

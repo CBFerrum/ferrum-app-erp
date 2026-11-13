@@ -1,13 +1,13 @@
 id: mes
 name: Manufacturing Execution
-version: 0.2.3
+version: 0.2.4
 publisher: cbferrum
 summary: Approved revisions, release gates, execution events, lot genealogy and OEE on ERP's work orders
 description: README.md
 categories: [manufacturing]
 license: AGPL-3.0-only
 runtime: native
-platform: ">=0.3.2, <0.4"
+platform: ">=0.3.6, <0.4"
 requires: {erp: ">=0.1", mfg-ops: ">=0.1", quality: ">=0.1", ops: ">=0.2"}
 parent: erp
 packages: [mes]

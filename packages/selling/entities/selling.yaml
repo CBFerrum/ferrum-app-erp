@@ -45,7 +45,7 @@
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: delivery_date, type: date}
     - {name: available_qty, type: decimal, read_only: true, no_copy: true, label: Available When Entered,
        description: "In stock units, at the line's warehouse when the draft was last saved: on hand less what open orders have yet to take"}
@@ -84,8 +84,8 @@
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: price_list, type: link, to: PriceList}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: SalesOrderItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100", label: Additional Discount %}
@@ -152,7 +152,7 @@
     - {name: rate, type: currency, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
@@ -189,8 +189,8 @@
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: price_list, type: link, to: PriceList}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: DeliveryNoteItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
@@ -242,16 +242,16 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: base_net_amount, type: currency, read_only: true}
-    - {name: income_account, type: link, to: Account, link_filters: {is_group: false}}
+    - {name: income_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: enable_deferred_revenue, type: check, label: Deferred Revenue, description: "Recognised day by day over the service period; a line added with its service period is deferred as its item is"}
     - {name: service_start_date, type: date}
     - {name: service_end_date, type: date}
-    - {name: deferred_revenue_account, type: link, to: Account, link_filters: {is_group: false}, description: "Where it waits; the company's default deferred revenue account when empty"}
+    - {name: deferred_revenue_account, type: link, to: Account, link_filters: {company: {from: parent.company}, is_group: false}, description: "Where it waits; the company's default deferred revenue account when empty"}
     - {name: deferred_booked, type: currency, read_only: true, no_copy: true, label: Recognised So Far}
     - {name: deferred_booked_till, type: date, read_only: true, no_copy: true, label: Recognised Through}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
-    - {name: warehouse, type: link, to: Warehouse, link_filters: {is_group: false}}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
     - {name: delivery_note, type: link, to: DeliveryNote, read_only: true}
@@ -267,8 +267,8 @@
     - {name: item_tax_rates, type: json, read_only: true}
     - {name: tax_categories, type: json, read_only: true, description: "Each tax account's category and exemption reason for the line"}
     - {name: carrier_shipment, type: link, to: CarrierShipment, read_only: true, no_copy: true, label: Carrier Shipment, description: "The label cost this line charges"}
-    - {name: stored_value_kind, type: link, to: StoredValueKind, read_only: true, label: Stored Value, description: "Its item sells stored value of this kind"}
-    - {name: stored_value_account, type: link, to: StoredValueAccount, label: Top Up Account, no_copy: true, visible_if: "doc.stored_value_kind != null",
+    - {name: stored_value_kind, type: link, to: StoredValueKind, link_filters: {company: {from: parent.company}}, read_only: true, label: Stored Value, description: "Its item sells stored value of this kind"}
+    - {name: stored_value_account, type: link, to: StoredValueAccount, link_filters: {company: {from: parent.company}}, label: Top Up Account, no_copy: true, visible_if: "doc.stored_value_kind != null",
        description: "An account to load; empty, the line opens a new one when the invoice is submitted"}
     - {name: stored_value_code, type: data, label: Card Code, no_copy: true, visible_if: "doc.stored_value_kind != null && doc.stored_value_account == null",
        description: "The new card's own code, typed or scanned; kept only as its last four characters. Empty: one is made, which the account's New Code shows"}
@@ -309,11 +309,11 @@
     - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods go when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
     - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods go, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: update_stock, type: check, description: Deliver stock with this invoice}
-    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {is_group: false}, visible_if: "doc.update_stock"}
+    - {name: set_warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}, is_group: false}, visible_if: "doc.update_stock"}
     - {name: currency, type: link, to: Currency}
     - {name: conversion_rate, type: decimal, default: 1, min: "0.000000001"}
     - {name: price_list, type: link, to: PriceList}
-    - {name: tax_template, type: link, to: TaxTemplate}
+    - {name: tax_template, type: link, to: TaxTemplate, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: SalesInvoiceItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: tax_breakdown, type: table, of: TaxBreakdown, read_only: true, label: Tax Breakdown}
@@ -340,11 +340,11 @@
     - {name: base_rounded_total, type: currency, read_only: true}
     - {name: outstanding_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
     - {name: debit_noted, type: currency, currency: currency, read_only: true, no_copy: true, label: Debit Notes, description: What the debit notes against this invoice charged on top}
-    - {name: debit_to, type: link, to: Account, read_only: true, label: Receivable Account}
+    - {name: debit_to, type: link, to: Account, link_filters: {company: {from: company}}, read_only: true, label: Receivable Account}
     - {name: status, type: select, options: [Draft, Unpaid, Partly Paid, Paid, Return, Credit Note Issued, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: po_no, type: data, label: Customer PO No}
     - {name: project, type: link, to: Project}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}}
     - {name: dimensions, type: json, description: "Accounting dimensions by code for every line it books, each line's own over these"}
     - {name: terms, type: text}
     - {name: remarks, type: text}
@@ -411,7 +411,7 @@
   label: Promotion Place
   kind: child
   fields:
-    - {name: warehouse, type: link, to: Warehouse, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}}, in_list: true}
     - {name: place, type: data, in_list: true, description: "Another place an app names a sale by (a register's id): it fills the place on the sale"}
 
 - name: Promotion
@@ -422,7 +422,7 @@
   description: "A discount over a whole sale: when it applies, what it gives and how it combines. Each line's pricing rules come first; promotions then go by priority on what is left"
   fields:
     - {name: title, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, in_filter: true, description: "Empty: every company"}
+    - {name: company, type: link, to: Company, in_list: true, in_filter: true, description: "Empty: every company"}
     - {name: disabled, type: check, in_filter: true}
     - {name: priority, type: int, default: 1, min: 0, max: 100, in_list: true, description: "Higher applies first; each on what earlier ones left"}
     - {name: valid_from, type: date, in_list: true}

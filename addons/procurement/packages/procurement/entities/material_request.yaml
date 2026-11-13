@@ -9,9 +9,9 @@
     - {name: conversion_factor, type: decimal, default: 1, min: "0.000000001", description: Stock units in one unit of this UOM}
     - {name: stock_uom, type: link, to: Uom, label: Stock UOM, fetch_from: item.stock_uom, read_only: true}
     - {name: stock_qty, type: decimal, label: Qty in Stock UOM, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, label: For Warehouse, link_filters: {is_group: false}, in_list: true,
+    - {name: warehouse, type: link, to: Warehouse, label: For Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true,
        description: "Where the goods are needed (the source for issues)"}
-    - {name: from_warehouse, type: link, to: Warehouse, label: Source Warehouse, link_filters: {is_group: false},
+    - {name: from_warehouse, type: link, to: Warehouse, label: Source Warehouse, link_filters: {company: {from: parent.company}, is_group: false},
        visible_if: "parent.material_request_type == 'Material Transfer'"}
     - {name: schedule_date, type: date, label: Required By, in_list: true}
     - {name: ordered_qty, type: decimal, label: Ordered / Fulfilled Qty, read_only: true, no_copy: true, in_list: true,
@@ -37,8 +37,8 @@
     - {name: requested_by, type: data, default_expr: "user.email", in_filter: true}
     - {name: customer, type: link, to: Customer, visible_if: "doc.material_request_type == 'Customer Provided'",
        required_if: "doc.material_request_type == 'Customer Provided'"}
-    - {name: set_warehouse, type: link, to: Warehouse, label: Set Target Warehouse, link_filters: {is_group: false}}
-    - {name: set_from_warehouse, type: link, to: Warehouse, label: Set Source Warehouse, link_filters: {is_group: false},
+    - {name: set_warehouse, type: link, to: Warehouse, label: Set Target Warehouse, link_filters: {company: {from: company}, is_group: false}}
+    - {name: set_from_warehouse, type: link, to: Warehouse, label: Set Source Warehouse, link_filters: {company: {from: company}, is_group: false},
        visible_if: "doc.material_request_type == 'Material Transfer'"}
     - {name: items, type: table, of: MaterialRequestItem, required: true}
     - {name: per_ordered, type: percent, label: "% Ordered", read_only: true, no_copy: true, in_list: true}

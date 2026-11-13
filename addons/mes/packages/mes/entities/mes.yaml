@@ -67,7 +67,7 @@
     - {name: work_order, type: link, to: WorkOrder, required: true, in_list: true, in_filter: true}
     - {name: revision, type: link, to: ProductionRevision, required: true, in_list: true}
     - {name: operation, type: link, to: Operation, required: true, in_list: true}
-    - {name: workstation, type: link, to: Workstation, required: true, in_list: true, in_filter: true}
+    - {name: workstation, type: link, to: Workstation, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: operator_email, type: email, required: true, in_list: true}
     - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true}
     - {name: material_source, type: select, options: [Delivered to Line, Preloaded], default: Delivered to Line, label: Material, description: "Preloaded says the machine already holds what this run needs, so its start waits for no delivery. Whoever releases the run answers for that"}

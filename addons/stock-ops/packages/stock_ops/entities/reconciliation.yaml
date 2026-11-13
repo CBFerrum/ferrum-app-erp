@@ -4,7 +4,7 @@
   fields:
     - {name: item, type: link, to: Item, required: true, in_list: true}
     - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {is_group: false}, in_list: true}
+    - {name: warehouse, type: link, to: Warehouse, required: true, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
     - {name: batch_no, type: data, in_list: true, description: Required for batch-tracked items; one line per batch}
     - {name: serial_no, type: text, description: "Counted serial numbers, one per line"}
     - {name: qty, type: decimal, label: Counted Qty, required: true, min: "0", in_list: true}
@@ -30,8 +30,8 @@
     - {name: purpose, type: select, options: [Stock Reconciliation, Opening Stock], required: true, default: Stock Reconciliation, in_list: true, in_filter: true}
     - {name: posting_date, type: date, required: true, default_expr: today, in_list: true, in_filter: true}
     - {name: posting_time, type: data, default: "23:59:59", description: "HH:MM:SS (orders entries on the same day)"}
-    - {name: expense_account, type: link, to: Account, label: Difference Account, link_filters: {is_group: false}, description: "Defaults to the company's stock adjustment account (opening balance account for opening stock)"}
-    - {name: cost_center, type: link, to: CostCenter}
+    - {name: expense_account, type: link, to: Account, label: Difference Account, link_filters: {company: {from: company}, is_group: false}, description: "Defaults to the company's stock adjustment account (opening balance account for opening stock)"}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}}
     - {name: items, type: table, of: StockReconciliationItem, required: true}
     - {name: difference_amount, type: currency, read_only: true, no_copy: true, in_list: true}
     - {name: remarks, type: text}

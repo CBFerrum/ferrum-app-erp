@@ -41,7 +41,7 @@
   description: A machine or work centre. Its hour rate costs operations; working hours, holidays and capacity drive scheduling.
   fields:
     - {name: workstation_name, type: data, required: true, in_list: true}
-    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: company, type: link, to: Company, in_list: true, required: true, default_expr: "user.default_company", in_filter: true}
     - {name: workstation_type, type: link, to: WorkstationType, in_list: true, in_filter: true, description: Empty rate components are taken from the type}
     - {name: hour_rate_electricity, type: currency, min: "0", label: Electricity Cost per Hour}
     - {name: hour_rate_consumable, type: currency, min: "0", label: Consumables Cost per Hour}
@@ -103,7 +103,7 @@
   kind: child
   fields:
     - {name: operation, type: link, to: Operation, required: true, in_list: true}
-    - {name: workstation, type: link, to: Workstation, in_list: true, description: Defaults to the operation's workstation}
+    - {name: workstation, type: link, to: Workstation, link_filters: {company: {from: parent.company}}, in_list: true, description: Defaults to the operation's workstation}
     - {name: time_basis, type: select, options: [Per Unit, Per Batch], required: true, default: Per Unit}
     - {name: time_in_mins, type: decimal, required: true, default: 0, min: "0", in_list: true, label: Time (Minutes), description: Per unit or per batch}
     - {name: batch_size, type: decimal, min: "0.000000001", description: Defaults to the operation's batch size}
@@ -119,7 +119,7 @@
   kind: child
   fields:
     - {name: operation, type: link, to: Operation, required: true, in_list: true}
-    - {name: workstation, type: link, to: Workstation, in_list: true}
+    - {name: workstation, type: link, to: Workstation, link_filters: {company: {from: parent.company}}, in_list: true}
     - {name: time_basis, type: select, options: [Per Unit, Per Batch], required: true, default: Per Unit}
     - {name: unit_time_in_mins, type: decimal, required: true, default: 0, min: "0", label: Time per Unit or Batch (Minutes)}
     - {name: batch_size, type: decimal, min: "0.000000001"}

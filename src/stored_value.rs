@@ -1893,18 +1893,6 @@ pub struct KindHook;
 
 #[async_trait::async_trait]
 impl DocHook for KindHook {
-    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let cid = id(doc, "company");
-        for f in ["liability_account", "income_account", "adjustment_account"] {
-            if let Some(acc) = id(doc, f)
-                && id(&get(hc.kernel, hc.ctx, hc.tx, "Account", acc).await?, "company") != cid
-            {
-                return Err(Error::field(f, "belongs to another company"));
-            }
-        }
-        Ok(())
-    }
-
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let kind_id = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let (k, ctx) = (hc.kernel, hc.ctx);

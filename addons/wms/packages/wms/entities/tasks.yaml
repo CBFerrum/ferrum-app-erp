@@ -52,7 +52,7 @@
   numbering: {template: "WAVE-{FY}-{seq:5}", date_field: planned_on}
   fields:
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
-    - {name: warehouse, type: link, to: Warehouse, required: true, in_list: true, in_filter: true}
+    - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: company}}, required: true, in_list: true, in_filter: true}
     - {name: planned_on, type: date, required: true, default_expr: today, in_list: true}
     - {name: strategy, type: select, options: [By Order, Batch], default: By Order, in_list: true, description: "Batch picks all of an item together and sorts it at packing"}
     - {name: orders, type: table, of: PickWaveOrder, required: true}
