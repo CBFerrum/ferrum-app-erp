@@ -1,6 +1,6 @@
 # Changelog
 
-## ERP 0.26.2: a link offers only its own company's records
+## ERP 0.26.2, Finance 0.6.2, Manufacturing Operations 0.2.1, Procurement 0.1.5, Stock Operations 0.2.1, Warehouse Management 0.3.1, MES 0.2.4: a link offers only its own company's records
 
 Fault from the second browser walk: Store Settings could not be saved by following the form, because the warehouse
 pickers listed every company's warehouses by bare name (four each of "Stores", "Finished Goods") and the save was
