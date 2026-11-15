@@ -244,6 +244,8 @@ pub(crate) async fn connect(hc: &mut HookCtx<'_>, company: &Doc) -> Result<Value
     let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
     let (_, www) =
         hosts(s(company, "gb_hmrc_mode").unwrap_or("Off")).ok_or_else(|| Error::invalid("choose Sandbox or Production under File VAT Returns with HMRC"))?;
+    // The person's browser goes there to sign in: HMRC's own address, as for the server's calls.
+    HMRC.check(&www, hc.kernel.settings.webhooks_allow_private)?;
     let client_id = s(company, "gb_hmrc_client_id").ok_or_else(|| Error::field("gb_hmrc_client_id", "is required to connect"))?;
     let redirect = s(company, "gb_hmrc_redirect_uri").ok_or_else(|| Error::field("gb_hmrc_redirect_uri", "is required to connect"))?;
     let nonce = hex::encode(Sha256::digest(format!("{}:{}:{}", Uuid::now_v7(), cid, Utc::now().timestamp_nanos_opt().unwrap_or_default()).as_bytes()));

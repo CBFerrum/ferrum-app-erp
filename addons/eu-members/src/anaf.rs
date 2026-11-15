@@ -68,6 +68,8 @@ pub fn errors(xml: &str) -> Vec<String> {
 pub async fn connect(hc: &mut HookCtx<'_>, company: &Doc) -> Result<Value> {
     let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
     let (auth, _) = hosts(s(company, "ro_anaf_mode").unwrap_or("Off")).ok_or_else(|| Error::invalid("choose Test or Production for the ANAF connection"))?;
+    // The person's browser goes there to sign in: ANAF's own address, as for the server's calls.
+    ANAF.check(&auth, hc.kernel.settings.webhooks_allow_private)?;
     let client_id = s(company, "ro_anaf_client_id").ok_or_else(|| Error::field("ro_anaf_client_id", "is required to connect"))?;
     let redirect = s(company, "ro_anaf_redirect_uri").ok_or_else(|| Error::field("ro_anaf_redirect_uri", "is required to connect"))?;
     let nonce = hex::encode(Sha256::digest(format!("{}:{cid}:{}", Uuid::now_v7(), Utc::now().timestamp_nanos_opt().unwrap_or_default()).as_bytes()));
