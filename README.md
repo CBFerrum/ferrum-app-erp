@@ -786,9 +786,9 @@ stored value, and tracks carrier shipments. Finance's reverses exchange revaluat
 
 Each connection is set up per company, so a workspace's companies can use different services or none.
 
-Every call to these services goes through the platform's vetted client, made for the company's workspace: a sandbox
-copy of a workspace calls none of them. Each is called at the provider's own address, its production one or its test
-environment's as the company's settings choose. An address in the server's environment (`FERRUM_GB_HMRC_URL`,
+ERP's own calls (HMRC, AvaTax, MyInvois, ANAF, VIES, TEDB, the IRP, a carrier's label) go through the platform's
+vetted client, made for the company's workspace: a sandbox copy of a workspace makes none of them. Each provider is
+called at its own address, its production one or its test environment's as the company's settings choose. An address in the server's environment (`FERRUM_GB_HMRC_URL`,
 `FERRUM_US_AVATAX_URL`, `FERRUM_MY_MYINVOIS_URL`, `FERRUM_RO_ANAF_URL`, `FERRUM_EU_VIES_URL`, `FERRUM_EU_TEDB_URL`)
 still stands in for the provider's, but outside development only when it is at one of the provider's own hosts.
 

@@ -50,8 +50,8 @@ too large is refused alike and counted on the connection. The old address under 
 gone. The upkeep tracks labelled shipments every *Track Every (Hours)* (6; 0: only when asked or told; a
 carrier that signed with `hmac` and had 0 gets 6).
 
-A label the answer gives as an address (`label_url_at`) is fetched with the platform's vetted client: the
-connection's operations read JSON, not files.
+A label the answer gives as an address (`label_url_at`) is fetched with the platform's vetted client, for the
+shipment's workspace (a sandbox copy fetches nothing): the connection's operations read JSON, not files.
 
 **On a delivery note or a purchase return**: Ship by Carrier makes a Carrier Shipment with the first
 parcel; add parcels; Get Rates; Choose Rate; Buy Label (the file attached to the shipment, the tracking
