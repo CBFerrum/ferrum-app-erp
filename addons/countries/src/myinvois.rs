@@ -16,6 +16,7 @@ use crate::util::{b, d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -29,6 +30,9 @@ pub const STATUS_TOPIC: &str = "my.myinvois.status_requested";
 pub const CANCEL_TOPIC: &str = "my.myinvois.cancel_requested";
 const SANDBOX: (&str, &str) = ("https://preprod-api.myinvois.hasil.gov.my", "https://preprod.myinvois.hasil.gov.my");
 const PRODUCTION: (&str, &str) = ("https://api.myinvois.hasil.gov.my", "https://myinvois.hasil.gov.my");
+const MYINVOIS: Provider =
+    Provider { name: "MyInvois", env: "FERRUM_MY_MYINVOIS_URL", hosts: &["api.myinvois.hasil.gov.my", "preprod-api.myinvois.hasil.gov.my"] };
+const WAIT: Wait = Wait::from_secs(60);
 pub const GENERAL_PUBLIC: &str = "EI00000000010";
 pub const FOREIGN_BUYER: &str = "EI00000000020";
 
@@ -38,9 +42,7 @@ fn hosts(mode: &str) -> Option<(String, String)> {
     if mode == "Off" {
         return None;
     }
-    if let Ok(u) = std::env::var("FERRUM_MY_MYINVOIS_URL")
-        && !u.trim().is_empty()
-    {
+    if let Some(u) = MYINVOIS.env_address() {
         let u = u.trim_end_matches('/').to_string();
         return Some((u.clone(), u));
     }
@@ -373,15 +375,7 @@ impl DocHook for MyInvoisHook {
 }
 
 /// The connector.
-pub struct MyInvois {
-    client: reqwest::Client,
-}
-
-impl Default for MyInvois {
-    fn default() -> Self {
-        MyInvois { client: reqwest::Client::builder().timeout(Wait::from_secs(60)).build().unwrap_or_default() }
-    }
-}
+pub struct MyInvois;
 
 impl MyInvois {
     /// A usable access token for the company: the stored one while it lasts, else a new one.
@@ -398,9 +392,9 @@ impl MyInvois {
         let (Some(client_id), Some(secret)) = (s(company, "my_client_id"), secret) else {
             return Err(Error::invalid("set the company's MyInvois client ID and client secret"));
         };
-        let reply = self
-            .client
-            .post(format!("{api}/connect/token"))
+        let (client, url) = MYINVOIS.client(k, ctx.tenant, &format!("{api}/connect/token"), WAIT).await?;
+        let reply = client
+            .post(url)
             .form(&[("client_id", client_id), ("client_secret", secret.as_str()), ("grant_type", "client_credentials"), ("scope", "InvoicingAPI")])
             .send()
             .await
@@ -459,14 +453,8 @@ impl EventSink for MyInvois {
         let reached = |e: reqwest::Error| Error::internal(format!("MyInvois could not be reached: {e}"));
         match ev.topic.as_str() {
             SUBMIT_TOPIC => {
-                let reply = self
-                    .client
-                    .post(format!("{api}/api/v1.0/documentsubmissions/"))
-                    .bearer_auth(&token)
-                    .json(&ev.payload["body"])
-                    .send()
-                    .await
-                    .map_err(reached)?;
+                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/"), WAIT).await?;
+                let reply = client.post(url).bearer_auth(&token).json(&ev.payload["body"]).send().await.map_err(reached)?;
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
@@ -497,7 +485,8 @@ impl EventSink for MyInvois {
             }
             STATUS_TOPIC => {
                 let uid = ev.payload["submission"].as_str().unwrap_or_default();
-                let reply = self.client.get(format!("{api}/api/v1.0/documentsubmissions/{uid}")).bearer_auth(&token).send().await.map_err(reached)?;
+                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/{uid}"), WAIT).await?;
+                let reply = client.get(url).bearer_auth(&token).send().await.map_err(reached)?;
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 if status != 200 {
@@ -526,14 +515,9 @@ impl EventSink for MyInvois {
             }
             _ => {
                 let uuid = ev.payload["uuid"].as_str().unwrap_or_default();
-                let reply = self
-                    .client
-                    .put(format!("{api}/api/v1.0/documents/state/{uuid}/state"))
-                    .bearer_auth(&token)
-                    .json(&json!({"status": "cancelled", "reason": ev.payload["reason"]}))
-                    .send()
-                    .await
-                    .map_err(reached)?;
+                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/state/{uuid}/state"), WAIT).await?;
+                let reply =
+                    client.put(url).bearer_auth(&token).json(&json!({"status": "cancelled", "reason": ev.payload["reason"]})).send().await.map_err(reached)?;
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
@@ -556,7 +540,7 @@ impl EventSink for MyInvois {
 
 pub fn register(h: &mut ferrum_kernel::HookRegistry) {
     h.register("SalesInvoice", std::sync::Arc::new(MyInvoisHook));
-    h.add_event_sink(std::sync::Arc::new(MyInvois::default()));
+    h.add_event_sink(std::sync::Arc::new(MyInvois));
 }
 
 #[cfg(test)]

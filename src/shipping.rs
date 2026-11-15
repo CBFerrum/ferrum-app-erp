@@ -649,7 +649,7 @@ async fn choose(hc: &mut HookCtx<'_>, sid: Uuid, service: &str) -> Result<Value>
     Ok(r.clone())
 }
 
-async fn label_file(k: &Kernel, conn: &Conn, answer: &Value) -> Result<Vec<u8>> {
+async fn label_file(k: &Kernel, tenant: Uuid, conn: &Conn, answer: &Value) -> Result<Vec<u8>> {
     if let Some(b64) = at(answer, Some("/label")) {
         return base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|_| Error::invalid("the carrier's label is not base64"));
     }
@@ -657,7 +657,7 @@ async fn label_file(k: &Kernel, conn: &Conn, answer: &Value) -> Result<Vec<u8>> 
     if crate::util::b(&conn.doc, "test") {
         return Ok(url.into_bytes());
     }
-    let (client, parsed) = k.vetted_client(&url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-Carriers/1").await?;
+    let (client, parsed) = k.vetted_client_for(tenant, &url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-Carriers/1").await?;
     let res = client.get(parsed).send().await.map_err(|e| Error::Unavailable(format!("the label could not be fetched: {e}")))?;
     if !res.status().is_success() {
         return Err(Error::Unavailable(format!("the label could not be fetched: {}", res.status())));
@@ -685,7 +685,7 @@ async fn buy_label(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
     let c = &conn.desc.label;
     let answer = call(hc.kernel, hc.ctx, &conn, "label", Some(sid), sid, &v).await?;
     let tracking = at(&answer, Some("/tracking")).ok_or_else(|| Error::invalid("the carrier's answer holds no tracking number"))?;
-    let bytes = label_file(hc.kernel, &conn, &answer).await?;
+    let bytes = label_file(hc.kernel, hc.ctx.tenant, &conn, &answer).await?;
     let kind = c.label_type.as_deref().unwrap_or("pdf").to_lowercase();
     let ctype = match kind.as_str() {
         "pdf" => "application/pdf",

@@ -38,7 +38,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("Supplier", Arc::new(gst::PartyGstHook))
             .register("SalesInvoice", Arc::new(einvoice::EInvoiceHook));
     });
-    h.add_event_sink(Arc::new(irp::IrpConnector::default()));
+    h.add_event_sink(Arc::new(irp::IrpConnector));
 }
 
 /// India's reports: none of its own; its GST returns are tax return definitions it seeds (docs/india-returns.md).

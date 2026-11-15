@@ -113,7 +113,13 @@ async fn fresh_kernel() -> Arc<Kernel> {
     ferrum_gb::register(&mut hooks);
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
-    let settings = KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([5u8; 32])), webhooks_allow_private: true, ..Default::default() };
+    // The server's public address (PUBLIC_URL) is what HMRC is told the server is at.
+    let settings = KernelSettings {
+        secret_key: Some(ferrum_kernel::secret::SecretKey::new([5u8; 32])),
+        webhooks_allow_private: true,
+        public_url: Some("https://203.0.113.9".into()),
+        ..Default::default()
+    };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
     k
@@ -314,6 +320,7 @@ async fn scenario() {
             ("gov-client-screens", "width=1920&height=1080&scaling-factor=1&colour-depth=24"),
             ("gov-client-user-ids", "ferrum=admin%40acme.test"),
             ("gov-client-device-id", "beec798b-b366-47fa-b1f8-92cede14a1ce"),
+            ("gov-vendor-public-ip", "203.0.113.9"),
         ] {
             assert_eq!(headers.get(h).map(String::as_str), Some(v), "{h}");
         }

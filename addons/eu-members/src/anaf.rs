@@ -10,6 +10,7 @@
 use crate::util::{get, id, s, sys};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, outbox};
 use serde_json::{Map, Value, json};
@@ -21,6 +22,8 @@ pub const STATUS_TOPIC: &str = "ro.efactura.status_requested";
 const AUTH: &str = "https://logincert.anaf.ro/anaf-oauth2/v1";
 const API_TEST: &str = "https://api.anaf.ro/test/FCTEL/rest";
 const API_PRODUCTION: &str = "https://api.anaf.ro/prod/FCTEL/rest";
+const ANAF: Provider = Provider { name: "ANAF", env: "FERRUM_RO_ANAF_URL", hosts: &["logincert.anaf.ro", "api.anaf.ro"] };
+const WAIT: Wait = Wait::from_secs(60);
 
 /// ANAF's sign-in and e-Factura hosts for a company's mode (none when it is Off);
 /// `FERRUM_RO_ANAF_URL` stands in for both (`{url}/anaf-oauth2/v1`, `{url}/FCTEL/rest`).
@@ -28,9 +31,7 @@ fn hosts(mode: &str) -> Option<(String, String)> {
     if mode == "Off" {
         return None;
     }
-    if let Ok(u) = std::env::var("FERRUM_RO_ANAF_URL")
-        && !u.trim().is_empty()
-    {
+    if let Some(u) = ANAF.env_address() {
         let u = u.trim_end_matches('/');
         return Some((format!("{u}/anaf-oauth2/v1"), format!("{u}/FCTEL/rest")));
     }
@@ -67,6 +68,8 @@ pub fn errors(xml: &str) -> Vec<String> {
 pub async fn connect(hc: &mut HookCtx<'_>, company: &Doc) -> Result<Value> {
     let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
     let (auth, _) = hosts(s(company, "ro_anaf_mode").unwrap_or("Off")).ok_or_else(|| Error::invalid("choose Test or Production for the ANAF connection"))?;
+    // The person's browser goes there to sign in: ANAF's own address, as for the server's calls.
+    ANAF.check(&auth, hc.kernel.settings.webhooks_allow_private)?;
     let client_id = s(company, "ro_anaf_client_id").ok_or_else(|| Error::field("ro_anaf_client_id", "is required to connect"))?;
     let redirect = s(company, "ro_anaf_redirect_uri").ok_or_else(|| Error::field("ro_anaf_redirect_uri", "is required to connect"))?;
     let nonce = hex::encode(Sha256::digest(format!("{}:{cid}:{}", Uuid::now_v7(), Utc::now().timestamp_nanos_opt().unwrap_or_default()).as_bytes()));
@@ -78,8 +81,9 @@ pub async fn connect(hc: &mut HookCtx<'_>, company: &Doc) -> Result<Value> {
     Ok(json!({"url": url, "message": "Open the address, sign in with the company's qualified certificate and allow access; ANAF returns you to Ferrum"}))
 }
 
-async fn token_request(client: &reqwest::Client, auth: &str, form: &[(&str, &str)]) -> Result<Value> {
-    let reply = client.post(format!("{auth}/token")).form(form).send().await.map_err(|e| Error::internal(format!("ANAF could not be reached: {e}")))?;
+async fn token_request(k: &Kernel, tenant: Uuid, auth: &str, wait: Wait, form: &[(&str, &str)]) -> Result<Value> {
+    let (client, url) = ANAF.client(k, tenant, &format!("{auth}/token"), wait).await?;
+    let reply = client.post(url).form(form).send().await.map_err(|e| Error::internal(format!("ANAF could not be reached: {e}")))?;
     let status = reply.status();
     let v: Value = reply.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
@@ -143,11 +147,12 @@ impl Site for AnafSite {
         let (auth, _) = hosts(s(&company, "ro_anaf_mode").unwrap_or("Off")).ok_or_else(|| Error::invalid("the company has no ANAF connection"))?;
         let secret = secret.ok_or_else(|| Error::invalid("set the ANAF application's client secret on the company"))?;
         let (client_id, redirect) = (s(&company, "ro_anaf_client_id").unwrap_or_default(), s(&company, "ro_anaf_redirect_uri").unwrap_or_default());
-        let client = reqwest::Client::builder().timeout(Wait::from_secs(30)).build().map_err(Error::internal)?;
         let code = q("code");
         let answer = token_request(
-            &client,
+            k,
+            req.tenant,
             &auth,
+            Wait::from_secs(30),
             &[
                 ("grant_type", "authorization_code"),
                 ("code", &code),
@@ -177,15 +182,7 @@ impl DocHook for AnafHook {
 }
 
 /// The connector.
-pub struct Anaf {
-    client: reqwest::Client,
-}
-
-impl Default for Anaf {
-    fn default() -> Self {
-        Anaf { client: reqwest::Client::builder().timeout(Wait::from_secs(60)).build().unwrap_or_default() }
-    }
-}
+pub struct Anaf;
 
 impl Anaf {
     async fn record(k: &Kernel, ctx: &Ctx, invoice: Uuid, values: Value) -> Result<()> {
@@ -213,8 +210,10 @@ impl Anaf {
         let (Some(refresh), Some(secret)) = (refresh, secret) else { return Err(Error::invalid("connect the company to ANAF first (Connect to ANAF)")) };
         let client_id = s(company, "ro_anaf_client_id").unwrap_or_default();
         let answer = token_request(
-            &self.client,
+            k,
+            ctx.tenant,
             auth,
+            WAIT,
             &[
                 ("grant_type", "refresh_token"),
                 ("refresh_token", &refresh),
@@ -253,9 +252,9 @@ impl EventSink for Anaf {
             let reached = |e: reqwest::Error| Error::internal(format!("ANAF could not be reached: {e}"));
             let (status, body) = if ev.topic == crate::ro::UPLOAD_TOPIC {
                 let cif = ev.payload["cif"].as_str().unwrap_or_default();
-                let reply = self
-                    .client
-                    .post(format!("{api}/upload?standard=UBL&cif={}", pct(cif)))
+                let (client, url) = ANAF.client(k, ev.tenant_id, &format!("{api}/upload?standard=UBL&cif={}", pct(cif)), WAIT).await?;
+                let reply = client
+                    .post(url)
                     .bearer_auth(&token)
                     .header("Content-Type", "text/plain")
                     .body(ev.payload["xml"].as_str().unwrap_or_default().to_string())
@@ -265,7 +264,8 @@ impl EventSink for Anaf {
                 (reply.status().as_u16(), reply.text().await.unwrap_or_default())
             } else {
                 let index = ev.payload["index"].as_str().unwrap_or_default();
-                let reply = self.client.get(format!("{api}/stareMesaj?id_incarcare={}", pct(index))).bearer_auth(&token).send().await.map_err(reached)?;
+                let (client, url) = ANAF.client(k, ev.tenant_id, &format!("{api}/stareMesaj?id_incarcare={}", pct(index)), WAIT).await?;
+                let reply = client.get(url).bearer_auth(&token).send().await.map_err(reached)?;
                 (reply.status().as_u16(), reply.text().await.unwrap_or_default())
             };
             match status {

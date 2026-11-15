@@ -7,6 +7,7 @@ use crate::util::{find, s, sys};
 use crate::vat::{iso_code, vies_code};
 use async_trait::async_trait;
 use chrono::Utc;
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use serde_json::{Value, json};
@@ -15,12 +16,13 @@ use uuid::Uuid;
 
 pub const TOPIC: &str = "eu.vies.requested";
 const DEFAULT_URL: &str = "https://ec.europa.eu/taxation_customs/vies/rest-api";
+const VIES: Provider = Provider { name: "VIES", env: "FERRUM_EU_VIES_URL", hosts: &["ec.europa.eu"] };
 /// VIES's errors that pass: a member state's service or VIES itself is busy or down.
 const PASSING: &[&str] = &["MS_UNAVAILABLE", "SERVICE_UNAVAILABLE", "TIMEOUT", "MS_MAX_CONCURRENT_REQ", "GLOBAL_MAX_CONCURRENT_REQ", "SERVER_BUSY"];
 
 /// VIES's address: the Commission's, or `FERRUM_EU_VIES_URL` (a proxy, a test double).
 fn base_url() -> String {
-    std::env::var("FERRUM_EU_VIES_URL").ok().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| DEFAULT_URL.into()).trim_end_matches('/').to_string()
+    VIES.env_address().unwrap_or_else(|| DEFAULT_URL.into()).trim_end_matches('/').to_string()
 }
 
 /// Queues a check of the customer's VAT number, on behalf of `company` (else the first of the
@@ -37,15 +39,7 @@ fn text(v: &Value) -> Value {
     }
 }
 
-pub struct Vies {
-    client: reqwest::Client,
-}
-
-impl Default for Vies {
-    fn default() -> Self {
-        Vies { client: reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default() }
-    }
-}
+pub struct Vies;
 
 impl Vies {
     async fn record(k: &Kernel, ctx: &Ctx, customer: Uuid, values: Value) -> Result<()> {
@@ -86,7 +80,13 @@ impl EventSink for Vies {
             body["requesterMemberStateCode"] = json!(&own[..2]);
             body["requesterNumber"] = json!(&own[2..]);
         }
-        let sent = self.client.post(format!("{}/check-vat-number", base_url())).json(&body).send().await;
+        let (client, url) = match VIES.client(k, ev.tenant_id, &format!("{}/check-vat-number", base_url()), Duration::from_secs(30)).await {
+            Ok(c) => c,
+            // An address VIES is not at: said on the customer, and not asked again.
+            Err(Error::Invalid(m)) => return Self::record(k, &ctx, customer, json!({"eu_vies_error": m})).await,
+            Err(e) => return Err(e),
+        };
+        let sent = client.post(url).json(&body).send().await;
         let reply = match sent {
             Ok(r) => r,
             Err(e) => {

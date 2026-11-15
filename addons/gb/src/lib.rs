@@ -33,7 +33,7 @@ pub fn register(h: &mut HookRegistry) {
             .register("Supplier", Arc::new(vat::VrnHook))
             .register("GbVatReturn", Arc::new(mtd::VatReturnHook));
     });
-    h.add_event_sink(Arc::new(mtd::Mtd::default()));
+    h.add_event_sink(Arc::new(mtd::Mtd));
     h.add_site(PACKAGE, Arc::new(mtd::HmrcSite));
 }
 

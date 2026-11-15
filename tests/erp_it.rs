@@ -7,7 +7,7 @@
 
 use ferrum_india::gstin_check_char;
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery};
+use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, EventSink, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -881,6 +881,69 @@ async fn scenario() {
     for inv in [sent, lost, refused, by_hand] {
         t.k.cancel(&t.ctx, "SalesInvoice", inv, None).await.expect("cancelled");
     }
+
+    // ───────────── one IRP session for every replica ─────────────
+    // At a new address, two replicas at once (each connector is one, with nothing of its own in memory) sign in once
+    // between them; the session is kept sealed on the company, where a replica started later finds it.
+    let shared = fake_irp::start().await;
+    t.k.update(&t.ctx, "Company", cid, obj(json!({"in_irp_url": shared.url, "in_irp_public_key": shared.public_pem, "in_irp_qr_key": shared.qr_pem})), None)
+        .await
+        .expect("a new IRP address");
+    // The requests' events, taken from the outbox as a replica's dispatcher would take them.
+    let taken = |invoices: Vec<Uuid>| {
+        let k = t.k.clone();
+        async move {
+            let mut tx = k.db.system_tx().await.unwrap();
+            let rows: Vec<(i64, Uuid, Uuid, Value)> = sqlx::query_as(
+                "update outbox set processed_at = now() where topic = 'india.e_invoice.requested' and record_id = any($1) and processed_at is null \
+                 returning id, tenant_id, record_id, payload",
+            )
+            .bind(&invoices)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            assert_eq!(rows.len(), invoices.len());
+            rows.into_iter()
+                .map(|(id, tenant_id, record, payload)| ferrum_kernel::outbox::Event {
+                    id,
+                    tenant_id,
+                    topic: "india.e_invoice.requested".into(),
+                    record_id: Some(record),
+                    payload,
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let (one, _) = invoice_for_irp().await;
+    let (two, _) = invoice_for_irp().await;
+    for inv in [one, two] {
+        t.action("SalesInvoice", inv, "request_e_invoice", json!({})).await;
+    }
+    let events = taken(vec![one, two]).await;
+    let (a, b) = (ferrum_india::irp::IrpConnector, ferrum_india::irp::IrpConnector);
+    let (x, y) = tokio::join!(a.on_event(&t.k, &events[0]), b.on_event(&t.k, &events[1]));
+    x.expect("replica one");
+    y.expect("replica two");
+    let (three, _) = invoice_for_irp().await;
+    t.action("SalesInvoice", three, "request_e_invoice", json!({})).await;
+    ferrum_india::irp::IrpConnector.on_event(&t.k, &taken(vec![three]).await[0]).await.expect("a replica started later");
+    for inv in [one, two, three] {
+        let doc = t.get("SalesInvoice", inv).await;
+        assert_eq!(doc["in_e_invoice_status"], json!("Generated"), "{:?}", doc.get("in_e_invoice_error"));
+    }
+    assert_eq!(shared.books.lock().unwrap().sign_ins, 1, "one sign-in for three replicas");
+    assert_eq!(t.get("Company", cid).await["in_irp_session"], json!(true), "kept sealed: the company shows only that it has one");
+    for inv in [one, two, three] {
+        t.action("SalesInvoice", inv, "cancel_e_invoice", json!({"reason": "Data entry mistake", "remark": "Test"})).await;
+    }
+    drain().await;
+    for inv in [one, two, three] {
+        assert_eq!(t.get("SalesInvoice", inv).await["in_e_invoice_status"], json!("Cancelled"));
+        t.k.cancel(&t.ctx, "SalesInvoice", inv, None).await.expect("cancelled");
+    }
+    assert_eq!(shared.books.lock().unwrap().sign_ins, 1, "the cancellations used it too");
 
     // ───────────── the same through a GSP in front of the IRP ─────────────
     // The GSP's own credentials (the company's GSP headers) go on every call, each once, also one

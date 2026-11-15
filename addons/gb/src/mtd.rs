@@ -13,6 +13,7 @@ use crate::util::{d, get, id, money, s, set, sys};
 use crate::vat::{INPUT_TAX, OUTPUT_TAX, account};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -25,6 +26,12 @@ pub const TOPIC: &str = "gb.mtd.submit_requested";
 const SANDBOX: (&str, &str) = ("https://test-api.service.hmrc.gov.uk", "https://test-www.tax.service.gov.uk");
 const PRODUCTION: (&str, &str) = ("https://api.service.hmrc.gov.uk", "https://www.tax.service.gov.uk");
 const ACCEPT: &str = "application/vnd.hmrc.1.0+json";
+const HMRC: Provider = Provider {
+    name: "HMRC",
+    env: "FERRUM_GB_HMRC_URL",
+    hosts: &["api.service.hmrc.gov.uk", "test-api.service.hmrc.gov.uk", "www.tax.service.gov.uk", "test-www.tax.service.gov.uk"],
+};
+const WAIT: Wait = Wait::from_secs(60);
 
 /// HMRC's API and sign-in hosts for a company's mode (none when it is Off); `FERRUM_GB_HMRC_URL`
 /// stands in for both.
@@ -32,9 +39,7 @@ fn hosts(mode: &str) -> Option<(String, String)> {
     if mode == "Off" {
         return None;
     }
-    if let Ok(u) = std::env::var("FERRUM_GB_HMRC_URL")
-        && !u.trim().is_empty()
-    {
+    if let Some(u) = HMRC.env_address() {
         let u = u.trim_end_matches('/').to_string();
         return Some((u.clone(), u));
     }
@@ -136,9 +141,25 @@ fn device_id(tenant: Uuid, user: Uuid) -> String {
     Uuid::from_bytes(b).to_string()
 }
 
+/// The server's public IP address for HMRC (`Gov-Vendor-Public-IP`): `FERRUM_PUBLIC_IP` while it
+/// is set (`from_env`, through this release), else the address the installation's public address
+/// (`PUBLIC_URL`) resolves to, when that is a public one.
+pub async fn vendor_ip(from_env: Option<String>, public_url: Option<&str>) -> Option<String> {
+    if let Some(ip) = from_env.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        return Some(ip);
+    }
+    let url = reqwest::Url::parse(public_url?).ok()?;
+    let host = url.host_str()?.trim_matches(['[', ']']).to_string();
+    let found: Vec<std::net::IpAddr> = match host.parse() {
+        Ok(ip) => vec![ip],
+        Err(_) => tokio::net::lookup_host((host.as_str(), url.port_or_known_default().unwrap_or(443))).await.ok()?.map(|a| a.ip()).collect(),
+    };
+    found.into_iter().find(|ip| !ferrum_kernel::outbox::is_private(*ip)).map(|ip| ip.to_string())
+}
+
 /// The WEB_APP_VIA_SERVER headers from what was captured when the return was filed (`client`:
-/// the browser's details and the request's), with the vendor's own.
-pub fn fraud_headers(client: &Value, tenant: Uuid) -> Vec<(String, String)> {
+/// the browser's details and the request's), with the vendor's own (`vendor_ip`: [`vendor_ip`]).
+pub fn fraud_headers(client: &Value, tenant: Uuid, vendor_ip: Option<String>) -> Vec<(String, String)> {
     let mut h: Vec<(String, String)> = vec![("Gov-Client-Connection-Method".into(), "WEB_APP_VIA_SERVER".into())];
     let text = |k: &str| client.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
     let mut put = |name: &str, v: Option<String>| {
@@ -160,7 +181,7 @@ pub fn fraud_headers(client: &Value, tenant: Uuid) -> Vec<(String, String)> {
     let license = hex::encode(Sha256::digest(format!("ferrum-gb-license:{tenant}").as_bytes()));
     put("Gov-Vendor-License-IDs", Some(format!("ferrum={license}")));
     put("Gov-Vendor-Product-Name", Some("Ferrum".into()));
-    put("Gov-Vendor-Public-IP", text("vendor_ip").or_else(|| std::env::var("FERRUM_PUBLIC_IP").ok()));
+    put("Gov-Vendor-Public-IP", text("vendor_ip").or(vendor_ip));
     put("Gov-Vendor-Version", Some(format!("ferrum-gb={}", env!("CARGO_PKG_VERSION"))));
     h
 }
@@ -239,6 +260,8 @@ pub(crate) async fn connect(hc: &mut HookCtx<'_>, company: &Doc) -> Result<Value
     let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
     let (_, www) =
         hosts(s(company, "gb_hmrc_mode").unwrap_or("Off")).ok_or_else(|| Error::invalid("choose Sandbox or Production under File VAT Returns with HMRC"))?;
+    // The person's browser goes there to sign in: HMRC's own address, as for the server's calls.
+    HMRC.check(&www, hc.kernel.settings.webhooks_allow_private)?;
     let client_id = s(company, "gb_hmrc_client_id").ok_or_else(|| Error::field("gb_hmrc_client_id", "is required to connect"))?;
     let redirect = s(company, "gb_hmrc_redirect_uri").ok_or_else(|| Error::field("gb_hmrc_redirect_uri", "is required to connect"))?;
     let nonce = hex::encode(Sha256::digest(format!("{}:{}:{}", Uuid::now_v7(), cid, Utc::now().timestamp_nanos_opt().unwrap_or_default()).as_bytes()));
@@ -275,8 +298,9 @@ async fn store_tokens(k: &Kernel, ctx: &Ctx, company: Uuid, answer: &Value, conn
     Ok(())
 }
 
-async fn token_request(client: &reqwest::Client, api: &str, form: &[(&str, &str)]) -> Result<Value> {
-    let reply = client.post(format!("{api}/oauth/token")).form(form).send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
+async fn token_request(k: &Kernel, tenant: Uuid, api: &str, wait: Wait, form: &[(&str, &str)]) -> Result<Value> {
+    let (client, url) = HMRC.client(k, tenant, &format!("{api}/oauth/token"), wait).await?;
+    let reply = client.post(url).form(form).send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
     let status = reply.status();
     let v: Value = reply.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
@@ -325,10 +349,11 @@ impl Site for HmrcSite {
                 let (client_id, redirect) = (s(&company, "gb_hmrc_client_id").unwrap_or_default(), s(&company, "gb_hmrc_redirect_uri").unwrap_or_default());
                 let secret = secret.ok_or_else(|| Error::invalid("set the HMRC application's client secret on the company"))?;
                 let code = q("code");
-                let client = reqwest::Client::builder().timeout(Wait::from_secs(30)).build().map_err(Error::internal)?;
                 let answer = token_request(
-                    &client,
+                    k,
+                    req.tenant,
                     &api,
+                    Wait::from_secs(30),
                     &[("grant_type", "authorization_code"), ("client_id", client_id), ("client_secret", &secret), ("redirect_uri", redirect), ("code", &code)],
                 )
                 .await?;
@@ -362,15 +387,7 @@ impl Site for HmrcSite {
 
 // ───────────────────────────── the connector ─────────────────────────────
 
-pub struct Mtd {
-    client: reqwest::Client,
-}
-
-impl Default for Mtd {
-    fn default() -> Self {
-        Mtd { client: reqwest::Client::builder().timeout(Wait::from_secs(60)).build().unwrap_or_default() }
-    }
-}
+pub struct Mtd;
 
 impl Mtd {
     async fn record(k: &Kernel, ctx: &Ctx, rid: Uuid, values: Value) -> Result<()> {
@@ -398,8 +415,10 @@ impl Mtd {
         let (Some(refresh), Some(secret)) = (refresh, secret) else { return Err(Error::invalid("connect the company to HMRC first (Connect to HMRC)")) };
         let client_id = s(company, "gb_hmrc_client_id").unwrap_or_default();
         let answer = token_request(
-            &self.client,
+            k,
+            ctx.tenant,
             api,
+            WAIT,
             &[("grant_type", "refresh_token"), ("client_id", client_id), ("client_secret", &secret), ("refresh_token", &refresh)],
         )
         .await?;
@@ -425,7 +444,8 @@ impl EventSink for Mtd {
                 .await;
         };
         let vrn = ev.payload["vrn"].as_str().unwrap_or_default();
-        let headers = fraud_headers(&ev.payload["client"], ev.tenant_id);
+        let vendor = vendor_ip(std::env::var("FERRUM_PUBLIC_IP").ok(), k.settings.public_url.as_deref()).await;
+        let headers = fraud_headers(&ev.payload["client"], ev.tenant_id, vendor);
         let mut forced = false;
         loop {
             let token = match self.token(k, &ctx, &api, &company, forced).await {
@@ -433,8 +453,8 @@ impl EventSink for Mtd {
                 Err(Error::Invalid(m)) => return Self::record(k, &ctx, rid, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
                 Err(e) => return Err(e),
             };
-            let mut call =
-                self.client.post(format!("{api}/organisations/vat/{vrn}/returns")).header("Accept", ACCEPT).bearer_auth(&token).json(&ev.payload["body"]);
+            let (client, url) = HMRC.client(k, ev.tenant_id, &format!("{api}/organisations/vat/{vrn}/returns"), WAIT).await?;
+            let mut call = client.post(url).header("Accept", ACCEPT).bearer_auth(&token).json(&ev.payload["body"]);
             for (name, value) in &headers {
                 call = call.header(name.as_str(), value.as_str());
             }
@@ -491,6 +511,7 @@ mod tests {
         let h = fraud_headers(
             &json!({"user": "anna@x.test", "screens": "width=1920&height=1080&scaling-factor=1&colour-depth=24", "public_ip": "198.51.100.7"}),
             Uuid::nil(),
+            None,
         );
         let get = |n: &str| h.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
         assert_eq!(get("Gov-Client-Connection-Method"), Some("WEB_APP_VIA_SERVER"));
@@ -499,5 +520,19 @@ mod tests {
         assert!(get("Gov-Vendor-Version").unwrap().starts_with("ferrum-gb="));
         assert_eq!(device_id(Uuid::nil(), Uuid::nil()), device_id(Uuid::nil(), Uuid::nil()), "the same device ID every time");
         assert_eq!(device_id(Uuid::nil(), Uuid::nil()).len(), 36);
+    }
+
+    #[tokio::test]
+    async fn the_vendors_ip_is_the_servers_public_address() {
+        assert_eq!(
+            vendor_ip(Some(" 198.51.100.20 ".into()), Some("https://203.0.113.9")).await.as_deref(),
+            Some("198.51.100.20"),
+            "the variable wins while it is set"
+        );
+        assert_eq!(vendor_ip(None, Some("https://203.0.113.9")).await.as_deref(), Some("203.0.113.9"));
+        assert_eq!(vendor_ip(None, Some("https://[2001:db8::5]:8443/")).await.as_deref(), Some("2001:db8::5"));
+        assert_eq!(vendor_ip(Some(String::new()), Some("http://127.0.0.1:5150")).await, None, "a private address is not the public one");
+        assert_eq!(vendor_ip(None, Some("http://localhost:5150")).await, None);
+        assert_eq!(vendor_ip(None, None).await, None);
     }
 }

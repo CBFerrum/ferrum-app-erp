@@ -311,6 +311,62 @@ async fn scenario() {
     let a3 = t.find(&gift, "GIFT-0000-0000-0001", None).await.unwrap();
     assert_eq!(t.account(a3).await, (n("500"), n("500"), "Active".into()));
     assert_eq!(t.get("StoredValueAccount", a3).await["holder"], Value::Null, "a bearer card names no one");
+    // A code and PIN typed on a line leave nothing on the invoice that a reader could use: the line keeps a handle
+    // and the code's last four characters, and the code's hash and the PIN's wait apart until it is submitted.
+    let (code42, pin42) = ("GIFT-0000-0000-0042", "Zx-9753-q");
+    let sec42 = stored_value::secret(tenant, code42, Some(pin42)).unwrap();
+    let typed = t
+        .insert(
+            "SalesInvoice",
+            json!({"company": c, "customer": walk_in, "items": [{"item": card, "qty": "1", "stored_value_code": code42, "stored_value_pin": pin42}]}),
+        )
+        .await;
+    let kept = |doc: &Doc| doc["items"][0]["stored_value_secret"].as_str().unwrap_or_default().to_string();
+    let on_line = kept(&t.get("SalesInvoice", uid(&typed)).await);
+    assert!(!on_line.is_empty() && !on_line.contains(&sec42.hash) && !on_line.contains(sec42.pin_hash.as_deref().unwrap()), "{on_line}");
+    t.submit("SalesInvoice", uid(&typed)).await;
+    let a42 = t.find(&gift, code42, Some(pin42)).await.unwrap();
+    assert_eq!(t.get("StoredValueAccount", a42).await["pin_hash"], json!(sec42.pin_hash), "the card has the PIN typed on the line");
+    // A draft from before 0.27.0 carries both hashes on its line, and a submitted invoice still has them: the upgrade
+    // moves the draft's apart, so it still opens its card with its code and PIN, and clears the submitted one's.
+    let (code43, pin43) = ("GIFT-0000-0000-0043", "Zx-8642-q");
+    let sec43 = stored_value::secret(tenant, code43, Some(pin43)).unwrap();
+    let before = t.insert("SalesInvoice", json!({"company": c, "customer": walk_in, "items": [{"item": card, "qty": "1"}]})).await;
+    {
+        let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+        let old = format!("{}:{}:{}", sec43.hash, sec43.hint, sec43.pin_hash.clone().unwrap());
+        sqlx::query("update e_sales_invoice__items set stored_value_code = $3, stored_value_secret = $2 where tenant_id = $1 and parent_id = $4")
+            .bind(tenant)
+            .bind(old)
+            .bind(stored_value::masked(&sec43.hint))
+            .bind(uid(&before))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("update e_sales_invoice__items set stored_value_secret = $2 where tenant_id = $1 and parent_id = $3 and stored_value_kind is not null")
+            .bind(tenant)
+            .bind(format!("{}:{}:{}", sec42.hash, sec42.hint, sec42.pin_hash.clone().unwrap()))
+            .bind(uid(&typed))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("../packages/accounting/sql/010_stored_value_typed_moved.sql")).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    let moved = kept(&t.get("SalesInvoice", uid(&before)).await);
+    assert!(moved.ends_with(":0043:held") && !moved.contains(&sec43.hash) && !moved.contains(sec43.pin_hash.as_deref().unwrap()), "{moved}");
+    assert_eq!(t.get("SalesInvoice", uid(&typed)).await["items"][0]["stored_value_secret"], Value::Null, "a submitted invoice keeps neither");
+    t.submit("SalesInvoice", uid(&before)).await;
+    let a43 = t.find(&gift, code43, Some(pin43)).await.unwrap();
+    assert_eq!(t.get("StoredValueAccount", a43).await["pin_hash"], json!(sec43.pin_hash));
+    let left: i64 = {
+        let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+        sqlx::query_scalar("select count(*) from stored_value_typed where tenant_id = $1").bind(tenant).fetch_one(&mut *tx).await.unwrap()
+    };
+    assert_eq!(left, 0, "each submission took what waited for it");
+    for sold in [uid(&typed), uid(&before)] {
+        t.cancel("SalesInvoice", sold).await.expect("unused, so cancelled");
+    }
     // Taxed when redeemed: the voucher's line carries no tax.
     let sold = t.post("SalesInvoice", json!({"company": c, "customer": walk_in, "tax_template": vat, "items": [{"item": voucher, "qty": "1"}]})).await;
     assert_eq!(t.posted(uid(&sold)).await, map(&[("Debtors", "300"), ("Gift Cards", "-300")]));
@@ -722,11 +778,20 @@ async fn scenario() {
     let mine = t.k.run_action(&t.ctx, "StoredValueAccount", pinned_acc, "new_code", json!({"proof": chosen["proof"]})).await.unwrap();
     assert_eq!(mine["code"], Value::Null, "the code came from prove, not again from here");
     assert_eq!(t.find(&pinned, chosen["code"].as_str().unwrap(), Some(pin)).await.unwrap(), pinned_acc);
-    let mut secrets: Vec<String> =
-        ["4000-1234-5678-9ABC", "STORECREDIT-0001", "STORECREDIT-0002", "STORECREDIT-0003", "GIFT-0000-0000-0001", "SHARED-CARD-0001", "SHARED-CARD-0002"]
-            .iter()
-            .map(|c| c.to_string())
-            .collect();
+    let mut secrets: Vec<String> = [
+        "4000-1234-5678-9ABC",
+        "STORECREDIT-0001",
+        "STORECREDIT-0002",
+        "STORECREDIT-0003",
+        "GIFT-0000-0000-0001",
+        "GIFT-0000-0000-0042",
+        "GIFT-0000-0000-0043",
+        "SHARED-CARD-0001",
+        "SHARED-CARD-0002",
+    ]
+    .iter()
+    .map(|c| c.to_string())
+    .collect();
     secrets.extend(
         [&second["code"], &back["code"], &fresh["code"], &to_new["code"], &made_pin["code"], &chosen["code"]]
             .iter()
@@ -734,7 +799,7 @@ async fn scenario() {
             .map(str::to_string),
     );
     secrets.extend(secrets.clone().iter().map(|c| c.replace('-', "")));
-    secrets.push(pin.into());
+    secrets.extend([pin, "Zx-9753-q", "Zx-8642-q"].map(String::from));
     let like: Vec<String> = secrets.iter().map(|s| format!("%{s}%")).collect();
     let mut tx = t.k.db.pool.begin().await.unwrap();
     sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();

@@ -41,8 +41,8 @@ pub fn register(h: &mut HookRegistry) {
             .register("Item", Arc::new(vat::VatNumberHook))
             .register("SalesInvoice", Arc::new(ubl::EInvoiceHook));
     });
-    h.add_event_sink(Arc::new(vies::Vies::default()));
-    h.add_event_sink(Arc::new(tedb::Tedb::default()));
+    h.add_event_sink(Arc::new(vies::Vies));
+    h.add_event_sink(Arc::new(tedb::Tedb));
 }
 
 /// The EU's reports: the EC sales list and the OSS return.
