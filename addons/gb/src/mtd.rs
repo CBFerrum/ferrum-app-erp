@@ -141,9 +141,25 @@ fn device_id(tenant: Uuid, user: Uuid) -> String {
     Uuid::from_bytes(b).to_string()
 }
 
+/// The server's public IP address for HMRC (`Gov-Vendor-Public-IP`): `FERRUM_PUBLIC_IP` while it
+/// is set (`from_env`, through this release), else the address the installation's public address
+/// (`PUBLIC_URL`) resolves to, when that is a public one.
+pub async fn vendor_ip(from_env: Option<String>, public_url: Option<&str>) -> Option<String> {
+    if let Some(ip) = from_env.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        return Some(ip);
+    }
+    let url = reqwest::Url::parse(public_url?).ok()?;
+    let host = url.host_str()?.trim_matches(['[', ']']).to_string();
+    let found: Vec<std::net::IpAddr> = match host.parse() {
+        Ok(ip) => vec![ip],
+        Err(_) => tokio::net::lookup_host((host.as_str(), url.port_or_known_default().unwrap_or(443))).await.ok()?.map(|a| a.ip()).collect(),
+    };
+    found.into_iter().find(|ip| !ferrum_kernel::outbox::is_private(*ip)).map(|ip| ip.to_string())
+}
+
 /// The WEB_APP_VIA_SERVER headers from what was captured when the return was filed (`client`:
-/// the browser's details and the request's), with the vendor's own.
-pub fn fraud_headers(client: &Value, tenant: Uuid) -> Vec<(String, String)> {
+/// the browser's details and the request's), with the vendor's own (`vendor_ip`: [`vendor_ip`]).
+pub fn fraud_headers(client: &Value, tenant: Uuid, vendor_ip: Option<String>) -> Vec<(String, String)> {
     let mut h: Vec<(String, String)> = vec![("Gov-Client-Connection-Method".into(), "WEB_APP_VIA_SERVER".into())];
     let text = |k: &str| client.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
     let mut put = |name: &str, v: Option<String>| {
@@ -165,7 +181,7 @@ pub fn fraud_headers(client: &Value, tenant: Uuid) -> Vec<(String, String)> {
     let license = hex::encode(Sha256::digest(format!("ferrum-gb-license:{tenant}").as_bytes()));
     put("Gov-Vendor-License-IDs", Some(format!("ferrum={license}")));
     put("Gov-Vendor-Product-Name", Some("Ferrum".into()));
-    put("Gov-Vendor-Public-IP", text("vendor_ip").or_else(|| std::env::var("FERRUM_PUBLIC_IP").ok()));
+    put("Gov-Vendor-Public-IP", text("vendor_ip").or(vendor_ip));
     put("Gov-Vendor-Version", Some(format!("ferrum-gb={}", env!("CARGO_PKG_VERSION"))));
     h
 }
@@ -428,7 +444,8 @@ impl EventSink for Mtd {
                 .await;
         };
         let vrn = ev.payload["vrn"].as_str().unwrap_or_default();
-        let headers = fraud_headers(&ev.payload["client"], ev.tenant_id);
+        let vendor = vendor_ip(std::env::var("FERRUM_PUBLIC_IP").ok(), k.settings.public_url.as_deref()).await;
+        let headers = fraud_headers(&ev.payload["client"], ev.tenant_id, vendor);
         let mut forced = false;
         loop {
             let token = match self.token(k, &ctx, &api, &company, forced).await {
@@ -494,6 +511,7 @@ mod tests {
         let h = fraud_headers(
             &json!({"user": "anna@x.test", "screens": "width=1920&height=1080&scaling-factor=1&colour-depth=24", "public_ip": "198.51.100.7"}),
             Uuid::nil(),
+            None,
         );
         let get = |n: &str| h.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
         assert_eq!(get("Gov-Client-Connection-Method"), Some("WEB_APP_VIA_SERVER"));
@@ -502,5 +520,19 @@ mod tests {
         assert!(get("Gov-Vendor-Version").unwrap().starts_with("ferrum-gb="));
         assert_eq!(device_id(Uuid::nil(), Uuid::nil()), device_id(Uuid::nil(), Uuid::nil()), "the same device ID every time");
         assert_eq!(device_id(Uuid::nil(), Uuid::nil()).len(), 36);
+    }
+
+    #[tokio::test]
+    async fn the_vendors_ip_is_the_servers_public_address() {
+        assert_eq!(
+            vendor_ip(Some(" 198.51.100.20 ".into()), Some("https://203.0.113.9")).await.as_deref(),
+            Some("198.51.100.20"),
+            "the variable wins while it is set"
+        );
+        assert_eq!(vendor_ip(None, Some("https://203.0.113.9")).await.as_deref(), Some("203.0.113.9"));
+        assert_eq!(vendor_ip(None, Some("https://[2001:db8::5]:8443/")).await.as_deref(), Some("2001:db8::5"));
+        assert_eq!(vendor_ip(Some(String::new()), Some("http://127.0.0.1:5150")).await, None, "a private address is not the public one");
+        assert_eq!(vendor_ip(None, Some("http://localhost:5150")).await, None);
+        assert_eq!(vendor_ip(None, None).await, None);
     }
 }

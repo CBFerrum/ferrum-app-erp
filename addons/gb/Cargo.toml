@@ -19,6 +19,8 @@ sqlx = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# The server's public address, resolved for HMRC's fraud prevention headers.
+tokio = { workspace = true, features = ["net"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
 
