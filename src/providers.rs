@@ -40,10 +40,12 @@ impl Provider {
         if host.as_deref().is_some_and(|h| self.hosts.contains(&h)) {
             return Ok(());
         }
+        // The host alone: an address can carry a user name and password.
         Err(Error::invalid(format!(
-            "{} is called only at its own addresses ({}), not at {url}: unset {}, which only a development server may point elsewhere",
+            "{} is called only at its own addresses ({}), not at {}: unset {}, which only a development server may point elsewhere",
             self.name,
             self.hosts.join(", "),
+            host.as_deref().unwrap_or("an address without a host"),
             self.env
         )))
     }
@@ -86,6 +88,9 @@ mod tests {
             let refused = HMRC.check(bad, false);
             assert!(matches!(&refused, Err(Error::Invalid(m)) if m.contains("FERRUM_GB_HMRC_URL")), "{bad}: {refused:?}");
         }
+        // What the refusal says names the host, never a user name or password the address carries.
+        let said = HMRC.check("https://ops:hunter2@collector.example.net/oauth/token", false).unwrap_err().to_string();
+        assert!(said.contains("collector.example.net") && !said.contains("hunter2") && !said.contains("ops:"), "{said}");
         // A development server calls its test doubles wherever they listen.
         assert!(HMRC.check("http://127.0.0.1:8080/oauth/token", true).is_ok());
     }
