@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.26.3-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.27.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.26.3`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.27.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 23 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (58 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -565,21 +565,21 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.6.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
-| 🇪🇺 | European Union | `ferrum-eu` 0.3.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
+| 🇮🇳 | India | `ferrum-india` 0.7.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇪🇺 | European Union | `ferrum-eu` 0.3.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.1.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
 | 🇫🇷 | France | `ferrum-eu-members` 0.1.0 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
 | 🇮🇹 | Italy | `ferrum-eu-members` 0.1.0 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
 | 🇵🇱 | Poland | `ferrum-eu-members` 0.1.0 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
 | 🇵🇹 | Portugal | `ferrum-eu-members` 0.1.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
-| 🇷🇴 | Romania | `ferrum-eu-members` 0.1.1 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
+| 🇷🇴 | Romania | `ferrum-eu-members` 0.1.2 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
 | 🇪🇸 | Spain | `ferrum-eu-members` 0.1.0 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
-| 🇬🇧 | United Kingdom | `ferrum-gb` 0.2.0 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
-| 🇺🇸 | United States | `ferrum-us` 0.1.0 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
+| 🇬🇧 | United Kingdom | `ferrum-gb` 0.2.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
+| 🇺🇸 | United States | `ferrum-us` 0.1.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
 | 🇨🇦 | Canada | `ferrum-ca` 0.1.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
 | 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.2.0 | Sales tax and service tax | SST-02 | MyInvois through LHDN |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 | MyInvois through LHDN |
 | 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN | — |
 | 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 | — |
 | 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q | — |
@@ -785,6 +785,12 @@ stored value, and tracks carrier shipments. Finance's reverses exchange revaluat
 | Label printers | Item, parcel and bin labels | A ZPL printer, or any printer for page labels |
 
 Each connection is set up per company, so a workspace's companies can use different services or none.
+
+Every call to these services goes through the platform's vetted client, made for the company's workspace: a sandbox
+copy of a workspace calls none of them. Each is called at the provider's own address, its production one or its test
+environment's as the company's settings choose. An address in the server's environment (`FERRUM_GB_HMRC_URL`,
+`FERRUM_US_AVATAX_URL`, `FERRUM_MY_MYINVOIS_URL`, `FERRUM_RO_ANAF_URL`, `FERRUM_EU_VIES_URL`, `FERRUM_EU_TEDB_URL`)
+still stands in for the provider's, but outside development only when it is at one of the provider's own hosts.
 
 ## 📊 How it compares
 

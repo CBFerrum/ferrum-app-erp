@@ -1,5 +1,49 @@
 # Changelog
 
+## ERP 0.27.0, India 0.7.0, United Kingdom 0.2.1, United States 0.1.1, European Union 0.3.1, Malaysia 0.2.1, Romania 0.1.2: calls outside only through the platform, nothing kept per server
+
+- **Every call to a service outside goes through the platform's vetted client, for its workspace.** HMRC, AvaTax,
+  MyInvois, ANAF, VIES and TEDB built HTTP clients of their own, which skipped the sandbox's check and the platform's
+  address checks; the IRP and the carriers' label download used the vetted client without naming the workspace. Each
+  call now goes through `ferrum_app_erp::providers`: a sandbox copy of a workspace is refused before any address is
+  looked up, so it files no return, reports no sale and sends no e-invoice for the live company (the event waits,
+  saying why), and every call is https to a public address, pinned, without redirects. `tests/outbound_meta.rs`
+  reads the sources and fails on a client built any other way.
+- **The providers' own addresses.** Each integration calls its provider's production host, or the provider's own
+  test host where the company's mode chooses it, as before. `FERRUM_GB_HMRC_URL`, `FERRUM_US_AVATAX_URL`,
+  `FERRUM_MY_MYINVOIS_URL`, `FERRUM_RO_ANAF_URL`, `FERRUM_EU_VIES_URL` and `FERRUM_EU_TEDB_URL` still stand in for those
+  addresses in this release; outside development (`webhooks_allow_private`, which only the development and test
+  configurations turn on) they are called only when their host is one of the provider's, so a changed environment
+  cannot send a company's credentials elsewhere. Any other host is refused, saying which variable to unset: the
+  invoice or return records it as its failure. HMRC's and ANAF's Connect check the sign-in page they send the browser
+  to in the same way. A server that reached a provider through a proxy of its own at another address must reach it
+  directly (or through an outbound proxy the network provides) from this release.
+- **India: one IRP session for every server.** Each server kept its own IRP session in memory and signed in by itself.
+  The session (its token, its session key and when it ends) is now kept on the company, sealed, in `in_irp_session`
+  (the company shows only that one is kept), and made under a lock per company: a server that needs a new one while
+  another is signing in waits for it and uses it. A token the IRP has forgotten is replaced once, whichever server
+  finds it.
+- **Stored value: a typed code leaves nothing usable on the record.** A card's code (and PIN) typed on a sales
+  invoice's line or on a payment into new store credit was carried to the submission as its hash and the PIN's hash
+  on the record (`stored_value_secret`), and a submitted invoice kept them; the PIN's hash gives the PIN back to anyone
+  who tries every PIN. They now wait in `stored_value_typed` under a random handle, the record keeping only the handle
+  and the code's last four characters, and the submission that opens the card takes them. A sealed field could not
+  hold them: the platform keeps no secret fields on a document's lines, and a hook cannot set one.
+- **United Kingdom: the server's public address for HMRC.** `Gov-Vendor-Public-IP` came only from `FERRUM_PUBLIC_IP`.
+  It is now the address the server's public address (`PUBLIC_URL`) resolves to, when that is a public one, and is
+  left out otherwise; `FERRUM_PUBLIC_IP` still wins in this release while it is set.
+- **Upgrading.** Nothing to do. Package SQL `010_stored_value_typed_moved.sql` moves what drafts carried into the new
+  table, so a draft from before still opens its card with its code and PIN, and clears the copies submitted and
+  cancelled documents kept. The IRP signs in once more after the upgrade, and the session is kept from then on. A
+  server of the release before, still running during the upgrade, keeps its own IRP session as it did; one that
+  submits a draft saved by this release makes a card its code does not open (never one that opens without it), so
+  finish the rollout before selling cards. Needs platform `>=0.3.8, <0.4` (`Kernel::outward`, `vetted_client_for`).
+- **Tests.** The US, Malaysia and Romania suites' kernels are development ones, as the others' were: their fake
+  services listen on a local address, which only a development server calls.
+- **Later.** Portugal's producer key (`FERRUM_PT_SIGNING_KEY`, `FERRUM_PT_CERTIFICATE`, `FERRUM_PT_KEY_VERSION`) still
+  comes from the environment, and the providers' credentials stay sealed fields on the company; both move when the
+  platform's vault comes (the credentials into connections).
+
 ## ERP 0.26.3: the interface resolves a link's filter from the record
 
 * **Pickers offer only the record's company's records in ERP's own screens.** 0.26.2 declared the filters; the interface built into it was older than the Frontend that resolves them, so a picker sent the filter unresolved and listed nothing. Rebuilt on Ferrum-Frontend 6d0bd1f. Nothing changes on the server. Found by a browser walk.
