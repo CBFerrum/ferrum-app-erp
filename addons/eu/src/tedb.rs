@@ -8,6 +8,7 @@ use crate::util::{id, rows, s, sys};
 use crate::vat::MEMBER_STATES;
 use async_trait::async_trait;
 use chrono::NaiveDate;
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, EventSink, HookCtx, Kernel, Result};
 use quick_xml::Reader;
@@ -21,10 +22,11 @@ use std::time::Duration;
 pub const TOPIC: &str = "eu.tedb.requested";
 const DEFAULT_URL: &str = "https://ec.europa.eu/taxation_customs/tedb/ws/";
 const ACTION: &str = "urn:ec.europa.eu:taxud:tedb:services:v1:VatRetrievalService/RetrieveVatRates";
+const TEDB: Provider = Provider { name: "TEDB", env: "FERRUM_EU_TEDB_URL", hosts: &["ec.europa.eu"] };
 
 /// TEDB's address: the Commission's, or `FERRUM_EU_TEDB_URL` (a proxy, a test double).
 fn url() -> String {
-    std::env::var("FERRUM_EU_TEDB_URL").ok().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| DEFAULT_URL.into())
+    TEDB.env_address().unwrap_or_else(|| DEFAULT_URL.into())
 }
 
 /// The request for every member state's rates on a day.
@@ -156,15 +158,7 @@ fn cn_digits(code: &str) -> String {
     code.chars().filter(char::is_ascii_digit).collect()
 }
 
-pub struct Tedb {
-    client: reqwest::Client,
-}
-
-impl Default for Tedb {
-    fn default() -> Self {
-        Tedb { client: reqwest::Client::builder().timeout(Duration::from_secs(120)).build().unwrap_or_default() }
-    }
-}
+pub struct Tedb;
 
 /// Keeps TEDB's rates the workspace does not have yet (by state, kind, rate, day and category).
 pub async fn store(k: &Kernel, ctx: &Ctx, rates: &[Rate]) -> Result<usize> {
@@ -221,9 +215,9 @@ impl EventSink for Tedb {
         }
         let on = ev.payload["situation_on"].as_str().filter(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok()).unwrap_or_default().to_string();
         let on = if on.is_empty() { ctx.today().format("%Y-%m-%d").to_string() } else { on };
-        let reply = self
-            .client
-            .post(url())
+        let (client, url) = TEDB.client(k, ev.tenant_id, &url(), Duration::from_secs(120)).await?;
+        let reply = client
+            .post(url)
             .header("Content-Type", "text/xml; charset=utf-8")
             .header("SOAPAction", ACTION)
             .body(envelope(&on))

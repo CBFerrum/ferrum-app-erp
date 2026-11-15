@@ -8,6 +8,7 @@
 use crate::tax::{SALES_TAX, account, tax_code, zip5};
 use crate::util::{d, get, id, rows, s, set, sys};
 use async_trait::async_trait;
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, outbox};
 use rust_decimal::Decimal;
@@ -19,15 +20,15 @@ pub const COMMIT_TOPIC: &str = "us.avatax.commit_requested";
 pub const VOID_TOPIC: &str = "us.avatax.void_requested";
 const SANDBOX: &str = "https://sandbox-rest.avatax.com";
 const PRODUCTION: &str = "https://rest.avatax.com";
+const AVATAX: Provider = Provider { name: "AvaTax", env: "FERRUM_US_AVATAX_URL", hosts: &["rest.avatax.com", "sandbox-rest.avatax.com"] };
+const WAIT: Duration = Duration::from_secs(60);
 
 /// AvaTax's host for a company's mode (none when it is Off); `FERRUM_US_AVATAX_URL` stands in for both.
 fn host(mode: &str) -> Option<String> {
     if mode == "Off" {
         return None;
     }
-    if let Ok(u) = std::env::var("FERRUM_US_AVATAX_URL")
-        && !u.trim().is_empty()
-    {
+    if let Some(u) = AVATAX.env_address() {
         return Some(u.trim_end_matches('/').to_string());
     }
     match mode {
@@ -176,15 +177,7 @@ impl DocHook for InvoiceHook {
 }
 
 /// The connector.
-pub struct AvaTax {
-    client: reqwest::Client,
-}
-
-impl Default for AvaTax {
-    fn default() -> Self {
-        AvaTax { client: reqwest::Client::builder().timeout(Duration::from_secs(60)).build().unwrap_or_default() }
-    }
-}
+pub struct AvaTax;
 
 impl AvaTax {
     async fn record(k: &Kernel, ctx: &Ctx, invoice: Uuid, values: Value) -> Result<()> {
@@ -239,15 +232,23 @@ impl EventSink for AvaTax {
             return Self::record(k, &ctx, invoice, failed("set the company's AvaTax account ID and license key")).await;
         };
         let client_id = format!("Ferrum; {}; Rust; 2; ferrum-us", env!("CARGO_PKG_VERSION"));
-        let call = |url: String| {
-            self.client.post(url).basic_auth(account_id, Some(&key)).header("X-Avalara-Client", client_id.as_str()).header("Accept", "application/json")
+        let url = if commit {
+            format!("{base}/api/v2/transactions/createoradjust")
+        } else {
+            let (number, company_code) = (ev.payload["code"].as_str().unwrap_or_default(), ev.payload["company_code"].as_str().unwrap_or_default());
+            let kind = ev.payload["document_type"].as_str().unwrap_or("SalesInvoice");
+            format!("{base}/api/v2/companies/{}/transactions/{}/void?documentType={kind}", segment(company_code), segment(number))
+        };
+        let call = match AVATAX.client(k, ev.tenant_id, &url, WAIT).await {
+            Ok((client, url)) => {
+                client.post(url).basic_auth(account_id, Some(&key)).header("X-Avalara-Client", client_id.as_str()).header("Accept", "application/json")
+            }
+            // An address that is not to be called: said on the invoice, and not tried again.
+            Err(Error::Invalid(m)) => return Self::record(k, &ctx, invoice, failed(&m)).await,
+            Err(e) => return Err(e),
         };
         if commit {
-            let reply = call(format!("{base}/api/v2/transactions/createoradjust"))
-                .json(&ev.payload["body"])
-                .send()
-                .await
-                .map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
+            let reply = call.json(&ev.payload["body"]).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
             let code = reply.status().as_u16();
             let v: Value = reply.json().await.unwrap_or(Value::Null);
             return match code {
@@ -269,14 +270,7 @@ impl EventSink for AvaTax {
                 _ => Self::record(k, &ctx, invoice, failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
             };
         }
-        let number = ev.payload["code"].as_str().unwrap_or_default();
-        let company_code = ev.payload["company_code"].as_str().unwrap_or_default();
-        let kind = ev.payload["document_type"].as_str().unwrap_or("SalesInvoice");
-        let reply = call(format!("{base}/api/v2/companies/{}/transactions/{}/void?documentType={kind}", segment(company_code), segment(number)))
-            .json(&json!({"code": "DocVoided"}))
-            .send()
-            .await
-            .map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
+        let reply = call.json(&json!({"code": "DocVoided"})).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
         let code = reply.status().as_u16();
         let v: Value = reply.json().await.unwrap_or(Value::Null);
         match code {

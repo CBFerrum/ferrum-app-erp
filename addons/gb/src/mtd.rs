@@ -13,6 +13,7 @@ use crate::util::{d, get, id, money, s, set, sys};
 use crate::vat::{INPUT_TAX, OUTPUT_TAX, account};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -25,6 +26,12 @@ pub const TOPIC: &str = "gb.mtd.submit_requested";
 const SANDBOX: (&str, &str) = ("https://test-api.service.hmrc.gov.uk", "https://test-www.tax.service.gov.uk");
 const PRODUCTION: (&str, &str) = ("https://api.service.hmrc.gov.uk", "https://www.tax.service.gov.uk");
 const ACCEPT: &str = "application/vnd.hmrc.1.0+json";
+const HMRC: Provider = Provider {
+    name: "HMRC",
+    env: "FERRUM_GB_HMRC_URL",
+    hosts: &["api.service.hmrc.gov.uk", "test-api.service.hmrc.gov.uk", "www.tax.service.gov.uk", "test-www.tax.service.gov.uk"],
+};
+const WAIT: Wait = Wait::from_secs(60);
 
 /// HMRC's API and sign-in hosts for a company's mode (none when it is Off); `FERRUM_GB_HMRC_URL`
 /// stands in for both.
@@ -32,9 +39,7 @@ fn hosts(mode: &str) -> Option<(String, String)> {
     if mode == "Off" {
         return None;
     }
-    if let Ok(u) = std::env::var("FERRUM_GB_HMRC_URL")
-        && !u.trim().is_empty()
-    {
+    if let Some(u) = HMRC.env_address() {
         let u = u.trim_end_matches('/').to_string();
         return Some((u.clone(), u));
     }
@@ -275,8 +280,9 @@ async fn store_tokens(k: &Kernel, ctx: &Ctx, company: Uuid, answer: &Value, conn
     Ok(())
 }
 
-async fn token_request(client: &reqwest::Client, api: &str, form: &[(&str, &str)]) -> Result<Value> {
-    let reply = client.post(format!("{api}/oauth/token")).form(form).send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
+async fn token_request(k: &Kernel, tenant: Uuid, api: &str, wait: Wait, form: &[(&str, &str)]) -> Result<Value> {
+    let (client, url) = HMRC.client(k, tenant, &format!("{api}/oauth/token"), wait).await?;
+    let reply = client.post(url).form(form).send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
     let status = reply.status();
     let v: Value = reply.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
@@ -325,10 +331,11 @@ impl Site for HmrcSite {
                 let (client_id, redirect) = (s(&company, "gb_hmrc_client_id").unwrap_or_default(), s(&company, "gb_hmrc_redirect_uri").unwrap_or_default());
                 let secret = secret.ok_or_else(|| Error::invalid("set the HMRC application's client secret on the company"))?;
                 let code = q("code");
-                let client = reqwest::Client::builder().timeout(Wait::from_secs(30)).build().map_err(Error::internal)?;
                 let answer = token_request(
-                    &client,
+                    k,
+                    req.tenant,
                     &api,
+                    Wait::from_secs(30),
                     &[("grant_type", "authorization_code"), ("client_id", client_id), ("client_secret", &secret), ("redirect_uri", redirect), ("code", &code)],
                 )
                 .await?;
@@ -362,15 +369,7 @@ impl Site for HmrcSite {
 
 // ───────────────────────────── the connector ─────────────────────────────
 
-pub struct Mtd {
-    client: reqwest::Client,
-}
-
-impl Default for Mtd {
-    fn default() -> Self {
-        Mtd { client: reqwest::Client::builder().timeout(Wait::from_secs(60)).build().unwrap_or_default() }
-    }
-}
+pub struct Mtd;
 
 impl Mtd {
     async fn record(k: &Kernel, ctx: &Ctx, rid: Uuid, values: Value) -> Result<()> {
@@ -398,8 +397,10 @@ impl Mtd {
         let (Some(refresh), Some(secret)) = (refresh, secret) else { return Err(Error::invalid("connect the company to HMRC first (Connect to HMRC)")) };
         let client_id = s(company, "gb_hmrc_client_id").unwrap_or_default();
         let answer = token_request(
-            &self.client,
+            k,
+            ctx.tenant,
             api,
+            WAIT,
             &[("grant_type", "refresh_token"), ("client_id", client_id), ("client_secret", &secret), ("refresh_token", &refresh)],
         )
         .await?;
@@ -433,8 +434,8 @@ impl EventSink for Mtd {
                 Err(Error::Invalid(m)) => return Self::record(k, &ctx, rid, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
                 Err(e) => return Err(e),
             };
-            let mut call =
-                self.client.post(format!("{api}/organisations/vat/{vrn}/returns")).header("Accept", ACCEPT).bearer_auth(&token).json(&ev.payload["body"]);
+            let (client, url) = HMRC.client(k, ev.tenant_id, &format!("{api}/organisations/vat/{vrn}/returns"), WAIT).await?;
+            let mut call = client.post(url).header("Accept", ACCEPT).bearer_auth(&token).json(&ev.payload["body"]);
             for (name, value) in &headers {
                 call = call.header(name.as_str(), value.as_str());
             }

@@ -28,6 +28,7 @@ pub mod planning;
 pub mod portal;
 pub mod pricing;
 pub mod promotion;
+pub mod providers;
 pub mod reports;
 pub mod reservation;
 pub mod scan;

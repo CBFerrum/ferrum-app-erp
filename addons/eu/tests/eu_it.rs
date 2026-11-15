@@ -37,10 +37,14 @@ fn uid(doc: &Doc) -> Uuid {
     doc["id"].as_str().unwrap().parse().unwrap()
 }
 
+/// How many checks the fake VIES was asked.
+static VIES_ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// VIES's REST API: FR12345678901 is valid (with a consultation number when asked by a requester),
 /// FR99999999999 is not, anything else is refused as bad input.
 async fn fake_vies() -> String {
     async fn check(Json(body): Json<Value>) -> (axum::http::StatusCode, Json<Value>) {
+        VIES_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let number = format!("{}{}", body["countryCode"].as_str().unwrap_or(""), body["vatNumber"].as_str().unwrap_or(""));
         let requester = body.get("requesterNumber").and_then(Value::as_str).is_some();
         match number.as_str() {
@@ -282,6 +286,56 @@ async fn scenario() {
     );
     assert_eq!(t.get("Customer", neu).await["eu_vies_valid"], json!(false));
     assert!(t.get("Customer", neu).await["eu_vies_error"].as_str().unwrap().contains("not a valid VAT number"));
+
+    // ───────────── a sandbox asks VIES nothing ─────────────
+    // A sandbox is a copy of a workspace that must reach nothing outside. The platform marks its row when it is made
+    // (and never after: a trigger refuses the change, set aside here as only a test does); the mark is all the
+    // refusal reads. Its check of a VAT number is refused before any address is looked up, and waits, saying why.
+    let try_tenant = k
+        .create_tenant(NewTenant {
+            slug: "mg-try".into(),
+            name: "Muster (sandbox)".into(),
+            admin_email: "admin@mg.test".into(),
+            admin_password: "Correct-Horse-9".into(),
+            admin_name: None,
+            packages: ["core", "accounting", "inventory", "selling", "buying", "eu"].iter().map(|s| s.to_string()).collect(),
+            settings: Some(json!({"fiscal_year_start_month": 1})),
+        })
+        .await
+        .expect("a second workspace");
+    {
+        let mut tx = k.db.system_tx().await.unwrap();
+        sqlx::raw_sql("alter table tenant disable trigger tenant_sandbox_kept").execute(&mut *tx).await.unwrap();
+        sqlx::query("update tenant set sandbox_of = $2, sandbox_from = 'mg', sandbox_until = current_date + 30 where id = $1")
+            .bind(try_tenant)
+            .bind(tenant)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::raw_sql("alter table tenant enable trigger tenant_sandbox_kept").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    let s = k.login("mg-try", "admin@mg.test", "Correct-Horse-9").await.expect("login to the sandbox");
+    let sandbox = T { k: k.clone(), ctx: k.load_ctx(try_tenant, s.user, Some(s.token_version), "it".into()).await.expect("ctx") };
+    let asked = VIES_ASKED.load(std::sync::atomic::Ordering::SeqCst);
+    let copy = uid(&sandbox.insert("Customer", json!({"customer_name": "Client SARL", "eu_vat_number": "FR12345678901"})).await);
+    t.drain().await;
+    assert_eq!(VIES_ASKED.load(std::sync::atomic::Ordering::SeqCst), asked, "the sandbox's check reached VIES");
+    let waiting: Vec<(Option<String>, bool)> = {
+        let mut tx = k.db.system_tx().await.unwrap();
+        let w = sqlx::query_as("select last_error, processed_at is not null from outbox where tenant_id = $1 and topic = 'eu.vies.requested'")
+            .bind(try_tenant)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        w
+    };
+    assert!(
+        matches!(waiting.as_slice(), [(Some(why), false)] if why.contains(ferrum_kernel::sandbox::SANDBOX)),
+        "the sandbox's check waits, saying why: {waiting:?}"
+    );
+    assert_eq!(sandbox.get("Customer", copy).await["eu_vies_valid"], json!(false), "and nothing came back");
 
     let sale = |customer: Uuid, lines: Vec<(Uuid, &'static str)>| {
         let (k, ctx) = (t.k.clone(), t.ctx.clone());

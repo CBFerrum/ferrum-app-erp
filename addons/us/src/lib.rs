@@ -35,7 +35,7 @@ pub fn register(h: &mut HookRegistry) {
         }
         h.register("SalesInvoice", Arc::new(avatax::InvoiceHook));
     });
-    h.add_event_sink(Arc::new(avatax::AvaTax::default()));
+    h.add_event_sink(Arc::new(avatax::AvaTax));
 }
 
 /// Sales tax by jurisdiction, economic nexus and Forms 1099.

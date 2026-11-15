@@ -286,7 +286,7 @@ fn hooks(h: &mut ferrum_kernel::HookRegistry) {
         h.register(entity, std::sync::Arc::new(EfacturaHook));
     }
     h.register("Company", std::sync::Arc::new(crate::anaf::AnafHook));
-    h.add_event_sink(std::sync::Arc::new(crate::anaf::Anaf::default()));
+    h.add_event_sink(std::sync::Arc::new(crate::anaf::Anaf));
     h.add_site(PACKAGE, std::sync::Arc::new(crate::anaf::AnafSite));
 }
 

@@ -268,7 +268,7 @@ impl IrpConnector {
 
     async fn post(k: &Kernel, cfg: &Config, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> Result<Value> {
         let url = format!("{}{path}", cfg.base);
-        let (client, parsed) = k.vetted_client(&url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-IRP/1").await?;
+        let (client, parsed) = k.vetted_client_for(cfg.tenant, &url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-IRP/1").await?;
         let mut req = if method == "GET" { client.get(parsed) } else { client.post(parsed) };
         // A GSP header replaces the IRP header of the same name rather than doubling it.
         let ours = headers.iter().copied().filter(|(n, _)| !cfg.extra.iter().any(|(g, _)| g.eq_ignore_ascii_case(n)));
