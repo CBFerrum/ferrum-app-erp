@@ -20,7 +20,10 @@
 //! a code. A code (and PIN) is given to [`prove`] (the kind's `prove`, read only and not logged),
 //! which keeps only its hashes in `stored_value_proof` and answers a proof: random, for one operation
 //! on one kind, used once, gone after [`PROOF_MINUTES`]. Issue, redeem, refund and transfer take the
-//! proof; a code made for a new card is answered by `prove` and never by the operation.
+//! proof; a code made for a new card is answered by `prove` and never by the operation. A code typed
+//! on a sales invoice's line or a payment for a new card waits for the submission in
+//! `stored_value_typed`: the record keeps a random handle and the last four characters, nothing a
+//! reader could use.
 //!
 //! Concurrency: every change locks the account's row first and reads its balance under the lock, so
 //! of two tills taking from one card at once the second waits, then sees what the first left; the
@@ -748,40 +751,82 @@ pub(crate) fn untaxed_rates(taxes: &[Doc]) -> Vec<Doc> {
         .collect()
 }
 
+/// What a record keeps in `stored_value_secret` after the handle and the hint when the hashes are apart.
+const APART: &str = "held";
+
 /// A code typed on a line or a payment is replaced, before anything is stored, by its last four
-/// characters, and kept as a hash in `secret_field` (`hash:hint:pin hash`); a PIN is not kept.
-fn mask(ctx: &Ctx, row: &mut Doc, secret_field: &str, at: &str) -> Result<()> {
+/// characters; a PIN is not kept. Returns the code's secret when one was typed now, for [`keep`]
+/// or a lookup; the record carries neither hash.
+fn mask(ctx: &Ctx, row: &mut Doc, secret_field: &str, at: &str) -> Result<Option<Secret>> {
     let typed_pin = s(row, "stored_value_pin").map(str::to_string);
-    match s(row, "stored_value_code").map(str::to_string) {
+    let typed = match s(row, "stored_value_code").map(str::to_string) {
         Some(code) if !code.starts_with('•') => {
             let sec = secret(ctx.tenant, &code, typed_pin.as_deref())?;
-            crate::util::set(row, secret_field, format!("{}:{}:{}", sec.hash, sec.hint, sec.pin_hash.unwrap_or_default()));
             crate::util::set(row, "stored_value_code", masked(&sec.hint));
+            crate::util::set(row, secret_field, Value::Null);
+            Some(sec)
         }
         Some(_) if typed_pin.is_some() => return Err(Error::field(at, "type the card's code again with its PIN")),
-        Some(_) => {}
-        None => crate::util::set(row, secret_field, Value::Null),
-    }
+        Some(_) => None,
+        None => {
+            crate::util::set(row, secret_field, Value::Null);
+            None
+        }
+    };
     if row.contains_key("stored_value_pin") {
         crate::util::set(row, "stored_value_pin", Value::Null);
     }
+    Ok(typed)
+}
+
+/// Keeps a typed code until its document is submitted: the code's hash and the PIN's in
+/// `stored_value_typed` under a random handle, and on the record only the handle and the code's last
+/// four characters (`handle:hint:held`), which nobody who reads the record can use.
+async fn keep(tx: &mut Tx, tenant: Uuid, row: &mut Doc, secret_field: &str, sec: &Secret) -> Result<()> {
+    let handle = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    sqlx::query("insert into stored_value_typed (tenant_id, handle, code_hash, code_hint, pin_hash) values ($1, $2, $3, $4, $5)")
+        .bind(tenant)
+        .bind(&handle)
+        .bind(&sec.hash)
+        .bind(&sec.hint)
+        .bind(&sec.pin_hash)
+        .execute(&mut **tx)
+        .await?;
+    crate::util::set(row, secret_field, format!("{handle}:{}:{APART}", sec.hint));
     Ok(())
 }
 
-fn kept_secret(row: &Doc, field: &str) -> Option<Secret> {
-    let mut parts = s(row, field)?.splitn(3, ':');
-    let (hash, hint, pin) = (parts.next()?, parts.next()?, parts.next().unwrap_or(""));
-    Some(Secret { hash: hash.into(), hint: hint.into(), pin_hash: (!pin.is_empty()).then(|| pin.to_string()) })
+/// The code a record keeps for its submission: from `stored_value_typed` by its handle (`take`: and
+/// gone from there, for the submission that opens the card), or the hashes a record written before
+/// 0.27.0 carries itself (`hash:hint:pin`).
+async fn kept_secret(tx: &mut Tx, tenant: Uuid, row: &Doc, field: &str, take: bool) -> Result<Option<Secret>> {
+    let Some(kept) = s(row, field) else { return Ok(None) };
+    let mut parts = kept.splitn(3, ':');
+    let (Some(first), Some(hint)) = (parts.next(), parts.next()) else { return Ok(None) };
+    let rest = parts.next().unwrap_or("");
+    if rest != APART {
+        return Ok(Some(Secret { hash: first.into(), hint: hint.into(), pin_hash: (!rest.is_empty()).then(|| rest.to_string()) }));
+    }
+    let sql = if take {
+        "delete from stored_value_typed where tenant_id = $1 and handle = $2 returning code_hash, code_hint, pin_hash"
+    } else {
+        "select code_hash, code_hint, pin_hash from stored_value_typed where tenant_id = $1 and handle = $2"
+    };
+    let found: Option<(String, String, Option<String>)> = sqlx::query_as(sql).bind(tenant).bind(first).fetch_optional(&mut **tx).await?;
+    let (hash, hint, pin_hash) = found.ok_or_else(|| Error::invalid(format!("the code typed for {} is no longer kept: type it again", masked(hint))))?;
+    Ok(Some(Secret { hash, hint, pin_hash }))
 }
 
 /// Hides the codes typed on a sales invoice's lines (before the draft is stored).
-pub(crate) fn mask_lines(ctx: &Ctx, doc: &mut Doc) -> Result<()> {
+pub(crate) async fn mask_lines(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
     let mut items = rows(doc, "items");
     if !items.iter().any(|r| r.contains_key("stored_value_code") || r.contains_key("stored_value_pin")) {
         return Ok(());
     }
     for (i, r) in items.iter_mut().enumerate() {
-        mask(ctx, r, "stored_value_secret", &format!("items.{i}.stored_value_code"))?;
+        if let Some(sec) = mask(hc.ctx, r, "stored_value_secret", &format!("items.{i}.stored_value_code"))? {
+            keep(hc.tx, hc.ctx.tenant, r, "stored_value_secret", &sec).await?;
+        }
     }
     crate::util::set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
     Ok(())
@@ -844,7 +889,7 @@ pub(crate) async fn check_invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()>
                 if s(row, "stored_value_code").is_some() && s(row, "stored_value_secret").is_none() {
                     return Err(Error::field(format!("items.{i}.stored_value_code"), "type the card's code again"));
                 }
-                if kd.requires_pin && kept_secret(row, "stored_value_secret").is_some_and(|x| x.pin_hash.is_none()) {
+                if kd.requires_pin && kept_secret(hc.tx, hc.ctx.tenant, row, "stored_value_secret", false).await?.is_some_and(|x| x.pin_hash.is_none()) {
                     return Err(Error::field(format!("items.{i}.stored_value_pin"), format!("{} is used with a PIN", kd.name)));
                 }
                 kd.check_load(Decimal::ZERO, amount)?;
@@ -889,7 +934,8 @@ pub(crate) async fn invoice_submitted(hc: &mut HookCtx<'_>, doc: &Doc) -> Result
             }
             None => {
                 let holder = if kd.bearer { None } else { id(doc, "customer") };
-                (open(k, ctx, hc.tx, &kd, holder, kept_secret(row, "stored_value_secret"), false, on).await?.0, "issue")
+                let typed = kept_secret(hc.tx, ctx.tenant, row, "stored_value_secret", true).await?;
+                (open(k, ctx, hc.tx, &kd, holder, typed, false, on).await?.0, "issue")
             }
         };
         let m = Move {
@@ -974,16 +1020,13 @@ pub(crate) fn pays(doc: &Doc) -> bool {
 /// A payment's card: a code typed in this save finds its account (PIN and guessing limits checked)
 /// and is hidden; the kind's liability account takes the bank account's place.
 pub(crate) async fn payment_fill(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-    let fresh = s(doc, "stored_value_code").is_some_and(|c| !c.starts_with('•'));
-    mask(hc.ctx, doc, "stored_value_secret", "stored_value_code")?;
-    if fresh && let Some(sec) = kept_secret(doc, "stored_value_secret") {
+    if let Some(sec) = mask(hc.ctx, doc, "stored_value_secret", "stored_value_code")? {
         match lookup(hc.kernel, hc.ctx, hc.tx, None, &sec, true).await? {
             Some(acc) => {
                 crate::util::set(doc, "stored_value_account", acc.to_string());
-                crate::util::set(doc, "stored_value_secret", Value::Null);
             }
             // A new card's code, for a refund into new store credit.
-            None if b(doc, "is_refund") && id(doc, "stored_value_kind").is_some() => {}
+            None if b(doc, "is_refund") && id(doc, "stored_value_kind").is_some() => keep(hc.tx, hc.ctx.tenant, doc, "stored_value_secret", &sec).await?,
             None => {
                 missed(hc.kernel, hc.ctx, None).await?;
                 return Err(Error::field("stored_value_code", "no stored value account has this code"));
@@ -1075,7 +1118,11 @@ pub(crate) async fn check_payment(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company)
             }
         }
     }
-    if refund && acc.is_none() && kd.requires_pin && kept_secret(doc, "stored_value_secret").is_none_or(|x| x.pin_hash.is_none()) {
+    if refund
+        && acc.is_none()
+        && kd.requires_pin
+        && kept_secret(hc.tx, hc.ctx.tenant, doc, "stored_value_secret", false).await?.is_none_or(|x| x.pin_hash.is_none())
+    {
         return Err(Error::field("stored_value_pin", format!("{} is used with a PIN: give the new card's code and PIN", kd.name)));
     }
     Ok(())
@@ -1156,7 +1203,8 @@ pub(crate) async fn payment_submitted(hc: &mut HookCtx<'_>, doc: &Doc, co: &Comp
         None => {
             let kd = kind(k, ctx, hc.tx, id(doc, "stored_value_kind").unwrap_or_default()).await?;
             // Without a code typed, the one made here is shown to no one: the account's New Code gives one.
-            (open(k, ctx, hc.tx, &kd, id(doc, "customer"), kept_secret(doc, "stored_value_secret"), false, on).await?.0, kd)
+            let typed = kept_secret(hc.tx, ctx.tenant, doc, "stored_value_secret", true).await?;
+            (open(k, ctx, hc.tx, &kd, id(doc, "customer"), typed, false, on).await?.0, kd)
         }
     };
     let amount = if kd.units { d(doc, "stored_value_units") } else { paid };

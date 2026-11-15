@@ -1175,7 +1175,7 @@ impl DocHook for InvoiceHook {
         }
         crate::withholding::invoice(hc, doc, self.0, &co).await?;
         if self.0 == Side::Selling {
-            crate::stored_value::mask_lines(hc.ctx, doc)?;
+            crate::stored_value::mask_lines(hc, doc).await?;
         }
         if d(doc, "docstatus").is_zero() {
             flow::set_status(doc, "Draft");
