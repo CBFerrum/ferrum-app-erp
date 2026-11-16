@@ -1656,7 +1656,7 @@ async fn scenario() {
     let run = || async {
         let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
         let through = chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
-        let moved = ferrum_app_erp::deferred::recognise(&t.k, &t.ctx, &mut tx, Some(gmbh), through).await.unwrap();
+        let (moved, _) = ferrum_app_erp::deferred::recognise(&t.k, &t.ctx, &mut tx, Some(gmbh), through).await.unwrap();
         tx.commit().await.unwrap();
         moved
     };
@@ -1711,6 +1711,33 @@ async fn scenario() {
     t.k.cancel(&t.ctx, "PurchaseInvoice", insurance, None).await.expect("cancel the insurance");
     assert_eq!(t.gl("Prepaid Expenses").await, Decimal::ZERO);
     assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(9, 30)})).await["lines"], json!(0), "nothing of a cancelled invoice");
+    // One invoice that cannot be recognised holds back no other. February's service waits while
+    // February is closed, and the accountant is told which and why; the year's support beside it is
+    // recognised, in the daily upkeep's round over every company as in the accountant's.
+    let tig_year =
+        uid(&t.insert("FiscalYear", json!({"year_name": "TIG 2026", "company": gmbh.to_string(), "start_date": year(1, 1), "end_date": year(12, 31)})).await);
+    let february = json!({"company": gmbh.to_string(), "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "28",
+                          "enable_deferred_revenue": true, "service_start_date": year(2, 1), "service_end_date": year(2, 28)}]});
+    let february = uid(&t.submit("SalesInvoice", uid(&t.insert("SalesInvoice", february).await)).await);
+    let beside = uid(&t.insert("SalesInvoice", support(true, Some(&year(1, 1)))).await);
+    t.submit("SalesInvoice", beside).await;
+    t.action("FiscalYear", tig_year, "close_period", json!({"period_start": year(2, 1)})).await;
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    let upkeep_round = ferrum_app_erp::deferred::recognise(&t.k, &t.ctx, &mut tx, None, chrono::NaiveDate::from_ymd_opt(2026, 3, 31).unwrap()).await;
+    assert!(upkeep_round.is_ok(), "{upkeep_round:?}");
+    tx.commit().await.unwrap();
+    assert_eq!((line(beside).await["deferred_booked_till"].clone(), line(february).await["deferred_booked_till"].clone()), (json!(year(3, 31)), Value::Null));
+    let told = t.k.run_action(&t.ctx, "Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await.expect("the accountant's round");
+    let number = t.get("SalesInvoice", february).await["number"].as_str().unwrap().to_string();
+    let message = told["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&number) && message.contains("closed"), "{told}");
+    // February open again, it is recognised.
+    t.action("FiscalYear", tig_year, "reopen_period", json!({"period_start": year(2, 1)})).await;
+    assert_eq!(t.action("Company", gmbh, "recognise_deferred", json!({"through": year(3, 31)})).await["lines"], json!(1));
+    for si in [february, beside] {
+        t.k.cancel(&t.ctx, "SalesInvoice", si, None).await.expect("cancel");
+    }
+    assert_eq!(t.gl("Deferred Revenue").await, Decimal::ZERO);
 
     // ───────────── accruals that reverse themselves (FERRUM-ERP-006) ─────────────
     // March's electricity, billed in April: accrued on 31 March and taken out again the day after,
