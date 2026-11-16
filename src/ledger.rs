@@ -112,6 +112,20 @@ impl Entry {
 
 type MergeKey = (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<(String, Uuid)>, String, crate::dimensions::Dims);
 
+/// `v` at `precision` places, rounded as a company rounds (`Company::rounding`: half up, or half to
+/// even), as the calculation rounds a document's base figures. Every conversion into the company's
+/// currency rounds so: an amount converted at a rate anywhere (an invoice, its payment, its return,
+/// its write-off) then comes to the one figure.
+pub fn round_as(v: Decimal, precision: u32, rounding: ferrum_calc::Rounding) -> Decimal {
+    let strategy = match rounding {
+        ferrum_calc::Rounding::HalfUp => rust_decimal::RoundingStrategy::MidpointAwayFromZero,
+        ferrum_calc::Rounding::HalfEven => rust_decimal::RoundingStrategy::MidpointNearestEven,
+    };
+    let mut x = v.round_dp_with_strategy(precision, strategy);
+    x.rescale(precision);
+    x
+}
+
 /// Appends one balanced journal entry. Returns `None` when every line nets to zero. Lines take
 /// their dimensions' defaults first and are refused a dimension value that is not one, or an
 /// account's required dimension left empty.

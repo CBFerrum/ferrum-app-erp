@@ -1238,7 +1238,8 @@ pub(crate) async fn refund_onto(k: &Kernel, ctx: &Ctx, tx: &mut Tx, invoice: Uui
 /// Days of Warning before expiry (`accounting.stored_value_expiring`, for an automation to tell the
 /// holder; nothing is sent from here), and the expiry after its last day, posting what the kind says
 /// of unused value. Each account is locked and its state read under the lock, so a second run, or
-/// another replica's, does neither twice. Returns (warned, expired).
+/// another replica's, does neither twice; one whose expiry is refused waits for a later round
+/// without holding back the others. Returns (warned, expired).
 pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, usize)> {
     let (accounts, kinds) = (table(ctx, ACCOUNT)?, table(ctx, "StoredValueKind")?);
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
@@ -1277,28 +1278,52 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<(usize, u
     for h in lapsed {
         end_holds(k, ctx, &mut tx, "h.id = $2", h, "expired", None).await?;
     }
+    let mut expired_now = 0;
     for id in &expired {
-        let mut acc = lock(ctx, &mut tx, *id).await?;
-        let kd = kind(k, ctx, &mut tx, acc.kind).await?;
-        let co = company(k, ctx, &mut tx, kd.company).await?;
-        let op = Uuid::now_v7();
-        // What stays owed keeps its balance and value; otherwise what is left becomes income.
-        let (amount, value) = if kd.on_expiry == OnExpiry::StaysOwed { (Decimal::ZERO, Decimal::ZERO) } else { (acc.balance(), acc.value()) };
-        let journal = if value.is_zero() {
-            None
-        } else {
-            let lines = vec![
-                Line::new(kd.liability, value, &co.currency_code).remarks("Expired stored value"),
-                Line::new(kd.income()?, -value, &co.currency_code).remarks("Expired stored value"),
-            ];
-            post(ctx, &mut tx, &co, today, op, &format!("{} expired", acc.label(&kd)), lines).await?
-        };
-        let m =
-            Move { entry_type: "expire", amount: -amount, value: -value, on: Some(today), source: Some((ACCOUNT.into(), *id)), journal, ..Default::default() };
-        record(k, ctx, &mut tx, &mut acc, &kd, op, m).await?;
+        // Each on its own: one whose posting is refused (its kind's account frozen, the day's period
+        // closed) is left for a later round, and the others expire.
+        sqlx::query("savepoint stored_value_expiry").execute(&mut *tx).await?;
+        let done = async {
+            let mut acc = lock(ctx, &mut tx, *id).await?;
+            let kd = kind(k, ctx, &mut tx, acc.kind).await?;
+            let co = company(k, ctx, &mut tx, kd.company).await?;
+            let op = Uuid::now_v7();
+            // What stays owed keeps its balance and value; otherwise what is left becomes income.
+            let (amount, value) = if kd.on_expiry == OnExpiry::StaysOwed { (Decimal::ZERO, Decimal::ZERO) } else { (acc.balance(), acc.value()) };
+            let journal = if value.is_zero() {
+                None
+            } else {
+                let lines = vec![
+                    Line::new(kd.liability, value, &co.currency_code).remarks("Expired stored value"),
+                    Line::new(kd.income()?, -value, &co.currency_code).remarks("Expired stored value"),
+                ];
+                post(ctx, &mut tx, &co, today, op, &format!("{} expired", acc.label(&kd)), lines).await?
+            };
+            let m = Move {
+                entry_type: "expire",
+                amount: -amount,
+                value: -value,
+                on: Some(today),
+                source: Some((ACCOUNT.into(), *id)),
+                journal,
+                ..Default::default()
+            };
+            record(k, ctx, &mut tx, &mut acc, &kd, op, m).await
+        }
+        .await;
+        match done {
+            Ok(_) => {
+                sqlx::query("release savepoint stored_value_expiry").execute(&mut *tx).await?;
+                expired_now += 1;
+            }
+            Err(e) => {
+                sqlx::query("rollback to savepoint stored_value_expiry").execute(&mut *tx).await?;
+                tracing::warn!(tenant = %ctx.tenant, account = %id, "stored value not expired: {e}");
+            }
+        }
     }
     tx.commit().await?;
-    Ok((due.len(), expired.len()))
+    Ok((due.len(), expired_now))
 }
 
 // ───────────────────────────── holds ─────────────────────────────

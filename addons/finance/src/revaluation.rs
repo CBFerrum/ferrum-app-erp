@@ -14,7 +14,7 @@ use crate::common::child_rows;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use ferrum_app_erp::ledger::{self, Entry, Line};
-use ferrum_domain::util::{Company, b, company, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
+use ferrum_domain::util::{Company, b, company, d, date, exchange_rate, get, id, money, rows, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -85,7 +85,7 @@ async fn balances(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDat
                 (currency, rate)
             }
         };
-        let revalued = round(foreign * rate, co.precision);
+        let revalued = ledger::round_as(foreign * rate, co.precision, co.rounding);
         let balance = Balance { account, customer, supplier, currency, foreign, book, rate, revalued };
         if !balance.gain().is_zero() {
             out.push(balance);

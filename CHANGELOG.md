@@ -1,5 +1,32 @@
 # Changelog
 
+## ERP 0.28.1, Finance 0.6.3: four faults, each shown failing first
+
+From the cleanup audit, each reproduced by a test before it was changed. Payment Run and its lines gain a field each
+(`rounds`, `round`); the Recognise Deferred action's answer gains `left`. No interface change.
+
+- **A payment run's bank file holds one round's payments.** Pressing Make Payments again after a supplier failed made
+  the file again from every line ever paid, under the same message id, and deleted the first: uploading the newest
+  after the first paid the first round's suppliers twice, and a bank that refuses a repeated message id refused the
+  new payments with them. A press that pays something is now a round: its lines carry it, its file (pain.001 or CSV)
+  holds them alone under message id `<number>-<round>`, and the earlier files stay on the run. A press that pays
+  nothing makes no file.
+- **A pricing rule whose condition does not compile applies to no one.** It was taken as having no condition, so a
+  typo in a customer or coupon gate (Commerce writes its coupon gate into the condition) gave the discount to everyone.
+  Such a rule is now left out when pricing, whatever wrote it, and saving one is refused on its condition.
+- **One document holds back no other in the upkeeps.** Deferred recognition stopped for every invoice of a workspace,
+  every month, when one could not be recognised (its period closed, an account missing); stored value expiry stopped
+  likewise when one account's posting was refused (its kind's income account frozen). Each invoice and each account
+  now goes in a savepoint of its own: one refused waits for a later round, named in the log and in the accountant's
+  Recognise Deferred message.
+- **Conversions round as the company rounds.** A company that rounds half to even had its documents' base figures
+  rounded so, but every other conversion into its currency rounded half up: an invoice of 10.10 dollars at 83.25 was
+  booked at 840.82 and its payment at the same rate at 840.83, leaving 0.01 in receivables on a paid invoice. Payments
+  (and what they settle, deduct or leave unallocated), transfers, returns settling their invoice, write-offs, opening
+  invoices, journal lines in another currency, withholding on payment, and Finance's dunning charges, allocations,
+  advances, revaluation and payment schedules now round through `ledger::round_as`. Nothing changes for a company that
+  rounds half up, the default.
+
 ## ERP 0.28.0, European Union 0.4.0, United Kingdom 0.3.0, United States 0.2.0, Malaysia 0.3.0, Romania 0.2.0, Portugal 0.2.0: settings in the database, Portugal's key in its vault
 
 Each needs platform 0.3.9 (Ferrum `22d082f7` or later), which reads apps' operator settings. No database or interface

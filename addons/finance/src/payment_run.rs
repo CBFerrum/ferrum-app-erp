@@ -8,7 +8,9 @@
 //! so one that is refused is marked Failed with why and the others stand, and sends that supplier its
 //! remittance advice (`finance.remittance_advice`). The run is locked while it pays and a line with a
 //! payment is never paid again, so pressing it twice, or at once, pays nothing twice; the ledger's
-//! allocation refuses more than is outstanding besides.
+//! allocation refuses more than is outstanding besides. Each press that pays something is a round
+//! with a bank file of its own, holding that round's payments only under message id `<number>-<round>`:
+//! the earlier files stay as they were, and a payment the bank was given once is never in a later file.
 //!
 //! A bill's discount is its payment terms': each installment still open whose discount date is on or
 //! after the pay date gives its percent of what is open of it. The template says where the discount
@@ -274,6 +276,9 @@ async fn make_payments(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
     }
     let number = s(&run, "number").unwrap_or_default().to_string();
     let sctx = sys(hc.ctx);
+    // This press is a round when it pays something; its lines carry it, and its bank file holds them alone.
+    let round = run.get("rounds").and_then(Value::as_i64).unwrap_or(0) + 1;
+    let mut paid_now = false;
     for (supplier, ls) in by_supplier {
         sqlx::query("savepoint payment_run_supplier").execute(&mut **hc.tx).await?;
         let made = pay_supplier(hc, &run, supplier, &ls, &number).await;
@@ -287,11 +292,13 @@ async fn make_payments(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
                 ("Failed", None, Some(e.to_string()))
             }
         };
+        paid_now |= payment.is_some();
         for l in &ls {
             let mut v = Doc::new();
             v.insert("state".into(), json!(state));
             v.insert("payment_entry".into(), json!(payment));
             v.insert("error".into(), json!(error));
+            v.insert("round".into(), json!(payment.map(|_| round)));
             hc.kernel.set_child_values_tx(&sctx, hc.tx, "PaymentRun", "lines", id(l, "id").unwrap_or_default(), v).await?;
         }
     }
@@ -304,17 +311,21 @@ async fn make_payments(hc: &mut HookCtx<'_>, rid: Uuid) -> Result<()> {
     v.insert("paid_amount".into(), money(paid));
     v.insert("failed_count".into(), json!(failed));
     v.insert("run_status".into(), json!(if done { "Paid" } else { "Partly Paid" }));
+    if paid_now {
+        v.insert("rounds".into(), json!(round));
+    }
     hc.kernel.set_values_tx(&sctx, hc.tx, "PaymentRun", rid, v).await?;
-    // The bank's file of what was paid, kept on the run (made again, replacing it, when it pays more).
+    // The bank's file of what this round paid, under a message id of its own, kept on the run beside
+    // the earlier rounds' files: the bank may have those already, so none is made again or replaced.
     if let Some(template) = s(&run, "bank_file").map(str::trim).filter(|t| !t.is_empty())
-        && !paid.is_zero()
+        && paid_now
     {
         let g = ferrum_kernel::documents::Generate {
             template: template.to_string(),
             record: rid,
-            name: Some(format!("{number} bank file")),
+            name: Some(format!("{number}-{round} bank file")),
             language: None,
-            replace: true,
+            replace: false,
             values: Default::default(),
         };
         ferrum_kernel::documents::generate(hc.kernel, hc.tx, &sctx, &g).await?;

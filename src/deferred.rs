@@ -100,15 +100,18 @@ pub fn earned(amount: Decimal, start: NaiveDate, end: NaiveDate, through: NaiveD
 }
 
 /// Recognises, for every submitted invoice of `only` (a company) or every company, what its
-/// deferred lines earned or used through `through`. Answers how many lines moved.
-pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, through: NaiveDate) -> Result<usize> {
+/// deferred lines earned or used through `through`, each invoice on its own: one that cannot be (its
+/// day's period closed, an account missing) is left as it was, and the others are recognised.
+/// Answers how many lines moved, and each invoice left with why.
+pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, through: NaiveDate) -> Result<(usize, Vec<String>)> {
     let mut moved = 0;
+    let mut left = Vec::new();
     for kd in &KINDS {
         let Some(ent) = ctx.schema.entity(kd.invoice) else { continue };
         let Some(lines) = ent.children.get("items").map(|c| c.table.clone()) else { continue };
         let invoice_table = ent.table.clone();
-        let waiting: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "select distinct i.id from {invoice_table} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
+        let waiting: Vec<(Uuid, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "select distinct i.id, i.number from {invoice_table} i join {lines} l on l.tenant_id = i.tenant_id and l.parent_id = i.id \
              where i.tenant_id = $1 and i.docstatus = 1 and ($2::uuid is null or i.company = $2) \
              and coalesce(l.{flag}, false) and l.service_start_date <= $3 \
              and (l.deferred_booked_till is null or l.deferred_booked_till < l.service_end_date) and (l.deferred_booked_till is null or l.deferred_booked_till < $3) \
@@ -122,11 +125,21 @@ pub async fn recognise(k: &Kernel, ctx: &Ctx, tx: &mut Tx, only: Option<Uuid>, t
         .bind(through)
         .fetch_all(&mut **tx)
         .await?;
-        for iid in waiting {
-            moved += recognise_invoice(k, ctx, tx, kd, iid, through).await?;
+        for (iid, number) in waiting {
+            sqlx::query("savepoint deferred_invoice").execute(&mut **tx).await?;
+            match recognise_invoice(k, ctx, tx, kd, iid, through).await {
+                Ok(n) => {
+                    sqlx::query("release savepoint deferred_invoice").execute(&mut **tx).await?;
+                    moved += n;
+                }
+                Err(e) => {
+                    sqlx::query("rollback to savepoint deferred_invoice").execute(&mut **tx).await?;
+                    left.push(format!("{} ({e})", number.unwrap_or_else(|| iid.to_string())));
+                }
+            }
         }
     }
-    Ok(moved)
+    Ok((moved, left))
 }
 
 async fn recognise_invoice(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kd: &Kind, iid: Uuid, through: NaiveDate) -> Result<usize> {
@@ -196,10 +209,12 @@ pub async fn action(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, params: &
     if through > ctx.today() {
         return Err(Error::field("through", "deferred amounts are recognised up to a day that has come"));
     }
-    let moved = recognise(k, ctx, tx, Some(company), through).await?;
-    Ok(
-        json!({"lines": moved, "through": through.to_string(), "message": format!("{moved} deferred line{} recognised through {through}", if moved == 1 { "" } else { "s" })}),
-    )
+    let (moved, left) = recognise(k, ctx, tx, Some(company), through).await?;
+    let mut message = format!("{moved} deferred line{} recognised through {through}", if moved == 1 { "" } else { "s" });
+    if !left.is_empty() {
+        message.push_str(&format!("; not yet: {}", left.join("; ")));
+    }
+    Ok(json!({"lines": moved, "through": through.to_string(), "left": left, "message": message}))
 }
 
 #[cfg(test)]

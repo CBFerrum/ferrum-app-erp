@@ -593,6 +593,32 @@ async fn scenario() {
     let e = t.k.insert(&t.ctx, "PaymentEntry", obj(pay(&walk_in, &i9, "10", json!({"stored_value_account": a8.to_string()})))).await;
     assert!(e.unwrap_err().to_string().contains("expired"));
     t.agrees().await;
+    // An account whose expiry cannot be booked (its kind's income account frozen) waits for a later
+    // round, and holds back no other account's expiry.
+    let breakage = t
+        .insert("Account", json!({"account_name": "Card Breakage", "company": c, "parent_account": account("Indirect Income").await, "root_type": "Income"}))
+        .await["id"]
+        .clone();
+    let expiring = |name: &'static str, income: Value| {
+        let (t, c, liability, goodwill) = (&t, c.clone(), liability.clone(), goodwill.clone());
+        async move {
+            let kind = json!({"kind_name": name, "company": c, "liability_account": liability, "adjustment_account": goodwill, "income_account": income,
+                              "expiry": "From Issue", "expiry_days": 30, "on_expiry": "Income at Expiry"});
+            t.insert("StoredValueKind", kind).await["id"].as_str().unwrap().to_string()
+        }
+    };
+    let (fragile, steady) = (expiring("Fragile", breakage.clone()).await, expiring("Steady", income.clone()).await);
+    let a10 = vid(&t.issue(&fragile, "20", None, None, None, None).await.unwrap()["account"]);
+    let a11 = vid(&t.issue(&steady, "30", None, None, None, None).await.unwrap()["account"]);
+    let freeze = |frozen: bool| t.k.update(&t.ctx, "Account", vid(&breakage), obj(json!({"frozen": frozen})), None);
+    freeze(true).await.expect("freeze");
+    let upkeep_round = stored_value::upkeep(&t.k, &t.ctx, days(31)).await;
+    assert!(upkeep_round.is_ok(), "{upkeep_round:?}");
+    assert_eq!((t.account(a10).await.2, t.account(a11).await), ("Active".to_string(), (n("0"), n("0"), "Expired".to_string())));
+    freeze(false).await.expect("unfreeze");
+    stored_value::upkeep(&t.k, &t.ctx, days(31)).await.unwrap();
+    assert_eq!(t.account(a10).await, (n("0"), n("0"), "Expired".into()));
+    t.agrees().await;
     // ───────────── 6. reports ─────────────
     let report = |name: &'static str, params: Vec<(&'static str, String)>| {
         let t = &t;

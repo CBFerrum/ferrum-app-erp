@@ -235,7 +235,11 @@ impl DunningHook {
         set(doc, "dunning_fee", money(fee));
         set(doc, "dunning_amount", money(charges));
         set(doc, "grand_total", money(total + charges));
-        set(doc, "base_dunning_amount", money(round(fee * rate, co.precision) + round(interest_total * rate, co.precision)));
+        set(
+            doc,
+            "base_dunning_amount",
+            money(ledger::round_as(fee * rate, co.precision, co.rounding) + ledger::round_as(interest_total * rate, co.precision, co.rounding)),
+        );
         set(doc, "outstanding_amount", money(charges));
         set(doc, "status", json!("Draft"));
         let vars = json!({
@@ -298,7 +302,8 @@ impl DocHook for DunningHook {
             };
             let interest_account = id(&dt, "interest_income_account").unwrap_or(income);
             let (fee, interest) = (d(doc, "dunning_fee"), d(doc, "interest_amount"));
-            let (base_fee, base_interest) = (round(fee * rate, co.precision), round(interest * rate, co.precision));
+            let (base_fee, base_interest) =
+                (ledger::round_as(fee * rate, co.precision, co.rounding), ledger::round_as(interest * rate, co.precision, co.rounding));
             let mut entry = Entry::new(co.id, on, "Dunning", did, s(doc, "number").map(str::to_string));
             entry.memo = Some(format!("Dunning level {} for {}", crate::common::int(doc, "dunning_level"), s(doc, "customer_name").unwrap_or_default()));
             entry

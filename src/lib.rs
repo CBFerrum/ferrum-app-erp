@@ -108,6 +108,7 @@ pub fn register(h: &mut HookRegistry) {
     });
     h.scoped(&only("selling"), |h| {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))
+            .register("PricingRule", Arc::new(pricing::RuleHook))
             .register("Company", Arc::new(promotion::PriceLinesHook))
             .register("Company", Arc::new(reservation::AvailabilityHook));
     });
@@ -162,7 +163,12 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         let ctx = ferrum_kernel::Ctx::system(tenant, schema);
         let mut tx = k.db.tenant_tx(tenant).await?;
         match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
-            Ok(_) => tx.commit().await?,
+            Ok((_, left)) => {
+                tx.commit().await?;
+                for invoice in left {
+                    tracing::warn!(%tenant, "deferred recognition waits: {invoice}");
+                }
+            }
             Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
         }
         if let Err(e) = journal_template::upkeep(k, &ctx, today).await {
