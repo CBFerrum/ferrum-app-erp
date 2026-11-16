@@ -146,6 +146,36 @@ async fn scenario() {
     let late = invoicing.await.unwrap();
     assert!(matches!(&late, Err(e) if format!("{e:?}").contains("is filed for")), "an invoice submitted into a period as it was filed: {late:?}");
     assert!(waited, "the invoice waited for the filing");
+
+    // A payment whose early-payment discount takes tax back is in the tax ledger on its day, as an invoice is: in a
+    // filed period it is neither submitted nor cancelled. One without a discount on tax is not the return's.
+    let bank = t.account("Primary Bank").await;
+    let allowed = t.account("Sales").await;
+    let paid = |si: uuid::Uuid, discount: &str| {
+        json!({"company": c, "payment_type": "Receive", "customer": globex, "bank_account": bank, "posting_date": month(3).to_string(),
+               "paid_amount": (Decimal::from(110) - Decimal::from_str_exact(discount).unwrap()).to_string(),
+               "references": [{"invoice": si.to_string(), "allocated_amount": (Decimal::from(110) - Decimal::from_str_exact(discount).unwrap()).to_string(),
+                               "discount_amount": discount, "discount_account": allowed, "discount_reduces_tax": true}]})
+    };
+    let early = uid(&t.post("SalesInvoice", dated(month(3))).await);
+    let later = uid(&t.post("SalesInvoice", dated(month(3))).await);
+    let pe = t.post("PaymentEntry", paid(early, "11")).await;
+    let filed = t.post("TaxReturn", return_for(month(3))).await;
+    assert_eq!(boxes(&filed)["OUT"], n(19), "two sales' 20 less the 1 the discount took back");
+    let books = async || dec(&t.report("tax_return_documents", &[("tax_return", &uid(&filed).to_string()), ("box", "OUT")]).await["totals"]["counted"]);
+    let submitted = t.try_post("PaymentEntry", paid(later, "11")).await;
+    let after_payment = books().await;
+    let cancelled = t.k.cancel(&t.ctx, "PaymentEntry", uid(&pe), None).await.map_err(|e| format!("{e:?}"));
+    let after_cancel = books().await;
+    let refused = |r: &Result<_, String>| matches!(r, Err(e) if e.contains("is filed for"));
+    assert_eq!(
+        (after_payment, refused(&submitted), after_cancel, refused(&cancelled)),
+        (n(19), true, n(19), true),
+        "the filed return's figures stay what was filed: {:?} {:?}",
+        submitted.as_ref().err(),
+        cancelled.as_ref().err()
+    );
+    t.post("PaymentEntry", paid(later, "0")).await;
 }
 
 /// Until a backend waits for a lock `pid` holds (true), or `task` is done without that (false), however loaded the

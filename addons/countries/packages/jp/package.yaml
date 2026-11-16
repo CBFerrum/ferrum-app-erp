@@ -38,3 +38,31 @@ overlays:
       - {op: add_action, action: {name: jp_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.jp_peppol_status != 'Sent'"}}
       - {op: add_action, action: {name: jp_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
           params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Japan Consumption Tax Return"
+        country: JP
+        frequency: Monthly
+        notes: "A summary of the consumption tax return by rate from the tax ledger, with the national (7.8/10 and 6.24/8) and local parts; the boxes are in the company's currency, rounded to its decimals (whole yen). The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "S_EXP", label: "Export sales", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "S_ZR", label: "Zero-rated sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "T10S", label: "Consumption tax on sales at 10%, before the reverse charge", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "RC_TAX", label: "Consumption tax on specified services under the reverse charge", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "I10S", label: "Consumption tax on purchases at 10%, before the reverse charge", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "S10", label: "Taxable sales at 10%", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "S8", label: "Taxable sales at 8% (reduced)", kind: Sum, measure: Base, direction: Output, category: "Reduced"}
+          - {code: "EXP", label: "Export (exempt) sales", kind: Formula, formula: "S_EXP + S_ZR"}
+          - {code: "NT", label: "Non-taxable sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "RC", label: "Specified services under the reverse charge", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "T10", label: "Consumption tax on sales at 10%", kind: Formula, formula: "T10S + RC_TAX"}
+          - {code: "T8", label: "Consumption tax on sales at 8%", kind: Sum, measure: Tax, direction: Output, category: "Reduced"}
+          - {code: "I10", label: "Consumption tax on purchases at 10%", kind: Formula, formula: "I10S + RC_TAX"}
+          - {code: "I8", label: "Consumption tax on purchases at 8%", kind: Sum, measure: Tax, direction: Input, category: "Reduced", reverse_charge: "No"}
+          - {code: "N", label: "National consumption tax due (7.8/10 and 6.24/8 of the net)", kind: Formula, formula: "(T10 - I10) * 0.78 + (T8 - I8) * 0.78"}
+          - {code: "L", label: "Local consumption tax due (2.2/10 and 1.76/8 of the net)", kind: Formula, formula: "T10 - I10 + T8 - I8 - N"}
+          - {code: "NET", label: "Consumption tax due", kind: Formula, formula: "T10 + T8 - I10 - I8"}

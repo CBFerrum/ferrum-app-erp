@@ -4,9 +4,7 @@
 //! healthcare, interest, immovable property); VAT on services from abroad paid by the company
 //! (PP.36) and claimed as input tax. The return is PP.30's lines.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED};
-use ferrum_kernel::Doc;
-use rust_decimal::Decimal;
+use crate::engine::{Country, Rate, ReverseCharge, Row};
 
 pub static COUNTRY: Country = Country {
     package: "th",
@@ -37,27 +35,9 @@ pub fn number(raw: &str) -> Option<String> {
     ((11 - sum % 11) % 10 == d[12]).then_some(n)
 }
 
-fn pp30(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let zero = f.sales_net(&[ZERO_RATED, EXPORT]);
-    let exempt = f.sales_net(&[EXEMPT]);
-    let sales = f.sales_net(&["Standard"]) + zero + exempt;
-    let output = f.sales_tax(&["Standard"]);
-    let input = f.purchases_tax(&["Standard", REVERSE_CHARGED]);
-    vec![
-        ("1", "Sales amount", sales),
-        ("2", "Less sales subject to 0% tax rate", zero),
-        ("3", "Less exempted sales", exempt),
-        ("4", "Taxable sales amount", sales - zero - exempt),
-        ("5", "Output tax this month", output),
-        ("6", "Purchase amount entitled to deduction of input tax", f.purchases_net(&["Standard", REVERSE_CHARGED])),
-        ("7", "Input tax this month", input),
-        ("8", "Tax payable", (output - input).max(Decimal::ZERO)),
-        ("9", "Excess tax payment", (input - output).max(Decimal::ZERO)),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "th_pp30", label: "VAT Return (PP.30)", country: &COUNTRY, boxes: pp30 })]
+    Vec::new()
 }
 
 crate::app!("th");

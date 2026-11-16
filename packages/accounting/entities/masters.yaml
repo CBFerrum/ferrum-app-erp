@@ -351,7 +351,7 @@
   submittable: true
   company_scoped: true
   numbering: {template: "TR-{FY}-{seq:4}", date_field: from_date}
-  description: "A return for a period, its boxes worked out from the books while it is a draft and adjusted by hand with a reason. Submitting it files it: its values are kept, and no invoice of its period may be submitted or cancelled after."
+  description: "A return for a period, its boxes worked out from the books while it is a draft and adjusted by hand with a reason. Submitting it files it: its values are kept, and no invoice of its period, nor payment whose discount takes tax back, may be submitted or cancelled after."
   fields:
     - {name: definition, type: link, to: TaxReturnDefinition, required: true, in_list: true, in_filter: true}
     - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}

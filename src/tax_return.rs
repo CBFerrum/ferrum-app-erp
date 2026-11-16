@@ -4,7 +4,7 @@
 //! category, direction, place of delivery and document kind; a formula over other boxes; or a figure
 //! entered by hand. A `TaxReturn` for a period works its boxes out while it is a draft, keeps each
 //! box's adjustment and reason, and once submitted (filed) keeps its values and refuses any invoice
-//! of its period being submitted or cancelled. A box drills to its documents through the report
+//! of its period, or payment whose discount takes tax back, being submitted or cancelled. A box drills to its documents through the report
 //! `tax_return_documents`. No country is named here: a country's return is a definition its add-on
 //! seeds.
 
@@ -316,9 +316,9 @@ impl DocHook for ReturnHook {
     }
 }
 
-/// Refuses to submit or cancel an invoice dated in a filed return's period: its figures are kept as filed. The
-/// invoice's month is held (shared) to the end of its transaction, so a return of the period being worked out at once
-/// waits for it, or it for the return.
+/// Refuses to submit or cancel a document of the tax ledger (an invoice, or a payment whose discount takes tax back)
+/// dated in a filed return's period: its figures are kept as filed. The document's month is held (shared) to the end of
+/// its transaction, so a return of the period being worked out at once waits for it, or it for the return.
 pub async fn check_open(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
     let Some(ent) = hc.ctx.schema.entity("TaxReturn") else { return Ok(()) };
     let (Some(cid), Ok(on)) = (id(doc, "company"), date(doc, "posting_date")) else { return Ok(()) };
@@ -334,7 +334,7 @@ pub async fn check_open(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
     .await?;
     match filed {
         Some(n) => Err(Error::invalid(format!(
-            "the tax return {n} is filed for {on}: an invoice of its period is no longer submitted or cancelled; date it in an open period"
+            "the tax return {n} is filed for {on}: a document that changes its figures is no longer submitted or cancelled; date it in an open period"
         ))),
         None => Ok(()),
     }

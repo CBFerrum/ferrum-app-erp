@@ -49,3 +49,35 @@ overlays:
       - {op: add_field, after: my_long_id, field: {name: my_validation_url, type: data, label: Validation Link (QR Code), max_length: 300, read_only: true, no_copy: true}}
       - {op: add_field, after: my_validation_url, field: {name: my_validated_at, type: data, label: Validated At, read_only: true, no_copy: true}}
       - {op: add_field, after: my_validated_at, field: {name: my_einvoice_error, type: text, label: MyInvois Errors, read_only: true, no_copy: true}}
+  # The return's boxes sum the tax ledger by this country's own categories too.
+  - entity: TaxReturnBoxDefinition
+    ops:
+      - {op: add_options, field: category, options: ["Sales Tax 10%", "Sales Tax 5%", "Service Tax", "Service Tax 6%"]}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Malaysia SST-02"
+        country: MY
+        frequency: Monthly
+        notes: "The SST-02 figures from the tax ledger: the boxes ending in _TAX and EXM, ZR, EXPS sum the ledger for the form's boxes. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "ST10_TAX", label: "Sales tax at 10%", kind: Sum, measure: Tax, direction: Output, category: "Sales Tax 10%"}
+          - {code: "ST5_TAX", label: "Sales tax at 5%", kind: Sum, measure: Tax, direction: Output, category: "Sales Tax 5%"}
+          - {code: "SV8_TAX", label: "Service tax at 8%", kind: Sum, measure: Tax, direction: Output, category: "Service Tax"}
+          - {code: "SV6_TAX", label: "Service tax at 6%", kind: Sum, measure: Tax, direction: Output, category: "Service Tax 6%"}
+          - {code: "EXM", label: "Exempted", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "ZR", label: "Zero-rated", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "EXPS", label: "Exported", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "ST10", label: "Taxable goods sold at 10%", kind: Sum, measure: Base, direction: Output, category: "Sales Tax 10%"}
+          - {code: "ST5", label: "Taxable goods sold at 5%", kind: Sum, measure: Base, direction: Output, category: "Sales Tax 5%"}
+          - {code: "ST", label: "Sales tax", kind: Formula, formula: "ST10_TAX + ST5_TAX"}
+          - {code: "SV8", label: "Taxable services at 8%", kind: Sum, measure: Base, direction: Output, category: "Service Tax"}
+          - {code: "SV6", label: "Taxable services at 6%", kind: Sum, measure: Base, direction: Output, category: "Service Tax 6%"}
+          - {code: "SV", label: "Service tax", kind: Formula, formula: "SV8_TAX + SV6_TAX"}
+          - {code: "ITS", label: "Imported taxable services", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "ITST", label: "Service tax on imported taxable services", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "EX", label: "Exempted, zero-rated and exported", kind: Formula, formula: "EXM + ZR + EXPS"}
+          - {code: "TOTAL", label: "Total tax payable", kind: Formula, formula: "ST + SV + ITST"}

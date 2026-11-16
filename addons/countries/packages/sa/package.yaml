@@ -22,3 +22,41 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
       - {op: add_field, after: sa_vat_category, field: {name: sa_kind, type: select, label: "Goods or Services (Saudi Arabia)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Saudi Arabia VAT Return"
+        country: SA
+        frequency: Monthly
+        notes: "ZATCA's VAT return from the tax ledger: the boxes in capitals sum the ledger, the form's numbered boxes are formulas over them. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "S_STD", label: "Standard rated sales", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "S_STD_TAX", label: "VAT on standard rated sales", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "S_ZR", label: "Zero rated domestic sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "S_EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "S_EX", label: "Exempt sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "P_STD", label: "Standard rated domestic purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "P_STD_TAX", label: "VAT on standard rated domestic purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "RC", label: "Imports through reverse charge", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "RC_TAX", label: "VAT on imports through reverse charge", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "P_ZR", label: "Zero rated purchases", kind: Sum, measure: Base, direction: Input, category: "Zero Rated", reverse_charge: "No"}
+          - {code: "P_EX", label: "Exempt purchases", kind: Sum, measure: Base, direction: Input, category: "Exempt", reverse_charge: "No"}
+          - {code: "1", label: "Standard rated sales", kind: Formula, formula: "S_STD"}
+          - {code: "1 VAT", label: "VAT on standard rated sales", kind: Formula, formula: "S_STD_TAX"}
+          - {code: "3", label: "Zero rated domestic sales", kind: Formula, formula: "S_ZR"}
+          - {code: "4", label: "Exports", kind: Formula, formula: "S_EXP"}
+          - {code: "5", label: "Exempt sales", kind: Formula, formula: "S_EX"}
+          - {code: "6", label: "Total sales", kind: Formula, formula: "S_STD + S_ZR + S_EXP + S_EX"}
+          - {code: "6 VAT", label: "VAT on total sales", kind: Formula, formula: "S_STD_TAX"}
+          - {code: "7", label: "Standard rated domestic purchases", kind: Formula, formula: "P_STD"}
+          - {code: "7 VAT", label: "VAT on standard rated domestic purchases", kind: Formula, formula: "P_STD_TAX"}
+          - {code: "9", label: "Imports subject to VAT accounted for through reverse charge mechanism", kind: Formula, formula: "RC"}
+          - {code: "9 VAT", label: "VAT on imports through reverse charge", kind: Formula, formula: "RC_TAX"}
+          - {code: "10", label: "Zero rated purchases", kind: Formula, formula: "P_ZR"}
+          - {code: "11", label: "Exempt purchases", kind: Formula, formula: "P_EX"}
+          - {code: "12", label: "Total purchases", kind: Formula, formula: "P_STD + RC + P_ZR + P_EX"}
+          - {code: "12 VAT", label: "VAT on total purchases", kind: Formula, formula: "P_STD_TAX + RC_TAX"}
+          - {code: "13", label: "Total VAT due for current period", kind: Formula, formula: "S_STD_TAX + RC_TAX - P_STD_TAX - RC_TAX"}

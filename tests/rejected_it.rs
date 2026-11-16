@@ -50,7 +50,7 @@ async fn scenario() {
     assert_eq!(bal, vec![(n("3"), n("0"))], "kept at no value");
     assert_eq!(dec(&t.get("PurchaseOrder", uid(&po)).await["items"][0]["received_qty"]), n("7"));
     let asked = json!({"id": c, "params": {"item": bolt, "qty": "1"}});
-    let avail = t.k.invoke(&t.ctx, ferrum_kernel::capability::Invocation::new("core.company.availability", asked)).await.unwrap().result;
+    let avail = t.k.invoke(&t.ctx, ferrum_kernel::capability::Invocation::new("selling.company.availability", asked)).await.unwrap().result;
     let total: Decimal = avail["warehouses"].as_array().unwrap().iter().map(|w| dec(&w["on_hand"])).sum();
     assert_eq!(total, n("7"), "rejected goods are not available: {avail}");
     let globex = uid(&t.insert("Customer", json!({"customer_name": "Globex"})).await).to_string();

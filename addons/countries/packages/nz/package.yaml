@@ -38,3 +38,34 @@ overlays:
       - {op: add_action, action: {name: nz_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.nz_peppol_status != 'Sent'"}}
       - {op: add_action, action: {name: nz_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
           params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "New Zealand GST101A"
+        country: NZ
+        frequency: Monthly
+        notes: "Inland Revenue's GST101A, boxes 5 to 15, from the tax ledger on the tax fraction 3/23 of amounts that include GST: the boxes in capitals sum the ledger or take the fraction, the form's numbered boxes are formulas over them. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "S_STD", label: "Standard-rated sales", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "S_ZR", label: "Zero-rated sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "S_EXP", label: "Zero-rated exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "S_TAX", label: "GST on sales", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "RC_TAX", label: "GST on imported services (reverse charge)", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "P_STD", label: "Standard-rated purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "P_TAX", label: "GST on purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "G8", label: "Sales including GST, less zero-rated, times 3/23", kind: Formula, formula: "(S_STD + S_TAX) * 3 / 23"}
+          - {code: "G12", label: "Purchases including GST, times 3/23", kind: Formula, formula: "(P_STD + P_TAX) * 3 / 23"}
+          - {code: "5", label: "Total sales and income for the period (including GST and any zero-rated supplies)", kind: Formula, formula: "S_STD + S_ZR + S_EXP + S_TAX"}
+          - {code: "6", label: "Zero-rated supplies included in Box 5", kind: Formula, formula: "S_ZR + S_EXP"}
+          - {code: "7", label: "Box 5 less Box 6", kind: Formula, formula: "S_STD + S_TAX"}
+          - {code: "8", label: "Box 7 multiplied by three and divided by twenty-three", kind: Formula, formula: "G8"}
+          - {code: "9", label: "Adjustments from your calculation sheet", kind: Formula, formula: "RC_TAX"}
+          - {code: "10", label: "Total GST collected on sales and income", kind: Formula, formula: "G8 + RC_TAX"}
+          - {code: "11", label: "Total purchases and expenses (including GST) for which tax invoicing requirements have been met", kind: Formula, formula: "P_STD + P_TAX"}
+          - {code: "12", label: "Box 11 multiplied by three and divided by twenty-three", kind: Formula, formula: "G12"}
+          - {code: "13", label: "Credit adjustments from your calculation sheet", kind: Formula, formula: "RC_TAX"}
+          - {code: "14", label: "Total GST credit for purchases and expenses", kind: Formula, formula: "G12 + RC_TAX"}
+          - {code: "15", label: "Difference between Box 10 and Box 14 (GST to pay, or a refund when negative)", kind: Formula, formula: "G8 + RC_TAX - G12 - RC_TAX"}

@@ -4,8 +4,7 @@
 //! services used here from abroad, which the company pays itself. The return summarises SPT Masa
 //! PPN. A 15-digit NPWP becomes the 16-digit one with a leading zero.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED, digits};
-use ferrum_kernel::Doc;
+use crate::engine::{Country, Rate, ReverseCharge, Row, digits};
 
 pub static COUNTRY: Country = Country {
     package: "id",
@@ -43,23 +42,9 @@ pub fn number(raw: &str) -> Option<String> {
     }
 }
 
-fn spt_masa_ppn(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let output = f.sales_tax(&["Standard", "Luxury"]);
-    let reverse = f.purchases_tax(&[REVERSE_CHARGED]);
-    let input = f.purchases_tax(&["Standard", "Luxury", REVERSE_CHARGED]);
-    vec![
-        ("A1", "Ekspor (export)", f.sales_net(&[EXPORT, ZERO_RATED])),
-        ("A2", "Penyerahan yang PPN-nya harus dipungut sendiri (taxable deliveries)", f.sales_net(&["Standard", "Luxury"])),
-        ("A3", "Penyerahan yang dibebaskan dari pengenaan PPN (exempt deliveries)", f.sales_net(&[EXEMPT])),
-        ("PK", "PPN Keluaran (output tax)", output),
-        ("JLN", "PPN atas pemanfaatan JKP dari luar Daerah Pabean (services from abroad)", reverse),
-        ("PM", "Pajak Masukan yang dapat dikreditkan (creditable input tax)", input),
-        ("KB", "PPN kurang (lebih) bayar (payable, or overpaid when negative)", output + reverse - input),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "id_spt_masa_ppn", label: "SPT Masa PPN (Summary)", country: &COUNTRY, boxes: spt_masa_ppn })]
+    Vec::new()
 }
 
 crate::app!("id");

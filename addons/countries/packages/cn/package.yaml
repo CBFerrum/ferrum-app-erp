@@ -23,3 +23,37 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
       - {op: add_field, after: cn_vat_category, field: {name: cn_kind, type: select, label: "Goods or Services (China)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  # The return's boxes sum the tax ledger by this country's own categories too.
+  - entity: TaxReturnBoxDefinition
+    ops:
+      - {op: add_options, field: category, options: ["13%", "9%", "6%", "Small-scale"]}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "China VAT Return"
+        country: CN
+        frequency: Monthly
+        notes: "The VAT return's figures from the tax ledger: the boxes in capitals with a rate or ZR, EXP and RC in them sum the ledger for the return's boxes. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "S_EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "S_ZR", label: "Zero-rated sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "T13", label: "Output tax at 13%", kind: Sum, measure: Tax, direction: Output, category: "13%"}
+          - {code: "T9", label: "Output tax at 9%", kind: Sum, measure: Tax, direction: Output, category: "9%"}
+          - {code: "T6", label: "Output tax at 6%", kind: Sum, measure: Tax, direction: Output, category: "6%"}
+          - {code: "TSS", label: "Output tax under the simplified method", kind: Sum, measure: Tax, direction: Output, category: "Small-scale"}
+          - {code: "I13", label: "Input tax at 13%", kind: Sum, measure: Tax, direction: Input, category: "13%", reverse_charge: "No"}
+          - {code: "I9", label: "Input tax at 9%", kind: Sum, measure: Tax, direction: Input, category: "9%", reverse_charge: "No"}
+          - {code: "I6", label: "Input tax at 6%", kind: Sum, measure: Tax, direction: Input, category: "6%", reverse_charge: "No"}
+          - {code: "I_RC", label: "VAT withheld on services from abroad", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "13", label: "Sales at 13%", kind: Sum, measure: Base, direction: Output, category: "13%"}
+          - {code: "9", label: "Sales at 9%", kind: Sum, measure: Base, direction: Output, category: "9%"}
+          - {code: "6", label: "Sales at 6%", kind: Sum, measure: Base, direction: Output, category: "6%"}
+          - {code: "S", label: "Sales under the simplified method (small-scale)", kind: Sum, measure: Base, direction: Output, category: "Small-scale"}
+          - {code: "EXP", label: "Exports (0%)", kind: Formula, formula: "S_EXP + S_ZR"}
+          - {code: "EX", label: "VAT-exempt sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "OUT", label: "Output tax", kind: Formula, formula: "T13 + T9 + T6 + TSS"}
+          - {code: "IN", label: "Input tax credited (services from abroad included)", kind: Formula, formula: "I13 + I9 + I6 + I_RC"}
+          - {code: "DUE", label: "VAT payable (input tax carried forward when negative)", kind: Formula, formula: "OUT - IN"}

@@ -59,7 +59,7 @@ async fn scenario() {
     let lots = t.insert("SalesOrder", order("30")).await;
     assert_eq!(line(&lots)["promised_date"], json!((today + chrono::Duration::days(14)).to_string()));
     let asked = json!({"id": c, "params": {"item": widget, "qty": "12", "warehouse": wh}});
-    let out = t.k.invoke(&t.ctx, Invocation::new("core.company.availability", asked)).await.expect("availability").result;
+    let out = t.k.invoke(&t.ctx, Invocation::new("selling.company.availability", asked)).await.expect("availability").result;
     assert_eq!((dec(&out["warehouses"][0]["available_now"]), out["promise_date"].clone()), (n("10"), json!(po_day)), "{out}");
     for d in [&six, &more, &lots] {
         t.k.delete(&t.ctx, "SalesOrder", uid(d), None).await.expect("drop the draft");

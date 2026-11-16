@@ -22,3 +22,27 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
       - {op: add_field, after: ph_vat_category, field: {name: ph_kind, type: select, label: "Goods or Services (Philippines)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Philippines 2550Q"
+        country: PH
+        frequency: Quarterly
+        notes: "BIR Form 2550Q's figures from the tax ledger: ZRS, EXPS, IN_STD and NR_TAX sum the ledger for the form's boxes."
+        boxes:
+          - {code: "ZRS", label: "Zero-rated domestic sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "EXPS", label: "Export sales", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "IN_STD", label: "Input tax on domestic purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "NR_TAX", label: "Input tax on services rendered by non-residents", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "VS", label: "VATable sales", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "ZR", label: "Zero-rated sales", kind: Formula, formula: "ZRS + EXPS"}
+          - {code: "EX", label: "Exempt sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "TS", label: "Total sales", kind: Formula, formula: "VS + ZR + EX"}
+          - {code: "OT", label: "Output tax due", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "DP", label: "Domestic purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "NR", label: "Services rendered by non-residents", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "IT", label: "Total available input tax", kind: Formula, formula: "IN_STD + NR_TAX"}
+          - {code: "NV", label: "Net VAT payable (excess input tax when negative)", kind: Formula, formula: "OT - IT"}

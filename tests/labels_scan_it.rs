@@ -64,7 +64,7 @@ async fn scenario() {
         let ask = json!({"id": c, "params": {"text": text}});
         let k = t.k.clone();
         let ctx = t.ctx.clone();
-        async move { k.invoke(&ctx, Invocation::new("core.company.scan", ask)).await.expect("scan").result }
+        async move { k.invoke(&ctx, Invocation::new("inventory.company.scan", ask)).await.expect("scan").result }
     };
     let kinds = |v: &Value| v["matches"].as_array().unwrap().iter().map(|m| m["kind"].as_str().unwrap().to_string()).collect::<Vec<_>>();
 
@@ -98,6 +98,6 @@ async fn scenario() {
     );
     let none = scan("NOTHING-HERE").await;
     assert_eq!((none["matches"].as_array().unwrap().len(), none["ambiguous"].clone(), none["gs1"].clone()), (0, json!(false), Value::Null));
-    let long = t.k.invoke(&t.ctx, Invocation::new("core.company.scan", json!({"id": c, "params": {"text": "x".repeat(201)}}))).await;
+    let long = t.k.invoke(&t.ctx, Invocation::new("inventory.company.scan", json!({"id": c, "params": {"text": "x".repeat(201)}}))).await;
     assert!(long.is_err(), "a scan is bounded");
 }

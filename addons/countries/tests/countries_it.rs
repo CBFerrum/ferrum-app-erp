@@ -101,6 +101,7 @@ struct Case {
     goods: Option<&'static str>,
     services: Option<&'static str>,
     company: Value,
+    /// Its return: the report, or the definition its add-on seeds when `definition`.
     report: &'static str,
     t: i64,
     i: i64,
@@ -109,6 +110,7 @@ struct Case {
     /// The local customer's own fields, and for PINT countries what its e-invoice says.
     buyer: Value,
     pint: Option<&'static [&'static str]>,
+    definition: bool,
 }
 
 fn cases() -> Vec<Case> {
@@ -127,6 +129,7 @@ fn cases() -> Vec<Case> {
         boxes,
         buyer: json!({}),
         pint: None,
+        definition: false,
     };
     let mut all = vec![
         c(
@@ -137,7 +140,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({"sg_reverse_charge": true}),
-            "sg_gst_f5",
+            "Singapore GST F5",
             9,
             9,
             9,
@@ -151,7 +154,7 @@ fn cases() -> Vec<Case> {
             Some("Sales Tax 10%"),
             Some("Service Tax"),
             json!({}),
-            "my_sst02",
+            "Malaysia SST-02",
             10,
             0,
             8,
@@ -165,7 +168,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "id_spt_masa_ppn",
+            "Indonesia SPT Masa PPN",
             11,
             11,
             11,
@@ -179,13 +182,26 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "th_pp30",
+            "Thailand PP 30",
             7,
             7,
             7,
             &[("1", 200), ("4", 100), ("5", 7), ("7", 14), ("8", 0), ("9", 7)],
         ),
-        c("ph", "Philippines", "PHP", "123456789000", None, None, json!({}), "ph_2550q", 12, 12, 12, &[("VS", 100), ("OT", 12), ("IT", 24), ("NV", -12)]),
+        c(
+            "ph",
+            "Philippines",
+            "PHP",
+            "123456789000",
+            None,
+            None,
+            json!({}),
+            "Philippines 2550Q",
+            12,
+            12,
+            12,
+            &[("VS", 100), ("OT", 12), ("IT", 24), ("NV", -12)],
+        ),
         c(
             "vn",
             "Vietnam",
@@ -194,7 +210,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "vn_01_gtgt",
+            "Vietnam 01/GTGT",
             10,
             10,
             10,
@@ -208,7 +224,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "sa_vat_return",
+            "Saudi Arabia VAT Return",
             15,
             15,
             15,
@@ -250,7 +266,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({"nz_reverse_charge": true}),
-            "nz_gst101a",
+            "New Zealand GST101A",
             15,
             15,
             15,
@@ -264,7 +280,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({"jp_reverse_charge": true}),
-            "jp_consumption_tax",
+            "Japan Consumption Tax Return",
             10,
             10,
             10,
@@ -279,7 +295,7 @@ fn cases() -> Vec<Case> {
             None,
             Some("6%"),
             json!({}),
-            "cn_vat_return",
+            "China VAT Return",
             13,
             13,
             6,
@@ -337,6 +353,9 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
+    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz", "jp", "cn"] {
+        all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
+    }
     for (code, buyer, expect) in pint {
         let case = all.iter_mut().find(|c| c.code == code).unwrap();
         let company = case.company.as_object_mut().unwrap();
@@ -350,6 +369,168 @@ fn cases() -> Vec<Case> {
         case.pint = Some(expect);
     }
     all
+}
+
+/// A document a country's return scenario adds: a sale (or purchase) to (or from) a party at home
+/// or abroad, of one of each (goods or services, category).
+type Extra = (&'static str, bool, &'static [(&'static str, Option<&'static str>)]);
+
+/// What gives every box of a country's return a figure, beside the sale at home and abroad, the
+/// purchase at home, the services from abroad and a credit note.
+fn extras(code: &str) -> Vec<Extra> {
+    let mut all: Vec<Extra> = vec![
+        ("SalesInvoice", false, &[("Goods", None)]),
+        ("SalesInvoice", false, &[("Goods", None)]),
+        ("SalesInvoice", false, &[("Goods", Some("Zero Rated"))]),
+        ("SalesInvoice", false, &[("Goods", Some("Exempt"))]),
+        ("SalesInvoice", false, &[("Goods", Some("Out of Scope"))]),
+        ("PurchaseInvoice", false, &[("Goods", Some("Zero Rated"))]),
+        ("PurchaseInvoice", false, &[("Goods", Some("Exempt"))]),
+    ];
+    all.extend(match code {
+        "my" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("Sales Tax 5%"))][..]),
+            ("SalesInvoice", false, &[("Services", Some("Service Tax"))]),
+            ("SalesInvoice", false, &[("Services", Some("Service Tax 6%"))]),
+            ("SalesInvoice", false, &[("Goods", Some("Sales Tax 10%")), ("Services", Some("Service Tax"))]),
+        ],
+        "th" => vec![("SalesInvoice", false, &[("Goods", None)][..]), ("SalesInvoice", false, &[("Goods", None)])],
+        "id" => vec![("SalesInvoice", false, &[("Goods", Some("Luxury"))][..]), ("PurchaseInvoice", false, &[("Goods", Some("Luxury"))])],
+        "vn" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("Standard (Reduced to 8%)"))][..]),
+            ("SalesInvoice", false, &[("Goods", Some("Reduced 5%"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("Standard (Reduced to 8%)"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("Reduced 5%"))]),
+        ],
+        "jp" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("Reduced"))][..]),
+            ("PurchaseInvoice", false, &[("Goods", Some("Reduced"))]),
+            ("SalesInvoice", false, &[("Goods", Some("Standard")), ("Goods", Some("Reduced"))]),
+        ],
+        "cn" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("9%"))][..]),
+            ("SalesInvoice", false, &[("Services", Some("6%"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("9%"))]),
+            ("PurchaseInvoice", false, &[("Services", Some("6%"))]),
+        ],
+        _ => vec![],
+    });
+    all
+}
+
+/// Every box of a moved country's return once the extras are in, beside the helper boxes they sum.
+fn full(code: &str) -> &'static [(&'static str, &'static str)] {
+    match code {
+        "sg" => &[("1", "300"), ("2", "200"), ("3", "100"), ("4", "600"), ("5", "300"), ("6", "27"), ("7", "18"), ("8", "9"), ("13", "600"), ("14", "100")],
+        "my" => &[
+            ("ST10", "100"),
+            ("ST5", "100"),
+            ("ST", "15"),
+            ("SV8", "200"),
+            ("SV6", "100"),
+            ("SV", "22"),
+            ("ITS", "100"),
+            ("ITST", "8"),
+            ("EX", "300"),
+            ("TOTAL", "45"),
+        ],
+        "id" => &[("A1", "200"), ("A2", "300"), ("A3", "100"), ("PK", "34"), ("JLN", "11"), ("PM", "34"), ("KB", "11")],
+        "th" => &[("1", "700"), ("2", "200"), ("3", "100"), ("4", "400"), ("5", "28"), ("6", "200"), ("7", "14"), ("8", "14"), ("9", "0")],
+        "ph" => &[("VS", "200"), ("ZR", "200"), ("EX", "100"), ("TS", "500"), ("OT", "24"), ("DP", "100"), ("NR", "100"), ("IT", "24"), ("NV", "0")],
+        // Exempt sales are in [26] and [34]: the return in Rust left them out, taking Vietnam's exemption
+        // reason ("Not subject to VAT") for the mark of a line on a row its category is not on.
+        "vn" => &[
+            ("[23]", "500"),
+            ("[24]", "33"),
+            ("[25]", "33"),
+            ("[26]", "200"),
+            ("[29]", "200"),
+            ("[30]", "100"),
+            ("[31]", "5"),
+            ("[32]", "300"),
+            ("[32a]", "100"),
+            ("[33]", "28"),
+            ("[34]", "800"),
+            ("[35]", "33"),
+            ("[36]", "0"),
+        ],
+        "sa" => &[
+            ("1", "200"),
+            ("1 VAT", "30"),
+            ("3", "100"),
+            ("4", "100"),
+            ("5", "100"),
+            ("6", "500"),
+            ("6 VAT", "30"),
+            ("7", "100"),
+            ("7 VAT", "15"),
+            ("9", "100"),
+            ("9 VAT", "15"),
+            ("10", "100"),
+            ("11", "100"),
+            ("12", "400"),
+            ("12 VAT", "30"),
+            ("13", "15"),
+        ],
+        "nz" => &[
+            ("5", "430"),
+            ("6", "200"),
+            ("7", "230"),
+            ("8", "30"),
+            ("9", "15"),
+            ("10", "45"),
+            ("11", "115"),
+            ("12", "15"),
+            ("13", "15"),
+            ("14", "30"),
+            ("15", "15"),
+        ],
+        "jp" => &[
+            ("S10", "300"),
+            ("S8", "200"),
+            ("EXP", "200"),
+            ("NT", "100"),
+            ("RC", "100"),
+            ("T10", "40"),
+            ("T8", "16"),
+            ("I10", "20"),
+            ("I8", "8"),
+            ("N", "22"),
+            ("L", "6"),
+            ("NET", "28"),
+        ],
+        "cn" => &[("13", "200"), ("9", "100"), ("6", "100"), ("S", "0"), ("EXP", "200"), ("EX", "100"), ("OUT", "41"), ("IN", "34"), ("DUE", "7")],
+        _ => &[],
+    }
+}
+
+/// A company's return over all its documents: its definition's boxes worked out on a draft Tax
+/// Return for the month, or its report's.
+async fn returned(k: &Arc<Kernel>, ctx: &Ctx, case: &Case, cid: Uuid) -> HashMap<String, Decimal> {
+    let today = ctx.today();
+    let first = chrono::NaiveDate::from_ymd_opt(chrono::Datelike::year(&today), chrono::Datelike::month(&today), 1).unwrap();
+    if case.definition {
+        let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&json!({"definition_name": case.report})).unwrap(), ..Default::default() };
+        let def =
+            k.list(ctx, "TaxReturnDefinition", &q).await.unwrap().rows.into_iter().next().unwrap_or_else(|| panic!("{}: {} is seeded", case.code, case.report));
+        let ret = k
+            .insert(ctx, "TaxReturn", obj(json!({"definition": def["id"], "company": cid.to_string(), "from_date": first.to_string()})))
+            .await
+            .unwrap_or_else(|e| panic!("{}: the return: {e:?}", case.code));
+        return ret["boxes"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap().to_string(), dec(&b["value"]))).collect();
+    }
+    let p: HashMap<String, String> = [("company", cid.to_string()), ("from_date", "2000-01-01".to_string()), ("to_date", "2100-12-31".to_string())]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    let report = ferrum_domain::reports::run(k, ctx, case.report, &p).await.unwrap_or_else(|e| panic!("{}: {}: {e:?}", case.code, case.report));
+    report["rows"].as_array().unwrap().iter().map(|r| (r["box"].as_str().unwrap().to_string(), dec(&r["amount"]))).collect()
+}
+
+fn check(tag: &str, got: &HashMap<String, Decimal>, want: &[(&str, &str)]) {
+    for (b, v) in want {
+        assert_eq!(got.get(*b).copied(), Some(Decimal::from_str(v).unwrap()), "{tag}: box {b} of {got:?}");
+    }
 }
 
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
@@ -668,15 +849,98 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
         k.submit(&ctx, "PaymentEntry", uid(&pay), None).await.expect("payment");
     }
 
-    let p: HashMap<String, String> = [("company", cid.to_string()), ("from_date", "2000-01-01".to_string()), ("to_date", "2100-12-31".to_string())]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect();
-    let report = ferrum_domain::reports::run(k, &ctx, case.report, &p).await.unwrap_or_else(|e| panic!("{code}: {}: {e:?}", case.report));
-    let got: HashMap<String, Decimal> =
-        report["rows"].as_array().unwrap().iter().map(|r| (r["box"].as_str().unwrap().to_string(), dec(&r["amount"]))).collect();
+    let got = returned(k, &ctx, case, cid).await;
     for (b, want) in case.boxes {
-        assert_eq!(got.get(*b).copied(), Some(Decimal::from(*want)), "{code}: box {b} of {:?}", report["rows"]);
+        assert_eq!(got.get(*b).copied(), Some(Decimal::from(*want)), "{code}: box {b} of {got:?}");
+    }
+    if case.definition {
+        // A credit note and what gives every box a figure.
+        let mut made: HashMap<String, Uuid> = HashMap::new();
+        let credit = insert(
+            "SalesInvoice",
+            json!({"company": cid.to_string(), "customer": home.to_string(), "is_return": true, "return_against": si["id"], "items": [{"item": goods.to_string(), "qty": "-1"}]}),
+        )
+        .await;
+        k.submit(&ctx, "SalesInvoice", uid(&credit), None).await.unwrap_or_else(|e| panic!("{code}: credit note: {e:?}"));
+        for (n, (doc, far, lines)) in extras(code).into_iter().enumerate() {
+            let mut rows = Vec::new();
+            for (kind, category) in lines {
+                let key = format!("{kind}-{}", category.unwrap_or("none"));
+                let id = match made.get(&key) {
+                    Some(i) => *i,
+                    None => {
+                        let i = item(&key, kind, *category).await;
+                        made.insert(key.clone(), i);
+                        i
+                    }
+                };
+                rows.push(json!({"item": id.to_string(), "qty": "1", "price_list_rate": "100"}));
+            }
+            let v = if doc == "SalesInvoice" {
+                json!({"company": cid.to_string(), "customer": (if far { abroad } else { home }).to_string(), "items": rows})
+            } else {
+                json!({"company": cid.to_string(), "supplier": (if far { foreign } else { supplier }).to_string(), "bill_no": format!("X-{n}"), "items": rows})
+            };
+            let d = insert(doc, v).await;
+            k.submit(&ctx, doc, uid(&d), None).await.unwrap_or_else(|e| panic!("{code}: extra {n}: {e:?}"));
+        }
+        check(code, &returned(k, &ctx, case, cid).await, full(code));
+        if code == "cn" {
+            // A small-scale taxpayer: its taxable sales on the simplified method.
+            let mut small = obj(
+                json!({"company_name": "China Small Trading", "abbr": "CNS", "default_currency": currency["id"], "country": case.country, "cn_small_scale": true}),
+            );
+            small.insert(country.number_field.into(), json!(case.number));
+            let small = uid(&insert("Company", Value::Object(small)).await);
+            let s =
+                insert("SalesInvoice", json!({"company": small.to_string(), "customer": home.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]}))
+                    .await;
+            k.submit(&ctx, "SalesInvoice", uid(&s), None).await.expect("small-scale sale");
+            let small = returned(k, &ctx, case, small).await;
+            check("cn small-scale", &small, &[("S", "100"), ("OUT", "1"), ("IN", "0"), ("DUE", "1"), ("13", "0"), ("EXP", "0")]);
+        }
+        if code == "sg" {
+            // An early-payment discount that takes tax back (0.90 of a 10.90 discount on 109) takes its base and
+            // tax off the standard-rated supplies on the payment's day: the return says what the books say.
+            let paid = sale(home).await;
+            let paid = k.submit(&ctx, "SalesInvoice", uid(&paid), None).await.unwrap();
+            let account = async |number: &str| list("Account", json!({"company": cid.to_string(), "account_number": number})).await.remove(0)["id"].clone();
+            let allowed = list("Account", json!({"company": cid.to_string(), "account_name": "Sales"})).await.remove(0);
+            let pay = insert(
+                "PaymentEntry",
+                json!({"company": cid.to_string(), "payment_type": "Receive", "customer": home.to_string(), "bank_account": account("1121").await, "paid_amount": "98.10",
+                       "references": [{"invoice": paid["id"], "allocated_amount": "98.10", "discount_amount": "10.90", "discount_account": allowed["id"], "discount_reduces_tax": true}]}),
+            )
+            .await;
+            k.submit(&ctx, "PaymentEntry", uid(&pay), None).await.expect("payment");
+            let got = returned(k, &ctx, case, cid).await;
+            check(
+                "sg after a discount",
+                &got,
+                &[
+                    ("1", "390"),
+                    ("2", "200"),
+                    ("3", "100"),
+                    ("4", "690"),
+                    ("5", "300"),
+                    ("6", "35.1"),
+                    ("7", "18"),
+                    ("8", "17.1"),
+                    ("13", "690"),
+                    ("14", "100"),
+                ],
+            );
+            let output_tax = account("2131").await.as_str().unwrap().to_string();
+            let mut tx = k.db.tenant_tx(ctx.tenant).await.unwrap();
+            let output: Option<Decimal> = sqlx::query_scalar("select sum(credit - debit) from journal_line where company_id = $1 and account_id = $2::uuid")
+                .bind(cid)
+                .bind(output_tax)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            assert_eq!(output, Some(got["SR_TAX"]), "sg: the output tax the return counts is the output tax account's");
+        }
     }
     if code == "sg" {
         // A rate kept as data wins over the built-in 9%, and stops when it ends.

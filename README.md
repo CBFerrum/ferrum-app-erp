@@ -294,7 +294,7 @@ add-on brings it.
   to a limit. Parties and items name a category; returns take back their share. Withholding desk and report.
 - **Tax returns as definitions.** A return's boxes are sums of the tax ledger filtered by tax, rate, category,
   direction, place and document kind, or formulas, or typed by hand. A return for a period is worked out
-  while it is a draft, adjusted with reasons, and filing keeps the values and closes the period to invoices.
+  while it is a draft, adjusted with reasons, and filing keeps the values and closes the period to invoices and to payments whose discount takes tax back.
   Each box drills down to its documents; a CSV export comes with it.
 - **Tax summary report** by tax account, category, rate and reverse charge, output and input, for any period.
 
@@ -554,7 +554,7 @@ history. Desks show only where their package is installed and only to people who
 - **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow` and
   `localization`; [docs/contracts.md](docs/contracts.md) says how each operation behaves (in the caller's
   transaction, appending, what it refuses, whether calling twice does it twice).
-- **Contracted capabilities**: `core.company.availability`, `core.company.price_lines`, `core.company.scan`, and
+- **Contracted capabilities**: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`, and
   stored value's `prove`, `balance`, `issue`, `redeem`, `refund`, `transfer`, `hold`, `release` and `reverse`.
 - **Events** `accounting.instrument_bounced` and `accounting.stored_value_expiring`, for automations.
 
@@ -578,19 +578,19 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇬🇧 | United Kingdom | `ferrum-gb` 0.2.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
 | 🇺🇸 | United States | `ferrum-us` 0.1.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
 | 🇨🇦 | Canada | `ferrum-ca` 0.1.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
-| 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 | MyInvois through LHDN |
-| 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN | — |
-| 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 | — |
-| 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q | — |
-| 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT | — |
-| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.2.0 | VAT 15%, reverse charge | ZATCA's VAT return | — |
+| 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
+| 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
+| 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
+| 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q as a return definition | — |
+| 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
+| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.2.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
 | 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.2.0 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
 | 🇦🇺 | Australia | `ferrum-countries` 0.2.0 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
-| 🇳🇿 | New Zealand | `ferrum-countries` 0.2.0 | GST 15%, IRD number check | GST101A | PINT A-NZ |
-| 🇯🇵 | Japan | `ferrum-countries` 0.2.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return | JP PINT |
+| 🇳🇿 | New Zealand | `ferrum-countries` 0.2.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
+| 🇯🇵 | Japan | `ferrum-countries` 0.2.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
 | 🇲🇽 | Mexico | `ferrum-countries` 0.2.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
-| 🇨🇳 | China | `ferrum-countries` 0.2.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return figures | — |
+| 🇨🇳 | China | `ferrum-countries` 0.2.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
 
 ### 🗣️ Languages and accessibility
 

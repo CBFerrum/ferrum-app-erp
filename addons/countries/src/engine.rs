@@ -13,8 +13,10 @@
 //! * A sales invoice that charges the tax needs the company's registration number.
 //! * A new company gets the country's accounts.
 //!
-//! Returns: [`Figures`] sums a period's submitted invoices by category from their tax breakdowns,
-//! and each country's [`Return`] lays them out in its form's boxes.
+//! Returns: a country's return is a definition its package seeds, worked out by ERP's tax returns.
+//! [`Figures`] and [`Return`] remain for the returns a definition cannot say yet: Australia's (the
+//! invoices' totals), the United Arab Emirates' (boxes by the company's emirate) and Mexico's (tax
+//! owed when paid).
 
 use crate::util::{b, find, get, id, rows, s, set, sys};
 use async_trait::async_trait;
