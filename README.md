@@ -402,7 +402,8 @@ add-on brings it.
 - **Payment runs**: bills due by a day and those whose early-payment discount is open, leaving out bills on hold;
   reviewed, approved, then paid one payment per supplier, with a bank file from a template (ISO 20022
   pain.001.001.03 or CSV; a bank's own format is another template) and remittance advice. Pressed twice it
-  pays nothing twice. Hold Payment and Release Payment on a bill.
+  pays nothing twice; each press that pays something gets a file of its own, holding that round's payments only.
+  Hold Payment and Release Payment on a bill.
 - **Payment terms** that split an invoice into installments with their own due dates and early-payment
   discounts, and **dunning** by level with fees, yearly interest and a letter.
 - **Budgets** per account for a cost centre, project or dimension value, phased by month (monthly
@@ -752,7 +753,9 @@ outside service and a retry never sends twice.
 
 ERP's upkeep makes the journal's yearly partitions, recognises deferred lines, reverses journal entries on
 their reversal day, makes recurring journals, says when a received cheque can be deposited, warns of and expires
-stored value, and tracks carrier shipments. Finance's reverses exchange revaluations on their day.
+stored value, and tracks carrier shipments. Each invoice to recognise and each account to expire goes on its own:
+one that cannot (its period closed, an account frozen) waits for a later round without holding back the others.
+Finance's reverses exchange revaluations on their day.
 
 ## 🔌 Integrations
 
