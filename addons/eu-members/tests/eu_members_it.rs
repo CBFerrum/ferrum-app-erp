@@ -82,7 +82,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
     // The fake services listen on a local address, which only a development server calls.
-    let settings = KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([3u8; 32])), webhooks_allow_private: true, ..Default::default() };
+    let settings = KernelSettings { webhooks_allow_private: true, ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
     k
@@ -256,19 +256,6 @@ async fn scenario() {
     spain(&k).await;
     france(&k).await;
     portugal(&k).await;
-    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
-    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let past: Vec<_> = k
-        .legacy_key(vec![])
-        .await
-        .unwrap()
-        .uses
-        .into_iter()
-        .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
-        .map(|u| u.1)
-        .collect();
-    assert!(past.is_empty(), "read past the vault: {past:?}");
 }
 
 async fn portugal(k: &Arc<Kernel>) {

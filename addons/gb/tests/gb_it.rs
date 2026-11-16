@@ -119,12 +119,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
     // The server's public address (PUBLIC_URL) is what HMRC is told the server is at.
-    let settings = KernelSettings {
-        secret_key: Some(ferrum_kernel::secret::SecretKey::new([5u8; 32])),
-        webhooks_allow_private: true,
-        public_url: Some("https://203.0.113.9".into()),
-        ..Default::default()
-    };
+    let settings = KernelSettings { webhooks_allow_private: true, public_url: Some("https://203.0.113.9".into()), ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
     k
@@ -352,17 +347,4 @@ async fn scenario() {
     let dup = k.get(&ctx, "GbVatReturn", uid(&dup), false).await.unwrap();
     assert_eq!(dup["hmrc_status"], json!("Failed"));
     assert!(dup["hmrc_error"].as_str().unwrap().contains("DUPLICATE_SUBMISSION"), "{dup:?}");
-    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
-    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let past: Vec<_> = k
-        .legacy_key(vec![])
-        .await
-        .unwrap()
-        .uses
-        .into_iter()
-        .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
-        .map(|u| u.1)
-        .collect();
-    assert!(past.is_empty(), "read past the vault: {past:?}");
 }

@@ -37,7 +37,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let india_packages: Vec<String> = ferrum_india::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
     hooks.app("india", &india_packages, ferrum_india::register);
     hooks.own("india", &india_packages);
-    let settings = KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([5u8; 32])), ..Default::default() };
+    let settings = KernelSettings::default();
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
     k

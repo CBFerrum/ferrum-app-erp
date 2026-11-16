@@ -69,7 +69,7 @@ impl T {
         T::boot_inner(url, KernelSettings::default(), |_, _| {}, true).await
     }
 
-    /// [`T::boot`] with the kernel's settings given (a secret key, private addresses allowed).
+    /// [`T::boot`] with the kernel's settings given (private addresses allowed).
     pub async fn boot_with(url: String, settings: KernelSettings, extra: impl FnOnce(&mut Vec<ferrum_meta::Package>, &mut HookRegistry)) -> T {
         T::boot_inner(url, settings, extra, false).await
     }
