@@ -168,7 +168,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "id_spt_masa_ppn",
+            "Indonesia SPT Masa PPN",
             11,
             11,
             11,
@@ -340,7 +340,7 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my"] {
+    for code in ["sg", "my", "id"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -381,6 +381,7 @@ fn extras(code: &str) -> Vec<Extra> {
             ("SalesInvoice", false, &[("Services", Some("Service Tax 6%"))]),
             ("SalesInvoice", false, &[("Goods", Some("Sales Tax 10%")), ("Services", Some("Service Tax"))]),
         ],
+        "id" => vec![("SalesInvoice", false, &[("Goods", Some("Luxury"))][..]), ("PurchaseInvoice", false, &[("Goods", Some("Luxury"))])],
         _ => vec![],
     });
     all
@@ -402,6 +403,7 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
             ("EX", "300"),
             ("TOTAL", "45"),
         ],
+        "id" => &[("A1", "200"), ("A2", "300"), ("A3", "100"), ("PK", "34"), ("JLN", "11"), ("PM", "34"), ("KB", "11")],
         _ => &[],
     }
 }
