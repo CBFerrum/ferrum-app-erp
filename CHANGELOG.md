@@ -1,5 +1,28 @@
 # Changelog
 
+## ERP 0.29.1, India 0.7.2: four faults, each shown failing first
+
+No database or interface change.
+
+- **Two carrier upkeeps at once ask the carrier once.** Every replica runs the upkeep: one that listed a due shipment
+  while another was tracking it waited for its lock and then asked the carrier again. A shipment is now taken still due
+  under its lock (`skip locked`): one another upkeep is tracking is left to it, one tracked a moment ago is not due.
+  Track on a shipment still asks the carrier each time.
+- **Filing a tax return and an invoice of its period take turns.** An invoice whose check passed before a return was
+  filed landed in the filed period, counted by no return. An invoice being submitted or cancelled now holds its month
+  (shared) to its end, and a return being worked out holds its period's months alone (an advisory lock per company and
+  month: there is no row every posting and every return share). A return filed while an invoice of its period is being
+  submitted waits for it and counts it; an invoice submitted while its return is being filed waits, then is refused.
+- **A default tax template whose condition cannot be worked out for a document is said, not passed over.** A
+  condition that compiles but fails on the document (a field it does not have, unlike values compared) counted as "does
+  not apply", leaving the document untaxed. The document is now refused, naming the template, as for a condition that
+  does not compile. Each engine takes both failures one way: a pricing rule's applies to no one, a tax template's
+  refuses the document.
+- **India's rules are for companies in India** (India 0.7.2). A company that named no country was taken as Indian: in a
+  workspace with India beside another country, such a company got India's GST accounts and its default 18% GST
+  templates. Only a company whose country is India (country code IN) gets them now, as with every other country's
+  add-on. A company made for India must say so (the platform's demo company names none).
+
 ## ERP 0.29.0, Finance 0.7.0, Quality 0.2.0, Portugal 0.3.0, Germany 0.1.1, Manufacturing Execution 0.2.5, Warehouse Management 0.3.2: one way for each thing, nothing kept for data that never shipped
 
 Nothing is installed, so what carried older data or an older way forward goes. Every package's SQL changed: a database
