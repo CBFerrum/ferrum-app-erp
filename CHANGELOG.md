@@ -1,5 +1,32 @@
 # Changelog
 
+## ERP 0.30.3, Malaysia 0.4.0, Singapore, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, New Zealand, Japan, China 0.3.0: ten countries' returns as definitions
+
+No database or interface change in ERP. The ten add-ons need ERP 0.22 (tax return definitions) or later; each loses
+its Rust report (`sg_gst_f5`, `my_sst02`, `id_spt_masa_ppn`, `th_pp30`, `ph_2550q`, `vn_01_gtgt`, `sa_vat_return`,
+`nz_gst101a`, `jp_consumption_tax`, `cn_vat_return`) and seeds a Tax Return Definition in its place.
+
+- **A payment whose early-payment discount takes tax back takes turns with filing.** The tax ledger counts such a
+  payment on its day, but only invoices were held while a return of their period was worked out and refused once it
+  was filed: a payment dated in a filed period changed what the books said of the filed figures, and cancelling one
+  took back tax the return had counted. It now holds its month as an invoice does and is refused in a filed period;
+  a payment whose discount takes no tax back is untouched.
+- **Ten countries' returns are definitions their add-ons seed**, worked out, adjusted, filed and drilled into like
+  India's and Ireland's: Singapore's GST F5, Malaysia's SST-02, Indonesia's SPT Masa PPN, Thailand's PP.30, the
+  Philippines' 2550Q (quarterly), Vietnam's 01/GTGT, Saudi Arabia's VAT return, New Zealand's GST101A, Japan's
+  consumption tax return and China's VAT return. The form's boxes keep their codes and labels and are formulas over
+  boxes that sum the tax ledger. Malaysia, Indonesia, Vietnam and China let a return's box name their own categories.
+  Each was compared box by box with the Rust return on the same documents; two differences, both where the Rust
+  return was wrong:
+  - an early-payment discount that takes tax back now lowers the boxes it belongs to on the payment's day, in every
+    country, as the books and the tax summary already did;
+  - Vietnam's exempt sales are in [26] and [34]: the Rust return mistook their exemption reason ("Not subject to
+    VAT") for the mark of a line on a row its category is not on, and left them out.
+- Australia's, the United Arab Emirates' and Mexico's returns stay in Rust: a definition cannot yet sum an invoice's
+  grand total, choose boxes by the company's emirate, or count tax when it is paid.
+- ERP's suites and documents name the company's capabilities by the package that adds them, as the platform now
+  lists them: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`.
+
 ## ERP 0.30.2, Warehouse Management 0.3.3, Manufacturing Execution 0.2.6
 
 Need the same platform as before. No database change. Interface only, each `ui/dist` rebuilt with Ferrum-Frontend `06bd1a2`.

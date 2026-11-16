@@ -1,7 +1,7 @@
 # ERP's add-on for Malaysia: sales and service tax (SST) and the SST-02 summary for ERP in Malaysia. Ferrum localization.md.
 id: my
 name: "Malaysia"
-version: 0.3.1
+version: 0.4.0
 publisher: cbferrum
 summary: "Sales and service tax (SST) and the SST-02 summary for ERP in Malaysia"
 categories: [finance]
@@ -14,6 +14,6 @@ operator_settings:
     env: FERRUM_MY_MYINVOIS_URL
     applies: live
     doc: Another address for MyInvois. Outside development only MyInvois's own hosts are called, so a company's credentials go nowhere else.
-requires: {erp: ">=0.21"}
+requires: {erp: ">=0.22"}
 parent: erp
 packages: [my]

@@ -294,7 +294,7 @@ add-on brings it.
   to a limit. Parties and items name a category; returns take back their share. Withholding desk and report.
 - **Tax returns as definitions.** A return's boxes are sums of the tax ledger filtered by tax, rate, category,
   direction, place and document kind, or formulas, or typed by hand. A return for a period is worked out
-  while it is a draft, adjusted with reasons, and filing keeps the values and closes the period to invoices.
+  while it is a draft, adjusted with reasons, and filing keeps the values and closes the period to invoices and to payments whose discount takes tax back.
   Each box drills down to its documents; a CSV export comes with it.
 - **Tax summary report** by tax account, category, rate and reverse charge, output and input, for any period.
 
