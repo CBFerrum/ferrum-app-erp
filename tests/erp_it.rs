@@ -2078,4 +2078,9 @@ async fn scenario() {
     t.k.cancel(&t.ctx, "PaymentEntry", pay, None).await.expect("cancel the payment");
     assert_eq!(left_of(uid(&taxed)).await, (n("16.6"), n("16.6"), "open".to_string()), "given back as it was taken");
     assert_eq!(t.gl("Exchange Gain or Loss").await, loss_before);
+    // What the receivables report says is owed in rupees is what the books hold for the invoice, not its dollars
+    // converted again (16.59).
+    let owed = t.report("receivables", &[("company", gmbh.to_string()), ("customer", abroad.to_string())]).await;
+    let row = owed["rows"].as_array().unwrap().iter().find(|r| r["voucher_id"] == taxed["id"]).cloned().expect("the open invoice");
+    assert_eq!((dec(&row["outstanding"]), dec(&row["outstanding_base"])), (n("11.06"), n("16.6")), "{row}");
 }
