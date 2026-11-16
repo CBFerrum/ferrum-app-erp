@@ -224,7 +224,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "sa_vat_return",
+            "Saudi Arabia VAT Return",
             15,
             15,
             15,
@@ -353,7 +353,7 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my", "id", "th", "ph", "vn"] {
+    for code in ["sg", "my", "id", "th", "ph", "vn", "sa"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -442,6 +442,24 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
             ("[34]", "800"),
             ("[35]", "33"),
             ("[36]", "0"),
+        ],
+        "sa" => &[
+            ("1", "200"),
+            ("1 VAT", "30"),
+            ("3", "100"),
+            ("4", "100"),
+            ("5", "100"),
+            ("6", "500"),
+            ("6 VAT", "30"),
+            ("7", "100"),
+            ("7 VAT", "15"),
+            ("9", "100"),
+            ("9 VAT", "15"),
+            ("10", "100"),
+            ("11", "100"),
+            ("12", "400"),
+            ("12 VAT", "30"),
+            ("13", "15"),
         ],
         _ => &[],
     }
