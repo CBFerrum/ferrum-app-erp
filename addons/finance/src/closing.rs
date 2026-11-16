@@ -178,6 +178,16 @@ impl DocHook for ClosingHook {
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let fy = year(hc, doc).await?;
         let closing = id(doc, "closing_account").ok_or_else(|| Error::field("closing_account", "is required"))?;
+        // The year's months locked before anything is read from their postings: an entry still being
+        // made into the year holds its month shared, so it is waited for and closed with the rest, and
+        // one made after waits for the closing and then finds its month closed.
+        sqlx::query("select 1 from accounting_period where tenant_id = $1 and company_id = $2 and period_start >= $3 and period_end <= $4 order by period_start for update")
+            .bind(hc.ctx.tenant)
+            .bind(co.id)
+            .bind(fy.start)
+            .bind(fy.end)
+            .execute(&mut **hc.tx)
+            .await?;
         let months = periods(hc, co.id, &fy).await?;
         // The entry is dated the year's last day; open that month for it if it was closed already.
         let last = months.iter().find(|(a, b, _)| *a <= fy.end && fy.end <= *b).copied();

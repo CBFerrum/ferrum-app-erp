@@ -722,6 +722,50 @@ async fn scenario() {
     t.k.run_action(&t.ctx, "FiscalYear", fy, "reopen_period", json!({"period_start": month.to_string()})).await.expect("reopen");
     t.submit("PaymentEntry", late_refund).await;
 
+    // A posting whose check passed while the month was open, still being made as the month is closed:
+    // the close waits for it, so nothing lands in the month once it is closed.
+    let month_end = (month + chrono::Months::new(1)).pred_opt().unwrap();
+    let in_month = move |k: Arc<Kernel>| async move {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        let n: i64 = sqlx::query_scalar("select count(*) from journal_entry where tenant_id = $1 and company_id = $2 and posting_date between $3 and $4")
+            .bind(tenant)
+            .bind(cid)
+            .bind(month)
+            .bind(month_end)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        n
+    };
+    let mut posting = t.k.db.tenant_tx(tenant).await.unwrap();
+    let mut entry = ferrum_app_erp::ledger::Entry::new(cid, month + chrono::Duration::days(9), "JournalEntry", Uuid::now_v7(), None);
+    entry.lines.push(ferrum_app_erp::ledger::Line::new(account("Cash").await.as_str().unwrap().parse().unwrap(), n("1"), "INR"));
+    entry.lines.push(ferrum_app_erp::ledger::Line::new(account("Sales").await.as_str().unwrap().parse().unwrap(), -n("1"), "INR"));
+    ferrum_app_erp::ledger::post(&mut posting, &t.ctx, entry, 2).await.expect("posted while the month is open");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *posting).await.unwrap();
+    let close = {
+        let (k, ctx) = (t.k.clone(), t.ctx.clone());
+        tokio::spawn(async move {
+            k.run_action(&ctx, "FiscalYear", fy, "close_period", json!({"period_start": month.to_string()})).await.expect("close");
+            in_month(k).await
+        })
+    };
+    for _ in 0..200 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&t.k.db.pool)
+            .await
+            .unwrap();
+        if waits || close.is_finished() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    posting.commit().await.unwrap();
+    let as_closed = close.await.unwrap();
+    assert_eq!(in_month(t.k.clone()).await, as_closed, "an entry landed in the month after it was closed");
+    t.k.run_action(&t.ctx, "FiscalYear", fy, "reopen_period", json!({"period_start": month.to_string()})).await.expect("reopen");
+
     // ───────────── returns made before 0.15.0: the migration counts them ─────────────
     let counted = "select coalesce(sum(returned_qty), 0) + coalesce(sum(credited_amount), 0) from ( \
          select id, returned_qty, null::numeric as credited_amount from e_delivery_note__items where tenant_id = $1 and $2 = $2 union all \
