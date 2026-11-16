@@ -10,7 +10,7 @@ import { recordsRoutes, RequireAuth } from "@ferrum/records/frame";
 /** ERP's packages and its add-ons': the sidebar shows their modules (Studio has its own interface). */
 export const ERP_PACKAGES = [
   ...["core", "parties", "products", "accounting", "selling", "buying", "inventory", "manufacturing"],
-  ...["india", "finance", "procurement", "stock_ops", "mfg_ops", "quality"],
+  ...["finance", "procurement", "stock_ops", "mfg_ops", "quality"],
 ];
 
 export function RouteError() {
