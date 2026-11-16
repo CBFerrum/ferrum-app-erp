@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use ferrum_app_erp::flow::sync_invoice_outstanding;
 use ferrum_app_erp::ledger::{self, Entry, Line};
-use ferrum_domain::util::{Company, company, d, date, id, money, rows, s, set};
+use ferrum_domain::util::{Company, company, d, date, id, money, rows, s, set, sys};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -230,10 +230,13 @@ impl DocHook for AllocationHook {
         let mut entry = Entry::new(co.id, on, ENTITY, pid, number.clone());
         entry.memo = Some(format!("Exchange difference on payment allocation {}", number.unwrap_or_default()));
         let mut touched = Vec::new();
+        let mut gains = Vec::new();
         for p in &found {
-            ledger::allocate(hc.tx, hc.ctx, co.id, p.invoice.id, ENTITY, pid, on, p.take, p.invoice_base).await?;
-            ledger::allocate(hc.tx, hc.ctx, co.id, p.credit.id, ENTITY, pid, on, -p.take, -p.credit_base).await?;
-            let diff = p.invoice_base - p.credit_base;
+            // What each side gave up: all an item has left when the pair clears it.
+            let invoice_base = ledger::allocate(hc.tx, hc.ctx, co.id, p.invoice.id, ENTITY, pid, on, p.take, p.invoice_base).await?;
+            let credit_base = -ledger::allocate(hc.tx, hc.ctx, co.id, p.credit.id, ENTITY, pid, on, -p.take, -p.credit_base).await?;
+            let diff = invoice_base - credit_base;
+            gains.push(if customer { -diff } else { diff });
             if !diff.is_zero() {
                 // The party's account keeps the base difference between the two rates; clear it.
                 let sign = if customer { -Decimal::ONE } else { Decimal::ONE };
@@ -254,6 +257,22 @@ impl DocHook for AllocationHook {
             }
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        // The differences shown are what was posted: a pair that cleared an item may have given up a
+        // unit more or less than its rate alone said.
+        let sctx = sys(hc.ctx);
+        for (r, gain) in rows(doc, "allocations").iter().zip(&gains) {
+            if let Some(row) = id(r, "id").filter(|_| d(r, "exchange_difference") != *gain) {
+                let mut v = Doc::new();
+                v.insert("exchange_difference".into(), money(*gain));
+                hc.kernel.set_child_values_tx(&sctx, hc.tx, ENTITY, "allocations", row, v).await?;
+            }
+        }
+        let total: Decimal = gains.iter().sum();
+        if d(doc, "exchange_difference") != total {
+            let mut v = Doc::new();
+            v.insert("exchange_difference".into(), money(total));
+            hc.kernel.set_values_tx(&sctx, hc.tx, ENTITY, pid, v).await?;
+        }
         for (entity, item) in touched {
             sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, item).await?;
         }

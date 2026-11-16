@@ -752,4 +752,23 @@ async fn scenario() {
     assert_eq!(t.scalar(counted, cid).await, before, "every return counted again, as the engine counts them");
     assert_eq!(dec(&t.get("DeliveryNote", dn).await["items"][0]["returned_qty"]), n("10"));
     refused(t.k.run_action(&t.ctx, "DeliveryNote", dn, "make_sales_return", json!({})).await, "everything on DN-");
+
+    // ───────────── a credit note at another rate than its invoice ─────────────
+    // 100 dollars invoiced at 83 and credited in full at 84: the note settles the invoice, and the 100
+    // rupees between the two rates are an exchange difference, not a balance left in receivables that
+    // no open item explains.
+    let usd = t.find_one("Currency", json!({"code": "USD"})).await;
+    let abroad = uid(&t.insert("Customer", json!({"customer_name": "Abroad Ltd", "default_currency": usd["id"]})).await);
+    let sold = json!({"company": c, "customer": abroad.to_string(), "currency": usd["id"], "conversion_rate": "83",
+                      "items": [{"description": "Advice", "qty": "1", "price_list_rate": "100"}]});
+    let sold = uid(&t.submit("SalesInvoice", uid(&t.insert("SalesInvoice", sold).await)).await);
+    let note = t.action("SalesInvoice", sold, "make_credit_note", json!({})).await;
+    t.update("SalesInvoice", note, json!({"conversion_rate": "84"})).await;
+    let gain_before = t.gl("Exchange Gain or Loss").await;
+    t.submit("SalesInvoice", note).await;
+    let open_base = "select coalesce(sum(base_outstanding), 0) from open_item where tenant_id = $1 and company_id = $2 and customer_id is not null";
+    assert_eq!(t.gl("Debtors").await, t.scalar(open_base, cid).await, "receivables agree with the open items");
+    assert_eq!(t.gl("Exchange Gain or Loss").await - gain_before, n("-100"), "a gain of 100 against the 100 more given back in sales");
+    t.cancel("SalesInvoice", note).await;
+    assert_eq!((t.gl("Debtors").await, t.gl("Exchange Gain or Loss").await), (t.scalar(open_base, cid).await, gain_before));
 }

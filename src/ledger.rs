@@ -439,7 +439,11 @@ pub async fn load_open_item(tx: &mut Tx, tenant: Uuid, id: Uuid, lock: bool) -> 
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(tenant).bind(id).fetch_optional(&mut **tx).await?)
 }
 
-/// Settles `amount` (same sign as the item) of an open item; the database refuses over-allocation.
+/// Settles `amount` (same sign as the item) of an open item, `base_amount` of it in the company's
+/// currency; the database refuses over-allocation. A settlement that clears what is outstanding takes
+/// all the item has left in the company's currency, whatever `base_amount` says: an invoice's base is
+/// its parts' (net and each tax) rounded apart, which the caller's conversion of the whole can miss by
+/// a unit. Answers the base taken, for the caller to post; unallocating gives back the same.
 #[allow(clippy::too_many_arguments)]
 pub async fn allocate(
     tx: &mut Tx,
@@ -451,23 +455,31 @@ pub async fn allocate(
     on: NaiveDate,
     amount: Decimal,
     base_amount: Decimal,
-) -> Result<()> {
-    let n = sqlx::query(
-        "update open_item set outstanding = outstanding - $3::numeric, base_outstanding = base_outstanding - $4::numeric, \
-         status = case when outstanding - $3::numeric = 0 then 'paid' else 'open' end, updated_at = now() \
+) -> Result<Decimal> {
+    let base: Option<Decimal> = sqlx::query_scalar(
+        "select case when outstanding = $3::numeric then base_outstanding else $4::numeric end from open_item \
          where tenant_id = $1 and id = $2 and status <> 'cancelled' \
-         and abs(outstanding) >= abs($3::numeric) and sign(outstanding) * sign($3::numeric) >= 0",
+         and abs(outstanding) >= abs($3::numeric) and sign(outstanding) * sign($3::numeric) >= 0 for update",
+    )
+    .bind(ctx.tenant)
+    .bind(item)
+    .bind(amount.to_string())
+    .bind(base_amount.to_string())
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(base_amount) = base else {
+        return Err(Error::invalid("the allocated amount exceeds what is outstanding on the invoice (or it was cancelled)"));
+    };
+    sqlx::query(
+        "update open_item set outstanding = outstanding - $3::numeric, base_outstanding = base_outstanding - $4::numeric, \
+         status = case when outstanding - $3::numeric = 0 then 'paid' else 'open' end, updated_at = now() where tenant_id = $1 and id = $2",
     )
     .bind(ctx.tenant)
     .bind(item)
     .bind(amount.to_string())
     .bind(base_amount.to_string())
     .execute(&mut **tx)
-    .await?
-    .rows_affected();
-    if n == 0 {
-        return Err(Error::invalid("the allocated amount exceeds what is outstanding on the invoice (or it was cancelled)"));
-    }
+    .await?;
     sqlx::query(
         "insert into allocation (tenant_id, id, company_id, open_item_id, payment_entity, payment_id, posting_date, amount, base_amount) \
          values ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric)",
@@ -483,7 +495,7 @@ pub async fn allocate(
     .bind(base_amount.to_string())
     .execute(&mut **tx)
     .await?;
-    Ok(())
+    Ok(base_amount)
 }
 
 /// Reverses every allocation a payment made (append-only), restoring the items' outstanding.

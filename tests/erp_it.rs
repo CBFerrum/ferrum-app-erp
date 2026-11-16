@@ -2034,4 +2034,48 @@ async fn scenario() {
     tx.commit().await.unwrap();
     let difference = paid.get("exchange_difference").map(dec).unwrap_or_default();
     assert_eq!((dec(&paid["base_paid_amount"]), receivable, left, difference), (n("840.82"), Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
+
+    // ───────────── a paid invoice keeps nothing in the company's currency ─────────────
+    // 10.05 dollars and 10% tax at 1.5 are booked part by part, 15.08 and 1.52: 16.60. Paid in full at
+    // the same rate the 11.06 dollars are 16.59, and the payment settles all that is left of the
+    // invoice, the cent between the two going to the exchange difference. Cancelled, the payment gives
+    // back exactly what it took.
+    let left_of = |item: Uuid| {
+        let t = &t;
+        async move {
+            let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+            let row: (Decimal, Decimal, String) = sqlx::query_as(
+                "select (select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and against_id = $2), base_outstanding, status \
+                 from open_item where tenant_id = $1 and id = $2",
+            )
+            .bind(t.ctx.tenant)
+            .bind(item)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            row
+        }
+    };
+    let output = t.find_one("Account", json!({"account_name": "Output Tax", "company": gmbh.to_string()})).await["id"].clone();
+    let vat = json!({"title": "VAT 10% (TIG)", "company": gmbh.to_string(), "kind": "Sales",
+                     "rows": [{"charge_type": "On Net Total", "account": output, "description": "VAT", "rate": "10"}]});
+    let vat = uid(&t.insert("TaxTemplate", vat).await).to_string();
+    let taxed = json!({"company": gmbh.to_string(), "customer": abroad.to_string(), "currency": usd["id"], "conversion_rate": "1.5", "tax_template": vat,
+                       "items": [{"description": "Advice", "qty": "1", "price_list_rate": "10.05"}]});
+    let taxed = t.submit("SalesInvoice", uid(&t.insert("SalesInvoice", taxed).await)).await;
+    assert_eq!((dec(&taxed["grand_total"]), dec(&taxed["base_grand_total"])), (n("11.06"), n("16.6")));
+    let gmbh_doc = t.get("Company", gmbh).await;
+    let pay = json!({"company": gmbh.to_string(), "payment_type": "Receive", "customer": abroad.to_string(), "bank_account": gmbh_doc["default_bank_account"],
+                     "currency": usd["id"], "exchange_rate": "1.5", "paid_amount": "11.06",
+                     "references": [{"invoice_type": "Sales Invoice", "invoice": taxed["id"], "allocated_amount": "11.06"}]});
+    let loss_before = t.gl("Exchange Gain or Loss").await;
+    let pay = uid(&t.submit("PaymentEntry", uid(&t.insert("PaymentEntry", pay).await)).await);
+    assert_eq!(left_of(uid(&taxed)).await, (Decimal::ZERO, Decimal::ZERO, "paid".to_string()), "nothing left in rupees on a paid invoice");
+    let paid = t.get("PaymentEntry", pay).await;
+    assert_eq!((dec(&paid["base_paid_amount"]), dec(&paid["exchange_difference"])), (n("16.59"), n("-0.01")));
+    assert_eq!(t.gl("Exchange Gain or Loss").await - loss_before, n("0.01"));
+    t.k.cancel(&t.ctx, "PaymentEntry", pay, None).await.expect("cancel the payment");
+    assert_eq!(left_of(uid(&taxed)).await, (n("16.6"), n("16.6"), "open".to_string()), "given back as it was taken");
+    assert_eq!(t.gl("Exchange Gain or Loss").await, loss_before);
 }
