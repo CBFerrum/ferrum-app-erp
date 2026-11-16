@@ -210,7 +210,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({}),
-            "vn_01_gtgt",
+            "Vietnam 01/GTGT",
             10,
             10,
             10,
@@ -353,7 +353,7 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my", "id", "th", "ph"] {
+    for code in ["sg", "my", "id", "th", "ph", "vn"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -396,6 +396,12 @@ fn extras(code: &str) -> Vec<Extra> {
         ],
         "th" => vec![("SalesInvoice", false, &[("Goods", None)][..]), ("SalesInvoice", false, &[("Goods", None)])],
         "id" => vec![("SalesInvoice", false, &[("Goods", Some("Luxury"))][..]), ("PurchaseInvoice", false, &[("Goods", Some("Luxury"))])],
+        "vn" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("Standard (Reduced to 8%)"))][..]),
+            ("SalesInvoice", false, &[("Goods", Some("Reduced 5%"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("Standard (Reduced to 8%)"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("Reduced 5%"))]),
+        ],
         _ => vec![],
     });
     all
@@ -420,6 +426,23 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
         "id" => &[("A1", "200"), ("A2", "300"), ("A3", "100"), ("PK", "34"), ("JLN", "11"), ("PM", "34"), ("KB", "11")],
         "th" => &[("1", "700"), ("2", "200"), ("3", "100"), ("4", "400"), ("5", "28"), ("6", "200"), ("7", "14"), ("8", "14"), ("9", "0")],
         "ph" => &[("VS", "200"), ("ZR", "200"), ("EX", "100"), ("TS", "500"), ("OT", "24"), ("DP", "100"), ("NR", "100"), ("IT", "24"), ("NV", "0")],
+        // Exempt sales are in [26] and [34]: the return in Rust left them out, taking Vietnam's exemption
+        // reason ("Not subject to VAT") for the mark of a line on a row its category is not on.
+        "vn" => &[
+            ("[23]", "500"),
+            ("[24]", "33"),
+            ("[25]", "33"),
+            ("[26]", "200"),
+            ("[29]", "200"),
+            ("[30]", "100"),
+            ("[31]", "5"),
+            ("[32]", "300"),
+            ("[32a]", "100"),
+            ("[33]", "28"),
+            ("[34]", "800"),
+            ("[35]", "33"),
+            ("[36]", "0"),
+        ],
         _ => &[],
     }
 }

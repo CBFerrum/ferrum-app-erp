@@ -5,8 +5,7 @@
 //! the buyer (foreign contractor tax) and claimed as input tax. The return lays out declaration
 //! 01/GTGT's indicators.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, OUT_OF_SCOPE, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED, digits};
-use ferrum_kernel::Doc;
+use crate::engine::{Country, Rate, ReverseCharge, Row, digits};
 
 pub static COUNTRY: Country = Country {
     package: "vn",
@@ -46,36 +45,9 @@ pub fn number(raw: &str) -> Option<String> {
     }
 }
 
-fn gtgt01(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let input = f.purchases_tax(&["Standard", "Standard (Reduced to 8%)", "Reduced 5%", REVERSE_CHARGED]);
-    let not_subject = f.sales_net(&[EXEMPT, OUT_OF_SCOPE]);
-    let zero = f.sales_net(&[ZERO_RATED, EXPORT]);
-    let five = f.sales_net(&["Reduced 5%"]);
-    let ten = f.sales_net(&["Standard", "Standard (Reduced to 8%)"]);
-    let output = f.sales_tax(&["Reduced 5%", "Standard", "Standard (Reduced to 8%)"]);
-    vec![
-        (
-            "[23]",
-            "Value of goods and services purchased",
-            f.purchases_net(&["Standard", "Standard (Reduced to 8%)", "Reduced 5%", REVERSE_CHARGED, ZERO_RATED]),
-        ),
-        ("[24]", "VAT on goods and services purchased", input),
-        ("[25]", "Deductible input VAT this period", input),
-        ("[26]", "Goods and services sold not subject to VAT", not_subject),
-        ("[29]", "Goods and services sold at 0%", zero),
-        ("[30]", "Goods and services sold at 5%", five),
-        ("[31]", "VAT on sales at 5%", f.sales_tax(&["Reduced 5%"])),
-        ("[32]", "Goods and services sold at 10% (those reduced to 8% included)", ten),
-        ("[32a]", "Of which reduced to 8%", f.sales_net(&["Standard (Reduced to 8%)"])),
-        ("[33]", "VAT on sales at 10% and 8%", f.sales_tax(&["Standard", "Standard (Reduced to 8%)"])),
-        ("[34]", "Total sales", not_subject + zero + five + ten),
-        ("[35]", "Total output VAT", output),
-        ("[36]", "VAT arising in the period (output less deductible input)", output - input),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "vn_01_gtgt", label: "VAT Declaration (01/GTGT)", country: &COUNTRY, boxes: gtgt01 })]
+    Vec::new()
 }
 
 crate::app!("vn");

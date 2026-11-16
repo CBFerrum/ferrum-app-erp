@@ -583,7 +583,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
 | 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
 | 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q as a return definition | — |
-| 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT | — |
+| 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
 | 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.2.0 | VAT 15%, reverse charge | ZATCA's VAT return | — |
 | 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.2.0 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
 | 🇦🇺 | Australia | `ferrum-countries` 0.2.0 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |

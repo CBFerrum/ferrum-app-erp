@@ -22,3 +22,52 @@ overlays:
           description: "Standard (Reduced to 8%): goods and services at 10% that the 2% reduction covers, 8% until 31 December 2026"}}
       - {op: add_field, after: vn_vat_category, field: {name: vn_kind, type: select, label: "Goods or Services (Vietnam)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+  # The return's boxes sum the tax ledger by this country's own categories too.
+  - entity: TaxReturnBoxDefinition
+    ops:
+      - {op: add_options, field: category, options: ["Standard (Reduced to 8%)", "Reduced 5%"]}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Vietnam 01/GTGT"
+        country: VN
+        frequency: Monthly
+        notes: "Declaration 01/GTGT from the tax ledger: the boxes without brackets sum the ledger, the declaration's bracketed boxes are formulas over them. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "P_STD", label: "Purchases at 10%", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "P_R8", label: "Purchases at 10% reduced to 8%", kind: Sum, measure: Base, direction: Input, category: "Standard (Reduced to 8%)", reverse_charge: "No"}
+          - {code: "P_R5", label: "Purchases at 5%", kind: Sum, measure: Base, direction: Input, category: "Reduced 5%", reverse_charge: "No"}
+          - {code: "P_ZR", label: "Purchases at 0%", kind: Sum, measure: Base, direction: Input, category: "Zero Rated", reverse_charge: "No"}
+          - {code: "RC", label: "Services bought from abroad", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "I_STD", label: "VAT on purchases at 10%", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "I_R8", label: "VAT on purchases reduced to 8%", kind: Sum, measure: Tax, direction: Input, category: "Standard (Reduced to 8%)", reverse_charge: "No"}
+          - {code: "I_R5", label: "VAT on purchases at 5%", kind: Sum, measure: Tax, direction: Input, category: "Reduced 5%", reverse_charge: "No"}
+          - {code: "I_RC", label: "VAT on services bought from abroad", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "S_EX", label: "Sales exempt from VAT", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "S_OOS", label: "Sales not subject to VAT", kind: Sum, measure: Base, direction: Output, category: "Out of Scope"}
+          - {code: "S_ZR", label: "Sales at 0%", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "S_EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "S5", label: "Sales at 5%", kind: Sum, measure: Base, direction: Output, category: "Reduced 5%"}
+          - {code: "S10", label: "Sales at 10%", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "S8", label: "Sales reduced to 8%", kind: Sum, measure: Base, direction: Output, category: "Standard (Reduced to 8%)"}
+          - {code: "T5", label: "VAT on sales at 5%", kind: Sum, measure: Tax, direction: Output, category: "Reduced 5%"}
+          - {code: "T10", label: "VAT on sales at 10%", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "T8", label: "VAT on sales reduced to 8%", kind: Sum, measure: Tax, direction: Output, category: "Standard (Reduced to 8%)"}
+          - {code: "IN", label: "Input VAT", kind: Formula, formula: "I_STD + I_R8 + I_R5 + I_RC"}
+          - {code: "OUT", label: "Output VAT", kind: Formula, formula: "T5 + T10 + T8"}
+          - {code: "[23]", label: "Value of goods and services purchased", kind: Formula, formula: "P_STD + P_R8 + P_R5 + RC + P_ZR"}
+          - {code: "[24]", label: "VAT on goods and services purchased", kind: Formula, formula: "IN"}
+          - {code: "[25]", label: "Deductible input VAT this period", kind: Formula, formula: "IN"}
+          - {code: "[26]", label: "Goods and services sold not subject to VAT", kind: Formula, formula: "S_EX + S_OOS"}
+          - {code: "[29]", label: "Goods and services sold at 0%", kind: Formula, formula: "S_ZR + S_EXP"}
+          - {code: "[30]", label: "Goods and services sold at 5%", kind: Formula, formula: "S5"}
+          - {code: "[31]", label: "VAT on sales at 5%", kind: Formula, formula: "T5"}
+          - {code: "[32]", label: "Goods and services sold at 10% (those reduced to 8% included)", kind: Formula, formula: "S10 + S8"}
+          - {code: "[32a]", label: "Of which reduced to 8%", kind: Formula, formula: "S8"}
+          - {code: "[33]", label: "VAT on sales at 10% and 8%", kind: Formula, formula: "T10 + T8"}
+          - {code: "[34]", label: "Total sales", kind: Formula, formula: "S_EX + S_OOS + S_ZR + S_EXP + S5 + S10 + S8"}
+          - {code: "[35]", label: "Total output VAT", kind: Formula, formula: "OUT"}
+          - {code: "[36]", label: "VAT arising in the period (output less deductible input)", kind: Formula, formula: "OUT - IN"}
