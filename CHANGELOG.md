@@ -1,5 +1,18 @@
 # Changelog
 
+## ERP 0.30.4: a new card's code typed in another app
+
+No database or interface change.
+
+- **Another app hands ERP a new card's code the way ERP keeps one typed on its own records.** Since 0.27.0 a code
+  typed on a sales invoice's line waits in `stored_value_typed` under a one-time handle, and the line keeps only the
+  handle and the last four characters; but an app that takes the code first (Point of Sale, at the till) had no way
+  to have it kept like that, so it wrote the code's hash onto ERP's line itself, in the old form, and the submission
+  refused it ("the code typed for ••••0001: is no longer kept"). `stored_value::typed` takes such a code (and PIN):
+  it answers the account the code names, to top up, or keeps the code for the new card and answers its handle, which
+  the app keeps in place of the code and passes on as the line's or the refund's `stored_value_secret`; the
+  submission opens the card once. `stored_value::forget` lets a kept code go when the app's draft no longer holds it.
+
 ## ERP 0.30.3, Malaysia 0.4.0, Singapore, Indonesia, Thailand, the Philippines, Vietnam, Saudi Arabia, New Zealand, Japan, China 0.3.0: ten countries' returns as definitions
 
 No database or interface change in ERP. The ten add-ons need ERP 0.22 (tax return definitions) or later; each loses

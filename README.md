@@ -274,7 +274,8 @@ add-on brings it.
   charged when sold or when redeemed.
 - **Accounts** keep their balance as the sum of their own append-only ledger, never below zero in the
   database. Codes are kept only as a salted hash and the last four characters; a code and PIN go to a
-  single-use proof, never to the audit log or a receipt.
+  single-use proof, never to the audit log or a receipt. Another app that takes a new card's code (a till)
+  has it kept by `stored_value::typed` and passes on the one-time handle, never the hash.
 - **Sold** on an invoice line, **redeemed** as a payment, **refunded** onto the card or new store credit,
   **held** for a sales order, **expired** by the upkeep with the event `stored_value_expiring` first. Block,
   unblock, new code, adjust and cash out.

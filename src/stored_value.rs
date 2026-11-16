@@ -23,7 +23,8 @@
 //! proof; a code made for a new card is answered by `prove` and never by the operation. A code typed
 //! on a sales invoice's line or a payment for a new card waits for the submission in
 //! `stored_value_typed`: the record keeps a random handle and the last four characters, nothing a
-//! reader could use.
+//! reader could use. Another app that takes a new card's code for a line or a refund it hands ERP
+//! later (a register) has it kept the same way by [`typed`] and passes the handle on.
 //!
 //! Concurrency: every change locks the account's row first and reads its balance under the lock, so
 //! of two tills taking from one card at once the second waits, then sees what the first left; the
@@ -777,9 +778,9 @@ fn mask(ctx: &Ctx, row: &mut Doc, secret_field: &str, at: &str) -> Result<Option
 }
 
 /// Keeps a typed code until its document is submitted: the code's hash and the PIN's in
-/// `stored_value_typed` under a random handle, and on the record only the handle and the code's last
-/// four characters (`handle:hint`), which nobody who reads the record can use.
-async fn keep(tx: &mut Tx, tenant: Uuid, row: &mut Doc, secret_field: &str, sec: &Secret) -> Result<()> {
+/// `stored_value_typed` under a random handle; answers what the record keeps, only the handle and the
+/// code's last four characters (`handle:hint`), which nobody who reads the record can use.
+async fn keep(tx: &mut Tx, tenant: Uuid, sec: &Secret) -> Result<String> {
     let handle = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     sqlx::query("insert into stored_value_typed (tenant_id, handle, code_hash, code_hint, pin_hash) values ($1, $2, $3, $4, $5)")
         .bind(tenant)
@@ -789,7 +790,39 @@ async fn keep(tx: &mut Tx, tenant: Uuid, row: &mut Doc, secret_field: &str, sec:
         .bind(&sec.pin_hash)
         .execute(&mut **tx)
         .await?;
-    crate::util::set(row, secret_field, format!("{handle}:{}", sec.hint));
+    Ok(format!("{handle}:{}", sec.hint))
+}
+
+/// A card's code (and PIN) typed in another app for a sales invoice line or a refund it hands ERP later (a register's
+/// sale of a card, a return onto one).
+#[derive(Debug, Clone)]
+pub struct Typed {
+    /// The account the code names: loaded without its PIN (value is given, not taken).
+    pub account: Option<Uuid>,
+    /// For a new card: the code as ERP keeps one typed on its own records (`handle:hint`, nothing a reader could use),
+    /// for the line's or payment's `stored_value_secret`. Its submission opens the card, once.
+    pub kept: Option<String>,
+    /// The code as shown (its last four characters), for `stored_value_code`.
+    pub shown: String,
+}
+
+/// Takes a code typed in another app the way ERP takes one typed on a sales invoice's line: the account it names, or
+/// the code kept for the new card. The app keeps the answer on its own record in place of the code, and passes `kept`
+/// and `shown` on with the line or payment it makes; it never sees or keeps the code's hash.
+pub async fn typed(k: &Kernel, ctx: &Ctx, tx: &mut Tx, code: &str, pin: Option<&str>) -> Result<Typed> {
+    let sec = secret(ctx.tenant, code, pin)?;
+    let shown = masked(&sec.hint);
+    if let Some(acc) = lookup(k, ctx, tx, None, &sec, false).await? {
+        return Ok(Typed { account: Some(acc), kept: None, shown });
+    }
+    Ok(Typed { account: None, kept: Some(keep(tx, ctx.tenant, &sec).await?), shown })
+}
+
+/// A code kept by [`typed`] that will open no card (the draft that kept it is deleted, or the code typed again): its
+/// hashes are gone at once instead of waiting for a submission that never comes.
+pub async fn forget(ctx: &Ctx, tx: &mut Tx, kept: &str) -> Result<()> {
+    let handle = kept.split_once(':').map_or(kept, |(h, _)| h);
+    sqlx::query("delete from stored_value_typed where tenant_id = $1 and handle = $2").bind(ctx.tenant).bind(handle).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -815,7 +848,7 @@ pub(crate) async fn mask_lines(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()
     }
     for (i, r) in items.iter_mut().enumerate() {
         if let Some(sec) = mask(hc.ctx, r, "stored_value_secret", &format!("items.{i}.stored_value_code"))? {
-            keep(hc.tx, hc.ctx.tenant, r, "stored_value_secret", &sec).await?;
+            crate::util::set(r, "stored_value_secret", keep(hc.tx, hc.ctx.tenant, &sec).await?);
         }
     }
     crate::util::set(doc, "items", Value::Array(items.into_iter().map(Value::Object).collect()));
@@ -1016,7 +1049,9 @@ pub(crate) async fn payment_fill(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<
                 crate::util::set(doc, "stored_value_account", acc.to_string());
             }
             // A new card's code, for a refund into new store credit.
-            None if b(doc, "is_refund") && id(doc, "stored_value_kind").is_some() => keep(hc.tx, hc.ctx.tenant, doc, "stored_value_secret", &sec).await?,
+            None if b(doc, "is_refund") && id(doc, "stored_value_kind").is_some() => {
+                crate::util::set(doc, "stored_value_secret", keep(hc.tx, hc.ctx.tenant, &sec).await?);
+            }
             None => {
                 missed(hc.kernel, hc.ctx, None).await?;
                 return Err(Error::field("stored_value_code", "no stored value account has this code"));
