@@ -7,6 +7,8 @@ Holds that hold, and what happens after.
   a lorry. Whoever placed a hold does not release it.
 - **Nonconformances** with a disposition, and **corrective action** verified by someone other than
   its owner.
-- **Inspection plans** that say when a lot needs looking at.
+
+Which items are inspected, and against which template, is the item's (Stock Operations' quality
+inspections).
 
 Controlled document release, supplier quality and recall management are not built.

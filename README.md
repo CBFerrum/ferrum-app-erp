@@ -494,7 +494,6 @@ Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
   allocating it and the floor from using it; receipts still pass. Whoever placed a hold does not release it.
 - **Nonconformances** with a disposition, and **corrective actions** (CAPA) closed only when someone other than
   the owner has seen them work.
-- **Inspection plans** per item and revision; an approved plan does not change.
 
 ### 🖨️ Print layouts and documents
 
@@ -720,7 +719,7 @@ outside service and a retry never sends twice.
 | ⚙️ Manufacturing Operations | Workstation, Workstation Type, Operation, Routing, Job Card, Production Plan, Subcontracting BOM, Subcontracting Order, Subcontracting Receipt |
 | 🏬 Warehouse | Managed Warehouse, Storage Zone, Storage Bin, Replenishment Rule, Handling Unit, Handling Unit Type, Inbound Shipment, Pick Wave, Warehouse Task, Shipment, Return Authorization, Cycle Count, Storage Contract |
 | 🛠️ Shop Floor | Production Run, Production Revision, Operator Qualification, Downtime Reason |
-| ✅ Quality | Quality Hold, Nonconformance, Corrective Action, Inspection Plan |
+| ✅ Quality | Quality Hold, Nonconformance, Corrective Action |
 | 🌍 Countries | EU VAT Rate; UK VAT Return; US Sales Tax Rate, US Rate Table, US Product Taxability, US Exemption Certificate; Portugal's invoice series |
 
 ### 👥 Roles
@@ -733,7 +732,7 @@ outside service and a retry never sends twice.
 | Purchase Manager / Purchase User | Suppliers, purchase orders, receipts and bills; the manager approves the first band |
 | Stock Manager / Stock User | Items, warehouses, price lists, stock entries, carriers and shipments |
 | Manufacturing Manager / Manufacturing User | BOMs, work orders and MRP runs |
-| Quality Manager / Quality User | Holds, nonconformances, corrective action, inspection plans (Quality) |
+| Quality Manager / Quality User | Holds, nonconformances, corrective action (Quality) |
 | Warehouse Manager / Operator / Viewer | The warehouse's tasks, waves, counts and approvals (WMS) |
 | Production Supervisor / Operator | Releases, runs and reports production (MES) |
 
@@ -1050,7 +1049,7 @@ addons/
 ├── procurement/   material requests, RFQs, supplier quotations and scorecards
 ├── stock-ops/     reconciliation, landed costs, picking, packing, inspection, variants
 ├── mfg-ops/       workstations, routings, job cards, production plans, subcontracting
-├── quality/       holds, nonconformances, corrective action, inspection plans
+├── quality/       holds, nonconformances, corrective action
 ├── wms/           Warehouse, with its own interface
 ├── mes/           Shop Floor, with its own interface
 ├── india/ eu/ de/ gb/ us/ ca/

@@ -1,6 +1,6 @@
 [package]
 name = "ferrum-quality"
-description = "Quality: holds that stop stock from moving, nonconformance and disposition, corrective action, versioned inspection plans"
+description = "Quality: holds that stop stock from moving, nonconformance and disposition, corrective action"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -169,20 +169,4 @@ async fn scenario() {
     actions[0]["done_on"] = json!(chrono::Utc::now().date_naive().to_string());
     k.update(&boss, "Capa", capa, obj(json!({"actions": actions})), None).await.unwrap();
     post(&k, &tester, &format!("/capa/{capa}/verify"), json!({"note": "No rejects in 400 units"})).await.expect("verified");
-
-    // An approved plan is frozen, and a new revision takes over.
-    let template = k
-        .insert(
-            &admin,
-            "QualityInspectionTemplate",
-            obj(json!({"template_name": "Paste", "parameters": [{"parameter": "Viscosity", "numeric": true, "min_value": 1, "max_value": 2}]})),
-        )
-        .await;
-    let template = template.map(|t| uid(&t)).unwrap_or_else(|e| panic!("{e:?}"));
-    let plan = uid(&k.insert(&boss, "InspectionPlan", obj(json!({"item": item, "revision": "A", "template": template}))).await.unwrap());
-    post(&k, &boss, &format!("/plans/{plan}/approve"), Value::Null).await.expect("approved");
-    assert!(k.update(&boss, "InspectionPlan", plan, obj(json!({"sample_size": 5})), None).await.is_err(), "an approved plan does not change");
-    let next = uid(&k.insert(&boss, "InspectionPlan", obj(json!({"item": item, "revision": "B", "template": template, "sample_size": 5}))).await.unwrap());
-    post(&k, &boss, &format!("/plans/{next}/approve"), Value::Null).await.unwrap();
-    assert_eq!(k.get(&admin, "InspectionPlan", plan, false).await.unwrap()["status"], json!("Superseded"));
 }
