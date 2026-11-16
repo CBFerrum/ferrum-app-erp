@@ -1,5 +1,22 @@
 # Changelog
 
+## ERP 0.30.0: the base names no country in its layouts, chart or manifest
+
+Seven documents gain a read-only Tax Registrations field; no interface change. ferrum-app-hr's suite looks the chart's
+TDS Payable up by name: it is Withholding Tax Payable now.
+
+- **Every layout prints the registrations the countries' add-ons give.** ERP's nine print layouts read India's
+  fields (`in_gstin`, and `in_address`, `in_city`, `in_pincode` where the letterhead was empty): seven printed a GSTIN
+  and no other country's registration. A layout now prints the document's `tax_registrations`, which ERP keeps on a
+  draft through its localization seam (`Localization::tax_ids`), each under the label its country gives: the seller's
+  and the buyer's on a sale and on a purchase (deliveries, receipts and orders included: the company sells on a sale and
+  buys on a purchase), the company's and the party's on a payment, the company's on a journal and a stock entry. The
+  letterhead's address is the company's letterhead fields. India's own sales invoice layout is unchanged.
+- **The standard chart's withholding accounts are Withholding Tax Receivable (1152) and Withholding Tax Payable
+  (2132)**, for every company; India's TDS categories book to 2132 as before.
+- **ERP's manifest no longer opens India's records**: they open where every other country's do, in the records of the
+  app they belong to.
+
 ## ERP 0.29.1, India 0.7.2: four faults, each shown failing first
 
 No database or interface change.
