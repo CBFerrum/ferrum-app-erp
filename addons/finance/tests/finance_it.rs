@@ -850,18 +850,22 @@ async fn scenario() {
         let (k, am, id) = (k.clone(), am.clone(), uid(&pcv));
         tokio::spawn(async move { k.submit(&am, "PeriodClosingVoucher", id, None).await })
     };
-    for _ in 0..200 {
+    // Until the second waits, or (without a lock) is done: either comes, however loaded the machine.
+    let mut waited = false;
+    for _ in 0..2400 {
         let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
             .bind(pid)
             .fetch_one(&k.db.pool)
             .await
             .unwrap();
         if waits || closing.is_finished() {
+            waited = waits;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     posting.commit().await.unwrap();
+    assert!(waited, "the closing waited for the entry");
     let pcv = closing.await.unwrap().expect("the closing");
     assert_eq!(dec(&pcv["net_profit"]), n("900"), "1000 + 200 income - 300 expense");
     let pl_left = "select count(*) from (select l.account_id, l.cost_center_id from journal_line l join e_account a on a.tenant_id = l.tenant_id \

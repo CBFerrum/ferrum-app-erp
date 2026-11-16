@@ -6,6 +6,7 @@
 
 use chrono::Utc;
 use ferrum_app_erp::ledger::{self, Entry, Line, OpenItem};
+use ferrum_app_erp::portal;
 use ferrum_app_erp::stock::{self, MoveIn};
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Tx};
@@ -37,6 +38,9 @@ async fn count(tx: &mut Tx, sql: &'static str, source: Uuid) -> i64 {
     sqlx::query_scalar(sql).bind(source).fetch_one(&mut **tx).await.unwrap()
 }
 
+const WEBSHOP: &str = "package: webshop\nversion: 0.1.0\nlabel: Web shop\ndepends: [parties]\nfield_prefix: commerce_\n\
+                       overlays:\n  - entity: Customer\n    ops:\n      - {op: add_field, field: {name: commerce_guest, type: check}}\n";
+
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
 fn opener(url: &str) -> ferrum_kernel::vault::Opener {
     ferrum_kernel::vault::Opener {
@@ -61,6 +65,8 @@ async fn scenario() {
     ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("the shared packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
+    // A web shop's guest checkouts flag the customers they make, as Commerce does.
+    packages.extend(ferrum_meta::catalog::load_embedded(&[("webshop", "package.yaml", WEBSHOP)]).expect("the web shop's flag"));
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
     let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
@@ -76,7 +82,7 @@ async fn scenario() {
             admin_email: "admin@co.test".into(),
             admin_password: "Correct-Horse-9".into(),
             admin_name: None,
-            packages: ["core", "accounting", "inventory"].iter().map(|s| s.to_string()).collect(),
+            packages: ["core", "accounting", "inventory", "webshop"].iter().map(|s| s.to_string()).collect(),
             settings: None,
         })
         .await
@@ -203,4 +209,64 @@ async fn scenario() {
     assert!(stock::reverse_moves(&mut tx, &ctx, &co, "ContractTest", receipt, day, Utc::now()).await.unwrap().is_empty(), "and once");
     tx.commit().await.unwrap();
     assert_eq!(stock::parse_serials(Some(" A1 \n\nB2,C3 ")), ["A1", "B2", "C3"]);
+
+    // ── portal::customer_for: a person's customer, found or made once ──
+    // Two calls at once for one address make one customer: the second waits for the first, then finds
+    // what it made.
+    let emailed = "select count(*) from e_customer where email = 'ann@example.test' and $1::uuid is not null";
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    let (ann, made) = portal::customer_for(&k, &ctx, &mut first, "Ann Lee", Some(" Ann@Example.test "), None).await.unwrap();
+    assert!(made);
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
+    let second = {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let found = portal::customer_for(&k, &ctx, &mut tx, "Ann", Some("ann@example.test"), Some("555 0100")).await.unwrap();
+            tx.commit().await.unwrap();
+            found
+        })
+    };
+    // Until the second waits, or (without a lock) is done: either comes, however loaded the machine.
+    let mut waited = false;
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || second.is_finished() {
+            waited = waits;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    first.commit().await.unwrap();
+    assert!(waited, "the second call waited for the first one's lock");
+    assert_eq!(second.await.unwrap(), (ann, false), "the second call finds the first one's customer");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    assert_eq!(count(&mut tx, emailed, ann).await, 1);
+    drop(tx);
+    let made = k.get(&ctx, "Customer", ann, false).await.unwrap();
+    assert_eq!((made["customer_name"].clone(), made["customer_type"].clone()), (json!("Ann Lee"), json!("Individual")));
+    // Never a disabled customer, a guest a web shop recorded, or a company whose contact has the
+    // address: the person gets a customer of their own, found again next time.
+    for flags in [json!({"disabled": true}), json!({"commerce_guest": true})] {
+        let mut c = obj(json!({"customer_name": "Bo", "email": "bo@example.test"}));
+        c.extend(obj(flags));
+        k.insert(&ctx, "Customer", c).await.unwrap();
+    }
+    let initech = id(&k.insert(&ctx, "Customer", obj(json!({"customer_name": "Initech"}))).await.unwrap()["id"]);
+    k.insert(&ctx, "Contact", obj(json!({"first_name": "Bo", "customer": initech.to_string(), "emails": [{"email": "bo@example.test"}]}))).await.unwrap();
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let (bo, made) = portal::customer_for(&k, &ctx, &mut tx, "Bo", Some("bo@example.test"), None).await.unwrap();
+    assert!(made && bo != initech);
+    assert_eq!(portal::customer_for(&k, &ctx, &mut tx, "Bo", Some("BO@example.test"), None).await.unwrap(), (bo, false));
+    // By phone when there is no email, whatever the punctuation; with neither, there is nothing to find by.
+    let (pat, made) = portal::customer_for(&k, &ctx, &mut tx, "Pat", None, Some("+91 98450 12345")).await.unwrap();
+    assert!(made);
+    assert_eq!(portal::customer_for(&k, &ctx, &mut tx, "Pat", Some(" "), Some("+91-9845012345")).await.unwrap(), (pat, false));
+    let (dee, made) = portal::customer_for(&k, &ctx, &mut tx, "Dee", None, None).await.unwrap();
+    assert!(made && portal::customer_for(&k, &ctx, &mut tx, "Dee", None, None).await.unwrap().0 != dee);
+    tx.commit().await.unwrap();
 }

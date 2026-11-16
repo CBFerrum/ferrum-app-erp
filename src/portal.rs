@@ -48,6 +48,58 @@ pub async fn suppliers_of(k: &Kernel, ctx: &Ctx, tx: &mut Tx, email: &str) -> Re
     parties_of(k, ctx, tx, email, "Supplier", "supplier").await
 }
 
+/// A person's customer, found or made, for an app that bills a person (a booking's guest, a learner,
+/// a patient, an applicant, a member): the oldest customer whose own email is `email` (without one,
+/// whose own phone has `phone`'s digits, 6 to 20 of them), never a disabled one nor a web shop's
+/// guest, as [`customers_of`] holds; else an Individual customer made now with `ctx`'s rights, with
+/// the name, email and phone. A contact's email is not matched: it names someone acting for a
+/// customer, often their employer, which is not the person's own account. The find and the make are
+/// serialized per workspace and address by a lock held to the end of the caller's transaction, so two
+/// calls at once for one address make one customer. With neither an email nor a phone there is
+/// nothing to find by, and a customer is made. Answers the customer and whether it was made now.
+pub async fn customer_for(k: &Kernel, ctx: &Ctx, tx: &mut Tx, name: &str, email: Option<&str>, phone: Option<&str>) -> Result<(Uuid, bool)> {
+    let email = email.map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty());
+    let digits = phone.map(|p| p.chars().filter(char::is_ascii_digit).collect::<String>()).filter(|d| (6..=20).contains(&d.len()));
+    let by = match (&email, &digits) {
+        (Some(e), _) => Some(("e", "lower(email)", e)),
+        (None, Some(d)) => Some(("p", "regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g')", d)),
+        (None, None) => None,
+    };
+    if let Some((kind, column, key)) = by {
+        sqlx::query("select pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("erp-customer:{}:{kind}:{key}", ctx.tenant))
+            .execute(&mut **tx)
+            .await?;
+        let table =
+            ctx.schema.entity("Customer").map(|e| ferrum_kernel::ddl::q(&e.table)).ok_or_else(|| Error::internal("this workspace keeps no customers"))?;
+        let found: Vec<Uuid> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("select id from {table} where tenant_id = $1 and {column} = $2 order by created_at, id limit 50")))
+                .bind(ctx.tenant)
+                .bind(key)
+                .fetch_all(&mut **tx)
+                .await?;
+        let sctx = sys(ctx);
+        for c in found {
+            if matchable(&k.get_tx(&sctx, tx, "Customer", c, false).await?) {
+                return Ok((c, false));
+            }
+        }
+    }
+    let mut c = Doc::new();
+    c.insert("customer_name".into(), json!(name));
+    c.insert("customer_type".into(), json!("Individual"));
+    c.insert("email".into(), json!(email));
+    c.insert("phone".into(), json!(phone.map(str::trim).filter(|p| !p.is_empty())));
+    let made = k.insert_tx(ctx, tx, "Customer", c).await?;
+    Ok((id(&made, "id").ok_or_else(|| Error::internal("a customer without an id"))?, true))
+}
+
+/// Whether an address may lead to this customer or supplier: not disabled, and not a guest a web
+/// shop records unchecked (anyone may type anyone's address at a guest checkout).
+fn matchable(c: &Doc) -> bool {
+    !b(c, "disabled") && !b(c, "commerce_guest")
+}
+
 /// The parties of `entity` an address belongs to: with it as their email, or through a contact
 /// whose `link` field names them.
 async fn parties_of(k: &Kernel, ctx: &Ctx, tx: &mut Tx, email: &str, entity: &str, link: &str) -> Result<Vec<Uuid>> {
@@ -56,19 +108,18 @@ async fn parties_of(k: &Kernel, ctx: &Ctx, tx: &mut Tx, email: &str, entity: &st
         return Ok(vec![]);
     }
     let sctx = sys(ctx);
-    let usable = |c: &Doc| !b(c, "disabled") && !b(c, "commerce_guest");
     let mut out: Vec<Uuid> = k
         .find_tx(&sctx, tx, entity, &[Filter::eq("email", email.clone())], Some("created_at asc"), 50)
         .await?
         .iter()
-        .filter(|c| usable(c))
+        .filter(|c| matchable(c))
         .filter_map(|c| id(c, "id"))
         .collect();
     if sctx.schema.entity("Contact").is_some_and(|c| c.field("emails").is_some() && c.field(link).is_some()) {
         for c in k.find_tx(&sctx, tx, "Contact", &[Filter::eq("emails.email", email)], Some("created_at asc"), 50).await? {
             let Some(party) = id(&c, link).filter(|p| !out.contains(p)) else { continue };
             if let Ok(doc) = k.get_tx(&sctx, tx, entity, party, false).await
-                && usable(&doc)
+                && matchable(&doc)
             {
                 out.push(party);
             }

@@ -1,5 +1,15 @@
 # Changelog
 
+## ERP 0.28.3: one way to find or make a person's customer
+
+- **`portal::customer_for(k, ctx, tx, name, email, phone) -> (Uuid, bool)`**, for the apps that bill a person
+  (bookings, learners, patients, applicants, members, a signed-in shopper's first order), which each carried a copy:
+  the oldest customer whose own email is the address (without one, whose own phone has the digits), never a disabled
+  one nor a web shop's guest, else an Individual customer made with the caller's rights. A lock per workspace and
+  address, held to the end of the caller's transaction, makes two calls at once for one address make one customer,
+  which only Bookings' copy did. A contact's email is not matched: it names someone acting for a customer, often their
+  employer. Listed in the contract; no database or interface change.
+
 ## ERP 0.28.2, Finance 0.6.4: what is settled leaves nothing behind, closing waits for what is being posted, a broken tax condition is said
 
 Three faults found in the first round, each shown failing first. One new package SQL file (accounting
