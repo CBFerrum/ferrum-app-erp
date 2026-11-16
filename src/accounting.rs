@@ -698,6 +698,8 @@ impl DocHook for PaymentEntryHook {
             touched.push((item.entity.clone(), inv));
         }
         if !discount_taxes.is_empty() {
+            // The tax taken back is in the tax ledger on the payment's day, as an invoice's tax is on its own.
+            crate::tax_return::check_open(hc, doc).await?;
             let mut v = Doc::new();
             v.insert("discount_taxes".into(), Value::Array(discount_taxes));
             hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "PaymentEntry", pid, v).await?;
@@ -778,6 +780,9 @@ impl DocHook for PaymentEntryHook {
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        if doc.get("discount_taxes").and_then(Value::as_array).is_some_and(|t| !t.is_empty()) {
+            crate::tax_return::check_open(hc, doc).await?;
+        }
         crate::instruments::payment_cancelled(hc, doc).await?;
         // Allocations, ledger and receivables all reverse on the same date, so as-of reports agree.
         let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
