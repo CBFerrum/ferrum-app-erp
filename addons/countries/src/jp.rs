@@ -11,9 +11,7 @@
 //! The cut to the food rate from 1 April 2027 to 31 March 2029 is enacted but its rate is not yet
 //! in this table: until it is, set the items' own tax rate.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED};
-use ferrum_kernel::Doc;
-use rust_decimal::Decimal;
+use crate::engine::{Country, Rate, ReverseCharge, Row};
 
 pub static COUNTRY: Country = Country {
     package: "jp",
@@ -55,30 +53,9 @@ pub fn corporate(d: &str) -> bool {
     v.len() == 13 && v[0] == 9 - v[1..].iter().rev().enumerate().map(|(i, x)| x * if i % 2 == 0 { 1 } else { 2 }).sum::<u32>() % 9
 }
 
-fn ct_return(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let tax10 = f.sales_tax(&["Standard"]) + f.purchases_tax(&[REVERSE_CHARGED]);
-    let tax8 = f.sales_tax(&["Reduced"]);
-    let input10 = f.purchases_tax(&["Standard", REVERSE_CHARGED]);
-    let input8 = f.purchases_tax(&["Reduced"]);
-    let national = |t10: Decimal, t8: Decimal| (t10 * Decimal::new(78, 2) + t8 * Decimal::new(78, 2)).round_dp(0);
-    vec![
-        ("S10", "Taxable sales at 10%", f.sales_net(&["Standard"])),
-        ("S8", "Taxable sales at 8% (reduced)", f.sales_net(&["Reduced"])),
-        ("EXP", "Export (exempt) sales", f.sales_net(&[EXPORT, ZERO_RATED])),
-        ("NT", "Non-taxable sales", f.sales_net(&[EXEMPT])),
-        ("RC", "Specified services under the reverse charge", f.purchases_net(&[REVERSE_CHARGED])),
-        ("T10", "Consumption tax on sales at 10%", tax10),
-        ("T8", "Consumption tax on sales at 8%", tax8),
-        ("I10", "Consumption tax on purchases at 10%", input10),
-        ("I8", "Consumption tax on purchases at 8%", input8),
-        ("N", "National consumption tax due (7.8/10 and 6.24/8 of the net)", national(tax10 - input10, tax8 - input8)),
-        ("L", "Local consumption tax due (2.2/10 and 1.76/8 of the net)", (tax10 - input10 + tax8 - input8) - national(tax10 - input10, tax8 - input8)),
-        ("NET", "Consumption tax due", tax10 + tax8 - input10 - input8),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "jp_consumption_tax", label: "Consumption Tax Return (Summary)", country: &COUNTRY, boxes: ct_return })]
+    Vec::new()
 }
 
 crate::app!("jp", crate::pint::JP);
