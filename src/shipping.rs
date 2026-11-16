@@ -520,7 +520,7 @@ pub struct CarrierHook;
 
 #[async_trait]
 impl DocHook for CarrierHook {
-    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
             .map_err(|e| Error::field("description", format!("is not a carrier description: {e}")))?;
         let test = crate::util::b(doc, "test");
