@@ -4,22 +4,11 @@
 // loads away. The same release draws its pages of the workspace's portal, a customer's "Your
 // invoices" at /portal/invoices/ and a supplier's "Your orders" at /portal/orders/ (§9.1, U7).
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Outlet, RouterProvider, type RouteObject } from "react-router";
-import { addCatalogs, bootstrap, routeBase, t, wordsReady } from "@ferrum/client";
-import { ConfirmHost, Toaster } from "@ferrum/kit";
+import { Outlet, type RouteObject } from "react-router";
+import { bootstrap, t } from "@ferrum/client";
 import { ERP_PACKAGES, erpRoutes, NotFound, RouteError, Started } from "./routes";
-import { setFrameMode } from "@ferrum/records/frame";
+import { mountApp, setFrameMode } from "@ferrum/records/frame";
 import "./styles.css";
-
-// Its own words in the page's language (src/locales), fetched as the page starts; it is drawn once they are in.
-void addCatalogs({ ar: () => import("./locales/ar.json"), hi: () => import("./locales/hi.json") });
-
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: 30_000 } },
-});
 
 /** The portal's pages, when the platform serves this release there, by their entry. */
 const PORTALS: Record<string, { back: string; pages: RouteObject[] }> = {
@@ -59,19 +48,8 @@ const portalRoutes: RouteObject[] = portal
     ]
   : [];
 
-const router = portal
-  ? createBrowserRouter(portalRoutes, { basename: routeBase(entry) })
-  : createBrowserRouter(erpRoutes, { basename: routeBase("erp") });
-
-// Drawn once the page's words are in (its language's catalogs, fetched as the page starts).
-void wordsReady().then(() =>
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-        <Toaster />
-        <ConfirmHost />
-      </QueryClientProvider>
-    </StrictMode>,
-  ),
-);
+mountApp({
+  route: portal ? entry : "erp",
+  catalogs: { ar: () => import("./locales/ar.json"), hi: () => import("./locales/hi.json") },
+  routes: portal ? portalRoutes : erpRoutes,
+});

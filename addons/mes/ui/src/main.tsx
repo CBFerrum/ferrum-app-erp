@@ -10,7 +10,7 @@ import { ConfirmHost, LoadFailed, StatePanel, Toaster } from "@ferrum/kit";
 import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import "./styles.css";
 
-const page = (name: "FormView" | "ListView" | "ReportView" | "AppSettingsPage" | "ScreenPage") => () => import("./records").then((m) => ({ Component: m[name] }));
+const page = (name: "FormView" | "ListView" | "ReportView") => () => import("./records").then((m) => ({ Component: m[name] }));
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: 5_000 } } });
 
@@ -50,8 +50,6 @@ const router = createBrowserRouter(
         { path: "e/:entity", lazy: page("ListView") },
         { path: "e/:entity/:id", lazy: page("FormView") },
         { path: "r/:name", lazy: page("ReportView") },
-        { path: "apps/:app/settings", lazy: page("AppSettingsPage") },
-        { path: "x/:app/:page", lazy: page("ScreenPage") },
         { path: "*", element: <NotFound /> },
       ],
     },
