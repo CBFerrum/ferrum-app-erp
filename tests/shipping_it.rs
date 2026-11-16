@@ -87,15 +87,15 @@ async fn scenario() {
     // A carrier described as calls: no carrier's name or format in the code.
     let desc = json!({
         "rate": {"url": format!("{base}/v1/rates"), "headers": {"Authorization": "Bearer {{ secret.api_key }}"},
-                 "body": "{\"to\": {\"city\": {{ to.city|json }}, \"line\": {{ to.address_line1|json }}}, \"parcels\": [{% for p in shipment.packages %}{\"weight\": {{ p.weight|json }}, \"unit\": {{ weight_unit|json }}}{% if not loop.last %},{% endif %}{% endfor %}]}",
+                 "body": "{\"to\": {\"city\": {{ inputs.to.city|json }}, \"line\": {{ inputs.to.address_line1|json }}}, \"parcels\": [{% for p in inputs.shipment.packages %}{\"weight\": {{ p.weight|json }}, \"unit\": {{ inputs.weight_unit|json }}}{% if not loop.last %},{% endif %}{% endfor %}]}",
                  "rates_at": "/result/rates", "service_at": "/name", "amount_at": "/price/value", "currency_at": "/price/currency", "days_at": "/eta_days", "rate_id_at": "/ref",
                  "error_at": "/error/message"},
         "label": {"url": format!("{base}/v1/labels"), "headers": {"Authorization": "Bearer {{ secret.api_key }}", "Idempotency-Key": "{{ key }}"},
-                  "body": "{\"rate\": {{ rate.id|json }}, \"reference\": {{ shipment.reference|json }}}",
+                  "body": "{\"rate\": {{ inputs.rate.id|json }}, \"reference\": {{ inputs.shipment.reference|json }}}",
                   "tracking_at": "/label/tracking", "label_at": "/label/file", "label_type": "zpl", "id_at": "/label/id", "error_at": "/error/message"},
-        "track": {"url": format!("{base}/v1/track/{{{{ tracking_number }}}}"), "method": "GET", "status_at": "/tracking/state",
+        "track": {"url": format!("{base}/v1/track/{{{{ inputs.tracking_number }}}}"), "method": "GET", "status_at": "/tracking/state",
                   "statuses": {"IN_TRANSIT": "In Transit", "DELIVERED": "Delivered", "FAILED": "Exception"}},
-        "cancel": {"url": format!("{base}/v1/cancel/{{{{ provider_id }}}}")},
+        "cancel": {"url": format!("{base}/v1/cancel/{{{{ inputs.provider_id }}}}")},
         "tracking_link": "https://track.carrier.example/{{ tracking_number }}",
         "inbound": {"auth": "token", "header": "X-Hook-Token", "tracking_at": "/data/tracking", "status_at": "/data/state",
                     "statuses": {"DELIVERED": "Delivered", "IN_TRANSIT": "In Transit"}}
@@ -104,6 +104,11 @@ async fn scenario() {
     bad["rate"]["amount_at"] = json!("price");
     let refused = t.k.insert(&t.ctx, "CarrierConnection", obj(json!({"connection_name": "Bad", "company": c, "description": bad}))).await;
     assert!(format!("{refused:?}").contains("not a JSON pointer"), "{refused:?}");
+    // Tracking calls that nothing would check are refused when the carrier is saved: the Inbound Secret comes in a header.
+    let mut unchecked = desc.clone();
+    unchecked["inbound"]["auth"] = json!("hmac");
+    let refused = t.k.insert(&t.ctx, "CarrierConnection", obj(json!({"connection_name": "Unchecked", "company": c, "description": unchecked}))).await;
+    assert!(format!("{refused:?}").contains("inbound.auth is token"), "{refused:?}");
     let conn = t
         .insert(
             "CarrierConnection",

@@ -1008,9 +1008,8 @@ cargo test --workspace
 `FERRUM_<NAME>_TEST_DATABASE_URL` overrides each database's address (`FERRUM_ERP_TEST_DATABASE_URL`,
 `FERRUM_EU_MEMBERS_TEST_DATABASE_URL` and so on, the database's name in capitals). The end-to-end test
 (`tests/erp_it.rs`) walks a company through opening stock, procure-to-pay, order-to-cash with a fake IRP,
-payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues. Finance's upgrade test
-installs an older release from git history, so clone with the whole history. `scripts/mutants.py` breaks the
-warehouse's, shop floor's and quality's guarantees one at a time and fails if a test does not notice.
+payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues. `scripts/mutants.py`
+breaks the warehouse's, shop floor's and quality's guarantees one at a time and fails if a test does not notice.
 
 ### 🖥️ Interface
 

@@ -751,9 +751,6 @@ pub(crate) fn untaxed_rates(taxes: &[Doc]) -> Vec<Doc> {
         .collect()
 }
 
-/// What a record keeps in `stored_value_secret` after the handle and the hint when the hashes are apart.
-const APART: &str = "held";
-
 /// A code typed on a line or a payment is replaced, before anything is stored, by its last four
 /// characters; a PIN is not kept. Returns the code's secret when one was typed now, for [`keep`]
 /// or a lookup; the record carries neither hash.
@@ -781,7 +778,7 @@ fn mask(ctx: &Ctx, row: &mut Doc, secret_field: &str, at: &str) -> Result<Option
 
 /// Keeps a typed code until its document is submitted: the code's hash and the PIN's in
 /// `stored_value_typed` under a random handle, and on the record only the handle and the code's last
-/// four characters (`handle:hint:held`), which nobody who reads the record can use.
+/// four characters (`handle:hint`), which nobody who reads the record can use.
 async fn keep(tx: &mut Tx, tenant: Uuid, row: &mut Doc, secret_field: &str, sec: &Secret) -> Result<()> {
     let handle = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     sqlx::query("insert into stored_value_typed (tenant_id, handle, code_hash, code_hint, pin_hash) values ($1, $2, $3, $4, $5)")
@@ -792,27 +789,20 @@ async fn keep(tx: &mut Tx, tenant: Uuid, row: &mut Doc, secret_field: &str, sec:
         .bind(&sec.pin_hash)
         .execute(&mut **tx)
         .await?;
-    crate::util::set(row, secret_field, format!("{handle}:{}:{APART}", sec.hint));
+    crate::util::set(row, secret_field, format!("{handle}:{}", sec.hint));
     Ok(())
 }
 
-/// The code a record keeps for its submission: from `stored_value_typed` by its handle (`take`: and
-/// gone from there, for the submission that opens the card), or the hashes a record written before
-/// 0.27.0 carries itself (`hash:hint:pin`).
+/// The code a record keeps for its submission, from `stored_value_typed` by the handle the record holds (`take`: and
+/// gone from there, for the submission that opens the card).
 async fn kept_secret(tx: &mut Tx, tenant: Uuid, row: &Doc, field: &str, take: bool) -> Result<Option<Secret>> {
-    let Some(kept) = s(row, field) else { return Ok(None) };
-    let mut parts = kept.splitn(3, ':');
-    let (Some(first), Some(hint)) = (parts.next(), parts.next()) else { return Ok(None) };
-    let rest = parts.next().unwrap_or("");
-    if rest != APART {
-        return Ok(Some(Secret { hash: first.into(), hint: hint.into(), pin_hash: (!rest.is_empty()).then(|| rest.to_string()) }));
-    }
+    let Some((handle, hint)) = s(row, field).and_then(|kept| kept.split_once(':')) else { return Ok(None) };
     let sql = if take {
         "delete from stored_value_typed where tenant_id = $1 and handle = $2 returning code_hash, code_hint, pin_hash"
     } else {
         "select code_hash, code_hint, pin_hash from stored_value_typed where tenant_id = $1 and handle = $2"
     };
-    let found: Option<(String, String, Option<String>)> = sqlx::query_as(sql).bind(tenant).bind(first).fetch_optional(&mut **tx).await?;
+    let found: Option<(String, String, Option<String>)> = sqlx::query_as(sql).bind(tenant).bind(handle).fetch_optional(&mut **tx).await?;
     let (hash, hint, pin_hash) = found.ok_or_else(|| Error::invalid(format!("the code typed for {} is no longer kept: type it again", masked(hint))))?;
     Ok(Some(Secret { hash, hint, pin_hash }))
 }

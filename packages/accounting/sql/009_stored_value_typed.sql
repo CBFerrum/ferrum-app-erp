@@ -1,6 +1,6 @@
 -- A card's code (and PIN) typed on a sales invoice's line or a payment waits here for its document to be submitted
 -- (src/stored_value.rs, `keep`): the code's hash, its last four characters and the PIN's hash, under a random handle.
--- The record keeps only the handle and the four characters (`handle:hint:held` in `stored_value_secret`), which
+-- The record keeps only the handle and the four characters (`handle:hint` in `stored_value_secret`), which
 -- nobody who reads the record, an export or the audit trail can use; the submission that opens the card takes the row.
 create table stored_value_typed (
   tenant_id uuid not null,

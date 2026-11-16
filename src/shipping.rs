@@ -96,8 +96,7 @@ pub struct Call {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Inbound {
-    /// `hmac` (HMAC-SHA256 of the body under the inbound secret, hex, in `header`) or `token` (the secret
-    /// itself in `header`, or the `token` query parameter).
+    /// `token`: the Inbound Secret itself in `header` (`X-Webhook-Token` when not named), which the platform compares.
     pub auth: String,
     #[serde(default)]
     pub header: Option<String>,
@@ -200,8 +199,9 @@ impl Description {
             return Some("track needs status_at".into());
         }
         if let Some(i) = &self.inbound {
-            if !matches!(i.auth.as_str(), "hmac" | "token") || (i.auth == "hmac" && i.header.is_none()) {
-                return Some("inbound.auth is hmac (with a header) or token".into());
+            // A call nothing checks is not taken: the carrier sends the Inbound Secret in a header.
+            if i.auth != "token" {
+                return Some("inbound.auth is token: the carrier sends the Inbound Secret in a header, which the platform checks".into());
             }
             if let Some(s) = i.statuses.values().find(|s| !TRACKED.contains(&s.as_str())) {
                 return Some(format!("inbound.statuses map the carrier's words to In Transit, Delivered or Exception, not {s}"));
@@ -216,17 +216,11 @@ impl Description {
     }
 }
 
-/// The values every operation of a carrier's connection takes as inputs; a call's templates read them by these
-/// names (the connection's own templates read `inputs.<name>`: each is set again by name at the top of every
-/// template the carrier's description gives, so descriptions written before connections work as they were).
+/// The values every operation of a carrier's connection takes as inputs, which a call's templates read as the
+/// connection's templates do (`inputs.to.city`).
 const INPUTS: [&str; 9] = ["shipment", "to", "from", "rate", "tracking_number", "provider_id", "weight_unit", "dimension_unit", "total_weight"];
 /// The secrets a carrier takes, held by its connection under the same names (`secret.api_key`).
 const SECRETS: [&str; 3] = ["api_key", "api_secret", "webhook_secret"];
-
-fn with_inputs(template: &str) -> String {
-    let set: String = INPUTS.iter().map(|n| format!("{{% set {n} = inputs.{n} %}}")).collect();
-    format!("{set}{template}")
-}
 
 /// An address split into the connection's base (scheme, host and port), the operation's path and its query.
 fn split_url(url: &str) -> std::result::Result<(String, String, BTreeMap<String, String>), String> {
@@ -243,8 +237,7 @@ fn split_url(url: &str) -> std::result::Result<(String, String, BTreeMap<String,
         .filter(|q| !q.is_empty())
         .map(|q| q.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap_or((q.to_string(), String::new())))
         .collect();
-    let path = if path.is_empty() { String::new() } else { format!("/{}{}", with_inputs(""), &path[1..]) };
-    Ok((format!("{scheme}://{authority}"), path, query))
+    Ok((format!("{scheme}://{authority}"), path.to_string(), query))
 }
 
 /// One carrier's call as the connection's operation, and the address it goes to.
@@ -272,10 +265,10 @@ fn operation(op: &str, c: &Call, fixture: Option<&Value>) -> std::result::Result
             label: Some(op.to_string()),
             method: Some(c.method.clone().unwrap_or_else(|| "POST".into())),
             path,
-            query: query.into_iter().map(|(k, v)| (k, with_inputs(&v))).collect(),
-            headers: c.headers.iter().map(|(h, v)| (h.clone(), with_inputs(v))).collect(),
-            body: c.body.as_deref().map(with_inputs),
-            form: c.form.iter().map(|(k, v)| (k.clone(), with_inputs(v))).collect(),
+            query,
+            headers: c.headers.clone(),
+            body: c.body.clone(),
+            form: c.form.clone(),
             result,
             error_at: c.error_at.clone(),
             temporary: c.temporary.clone(),
@@ -315,10 +308,8 @@ fn plan(base: &str, desc: &Description, test: bool, fixtures: Option<&Value>) ->
     for (n, (origin, operations)) in groups.into_iter().enumerate() {
         let name = if n == 0 { base.to_string() } else { format!("{base}_{}", n + 1) };
         out.names.extend(operations.keys().map(|op| (op.clone(), name.clone())));
-        // Verified as the platform verifies: a secret both sides hold, sent in a header. (A body signed without a
-        // timestamp, which is what `hmac` was, is not a scheme the platform checks: such a carrier is tracked by the
-        // upkeep.)
-        let inbound = (n == 0).then_some(desc.inbound.as_ref()).flatten().filter(|i| i.auth == "token").map(|i| ConnInbound {
+        // Verified as the platform verifies: a secret both sides hold, sent in a header.
+        let inbound = (n == 0).then_some(desc.inbound.as_ref()).flatten().map(|i| ConnInbound {
             verify: Verify::Token { header: i.header.clone().unwrap_or_else(|| "X-Webhook-Token".into()), secret: "webhook_secret".into() },
             delivery_header: None,
             delivery_at: None,
@@ -361,9 +352,6 @@ fn parse(rec: &Doc) -> Result<Description> {
 /// typed is refused rather than lost.
 async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rec: &Doc) -> Result<()> {
     let carrier = id(rec, "id").ok_or_else(|| Error::internal("a carrier without its id"))?;
-    if ctx.schema.entity("CarrierConnection").is_none_or(|e| e.field("connection_ops").is_none()) {
-        return Ok(());
-    }
     let sctx = sys(ctx);
     let base = s(rec, "connection").map(str::to_string).unwrap_or_else(|| connection_name(carrier));
     let planned = plan(&base, &parse(rec)?, crate::util::b(rec, "test"), rec.get("fixtures")).map_err(|m| Error::field("description", m))?;
@@ -404,49 +392,6 @@ async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, rec: &Doc) -> Result<()> {
     Ok(())
 }
 
-/// Puts carriers made before connections on them, once each: the connection is made from the carrier's stored
-/// settings, turned on only if the carrier was, its secrets moved in and cleared from the carrier. A carrier whose
-/// tracking calls were signed as a bare body (which the platform does not verify) is tracked by the upkeep instead,
-/// every 6 hours when it had no interval. Runs in the upkeep, and on first use of a carrier it has not reached.
-pub async fn migrate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
-    if ctx.schema.entity("CarrierConnection").is_none_or(|e| e.field("connection_ops").is_none()) {
-        return Ok(0);
-    }
-    let sctx = sys(ctx);
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let todo: Vec<Uuid> = k
-        .find_tx(&sctx, &mut tx, "CarrierConnection", &[], None, 500)
-        .await?
-        .iter()
-        .filter(|r| r.get("connection_ops").is_none_or(Value::is_null))
-        .filter_map(|r| id(r, "id"))
-        .collect();
-    tx.commit().await?;
-    let mut done = 0;
-    for rid in todo {
-        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        let rec = k.get_tx(&sctx, &mut tx, "CarrierConnection", rid, true).await?;
-        if rec.get("connection_ops").is_some_and(|v| !v.is_null()) {
-            continue;
-        }
-        match sync(k, ctx, &mut tx, &rec).await {
-            Ok(()) => {
-                if parse(&rec).is_ok_and(|x| x.track.is_some() && x.inbound.as_ref().is_some_and(|i| i.auth == "hmac"))
-                    && d(&rec, "track_every_hours").is_zero()
-                {
-                    let mut v = Doc::new();
-                    v.insert("track_every_hours".into(), json!(6));
-                    k.set_values_tx(&sctx, &mut tx, "CarrierConnection", rid, v).await?;
-                }
-                tx.commit().await?;
-                done += 1;
-            }
-            Err(e) => tracing::warn!(tenant = %ctx.tenant, carrier = %rid, "moving a carrier onto a connection: {e}"),
-        }
-    }
-    Ok(done)
-}
-
 /// A carrier as the calls need it.
 struct Conn {
     doc: Doc,
@@ -456,14 +401,9 @@ struct Conn {
 }
 
 async fn connection(k: &Kernel, ctx: &Ctx, tx: &mut Tx, conn: Uuid) -> Result<Conn> {
-    let mut doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
+    let doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
     if !crate::util::b(&doc, "enabled") {
         return Err(Error::invalid(format!("the carrier connection {} is turned off", s(&doc, "connection_name").unwrap_or_default())));
-    }
-    // A carrier the upkeep has not reached yet is put on its connection now.
-    if doc.get("connection_ops").is_none_or(Value::is_null) {
-        sync(k, ctx, tx, &doc).await?;
-        doc = get(k, ctx, tx, "CarrierConnection", conn).await?;
     }
     let desc = parse(&doc)?;
     let names = serde_json::from_value(doc.get("connection_ops").cloned().unwrap_or_default()).unwrap_or_default();
@@ -859,7 +799,6 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, limit: i64) -> Result<usize> {
     if ctx.schema.entity("CarrierShipment").is_none() {
         return Ok(0);
     }
-    migrate(k, ctx).await?;
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let due: Vec<Uuid> = sqlx::query_scalar(
         "select s.id from e_carrier_shipment s join e_carrier_connection c on c.tenant_id = s.tenant_id and c.id = s.carrier \
@@ -934,6 +873,10 @@ mod tests {
         let mut bad = ok.clone();
         bad["track"] = json!({"url": "https://c.example/t", "status_at": "/s", "statuses": {"X": "Lost"}});
         assert!(desc(bad).problem(false).unwrap().contains("not Lost"));
+        // A tracking call nothing would check is refused: the Inbound Secret comes in a header.
+        let mut bad = ok.clone();
+        bad["inbound"] = json!({"auth": "hmac", "header": "X-Signature", "tracking_at": "/t", "status_at": "/s"});
+        assert!(desc(bad).problem(false).unwrap().contains("inbound.auth is token"));
         let mut bad = ok;
         bad["rate"]["body"] = json!("{{ shipment.");
         assert!(desc(bad).problem(false).is_some());
@@ -961,9 +904,9 @@ mod tests {
 
     #[test]
     fn an_address_is_split_into_the_connections_and_the_calls() {
-        let (base, path, query) = split_url("https://api.example.test:8443/v1/track/{{ tracking_number }}?a=1&b={{ key }}").unwrap();
+        let (base, path, query) = split_url("https://api.example.test:8443/v1/track/{{ inputs.tracking_number }}?a=1&b={{ key }}").unwrap();
         assert_eq!(base, "https://api.example.test:8443");
-        assert!(path.starts_with("/{% set shipment = inputs.shipment %}") && path.ends_with("v1/track/{{ tracking_number }}"), "{path}");
+        assert_eq!(path, "/v1/track/{{ inputs.tracking_number }}");
         assert_eq!(query, BTreeMap::from([("a".to_string(), "1".to_string()), ("b".to_string(), "{{ key }}".to_string())]));
         assert_eq!(split_url("https://api.example.test").unwrap().1, "");
         assert!(split_url("https://{{ secret.api_secret }}.example.test/x").is_err(), "a host that is a template is not one address");
