@@ -1,7 +1,7 @@
 # ERP's add-on for Italy, on the European Union's: FatturaPA through SDI, Natura codes, the virtual stamp duty, the regime forfettario and the domestic reverse charge. Ferrum localization.md L2.
 id: it
 name: "Italy"
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: "FatturaPA through SDI, Natura codes, the virtual stamp duty, the regime forfettario and the domestic reverse charge for ERP in Italy"
 categories: [finance]
