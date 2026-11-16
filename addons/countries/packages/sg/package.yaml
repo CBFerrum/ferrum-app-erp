@@ -38,3 +38,35 @@ overlays:
       - {op: add_action, action: {name: sg_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.sg_peppol_status != 'Sent'"}}
       - {op: add_action, action: {name: sg_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
           params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Singapore GST F5"
+        country: SG
+        frequency: Monthly
+        notes: "IRAS's GST F5 from the tax ledger: the boxes in capitals sum the ledger, the form's numbered boxes are formulas over them. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "SR", label: "Standard-rated supplies", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "ZR", label: "Zero-rated supplies", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "EX", label: "Exempt supplies", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "OOS", label: "Out-of-scope supplies", kind: Sum, measure: Base, direction: Output, category: "Out of Scope"}
+          - {code: "RC", label: "Imported services under reverse charge", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "SR_TAX", label: "GST on standard-rated supplies", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "RC_TAX", label: "GST under reverse charge", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "TP", label: "Standard-rated purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "TP_ZR", label: "Zero-rated purchases", kind: Sum, measure: Base, direction: Input, category: "Zero Rated", reverse_charge: "No"}
+          - {code: "IN_TAX", label: "GST on standard-rated purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "1", label: "Total value of standard-rated supplies", kind: Formula, formula: "SR + RC"}
+          - {code: "2", label: "Total value of zero-rated supplies", kind: Formula, formula: "ZR + EXP"}
+          - {code: "3", label: "Total value of exempt supplies", kind: Formula, formula: "EX"}
+          - {code: "4", label: "Total value of (1) + (2) + (3)", kind: Formula, formula: "SR + RC + ZR + EXP + EX"}
+          - {code: "5", label: "Total value of taxable purchases", kind: Formula, formula: "TP + TP_ZR + RC"}
+          - {code: "6", label: "Output tax due", kind: Formula, formula: "SR_TAX + RC_TAX"}
+          - {code: "7", label: "Input tax and refunds claimed", kind: Formula, formula: "IN_TAX + RC_TAX"}
+          - {code: "8", label: "Net GST to be paid to or claimed from IRAS", kind: Formula, formula: "SR_TAX + RC_TAX - IN_TAX - RC_TAX"}
+          - {code: "13", label: "Revenue", kind: Formula, formula: "SR + ZR + EXP + EX + OOS"}
+          - {code: "14", label: "Value of imported services and low-value goods subject to GST under reverse charge", kind: Formula, formula: "RC"}

@@ -101,6 +101,7 @@ struct Case {
     goods: Option<&'static str>,
     services: Option<&'static str>,
     company: Value,
+    /// Its return: the report, or the definition its add-on seeds when `definition`.
     report: &'static str,
     t: i64,
     i: i64,
@@ -109,6 +110,7 @@ struct Case {
     /// The local customer's own fields, and for PINT countries what its e-invoice says.
     buyer: Value,
     pint: Option<&'static [&'static str]>,
+    definition: bool,
 }
 
 fn cases() -> Vec<Case> {
@@ -127,6 +129,7 @@ fn cases() -> Vec<Case> {
         boxes,
         buyer: json!({}),
         pint: None,
+        definition: false,
     };
     let mut all = vec![
         c(
@@ -137,7 +140,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({"sg_reverse_charge": true}),
-            "sg_gst_f5",
+            "Singapore GST F5",
             9,
             9,
             9,
@@ -337,6 +340,9 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
+    for code in ["sg"] {
+        all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
+    }
     for (code, buyer, expect) in pint {
         let case = all.iter_mut().find(|c| c.code == code).unwrap();
         let company = case.company.as_object_mut().unwrap();
@@ -350,6 +356,65 @@ fn cases() -> Vec<Case> {
         case.pint = Some(expect);
     }
     all
+}
+
+/// A document a country's return scenario adds: a sale (or purchase) to (or from) a party at home
+/// or abroad, of one of each (goods or services, category).
+type Extra = (&'static str, bool, &'static [(&'static str, Option<&'static str>)]);
+
+/// What gives every box of a country's return a figure, beside the sale at home and abroad, the
+/// purchase at home, the services from abroad and a credit note.
+fn extras(code: &str) -> Vec<Extra> {
+    let mut all: Vec<Extra> = vec![
+        ("SalesInvoice", false, &[("Goods", None)]),
+        ("SalesInvoice", false, &[("Goods", None)]),
+        ("SalesInvoice", false, &[("Goods", Some("Zero Rated"))]),
+        ("SalesInvoice", false, &[("Goods", Some("Exempt"))]),
+        ("SalesInvoice", false, &[("Goods", Some("Out of Scope"))]),
+        ("PurchaseInvoice", false, &[("Goods", Some("Zero Rated"))]),
+        ("PurchaseInvoice", false, &[("Goods", Some("Exempt"))]),
+    ];
+    all.extend(match code {
+        _ => vec![],
+    });
+    all
+}
+
+/// Every box of a moved country's return once the extras are in, beside the helper boxes they sum.
+fn full(code: &str) -> &'static [(&'static str, &'static str)] {
+    match code {
+        "sg" => &[("1", "300"), ("2", "200"), ("3", "100"), ("4", "600"), ("5", "300"), ("6", "27"), ("7", "18"), ("8", "9"), ("13", "600"), ("14", "100")],
+        _ => &[],
+    }
+}
+
+/// A company's return over all its documents: its definition's boxes worked out on a draft Tax
+/// Return for the month, or its report's.
+async fn returned(k: &Arc<Kernel>, ctx: &Ctx, case: &Case, cid: Uuid) -> HashMap<String, Decimal> {
+    let today = ctx.today();
+    let first = chrono::NaiveDate::from_ymd_opt(chrono::Datelike::year(&today), chrono::Datelike::month(&today), 1).unwrap();
+    if case.definition {
+        let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&json!({"definition_name": case.report})).unwrap(), ..Default::default() };
+        let def =
+            k.list(ctx, "TaxReturnDefinition", &q).await.unwrap().rows.into_iter().next().unwrap_or_else(|| panic!("{}: {} is seeded", case.code, case.report));
+        let ret = k
+            .insert(ctx, "TaxReturn", obj(json!({"definition": def["id"], "company": cid.to_string(), "from_date": first.to_string()})))
+            .await
+            .unwrap_or_else(|e| panic!("{}: the return: {e:?}", case.code));
+        return ret["boxes"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap().to_string(), dec(&b["value"]))).collect();
+    }
+    let p: HashMap<String, String> = [("company", cid.to_string()), ("from_date", "2000-01-01".to_string()), ("to_date", "2100-12-31".to_string())]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    let report = ferrum_domain::reports::run(k, ctx, case.report, &p).await.unwrap_or_else(|e| panic!("{}: {}: {e:?}", case.code, case.report));
+    report["rows"].as_array().unwrap().iter().map(|r| (r["box"].as_str().unwrap().to_string(), dec(&r["amount"]))).collect()
+}
+
+fn check(tag: &str, got: &HashMap<String, Decimal>, want: &[(&str, &str)]) {
+    for (b, v) in want {
+        assert_eq!(got.get(*b).copied(), Some(Decimal::from_str(v).unwrap()), "{tag}: box {b} of {got:?}");
+    }
 }
 
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
@@ -668,15 +733,84 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
         k.submit(&ctx, "PaymentEntry", uid(&pay), None).await.expect("payment");
     }
 
-    let p: HashMap<String, String> = [("company", cid.to_string()), ("from_date", "2000-01-01".to_string()), ("to_date", "2100-12-31".to_string())]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect();
-    let report = ferrum_domain::reports::run(k, &ctx, case.report, &p).await.unwrap_or_else(|e| panic!("{code}: {}: {e:?}", case.report));
-    let got: HashMap<String, Decimal> =
-        report["rows"].as_array().unwrap().iter().map(|r| (r["box"].as_str().unwrap().to_string(), dec(&r["amount"]))).collect();
+    let got = returned(k, &ctx, case, cid).await;
     for (b, want) in case.boxes {
-        assert_eq!(got.get(*b).copied(), Some(Decimal::from(*want)), "{code}: box {b} of {:?}", report["rows"]);
+        assert_eq!(got.get(*b).copied(), Some(Decimal::from(*want)), "{code}: box {b} of {got:?}");
+    }
+    if case.definition {
+        // A credit note and what gives every box a figure.
+        let mut made: HashMap<String, Uuid> = HashMap::new();
+        let credit = insert(
+            "SalesInvoice",
+            json!({"company": cid.to_string(), "customer": home.to_string(), "is_return": true, "return_against": si["id"], "items": [{"item": goods.to_string(), "qty": "-1"}]}),
+        )
+        .await;
+        k.submit(&ctx, "SalesInvoice", uid(&credit), None).await.unwrap_or_else(|e| panic!("{code}: credit note: {e:?}"));
+        for (n, (doc, far, lines)) in extras(code).into_iter().enumerate() {
+            let mut rows = Vec::new();
+            for (kind, category) in lines {
+                let key = format!("{kind}-{}", category.unwrap_or("none"));
+                let id = match made.get(&key) {
+                    Some(i) => *i,
+                    None => {
+                        let i = item(&key, kind, *category).await;
+                        made.insert(key.clone(), i);
+                        i
+                    }
+                };
+                rows.push(json!({"item": id.to_string(), "qty": "1", "price_list_rate": "100"}));
+            }
+            let v = if doc == "SalesInvoice" {
+                json!({"company": cid.to_string(), "customer": (if far { abroad } else { home }).to_string(), "items": rows})
+            } else {
+                json!({"company": cid.to_string(), "supplier": (if far { foreign } else { supplier }).to_string(), "bill_no": format!("X-{n}"), "items": rows})
+            };
+            let d = insert(doc, v).await;
+            k.submit(&ctx, doc, uid(&d), None).await.unwrap_or_else(|e| panic!("{code}: extra {n}: {e:?}"));
+        }
+        check(code, &returned(k, &ctx, case, cid).await, full(code));
+        if code == "sg" {
+            // An early-payment discount that takes tax back (0.90 of a 10.90 discount on 109) takes its base and
+            // tax off the standard-rated supplies on the payment's day: the return says what the books say.
+            let paid = sale(home).await;
+            let paid = k.submit(&ctx, "SalesInvoice", uid(&paid), None).await.unwrap();
+            let account = async |number: &str| list("Account", json!({"company": cid.to_string(), "account_number": number})).await.remove(0)["id"].clone();
+            let allowed = list("Account", json!({"company": cid.to_string(), "account_name": "Sales"})).await.remove(0);
+            let pay = insert(
+                "PaymentEntry",
+                json!({"company": cid.to_string(), "payment_type": "Receive", "customer": home.to_string(), "bank_account": account("1121").await, "paid_amount": "98.10",
+                       "references": [{"invoice": paid["id"], "allocated_amount": "98.10", "discount_amount": "10.90", "discount_account": allowed["id"], "discount_reduces_tax": true}]}),
+            )
+            .await;
+            k.submit(&ctx, "PaymentEntry", uid(&pay), None).await.expect("payment");
+            let got = returned(k, &ctx, case, cid).await;
+            check(
+                "sg after a discount",
+                &got,
+                &[
+                    ("1", "390"),
+                    ("2", "200"),
+                    ("3", "100"),
+                    ("4", "690"),
+                    ("5", "300"),
+                    ("6", "35.1"),
+                    ("7", "18"),
+                    ("8", "17.1"),
+                    ("13", "690"),
+                    ("14", "100"),
+                ],
+            );
+            let output_tax = account("2131").await.as_str().unwrap().to_string();
+            let mut tx = k.db.tenant_tx(ctx.tenant).await.unwrap();
+            let output: Option<Decimal> = sqlx::query_scalar("select sum(credit - debit) from journal_line where company_id = $1 and account_id = $2::uuid")
+                .bind(cid)
+                .bind(output_tax)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            assert_eq!(output, Some(got["SR_TAX"]), "sg: the output tax the return counts is the output tax account's");
+        }
     }
     if code == "sg" {
         // A rate kept as data wins over the built-in 9%, and stops when it ends.

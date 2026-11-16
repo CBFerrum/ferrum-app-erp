@@ -578,7 +578,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇬🇧 | United Kingdom | `ferrum-gb` 0.2.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
 | 🇺🇸 | United States | `ferrum-us` 0.1.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
 | 🇨🇦 | Canada | `ferrum-ca` 0.1.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
-| 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 | PINT SG through InvoiceNow |
+| 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
 | 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 | MyInvois through LHDN |
 | 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN | — |
 | 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 | — |
