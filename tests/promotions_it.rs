@@ -263,7 +263,7 @@ async fn scenario() {
     // rejected, like an unknown one.
     let orders_before = t.k.list(&t.ctx, "SalesOrder", &ListQuery::default()).await.unwrap().rows.len();
     let params = json!({"lines": serde_json::to_string(&lines).unwrap(), "customer": globex, "channel": "Web Shop", "codes": "SAVE10 nope10"});
-    let receipt = t.k.invoke(&t.ctx, Invocation::new("core.company.price_lines", json!({"id": c, "params": params}))).await.expect("price_lines");
+    let receipt = t.k.invoke(&t.ctx, Invocation::new("selling.company.price_lines", json!({"id": c, "params": params}))).await.expect("price_lines");
     let out = receipt.result;
     assert_eq!(out["rejected_codes"], json!(["SAVE10", "NOPE10"]));
     let titles: Vec<&str> = out["promotions"].as_array().unwrap().iter().map(|p| p["title"].as_str().unwrap()).collect();

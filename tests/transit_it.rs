@@ -66,7 +66,7 @@ async fn scenario() {
     assert!(held["rows"].as_array().unwrap().iter().any(|r| r["holds"] == "Transit" && dec(&r["qty"]) == n("9")), "{held}");
     // Nothing in transit can be promised.
     let asked = json!({"id": c, "params": {"item": widget, "qty": "1"}});
-    let avail = t.k.invoke(&t.ctx, ferrum_kernel::capability::Invocation::new("core.company.availability", asked)).await.unwrap().result;
+    let avail = t.k.invoke(&t.ctx, ferrum_kernel::capability::Invocation::new("selling.company.availability", asked)).await.unwrap().result;
     assert!(avail["warehouses"].as_array().unwrap().iter().all(|w| w["warehouse"] != json!(transit)), "{avail}");
 
     // A first receipt takes 4.

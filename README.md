@@ -554,7 +554,7 @@ history. Desks show only where their package is installed and only to people who
 - **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow` and
   `localization`; [docs/contracts.md](docs/contracts.md) says how each operation behaves (in the caller's
   transaction, appending, what it refuses, whether calling twice does it twice).
-- **Contracted capabilities**: `core.company.availability`, `core.company.price_lines`, `core.company.scan`, and
+- **Contracted capabilities**: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`, and
   stored value's `prove`, `balance`, `issue`, `redeem`, `refund`, `transfer`, `hold`, `release` and `reverse`.
 - **Events** `accounting.instrument_bounced` and `accounting.stored_value_expiring`, for automations.
 
