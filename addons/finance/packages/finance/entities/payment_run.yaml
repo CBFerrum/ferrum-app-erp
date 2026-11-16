@@ -23,6 +23,7 @@
        description: "For a mode paid by instrument: the number of the one paying this supplier (the first given among the supplier's lines); empty, the next from the mode's book"}
     - {name: payment_entry, type: link, to: PaymentEntry, read_only: true, in_list: true}
     - {name: state, type: select, options: [Proposed, Paid, Failed], read_only: true, in_list: true}
+    - {name: round, type: int, read_only: true, no_copy: true, label: Paid in Round, description: "The press of Make Payments that paid it: that round's bank file holds it"}
     - {name: error, type: text, read_only: true}
 
 - name: PaymentRun
@@ -53,6 +54,8 @@
     - {name: total_amount, type: currency, read_only: true, in_list: true}
     - {name: paid_amount, type: currency, read_only: true, no_copy: true}
     - {name: failed_count, type: int, read_only: true, no_copy: true, label: Payments Failed}
+    - {name: rounds, type: int, read_only: true, no_copy: true, label: Rounds Paid,
+       description: "Each press of Make Payments that pays something is a round, with a bank file of its own holding that round's payments only"}
     - {name: run_status, type: select, options: [Proposed, Approved, Paid, Partly Paid], default: Proposed, read_only: true, no_copy: true, in_list: true, in_filter: true}
   actions:
     - {name: propose, label: Propose Bills, docstatus: [0], permission: write}

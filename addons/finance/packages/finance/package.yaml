@@ -141,9 +141,9 @@ documents:
       en:
         body: |-
           <?xml version="1.0" encoding="UTF-8"?>
-          {% set paid = doc.lines|selectattr("state", "eq", "Paid")|list %}<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><CstmrCdtTrfInitn>
-          <GrpHdr><MsgId>{{ doc.number }}</MsgId><CreDtTm>{{ now }}</CreDtTm><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><InitgPty><Nm>{{ links.company.company_name }}</Nm></InitgPty></GrpHdr>
-          <PmtInf><PmtInfId>{{ doc.number }}</PmtInfId><PmtMtd>TRF</PmtMtd><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><ReqdExctnDt>{{ doc.posting_date }}</ReqdExctnDt>
+          {% set paid = doc.lines|selectattr("state", "eq", "Paid")|selectattr("round", "eq", doc.rounds)|list %}<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03"><CstmrCdtTrfInitn>
+          <GrpHdr><MsgId>{{ doc.number }}-{{ doc.rounds }}</MsgId><CreDtTm>{{ now }}</CreDtTm><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><InitgPty><Nm>{{ links.company.company_name }}</Nm></InitgPty></GrpHdr>
+          <PmtInf><PmtInfId>{{ doc.number }}-{{ doc.rounds }}</PmtInfId><PmtMtd>TRF</PmtMtd><NbOfTxs>{{ paid|length }}</NbOfTxs><CtrlSum>{{ paid|total("amount")|fixed(2) }}</CtrlSum><ReqdExctnDt>{{ doc.posting_date }}</ReqdExctnDt>
           <Dbtr><Nm>{{ links.company.company_name }}</Nm></Dbtr><DbtrAcct><Id><IBAN>{{ links.bank.iban }}</IBAN></Id></DbtrAcct><DbtrAgt><FinInstnId><BIC>{{ links.bank.swift_code }}</BIC></FinInstnId></DbtrAgt>
           {% for l in paid %}<CdtTrfTxInf><PmtId><EndToEndId>{{ l.invoice_number }}</EndToEndId></PmtId><Amt><InstdAmt Ccy="{{ doc.currency_code }}">{{ l.amount|fixed(2) }}</InstdAmt></Amt><CdtrAgt><FinInstnId><BIC>{{ l.bic }}</BIC></FinInstnId></CdtrAgt><Cdtr><Nm>{{ l.supplier_name }}</Nm></Cdtr><CdtrAcct><Id><IBAN>{{ l.iban }}</IBAN></Id></CdtrAcct><RmtInf><Ustrd>{{ l.invoice_number }}</Ustrd></RmtInf></CdtTrfTxInf>
           {% endfor %}</PmtInf></CstmrCdtTrfInitn></Document>
@@ -155,5 +155,5 @@ documents:
       en:
         body: |-
           Supplier,Account,Bank Code,Amount,Currency,Reference,Pay On
-          {% for l in doc.lines %}{% if l.state == "Paid" %}{{ l.supplier_name }},{{ l.iban }},{{ l.bic }},{{ l.amount|fixed(2) }},{{ doc.currency_code }},{{ l.invoice_number }},{{ doc.posting_date }}
+          {% for l in doc.lines %}{% if l.state == "Paid" and l.round == doc.rounds %}{{ l.supplier_name }},{{ l.iban }},{{ l.bic }},{{ l.amount|fixed(2) }},{{ doc.currency_code }},{{ l.invoice_number }},{{ doc.posting_date }}
           {% endif %}{% endfor %}

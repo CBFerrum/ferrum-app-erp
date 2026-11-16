@@ -108,8 +108,9 @@ async fn scenario() {
     assert_ne!(approver.user, admin_id);
 
     // Bolt is paid by hand meanwhile: the run's payment to Bolt is refused, Acme's stands.
-    t.post("PaymentEntry", json!({"company": c, "payment_type": "Pay", "supplier": bolt, "bank_account": bank, "paid_amount": "500", "references": [{"invoice": b2.to_string(), "allocated_amount": "500"}]}))
-        .await;
+    let by_hand = uid(&t
+        .post("PaymentEntry", json!({"company": c, "payment_type": "Pay", "supplier": bolt, "bank_account": bank, "paid_amount": "500", "references": [{"invoice": b2.to_string(), "allocated_amount": "500"}]}))
+        .await);
     let paid = t.action("PaymentRun", run, "make_payments", json!({})).await.expect("make payments");
     let states: Vec<(String, String)> = paid["lines"]
         .as_array()
@@ -117,7 +118,7 @@ async fn scenario() {
         .iter()
         .map(|l| (l["invoice_number"].as_str().unwrap().to_string(), l["state"].as_str().unwrap().to_string()))
         .collect();
-    assert_eq!(states, vec![(n1, "Paid".into()), (n2, "Failed".into())]);
+    assert_eq!(states, vec![(n1.clone(), "Paid".into()), (n2, "Failed".into())]);
     assert!(paid["lines"][1]["error"].as_str().unwrap().contains("outstanding"), "{}", paid["lines"][1]["error"]);
     assert_eq!((paid["run_status"].clone(), paid["failed_count"].clone(), dec(&paid["paid_amount"])), (json!("Partly Paid"), json!(1), Decimal::from(1078)));
     let acme_pay: Uuid = paid["lines"][0]["payment_entry"].as_str().unwrap().parse().unwrap();
@@ -155,6 +156,31 @@ async fn scenario() {
     assert_eq!(again["lines"][0]["payment_entry"], paid["lines"][0]["payment_entry"]);
     let acme_payments = t.find("PaymentEntry", json!({"supplier": acme, "docstatus": 1})).await;
     assert_eq!(acme_payments.len(), 1);
+
+    // ───── a second round: Bolt's payment by hand is cancelled, and the run pays Bolt ─────
+    t.k.cancel(&t.ctx, "PaymentEntry", by_hand, None).await.expect("cancel the payment by hand");
+    let second = t.action("PaymentRun", run, "make_payments", json!({})).await.expect("the second round");
+    assert_eq!((second["run_status"].clone(), dec(&second["paid_amount"])), (json!("Paid"), Decimal::from(1578)));
+    // The newest file is what the bank is given next: this round's payment only, under a message id of
+    // its own. The first round's file, which the bank may already have, is kept as it was.
+    let files: Vec<(Uuid,)> = t.sql("select id from file_object where record_id = $1 and document is not null order by created_at, id", run).await;
+    let read = |f: Uuid| {
+        let t = &t;
+        async move { String::from_utf8(t.k.read_file(&t.ctx, f).await.expect("the bank file").2).unwrap() }
+    };
+    let number = paid["number"].as_str().unwrap();
+    let newest = read(files.last().unwrap().0).await;
+    assert!(
+        newest.contains(&format!("<MsgId>{number}-2</MsgId>"))
+            && newest.contains("<NbOfTxs>1</NbOfTxs>")
+            && newest.contains("<CtrlSum>500.00</CtrlSum>")
+            && !newest.contains(&n1),
+        "Bolt alone, not Acme again (of {} files): {newest}",
+        files.len()
+    );
+    assert_eq!(files.len(), 2, "the first round's file is kept");
+    let first = read(files[0].0).await;
+    assert!(first.contains(&format!("<MsgId>{number}-1</MsgId>")) && first.contains("<CtrlSum>1078.00</CtrlSum>") && first.contains(&n1), "{first}");
 
     // ───── by hand, in time: the discount is taken by itself ─────
     let b6 = uid(&t.post("PurchaseInvoice", bill(&acme, "A-3", "1000", json!({"fin_payment_terms_template": terms}))).await);
