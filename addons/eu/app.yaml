@@ -3,12 +3,23 @@
 # add-ons on it (Ferrum docs/plan/localization.md, L1 and L2).
 id: eu
 name: European Union
-version: 0.3.1
+version: 0.4.0
 publisher: cbferrum
 summary: EU VAT for ERP. VIES, intra-EU supplies, the One-Stop Shop, EN 16931 e-invoices
 categories: [finance]
 runtime: native
-platform: ">=0.3.8, <0.4"
+platform: ">=0.3.9, <0.4"
+# What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
+# eu.<key> and read at each use; the variable, when set, still wins.
+operator_settings:
+  - key: vies_url
+    env: FERRUM_EU_VIES_URL
+    applies: live
+    doc: Another address for the EU's VAT number service (VIES), only on its own host outside development.
+  - key: tedb_url
+    env: FERRUM_EU_TEDB_URL
+    applies: live
+    doc: Another address for the EU's taxes database (TEDB), only on its own host outside development.
 requires: {erp: ">=0.22"}
 parent: erp
 packages: [eu]

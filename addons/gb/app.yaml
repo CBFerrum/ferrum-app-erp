@@ -3,12 +3,23 @@
 # books. Ferrum localization.md L3.
 id: gb
 name: United Kingdom
-version: 0.2.2
+version: 0.3.0
 publisher: cbferrum
 summary: UK VAT and Making Tax Digital returns for ERP
 categories: [finance]
 runtime: native
-platform: ">=0.3.8, <0.4"
+platform: ">=0.3.9, <0.4"
+# What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
+# gb.<key> and read at each use; the variable, when set, still wins.
+operator_settings:
+  - key: hmrc_url
+    env: FERRUM_GB_HMRC_URL
+    applies: live
+    doc: Another address for HMRC's Making Tax Digital API. Outside development only HMRC's own hosts are called, so a company's credentials go nowhere else.
+  - key: public_ip
+    env: FERRUM_PUBLIC_IP
+    applies: live
+    doc: The server's public address, sent in HMRC's fraud-prevention headers; found from the public address unless set.
 requires: {erp: ">=0.21"}
 parent: erp
 packages: [gb]

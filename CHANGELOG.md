@@ -1,5 +1,25 @@
 # Changelog
 
+## ERP 0.28.0, European Union 0.4.0, United Kingdom 0.3.0, United States 0.2.0, Malaysia 0.3.0, Romania 0.2.0, Portugal 0.2.0: settings in the database, Portugal's key in its vault
+
+Each needs platform 0.3.9 (Ferrum `22d082f7` or later), which reads apps' operator settings. No database or interface
+change.
+
+- **The add-ons' addresses are settings.** Each add-on declares what it reads (`operator_settings`): the European
+  Union `eu.vies_url` and `eu.tedb_url`, the United Kingdom `gb.hmrc_url` and `gb.public_ip`, the United States
+  `us.avatax_url`, Malaysia `my.myinvois_url`, Romania `ro.anaf_url`, Portugal `pt.certificate` and `pt.key_version` (1
+  unless set). Each is kept in the server's settings table and read at each call, so a change applies on every replica
+  within seconds; the variables still win through this release. A provider's address from the table is held to the
+  provider's own hosts outside development, exactly as the environment's was (`providers::Provider::check`): a changed
+  row cannot send a company's credentials anywhere else.
+- **Portugal's signing key lives in Portugal's own vault**, as the installation's secret `signing.key`, revealed to
+  Portugal alone (RSA, which the vault does not sign with) and sent nowhere. `FERRUM_PT_SIGNING_KEY`, while set, still
+  wins and is kept in the vault once (under a database lock, so replicas starting together keep it once). With neither,
+  Portuguese invoices are refused as before. A key that does not parse is refused without quoting it. Portugal takes
+  its handle in its registration (`hooks.app("pt", …)`, as the server registers it).
+- **Saving a carrier no longer makes ERP's keys in the workspace first, on a connection of their own**: the platform
+  makes them on the vault's own connection wherever they are first needed (0.3.9), so the step is gone.
+
 ## ERP 0.27.1, India 0.7.1, United Kingdom 0.2.2, United States 0.1.2, Procurement 0.1.6, Romania 0.1.3, Malaysia 0.2.2: each reads its own secret fields with its own vault handle
 
 - **Each app reads the secret fields its own package declares with its own handle on the vault**, in the same

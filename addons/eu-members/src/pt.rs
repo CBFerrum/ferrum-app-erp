@@ -7,8 +7,11 @@
 //! chained to the hash of the series' previous document, and carries the four hash characters
 //! (positions 1, 11, 21, 31) with "Processado por programa certificado n.º …/AT", and the QR
 //! code's message in the AT's field order (A to S, `*`-separated, amounts with two decimals).
-//! The producer's key and certificate number are the deployment's (`FERRUM_PT_SIGNING_KEY`,
-//! `FERRUM_PT_CERTIFICATE`, `FERRUM_PT_KEY_VERSION`): without them, Portuguese invoices are
+//! The producer's key and certificate number are the deployment's: the key is Portugal's secret
+//! `signing.key` in its own vault (the installation's; revealed to Portugal alone, since the vault
+//! does not sign with RSA), the certificate number and the key's version are the settings
+//! `pt.certificate` and `pt.key_version`. `FERRUM_PT_SIGNING_KEY` still wins while it is set, and
+//! is kept in the vault once. Without a key and a certificate number, Portuguese invoices are
 //! refused, as invoices from uncertified software would not be valid. NIFs are checked (modulo
 //! 11). Small businesses under article 53 of the CIVA charge no VAT; the reverse charge on
 //! construction (article 2(1)(j)) is the item's.
@@ -18,7 +21,8 @@ use crate::util::{b, d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
+use ferrum_kernel::vault::{New, Rule, Scope, Vault, Zeroizing};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result};
 use rsa::RsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::signature::{SignatureEncoding, Signer};
@@ -159,10 +163,68 @@ pub fn lisbon(now: DateTime<Utc>) -> String {
     (now + Duration::hours(if summer { 1 } else { 0 })).format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+/// The producer's signing key, Portugal's secret in the installation's scope of its vault.
+pub const SIGNING_KEY: &str = "signing.key";
+
+/// Portugal's handle on the vault, from its registration.
+static VAULT: std::sync::RwLock<Option<Vault>> = std::sync::RwLock::new(None);
+/// Whether this process has seen the environment's key kept in the vault already.
+static ADOPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// ponytail: the last registration's handle serves the whole process, as Drive's does.
+fn remember(v: Vault) {
+    *VAULT.write().unwrap_or_else(|e| e.into_inner()) = Some(v);
+}
+
+fn vault() -> Result<Vault> {
+    VAULT.read().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| {
+        Error::Unavailable("The Portugal add-on was registered without its vault handle: register it as the server does, hooks.app(\"pt\", …)".into())
+    })
+}
+
+/// The producer's key as PEM text: the environment's while it sets one (kept in the vault once: under an advisory lock
+/// held while it looks and sets, so that replicas doing it together keep it once), else the vault's.
+async fn signing_pem(k: &Kernel) -> Result<Option<Zeroizing<String>>> {
+    if let Some(pem) = ferrum_kernel::env::var("FERRUM_PT_SIGNING_KEY").filter(|p| !p.trim().is_empty()) {
+        let pem = Zeroizing::new(pem);
+        if let Err(e) = adopt(k, &pem).await {
+            tracing::warn!(error = %e, "Portugal could not keep the signing key from the environment in its vault; it uses the environment's");
+        }
+        return Ok(Some(pem));
+    }
+    match vault()?.reveal(k, Scope::Installation, SIGNING_KEY).await {
+        Ok(v) => Ok(String::from_utf8(v.to_vec()).ok().map(Zeroizing::new)),
+        Err(Error::NotFound(_)) => Ok(None),
+        Err(Error::Unavailable(why) | Error::Retryable(why)) => {
+            tracing::debug!("Portugal's vault: {why}");
+            Err(Error::Unavailable("Portuguese invoices cannot be signed right now: the vault is unavailable".into()))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn adopt(k: &Kernel, pem: &str) -> Result<()> {
+    use std::sync::atomic::Ordering;
+    if ADOPTED.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let v = vault()?;
+    let mut lock = k.db.system_tx().await?;
+    sqlx::query("select pg_advisory_xact_lock(hashtext('pt: adopt signing.key'))").execute(&mut *lock).await?;
+    if v.describe(k, Scope::Installation, SIGNING_KEY).await?.is_none() {
+        // Revealed to Portugal alone (RSA, which the vault does not sign with); sent nowhere.
+        let rule = Rule { reveal: true, ..Default::default() };
+        v.set(k, Scope::Installation, SIGNING_KEY, New::Value(Zeroizing::new(pem.as_bytes().to_vec())), rule).await?;
+    }
+    lock.commit().await?;
+    ADOPTED.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
 /// The deployment's signing configuration: the producer's key, its version and the certificate.
-pub fn signing() -> Result<(RsaPrivateKey, String, String)> {
-    let pem = std::env::var("FERRUM_PT_SIGNING_KEY").ok().filter(|k| !k.trim().is_empty());
-    let certificate = std::env::var("FERRUM_PT_CERTIFICATE").ok().filter(|c| !c.trim().is_empty());
+pub async fn signing(k: &Kernel) -> Result<(RsaPrivateKey, String, String)> {
+    let pem = signing_pem(k).await?;
+    let certificate = ferrum_kernel::env::var("FERRUM_PT_CERTIFICATE").filter(|c| !c.trim().is_empty());
     let (Some(pem), Some(certificate)) = (pem, certificate) else {
         return Err(Error::invalid(
             "Portuguese invoices come from software certified by the AT: this Ferrum has no certification (signing key and certificate number) configured",
@@ -170,10 +232,11 @@ pub fn signing() -> Result<(RsaPrivateKey, String, String)> {
     };
     use rsa::pkcs1::DecodeRsaPrivateKey;
     use rsa::pkcs8::DecodePrivateKey;
+    // What failed, never the key: a parser's message could quote it.
     let key = RsaPrivateKey::from_pkcs8_pem(&pem)
         .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem))
-        .map_err(|e| Error::internal(format!("the AT signing key: {e}")))?;
-    let version = std::env::var("FERRUM_PT_KEY_VERSION").unwrap_or_else(|_| "1".into());
+        .map_err(|_| Error::internal("the AT signing key is not an RSA private key in PEM"))?;
+    let version = ferrum_kernel::env::var("FERRUM_PT_KEY_VERSION").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "1".into());
     Ok((key, version, certificate))
 }
 
@@ -219,7 +282,7 @@ impl DocHook for CertifiedHook {
         if s(&company, "country_code") != Some("PT") {
             return Ok(());
         }
-        let (key, version, certificate) = signing()?;
+        let (key, version, certificate) = signing(hc.kernel).await?;
         let issuer =
             s(&company, "eu_vat_number").and_then(nif).ok_or_else(|| Error::invalid("set the company's NIF (its EU VAT number, PT and nine digits)"))?;
         let credit = b(doc, "is_return");
@@ -323,6 +386,7 @@ pub fn rules() -> Rules {
 }
 
 fn hooks(h: &mut ferrum_kernel::HookRegistry) {
+    remember(h.vault());
     for entity in ["Company", "Customer", "Supplier", "SalesInvoice", "PtSeries"] {
         h.register(entity, std::sync::Arc::new(CertifiedHook));
     }

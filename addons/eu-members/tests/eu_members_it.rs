@@ -10,6 +10,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use ferrum_kernel::tenant::NewTenant;
+use ferrum_kernel::vault::{New, Scope, Vault, Zeroizing};
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
@@ -34,6 +35,9 @@ fn dec(v: &Value) -> Decimal {
 fn uid(doc: &Doc) -> Uuid {
     doc["id"].as_str().unwrap().parse().unwrap()
 }
+
+/// Portugal's handle on the vault, as its registration gave it.
+static PT_VAULT: std::sync::OnceLock<Vault> = std::sync::OnceLock::new();
 
 async fn fresh_kernel() -> Arc<Kernel> {
     let url = std::env::var("FERRUM_EU_MEMBERS_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_eu_members_test".into());
@@ -66,7 +70,13 @@ async fn fresh_kernel() -> Arc<Kernel> {
     add!(ferrum_eu_members::fr);
     add!(ferrum_eu_members::it);
     add!(ferrum_eu_members::pl);
-    add!(ferrum_eu_members::pt);
+    // Portugal as the others, its handle kept too, to look at what it keeps in its vault.
+    packages.extend(ferrum_eu_members::pt::packages().expect("Portugal's package"));
+    hooks.app("pt", &["pt".to_string()], |h| {
+        ferrum_eu_members::pt::register(h);
+        let _ = PT_VAULT.set(h.vault());
+    });
+    hooks.own("pt", &["pt".to_string()]);
     add!(ferrum_eu_members::ro);
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
@@ -270,7 +280,7 @@ async fn portugal(k: &Arc<Kernel>) {
         rsa::pkcs1v15::VerifyingKey::<sha1::Sha1>::new(public.clone()).verify(text.as_bytes(), &sig).is_ok()
     };
     // The Despacho's first record, signed by openssl with the same key: the same 172 characters.
-    let (key, _, _) = ferrum_eu_members::pt::signing().unwrap();
+    let (key, _, _) = ferrum_eu_members::pt::signing(k).await.unwrap();
     let text = ferrum_eu_members::pt::message("2010-05-18", "2010-05-18T11:22:19", "FAC 001/14", Decimal::new(312, 2), "");
     let ours = ferrum_eu_members::pt::sign(&key, &text);
     assert_eq!(ours.len(), 172);
@@ -342,6 +352,68 @@ async fn portugal(k: &Arc<Kernel>) {
     let cancelled = t.get("SalesInvoice", uid(&si)).await;
     assert_eq!(cancelled["pt_status"], json!("A"));
     assert!(cancelled["pt_qr"].as_str().unwrap().contains("*E:A*"));
+
+    // ───────────── the producer's key in Portugal's own vault ─────────────
+    // The environment's key was kept there once, revealed to Portugal alone and sent nowhere.
+    let vault = PT_VAULT.get().expect("Portugal's handle");
+    let kept = vault.describe(&t.k, Scope::Installation, "signing.key").await.unwrap().expect("adopted");
+    assert_eq!((kept.version, kept.rule.reveal, kept.rule.hosts.len()), (1, true, 0));
+    let pem = include_str!("data/pt_test_key.pem");
+    let marker = pem.lines().nth(1).unwrap();
+    assert_eq!(plain_anywhere(&t.k, marker).await, Vec::<String>::new(), "the key is plain in a table");
+    let resolved = |key: Option<&str>| {
+        ferrum_kernel::env::set(
+            [
+                ("FERRUM_PT_SIGNING_KEY".to_string(), key.map(str::to_string)),
+                ("FERRUM_PT_CERTIFICATE".to_string(), Some("8888".to_string())),
+                ("FERRUM_PT_KEY_VERSION".to_string(), None),
+            ]
+            .into(),
+        )
+    };
+    let tt = &t;
+    let next = move || async move { tt.k.submit(&tt.ctx, "SalesInvoice", uid(&tt.invoice(cid, firm, goods).await), None).await };
+    // The vault holds another value: the environment's key, while it is set, still signs.
+    vault.rotate(&t.k, Scope::Installation, "signing.key", New::Value(Zeroizing::new(b"not a key".to_vec()))).await.unwrap();
+    resolved(Some(pem));
+    let signed = next().await.expect("the environment's key signs");
+    assert!(signed["pt_hash_mention"].as_str().unwrap().ends_with("n.º 8888/AT"), "the stored certificate number");
+    // Nothing in the environment: the vault's key, whatever it holds, is the one.
+    resolved(None);
+    let refused = format!("{:?}", next().await);
+    assert!(refused.contains("not an RSA private key") && !refused.contains("not a key\""), "{refused}");
+    vault.rotate(&t.k, Scope::Installation, "signing.key", New::Value(Zeroizing::new(pem.as_bytes().to_vec()))).await.unwrap();
+    let from_vault = next().await.expect("the vault's key signs");
+    let previous = signed["pt_hash"].as_str().unwrap();
+    let (date, entry, no) =
+        (from_vault["posting_date"].as_str().unwrap(), from_vault["pt_system_entry"].as_str().unwrap(), from_vault["pt_document_no"].as_str().unwrap());
+    assert!(verify(&format!("{date};{entry};{no};123.00;{previous}"), from_vault["pt_hash"].as_str().unwrap()), "signed with the vault's key, chained");
+    vault.remove(&t.k, Scope::Installation, "signing.key").await.unwrap();
+    let none = format!("{:?}", next().await);
+    assert!(none.contains("no certification"), "with neither, plainly not set up: {none}");
+    ferrum_kernel::env::set(HashMap::new());
+}
+
+/// The tables, the vault's included, any of whose rows holds `text` as it is.
+async fn plain_anywhere(k: &Kernel, text: &str) -> Vec<String> {
+    let mut tx = k.db.pool.begin().await.unwrap();
+    sqlx::query("select set_config('ferrum.vault', 'on', true)").execute(&mut *tx).await.unwrap();
+    let tables: Vec<(String, String)> =
+        sqlx::query_as("select schemaname::text, tablename::text from pg_tables where schemaname not in ('pg_catalog', 'information_schema')")
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+    assert!(tables.iter().any(|(s, _)| s == "vault"), "the vault's tables are among them");
+    let mut found = vec![];
+    for (schema, table) in tables {
+        let sql = format!("select count(*) from \"{schema}\".\"{table}\" t where t::text like '%' || $1 || '%'");
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(text).fetch_one(&mut *tx).await.unwrap();
+        if n > 0 {
+            found.push(format!("{schema}.{table}"));
+        }
+    }
+    tx.rollback().await.unwrap();
+    found
 }
 
 async fn france(k: &Arc<Kernel>) {

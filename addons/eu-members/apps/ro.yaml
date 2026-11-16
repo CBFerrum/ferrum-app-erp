@@ -1,12 +1,19 @@
 # ERP's add-on for Romania, on the European Union's: CIUS-RO e-invoices through ANAF's e-Factura, CIF checks, the small business exemption and the domestic reverse charge. Ferrum localization.md L2.
 id: ro
 name: "Romania"
-version: 0.1.3
+version: 0.2.0
 publisher: cbferrum
 summary: "CIUS-RO e-invoices through ANAF's e-Factura, CIF checks, the small business exemption and the domestic reverse charge for ERP in Romania"
 categories: [finance]
 runtime: native
-platform: ">=0.3.8, <0.4"
+platform: ">=0.3.9, <0.4"
+# What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
+# ro.<key> and read at each use; the variable, when set, still wins.
+operator_settings:
+  - key: anaf_url
+    env: FERRUM_RO_ANAF_URL
+    applies: live
+    doc: Another address for ANAF's e-Factura. Outside development only ANAF's own hosts are called, so a company's credentials go nowhere else.
 requires: {erp: ">=0.4", eu: ">=0.1"}
 parent: erp
 packages: [ro]

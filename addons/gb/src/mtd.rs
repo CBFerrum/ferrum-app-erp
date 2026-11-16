@@ -444,7 +444,7 @@ impl EventSink for Mtd {
                 .await;
         };
         let vrn = ev.payload["vrn"].as_str().unwrap_or_default();
-        let vendor = vendor_ip(std::env::var("FERRUM_PUBLIC_IP").ok(), k.settings.public_url.as_deref()).await;
+        let vendor = vendor_ip(ferrum_kernel::env::var("FERRUM_PUBLIC_IP"), k.settings.public_url.as_deref()).await;
         let headers = fraud_headers(&ev.payload["client"], ev.tenant_id, vendor);
         let mut forced = false;
         loop {
