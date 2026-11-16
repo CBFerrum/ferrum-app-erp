@@ -266,7 +266,7 @@ fn cases() -> Vec<Case> {
             None,
             None,
             json!({"nz_reverse_charge": true}),
-            "nz_gst101a",
+            "New Zealand GST101A",
             15,
             15,
             15,
@@ -353,7 +353,7 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my", "id", "th", "ph", "vn", "sa"] {
+    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -460,6 +460,19 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
             ("12", "400"),
             ("12 VAT", "30"),
             ("13", "15"),
+        ],
+        "nz" => &[
+            ("5", "430"),
+            ("6", "200"),
+            ("7", "230"),
+            ("8", "30"),
+            ("9", "15"),
+            ("10", "45"),
+            ("11", "115"),
+            ("12", "15"),
+            ("13", "15"),
+            ("14", "30"),
+            ("15", "15"),
         ],
         _ => &[],
     }

@@ -4,9 +4,7 @@
 //! supplies are under 95% of their supplies (a company setting). The return is the GST101A's
 //! boxes 5 to 15, on the tax fraction 3/23 of amounts that include GST.
 
-use crate::engine::{Country, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED, digits};
-use ferrum_kernel::Doc;
-use rust_decimal::{Decimal, RoundingStrategy};
+use crate::engine::{Country, Rate, ReverseCharge, Row, digits};
 
 pub static COUNTRY: Country = Country {
     package: "nz",
@@ -55,35 +53,9 @@ pub fn number(raw: &str) -> Option<String> {
     None
 }
 
-fn fraction(v: Decimal) -> Decimal {
-    (v * Decimal::from(3) / Decimal::from(23)).round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
-}
-
-fn gst101a(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let b5 = f.sales_net(&["Standard", ZERO_RATED, EXPORT]) + f.sales_tax(&["Standard"]);
-    let b6 = f.sales_net(&[ZERO_RATED, EXPORT]);
-    let b8 = fraction(b5 - b6);
-    let b9 = f.purchases_tax(&[REVERSE_CHARGED]);
-    let b11 = f.purchases_net(&["Standard"]) + f.purchases_tax(&["Standard"]);
-    let b12 = fraction(b11);
-    let b13 = f.purchases_tax(&[REVERSE_CHARGED]);
-    vec![
-        ("5", "Total sales and income for the period (including GST and any zero-rated supplies)", b5),
-        ("6", "Zero-rated supplies included in Box 5", b6),
-        ("7", "Box 5 less Box 6", b5 - b6),
-        ("8", "Box 7 multiplied by three and divided by twenty-three", b8),
-        ("9", "Adjustments from your calculation sheet", b9),
-        ("10", "Total GST collected on sales and income", b8 + b9),
-        ("11", "Total purchases and expenses (including GST) for which tax invoicing requirements have been met", b11),
-        ("12", "Box 11 multiplied by three and divided by twenty-three", b12),
-        ("13", "Credit adjustments from your calculation sheet", b13),
-        ("14", "Total GST credit for purchases and expenses", b12 + b13),
-        ("15", "Difference between Box 10 and Box 14 (GST to pay, or a refund when negative)", b8 + b9 - b12 - b13),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "nz_gst101a", label: "GST Return (GST101A)", country: &COUNTRY, boxes: gst101a })]
+    Vec::new()
 }
 
 crate::app!("nz", crate::pint::NZ);
@@ -95,6 +67,5 @@ mod tests {
         assert_eq!(super::number("49-091-850"), Some("049-091-850".into()));
         assert_eq!(super::number("136410132"), Some("136-410-132".into()), "the second weights");
         assert_eq!((super::number("136410133"), super::number("9125568")), (None, None));
-        assert_eq!(super::fraction(rust_decimal::Decimal::from(115)), rust_decimal::Decimal::from(15));
     }
 }
