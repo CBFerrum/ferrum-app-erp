@@ -1,5 +1,28 @@
 # Changelog
 
+## ERP 0.28.2, Finance 0.6.4: what is settled leaves nothing behind, closing waits for what is being posted, a broken tax condition is said
+
+Three faults found in the first round, each shown failing first. One new package SQL file (accounting
+`011_period_guard_lock.sql`); `ledger::allocate` returns the base it took; no interface change.
+
+- **A settlement that clears an item takes all it has left.** An invoice's base is its net's and each tax's rounded
+  apart (16.60 for 10.05 dollars and 10% tax at 1.5), while its payment converted the whole (16.59): a fully paid
+  foreign-currency invoice kept a unit on an item marked paid, and in receivables. `ledger::allocate` now takes all an
+  item has left in the company's currency when a settlement clears what is outstanding, and returns the base it took;
+  ERP's callers post it. A payment's unit goes to its exchange difference, a write-off's to the write-off account,
+  Finance's allocations and advances to their exchange difference; unallocating gives back what was taken. A credit
+  or debit note now books what its settlement of the original moves: at another rate than the original's (100 dollars
+  invoiced at 83 and credited at 84), that is the exchange difference, which was left in receivables with no open item
+  to explain it. Other apps calling `allocate` keep compiling; one that settles two items without a journal (Commerce's
+  advances) should post the difference of the two bases it gets back.
+- **Closing waits for what is being posted.** A posting checked its period without a lock, so one whose check passed
+  before a month was closed still landed in it after the close, and a year's closing left such an entry's income and
+  expense open in a closed year. A posting now takes its period shared (`for share`); closing a month waits for the
+  postings being made into it, and the period closing voucher locks the year's months before it reads their balances.
+- **A default tax template whose condition does not compile is said, not passed over.** Such a template was never
+  chosen, so a document it should have taxed came out with no tax. Saving one is refused on its condition, as for a
+  pricing rule, and a document that would have needed one already stored is refused, naming it.
+
 ## ERP 0.28.1, Finance 0.6.3: four faults, each shown failing first
 
 From the cleanup audit, each reproduced by a test before it was changed. Payment Run and its lines gain a field each

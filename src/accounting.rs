@@ -674,8 +674,11 @@ impl DocHook for PaymentEntryHook {
                 let base = ledger::round_as(discount * rate, co.precision, co.rounding);
                 lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co, &mut discount_taxes).await?);
             }
-            let base_at_invoice = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
-            ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
+            // What the invoice gives up at its own rate (all it has left, when this clears it); what the
+            // money is worth at today's differs by the exchange difference below.
+            let at_rate = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
+            let base_at_invoice =
+                item_sign * ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * at_rate).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
             lines.push(
                 Line::new(party_account, sign * base_at_invoice, &co.currency_code)

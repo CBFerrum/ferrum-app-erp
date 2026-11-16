@@ -1449,9 +1449,27 @@ impl DocHook for InvoiceHook {
                 .ok_or_else(|| Error::field("return_against", "original invoice is not open"))?;
             let settle = (-total_txn).min(item.outstanding);
             if settle > Decimal::ZERO {
-                let base = ledger::round_as(settle * item.exchange_rate, co.precision, co.rounding);
-                ledger::allocate(hc.tx, hc.ctx, co.id, orig, n.invoice, iid, on, settle, base).await?;
-                ledger::allocate(hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -ledger::round_as(settle * rate, co.precision, co.rounding)).await?;
+                let at = |r: Decimal| ledger::round_as(settle * r, co.precision, co.rounding);
+                let given = ledger::allocate(hc.tx, hc.ctx, co.id, orig, n.invoice, iid, on, settle, at(item.exchange_rate)).await?;
+                let taken = -ledger::allocate(hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -at(rate)).await?;
+                // Each side gave up its own base: what they differ by (the two rates, or what each
+                // document's rounding left) is an exchange difference, cleared from the party's account.
+                let diff = given - taken;
+                if !diff.is_zero() {
+                    let sign = if self.0 == Side::Selling { -Decimal::ONE } else { Decimal::ONE };
+                    let gl = co.require("exchange_gain_loss_account", "exchange gain/loss account")?;
+                    let mut e = Entry::new(co.id, on, n.invoice, iid, s(doc, "number").map(str::to_string));
+                    e.memo = Some(format!("Exchange difference on settling {}", item.number.clone().unwrap_or_default()));
+                    e.lines.push(
+                        Line::new(item.account_id, sign * diff, &co.currency_code)
+                            .txn(Decimal::ZERO, &item.currency, Decimal::ONE)
+                            .customer(item.customer_id)
+                            .supplier(item.supplier_id)
+                            .against(n.invoice, orig),
+                    );
+                    e.lines.push(Line::new(gl, -sign * diff, &co.currency_code).remarks("Exchange difference"));
+                    ledger::post(hc.tx, hc.ctx, e, co.precision).await?;
+                }
                 sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, orig).await?;
             }
         }

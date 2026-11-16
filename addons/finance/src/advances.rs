@@ -93,8 +93,9 @@ impl DocHook for AdvanceHook {
                 on = hc.ctx.today();
             }
             let (inv_base, adv_base, _) = difference(invoice.exchange_rate, adv_rate, take, co.precision, co.rounding, invoice.customer_id.is_some());
-            ledger::allocate(hc.tx, hc.ctx, co.id, iid, KEY, key, on, take, inv_base).await?;
-            ledger::allocate(hc.tx, hc.ctx, co.id, pid, KEY, key, on, -take, -adv_base).await?;
+            // What each side gave up: all an item has left when this clears it.
+            let inv_base = ledger::allocate(hc.tx, hc.ctx, co.id, iid, KEY, key, on, take, inv_base).await?;
+            let adv_base = -ledger::allocate(hc.tx, hc.ctx, co.id, pid, KEY, key, on, -take, -adv_base).await?;
             let diff = inv_base - adv_base;
             if !diff.is_zero() {
                 // The party account keeps the base difference between the two rates; clear it.

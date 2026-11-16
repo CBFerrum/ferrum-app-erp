@@ -89,7 +89,8 @@ pub fn register(h: &mut HookRegistry) {
             .register("OpeningInvoice", Arc::new(opening::OpeningInvoiceHook))
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
-            .register("StoredValueAccount", Arc::new(stored_value::AccountHook));
+            .register("StoredValueAccount", Arc::new(stored_value::AccountHook))
+            .register("TaxTemplate", Arc::new(pricing::ConditionHook));
         for numbered in ["JournalEntry", "PaymentEntry"] {
             h.register(numbered, Arc::new(series::SeriesHook));
         }
@@ -108,7 +109,7 @@ pub fn register(h: &mut HookRegistry) {
     });
     h.scoped(&only("selling"), |h| {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))
-            .register("PricingRule", Arc::new(pricing::RuleHook))
+            .register("PricingRule", Arc::new(pricing::ConditionHook))
             .register("Company", Arc::new(promotion::PriceLinesHook))
             .register("Company", Arc::new(reservation::AvailabilityHook));
     });

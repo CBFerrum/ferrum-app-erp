@@ -161,17 +161,17 @@ struct Rules {
     exprs: Vec<Option<Expr>>,
 }
 
-/// A pricing rule's condition, compiled: `None` when it has none (empty or blank).
+/// A pricing rule's or tax template's condition, compiled: `None` when it has none (empty or blank).
 fn condition(doc: &Doc) -> Option<std::result::Result<Expr, String>> {
     s(doc, "condition").filter(|c| !c.trim().is_empty()).map(Expr::compile)
 }
 
-/// Refuses a pricing rule whose condition does not compile, so the person writing it learns at once
-/// rather than finding a gated discount never given.
-pub struct RuleHook;
+/// Refuses a pricing rule or a tax template whose condition does not compile, so the person writing it
+/// learns at once rather than finding a gated discount never given or a document left without its tax.
+pub struct ConditionHook;
 
 #[async_trait::async_trait]
-impl ferrum_kernel::DocHook for RuleHook {
+impl ferrum_kernel::DocHook for ConditionHook {
     async fn validate(&self, _hc: &mut ferrum_kernel::HookCtx<'_>, doc: &Doc) -> Result<()> {
         match condition(doc) {
             Some(Err(e)) => Err(Error::field("condition", e)),
@@ -235,7 +235,9 @@ fn best_rule<'a>(rules: &'a Rules, item: &Doc, qty: Decimal, party: Option<&Doc>
     })
 }
 
-/// Picks the default tax template for the company/kind whose condition matches the document.
+/// Picks the default tax template for the company/kind whose condition matches the document. One whose
+/// condition does not compile cannot say whether it applies: the document is refused, naming it, rather
+/// than priced without its tax (or with a tax that is not its own).
 async fn default_template(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, side: Side, cel_doc: &Value) -> Result<Option<Doc>> {
     let templates = find(
         k,
@@ -248,10 +250,24 @@ async fn default_template(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, sid
     )
     .await?;
     let user = ctx.user_value();
-    let chosen = templates.into_iter().find(|t| match s(t, "condition") {
-        None => true,
-        Some(c) => Expr::compile(c).ok().is_some_and(|e| e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user: &user }).unwrap_or(false)),
-    });
+    let mut chosen = None;
+    for t in templates {
+        let applies = match condition(&t) {
+            None => true,
+            Some(Ok(e)) => e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user: &user }).unwrap_or(false),
+            Some(Err(e)) => {
+                let title = s(&t, "title").unwrap_or("the default tax template");
+                return Err(Error::field(
+                    "tax_template",
+                    format!("the condition of {title} does not compile ({e}): correct or clear it, or choose a tax template"),
+                ));
+            }
+        };
+        if applies {
+            chosen = Some(t);
+            break;
+        }
+    }
     // Lists carry no child rows: load the chosen template whole, with its tax rows.
     match chosen.and_then(|t| id(&t, "id")) {
         Some(t) => Ok(Some(get(k, ctx, tx, "TaxTemplate", t).await?)),

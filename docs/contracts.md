@@ -79,7 +79,7 @@ operations:
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
 | `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |
-| `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount)` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
+| `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount) -> Decimal` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back. Since 0.28.2 a settlement that clears what is outstanding takes all the item has left in the company's currency, whatever `base_amount` says, and every call returns the base it took: post that, and any difference from the money's own value as an exchange difference | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
 | `ledger::unallocate(tx, ctx, payment_entity, payment_id, on) -> Vec<Uuid>` | Reverses what a payment allocated, restoring what is outstanding; returns the items | | Undoes once |
 | `ledger::cancel_open_item(tx, ctx, id)` | Cancels an item: nothing outstanding, no payment taken | `Error::Invalid` while payments are allocated to it | Stays cancelled |
 | `ledger::load_open_item(tx, tenant, id, lock) -> Option<OpenItemRow>` | Reads an item, locked for the transaction when asked | | |
@@ -92,6 +92,8 @@ operations:
 | `pricing::calc_input`, `tax_in`, `line_tax_rates`, `tax_breakdown`, `breakup` | The calculation's parts over a document's lines, without reading anything | | |
 | `localization::check(hc, doc, Side)` | Each installed country's checks before a priced document is submitted: call it in `before_submit` | What the countries refuse | Reads only |
 | `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice`, `PurchaseInvoice` or `OpeningInvoice` | | Sets the same values |
+| `portal::customers_of(k, ctx, tx, email) -> Vec<Uuid>` | The customers an address belongs to: those with it as their email, and those of contacts with it (where the workspace's contacts link a customer), oldest first, at most 50 of each; never a disabled one, nor a guest a web shop records unchecked (anyone may type anyone's address at a guest checkout). Read as the system | | Reads only |
+| `portal::suppliers_of(k, ctx, tx, email) -> Vec<Uuid>` | The suppliers an address belongs to, found the same way | | Reads only |
 
 Not in it: closing periods, reports, set-up, the trade documents' own hooks and everything under
 `addons/`. They are ERP's, and apps reach them through documents and reports.

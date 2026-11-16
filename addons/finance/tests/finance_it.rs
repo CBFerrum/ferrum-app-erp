@@ -837,7 +837,32 @@ async fn scenario() {
     let e = t.k.submit(&am, "PeriodClosingVoucher", uid(&pcv), None).await.unwrap_err();
     assert!(invalid(&e, "unposted drafts: 1 Journal Entry"), "{e:?}");
     t.k.delete(&am, "JournalEntry", uid(&draft), None).await.unwrap();
-    let pcv = t.submit(&am, "PeriodClosingVoucher", uid(&pcv)).await;
+    // An entry into the year still being made as the year is closed (its income and expense net to
+    // nothing): the closing waits for it and closes it with the rest, rather than leaving it open in a
+    // closed year.
+    let mut posting = k.db.tenant_tx(tenant).await.unwrap();
+    let mut entry = ferrum_app_erp::ledger::Entry::new(t.company, NaiveDate::from_ymd_opt(2025, 7, 20).unwrap(), "JournalEntry", Uuid::now_v7(), None);
+    entry.lines.push(ferrum_app_erp::ledger::Line::new(admin_exp, n("100"), "INR").cost_center(Some(main)));
+    entry.lines.push(ferrum_app_erp::ledger::Line::new(sales, -n("100"), "INR").cost_center(Some(main)));
+    ferrum_app_erp::ledger::post(&mut posting, &am, entry, 2).await.expect("posted while the year is open");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *posting).await.unwrap();
+    let closing = {
+        let (k, am, id) = (k.clone(), am.clone(), uid(&pcv));
+        tokio::spawn(async move { k.submit(&am, "PeriodClosingVoucher", id, None).await })
+    };
+    for _ in 0..200 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || closing.is_finished() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    posting.commit().await.unwrap();
+    let pcv = closing.await.unwrap().expect("the closing");
     assert_eq!(dec(&pcv["net_profit"]), n("900"), "1000 + 200 income - 300 expense");
     let pl_left = "select count(*) from (select l.account_id, l.cost_center_id from journal_line l join e_account a on a.tenant_id = l.tenant_id \
                    and a.id = l.account_id where l.tenant_id = $1 and a.root_type in ('Income', 'Expense') and l.posting_date between '2025-01-01' \

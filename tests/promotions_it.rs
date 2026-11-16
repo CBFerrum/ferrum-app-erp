@@ -380,4 +380,30 @@ async fn scenario() {
     assert_eq!(amounts(&globex_lamp), [("Lamp".to_string(), n("100"))], "Globex is not Initech: no half off");
     let refused = message(t.k.insert(&t.ctx, "PricingRule", obj(rule(typo))).await);
     assert!(refused.starts_with("condition: "), "{refused}");
+
+    // A default tax template whose condition cannot be read is not passed over in silence, which would
+    // leave the document without its tax: the document is refused, naming the template, and the form
+    // refuses such a condition.
+    let output = t.find_one("Account", json!({"account_name": "Output Tax", "company": c})).await["id"].clone();
+    let template = |title: &str, condition: &str| {
+        json!({"title": title, "company": c, "kind": "Sales", "is_default": true, "condition": condition,
+               "rows": [{"charge_type": "On Net Total", "account": output, "description": "VAT", "rate": "10"}]})
+    };
+    let globex_tax = uid(&t.insert("TaxTemplate", template("VAT for Globex", "doc.customer_name == 'Globex'")).await);
+    let plain = json!({"company": c, "customer": globex, "items": [{"item": a, "qty": "1"}]});
+    assert_eq!(dec(&t.insert("SalesOrder", plain.clone()).await["total_taxes"]), n("10"), "Globex's tax by default");
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query("update e_tax_template set \"condition\" = $2 where id = $1")
+        .bind(globex_tax)
+        .bind("doc.customer_name == 'Globex")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let broken = t.k.insert(&t.ctx, "SalesOrder", obj(plain)).await;
+    assert!(broken.is_err(), "priced without its tax: {:?}", broken.as_ref().map(|d| d["total_taxes"].clone()));
+    let said = message(broken);
+    assert!(said.contains("VAT for Globex"), "{said}");
+    let refused = message(t.k.insert(&t.ctx, "TaxTemplate", obj(template("VAT typed in", "doc.customer_name == 'Globex"))).await);
+    assert!(refused.starts_with("condition: "), "{refused}");
 }

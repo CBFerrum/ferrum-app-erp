@@ -66,8 +66,14 @@ impl DocHook for WriteOffHook {
         // Locked: a payment and a write-off of the same invoice at once settle it once.
         let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::field("invoice", "is not open"))?;
         let amount = d(doc, "amount");
-        let base = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
-        ledger::allocate(hc.tx, hc.ctx, co.id, inv, ENTITY, wid, on, amount, base).await?;
+        // Written off at the invoice's rate: all it has left in the company's currency when this clears it.
+        let at_rate = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
+        let base = ledger::allocate(hc.tx, hc.ctx, co.id, inv, ENTITY, wid, on, amount, at_rate).await?;
+        if base != d(doc, "base_amount") {
+            let mut v = Doc::new();
+            v.insert("base_amount".into(), money(base));
+            hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, ENTITY, wid, v).await?;
+        }
         let invoice = match hc.ctx.schema.entity(&item.entity) {
             Some(_) if item.entity != "JournalEntry" => get(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await.unwrap_or_default(),
             _ => Doc::new(),
