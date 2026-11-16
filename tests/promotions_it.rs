@@ -366,4 +366,18 @@ async fn scenario() {
     t.k.cancel(&t.ctx, "SalesInvoice", notes[1].0, None).await.expect("cancel the second credit note");
     let left = given(&t.get("SalesInvoice", si3).await);
     assert_eq!((dec(&left["qty"]), dec(&left["amounts"][save10.to_string()])), (n("2"), n("6.67")));
+
+    // A pricing rule whose condition cannot be read gives its discount to no one. One that reaches the
+    // records past the form (another app's write, an import) is left out when pricing, not taken as
+    // having no condition; the form refuses one. Here the closing quote of a customer gate is missing.
+    let rule = |condition: &str| json!({"title": "Initech: half off", "apply_on": "All Items", "discount_percent": "50", "condition": condition});
+    let typo = "doc.customer_name == 'Initech";
+    let gated = uid(&t.insert("PricingRule", rule("doc.customer_name == 'Initech'")).await);
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query("update e_pricing_rule set \"condition\" = $2 where id = $1").bind(gated).bind(typo).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let globex_lamp = t.insert("SalesOrder", order(json!([{"item": a, "qty": "1"}]), json!({}))).await;
+    assert_eq!(amounts(&globex_lamp), [("Lamp".to_string(), n("100"))], "Globex is not Initech: no half off");
+    let refused = message(t.k.insert(&t.ctx, "PricingRule", obj(rule(typo))).await);
+    assert!(refused.starts_with("condition: "), "{refused}");
 }

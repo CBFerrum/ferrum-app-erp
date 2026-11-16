@@ -108,6 +108,7 @@ pub fn register(h: &mut HookRegistry) {
     });
     h.scoped(&only("selling"), |h| {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))
+            .register("PricingRule", Arc::new(pricing::RuleHook))
             .register("Company", Arc::new(promotion::PriceLinesHook))
             .register("Company", Arc::new(reservation::AvailabilityHook));
     });

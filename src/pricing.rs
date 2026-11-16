@@ -154,11 +154,30 @@ async fn default_price_list(k: &Kernel, ctx: &Ctx, tx: &mut Tx, side: Side) -> R
     Ok(lists.first().and_then(|l| id(l, "id")))
 }
 
-/// The enabled pricing rules as the pricing crate takes them, each with its condition (compiled;
-/// one that does not compile is no condition).
+/// The enabled pricing rules as the pricing crate takes them, each with its condition compiled. A
+/// rule whose condition does not compile is not among them: it applies to no one, never to everyone.
 struct Rules {
     rules: Vec<pricing::Rule>,
     exprs: Vec<Option<Expr>>,
+}
+
+/// A pricing rule's condition, compiled: `None` when it has none (empty or blank).
+fn condition(doc: &Doc) -> Option<std::result::Result<Expr, String>> {
+    s(doc, "condition").filter(|c| !c.trim().is_empty()).map(Expr::compile)
+}
+
+/// Refuses a pricing rule whose condition does not compile, so the person writing it learns at once
+/// rather than finding a gated discount never given.
+pub struct RuleHook;
+
+#[async_trait::async_trait]
+impl ferrum_kernel::DocHook for RuleHook {
+    async fn validate(&self, _hc: &mut ferrum_kernel::HookCtx<'_>, doc: &Doc) -> Result<()> {
+        match condition(doc) {
+            Some(Err(e)) => Err(Error::field("condition", e)),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// A `PricingRule` as the pricing crate takes it.
@@ -189,8 +208,14 @@ async fn rule_docs(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Vec<Doc>> {
 }
 
 async fn pricing_rules(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Rules> {
-    let docs = rule_docs(k, ctx, tx).await?;
-    Ok(Rules { rules: docs.iter().map(rule_of).collect(), exprs: docs.iter().map(|doc| s(doc, "condition").and_then(|c| Expr::compile(c).ok())).collect() })
+    let mut out = Rules { rules: vec![], exprs: vec![] };
+    for doc in rule_docs(k, ctx, tx).await? {
+        // Written past the form (another app, an import): left out rather than taken as no condition.
+        let Ok(expr) = condition(&doc).transpose() else { continue };
+        out.rules.push(rule_of(&doc));
+        out.exprs.push(expr);
+    }
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
