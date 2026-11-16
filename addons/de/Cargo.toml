@@ -12,6 +12,8 @@ ferrum-meta = { workspace = true }
 ferrum-domain = { workspace = true }
 ferrum-app-erp = { path = "../.." }
 ferrum-eu = { path = "../eu" }
+# The EU member states' rules at home (small businesses, the domestic reverse charge), with Germany's as its data.
+ferrum-eu-members = { path = "../eu-members" }
 async-trait = { workspace = true }
 rust_decimal = { workspace = true }
 serde_json = { workspace = true }
