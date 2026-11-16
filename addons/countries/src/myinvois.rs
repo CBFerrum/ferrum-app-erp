@@ -382,8 +382,8 @@ impl MyInvois {
     async fn token(&self, k: &Kernel, ctx: &Ctx, api: &str, company: &Doc) -> Result<String> {
         let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        let stored = k.secret(&mut tx, ctx.tenant, "Company", cid, "my_access_token").await?;
-        let secret = k.secret(&mut tx, ctx.tenant, "Company", cid, "my_client_secret").await?;
+        let stored = crate::keys::field(k, &mut tx, ctx.tenant, "Company", cid, "my_access_token").await?.map(|v| v.to_string());
+        let secret = crate::keys::field(k, &mut tx, ctx.tenant, "Company", cid, "my_client_secret").await?.map(|v| v.to_string());
         tx.commit().await?;
         let fresh = s(company, "my_token_expires").and_then(|t| DateTime::parse_from_rfc3339(t).ok()).is_some_and(|t| t > Utc::now() + Duration::seconds(60));
         if let (Some(t), true) = (stored, fresh) {
@@ -538,7 +538,10 @@ impl EventSink for MyInvois {
     }
 }
 
+/// Malaysia's MyInvois hooks, inside its app's registration (`hooks.app("my", …)`), where it takes its own vault handle,
+/// which reads its secret fields (`keys.rs`).
 pub fn register(h: &mut ferrum_kernel::HookRegistry) {
+    crate::keys::remember(h.vault());
     h.register("SalesInvoice", std::sync::Arc::new(MyInvoisHook));
     h.add_event_sink(std::sync::Arc::new(MyInvois));
 }

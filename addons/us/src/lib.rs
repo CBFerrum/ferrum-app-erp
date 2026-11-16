@@ -6,6 +6,7 @@
 //! AvaTax ([`avatax`]); and the sales tax, economic nexus and Form 1099 reports ([`reports`]).
 
 pub mod avatax;
+mod keys;
 pub mod reports;
 pub mod tax;
 
@@ -26,8 +27,10 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
     ferrum_meta::catalog::load_embedded(EMBEDDED)
 }
 
-/// Registers the US's rules, its rate tables' upkeep and the AvaTax connector.
+/// Registers the US's rules, its rate tables' upkeep and the AvaTax connector. Call it inside the platform's registration
+/// of the app, `hooks.app("us", …)`: it takes its own vault handle there, which reads its secret fields (`keys.rs`).
 pub fn register(h: &mut HookRegistry) {
+    keys::remember(h.vault());
     ferrum_app_erp::localization::add(Arc::new(tax::Us));
     h.scoped(&[PACKAGE.to_string()], |h| {
         for entity in ["UsTaxRate", "UsRateTable", "UsTaxability", "UsExemptionCertificate"] {

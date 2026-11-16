@@ -7,6 +7,7 @@
 //! `reports`, `maintenance`): its manifest is `apps/<code>.yaml` and its package `packages/<code>`.
 
 pub mod anaf;
+mod keys;
 pub mod member;
 
 pub mod be;

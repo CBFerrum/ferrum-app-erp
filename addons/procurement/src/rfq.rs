@@ -84,7 +84,7 @@ pub async fn signing_key(k: &Kernel, ctx: &Ctx, tx: &mut Tx, create: bool) -> Re
     let Some(settings_id) = sqlx::query_scalar::<_, Uuid>(sql).bind(tenant).fetch_optional(&mut **tx).await? else {
         return if create { Err(Error::invalid("save the Procurement Settings first")) } else { Ok(None) };
     };
-    if let Some(key) = k.secret(tx, tenant, "ProcurementSettings", settings_id, "signing_key").await? {
+    if let Some(key) = crate::keys::field(k, tx, tenant, "ProcurementSettings", settings_id, "signing_key").await?.map(|v| v.to_string()) {
         return hex::decode(key).map(Some).map_err(Error::internal);
     }
     if !create {

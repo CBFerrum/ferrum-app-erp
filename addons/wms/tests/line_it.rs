@@ -162,6 +162,16 @@ fn hex_key(seed: Uuid) -> String {
     ed25519_dalek::SigningKey::from_bytes(&bytes).verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
+}
+
 #[test]
 fn from_the_plan_to_the_books() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(32 << 20).build().unwrap();
@@ -170,8 +180,9 @@ fn from_the_plan_to_the_books() {
 
 async fn scenario() {
     let url = std::env::var("FERRUM_LINE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_line_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().unwrap();
     packages.extend(ferrum_app_erp::packages().unwrap());
     packages.extend(ferrum_stock_ops::packages().unwrap());
@@ -182,7 +193,9 @@ async fn scenario() {
     packages.extend(ferrum_mes::packages().unwrap());
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     ferrum_stock_ops::register(&mut hooks);
     ferrum_mfg_ops::register(&mut hooks);
     ferrum_quality::register(&mut hooks);

@@ -3,6 +3,7 @@
 //! construction industry's reverse charge, VAT registration numbers, and VAT returns worked out
 //! from the books and filed through HMRC's Making Tax Digital API ([`mtd`]).
 
+mod keys;
 pub mod mtd;
 pub mod vat;
 
@@ -34,7 +35,11 @@ pub fn register(h: &mut HookRegistry) {
             .register("GbVatReturn", Arc::new(mtd::VatReturnHook));
     });
     h.add_event_sink(Arc::new(mtd::Mtd));
-    h.add_site(PACKAGE, Arc::new(mtd::HmrcSite));
+    // Its own vault handle, kept beside its site: it reads its secret fields (`keys.rs`). Registered inside
+    // `hooks.app("gb", …)`, as the server does.
+    let site: Arc<dyn ferrum_kernel::Site> = Arc::new(mtd::HmrcSite);
+    keys::remember(&site, h.vault());
+    h.add_site(PACKAGE, site);
 }
 
 /// The UK's reports: none apart from its VAT returns, which are documents.

@@ -43,7 +43,9 @@ fn packages_at(root: &str) -> Result<Vec<ferrum_meta::Package>, String> {
 fn hooks() -> HookRegistry {
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     ferrum_finance::register(&mut hooks);
     hooks
 }
@@ -51,7 +53,11 @@ fn hooks() -> HookRegistry {
 async fn kernel(url: &str, erp: Vec<ferrum_meta::Package>, finance: Vec<ferrum_meta::Package>, reset: bool) -> Arc<Kernel> {
     let db = Db::connect(DbConfig { url: url.to_string(), max_connections: 10, ..Default::default() }).await.expect("connect");
     if reset {
-        sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+        sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;")
+            .execute(&db.pool)
+            .await
+            .expect("reset");
+        ferrum_kernel::vault::open(&db, opener(url), false).await.expect("the vault");
     }
     let mut packages = ferrum_domain::packages().expect("the shared packages");
     packages.extend(erp);
@@ -59,6 +65,16 @@ async fn kernel(url: &str, erp: Vec<ferrum_meta::Package>, finance: Vec<ferrum_m
     let k = Kernel::boot(db, Catalog::from_packages(packages).unwrap(), hooks(), KernelSettings::default(), None).await.expect("boot");
     k.set_file_store(Arc::new(MemFiles::default()));
     k
+}
+
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
 }
 
 #[test]

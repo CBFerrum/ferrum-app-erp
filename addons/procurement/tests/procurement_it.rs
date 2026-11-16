@@ -210,6 +210,16 @@ fn assert_refused<T: std::fmt::Debug>(r: Result<T, Error>, needle: &str) {
     assert!(msg.contains(needle), "expected '{needle}' in: {msg}");
 }
 
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
+}
+
 #[test]
 fn procurement_end_to_end() {
     // Same runtime shape as the server: unoptimized async hook chains need more than 2 MiB.
@@ -220,19 +230,24 @@ fn procurement_end_to_end() {
 async fn scenario() {
     let url =
         std::env::var("FERRUM_PROCUREMENT_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_procurement_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("platform packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_procurement::packages().expect("procurement packages"));
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     for source in ferrum_app_erp::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    ferrum_procurement::register(&mut hooks);
+    let procurement_packages: Vec<String> = ferrum_procurement::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("procurement", &procurement_packages, ferrum_procurement::register);
+    hooks.own("procurement", &procurement_packages);
     for source in ferrum_procurement::reports() {
         ferrum_domain::reports::add_source(source);
     }
@@ -981,4 +996,17 @@ async fn scenario() {
         .sql_scalar("select count(*) from (select entry_id from journal_line where tenant_id = $1 group by entry_id having sum(debit) <> sum(credit)) x")
         .await;
     assert_eq!(unbalanced, 0);
+    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
+    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let past: Vec<_> = k
+        .legacy_key(vec![])
+        .await
+        .unwrap()
+        .uses
+        .into_iter()
+        .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
+        .map(|u| u.1)
+        .collect();
+    assert!(past.is_empty(), "read past the vault: {past:?}");
 }

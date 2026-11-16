@@ -292,7 +292,7 @@ impl ReportSource for UsReports {
                 for (sid, supplier, form, tin_type, w9, backup, amount) in paid {
                     let form = form.unwrap_or_default();
                     let amount = amount.unwrap_or_default();
-                    let tin = k.secret(&mut tx, ctx.tenant, "Supplier", sid, "us_tin").await?;
+                    let tin = crate::keys::field(k, &mut tx, ctx.tenant, "Supplier", sid, "us_tin").await?.map(|v| v.to_string());
                     let limit = threshold(&form, y);
                     let mut notes: Vec<&str> = Vec::new();
                     if tin.as_deref().is_none_or(|t| t.chars().filter(char::is_ascii_digit).count() != 9) {

@@ -37,6 +37,16 @@ fn old_packages() -> Result<Vec<ferrum_meta::Package>, String> {
     ferrum_meta::catalog::load_embedded(&files).map_err(|e| e.to_string())
 }
 
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
+}
+
 #[test]
 fn carriers_upgrade_from_0_24_1() {
     let Ok(old) = old_packages() else {
@@ -50,13 +60,20 @@ fn carriers_upgrade_from_0_24_1() {
 async fn kernel(url: &str, erp: Vec<ferrum_meta::Package>, reset: bool) -> Arc<Kernel> {
     let db = Db::connect(DbConfig { url: url.to_string(), max_connections: 10, ..Default::default() }).await.expect("connect");
     if reset {
-        sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+        sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;")
+            .execute(&db.pool)
+            .await
+            .expect("reset");
     }
+    // Each kernel's vault, opened as a server opens it at its start, the first one's once the reset made it empty.
+    ferrum_kernel::vault::open(&db, opener(url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("the shared packages");
     packages.extend(erp);
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     let settings =
         KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([7; 32])), webhooks_allow_private: true, ..KernelSettings::default() };
     let k = Kernel::boot(db, Catalog::from_packages(packages).unwrap(), hooks, settings, None).await.expect("boot");

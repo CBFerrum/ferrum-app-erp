@@ -6,6 +6,7 @@
 pub mod einvoice;
 pub mod gst;
 pub mod irp;
+mod keys;
 
 pub use gst::{gstin_check_char, state_name, validate_gstin};
 
@@ -29,8 +30,10 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
 
 /// Registers India's rules: GSTINs on companies and parties, e-invoicing on sales invoices, the
 /// IRP connector, and its localization for ERP's taxes and company set-up. Its document hooks run
-/// only where its package is installed.
+/// only where its package is installed. Call it inside the platform's registration of the app, `hooks.app("india", …)`:
+/// it takes its own vault handle there, which reads its secret fields (`keys.rs`).
 pub fn register(h: &mut HookRegistry) {
+    keys::remember(h.vault());
     ferrum_app_erp::localization::add(Arc::new(gst::India));
     h.scoped(&[PACKAGE.to_string()], |h| {
         h.register("Company", Arc::new(gst::PartyGstHook))

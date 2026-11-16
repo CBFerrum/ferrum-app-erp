@@ -287,7 +287,11 @@ fn hooks(h: &mut ferrum_kernel::HookRegistry) {
     }
     h.register("Company", std::sync::Arc::new(crate::anaf::AnafHook));
     h.add_event_sink(std::sync::Arc::new(crate::anaf::Anaf));
-    h.add_site(PACKAGE, std::sync::Arc::new(crate::anaf::AnafSite));
+    // Its own vault handle, kept beside its site: it reads its secret fields (`keys.rs`). Registered inside
+    // `hooks.app("ro", …)`, as the server does.
+    let site: std::sync::Arc<dyn ferrum_kernel::Site> = std::sync::Arc::new(crate::anaf::AnafSite);
+    crate::keys::remember(&site, h.vault());
+    h.add_site(PACKAGE, site);
 }
 
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {

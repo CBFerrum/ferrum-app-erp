@@ -19,6 +19,7 @@ pub mod dimensions;
 pub mod flow;
 pub mod instruments;
 pub mod journal_template;
+mod keys;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
@@ -63,11 +64,14 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
 
 /// Registers ERP's document hooks and the portal's invoices, each for the workspaces with its
 /// package. Call it before the hooks of apps that build on ERP's documents, so theirs see totals,
-/// postings and open items.
+/// postings and open items. Call it inside the platform's registration of the app, `hooks.app("erp", …)`: it takes its
+/// own vault handle there, which reads its secret fields (`keys.rs`).
 pub fn register(h: &mut HookRegistry) {
     let only = |p: &str| vec![p.to_string()];
-    // A customer's invoices on the workspace's portal ("Your invoices").
-    h.add_site("selling", Arc::new(portal::SellingPortal));
+    // A customer's invoices on the workspace's portal ("Your invoices"); ERP's handle is kept beside it.
+    let selling: Arc<dyn ferrum_kernel::Site> = Arc::new(portal::SellingPortal);
+    keys::remember(&selling, h.vault());
+    h.add_site("selling", selling);
     // A supplier's orders and bills on the workspace's portal ("Your orders").
     h.add_site("buying", Arc::new(portal::BuyingPortal));
     // Carriers' tracking calls, which arrive at each carrier's connection.
