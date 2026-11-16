@@ -7,8 +7,7 @@
 //! recovered on purchases: each goes on its own row and account. Items are outside SST unless
 //! their category says otherwise. The return summarises SST-02's figures.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, OUT_OF_SCOPE, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED};
-use ferrum_kernel::Doc;
+use crate::engine::{Country, OUT_OF_SCOPE, Rate, ReverseCharge, Row};
 
 pub static COUNTRY: Country = Country {
     package: "my",
@@ -44,26 +43,9 @@ pub fn number(raw: &str) -> Option<String> {
     ok.then(|| format!("{}-{}-{}", &n[..3], &n[3..7], &n[7..]))
 }
 
-fn sst02(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let sales_tax = f.sales_tax(&["Sales Tax 10%", "Sales Tax 5%"]);
-    let service_tax = f.sales_tax(&["Service Tax", "Service Tax 6%"]);
-    let imported = f.purchases_tax(&[REVERSE_CHARGED]);
-    vec![
-        ("ST10", "Taxable goods sold at 10%", f.sales_net(&["Sales Tax 10%"])),
-        ("ST5", "Taxable goods sold at 5%", f.sales_net(&["Sales Tax 5%"])),
-        ("ST", "Sales tax", sales_tax),
-        ("SV8", "Taxable services at 8%", f.sales_net(&["Service Tax"])),
-        ("SV6", "Taxable services at 6%", f.sales_net(&["Service Tax 6%"])),
-        ("SV", "Service tax", service_tax),
-        ("ITS", "Imported taxable services", f.purchases_net(&[REVERSE_CHARGED])),
-        ("ITST", "Service tax on imported taxable services", imported),
-        ("EX", "Exempted, zero-rated and exported", f.sales_net(&[EXEMPT, ZERO_RATED, EXPORT])),
-        ("TOTAL", "Total tax payable", sales_tax + service_tax + imported),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "my_sst02", label: "SST-02 Return (Summary)", country: &COUNTRY, boxes: sst02 })]
+    Vec::new()
 }
 
 crate::app!("my", hooks = crate::myinvois::register);
