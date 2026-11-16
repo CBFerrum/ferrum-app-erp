@@ -788,9 +788,12 @@ Each connection is set up per company, so a workspace's companies can use differ
 
 ERP's own calls (HMRC, AvaTax, MyInvois, ANAF, VIES, TEDB, the IRP, a carrier's label) go through the platform's
 vetted client, made for the company's workspace: a sandbox copy of a workspace makes none of them. Each provider is
-called at its own address, its production one or its test environment's as the company's settings choose. An address in the server's environment (`FERRUM_GB_HMRC_URL`,
-`FERRUM_US_AVATAX_URL`, `FERRUM_MY_MYINVOIS_URL`, `FERRUM_RO_ANAF_URL`, `FERRUM_EU_VIES_URL`, `FERRUM_EU_TEDB_URL`)
-still stands in for the provider's, but outside development only when it is at one of the provider's own hosts.
+called at its own address, its production one or its test environment's as the company's settings choose. An operator's setting (`gb.hmrc_url`,
+`us.avatax_url`, `my.myinvois_url`, `ro.anaf_url`, `eu.vies_url`, `eu.tedb_url`, each set with `ferrum task settings set`
+or its variable, `FERRUM_GB_HMRC_URL` and the others, which wins) may stand in for the provider's, but outside
+development only when it is at one of the provider's own hosts: a changed setting cannot send a company's credentials
+anywhere else. The United Kingdom's `gb.public_ip` (`FERRUM_PUBLIC_IP`) names the server's public address in HMRC's
+fraud-prevention headers.
 
 ## 📊 How it compares
 
@@ -953,8 +956,11 @@ First steps in a new workspace:
 6. **Turn on what you need**: approval bands, numbering series, stock reservation, withholding categories,
    carriers.
 
-Portugal's certified invoicing needs the software producer's key on the server (`FERRUM_PT_SIGNING_KEY`,
-`FERRUM_PT_CERTIFICATE`, `FERRUM_PT_KEY_VERSION`); without them, submitting an invoice there is refused.
+Portugal's certified invoicing needs the software producer's key, as Portugal's secret `signing.key` in the
+installation's vault (`PUT /api/operator/secrets/pt/signing.key` with `{"value": "<the PEM>", "rule": {"reveal": true}}`),
+and the settings `pt.certificate` and `pt.key_version` (1 unless set). `FERRUM_PT_SIGNING_KEY`, `FERRUM_PT_CERTIFICATE`
+and `FERRUM_PT_KEY_VERSION` still work and win; the key given that way is kept in the vault once. Without a key and a
+certificate number, submitting an invoice there is refused.
 
 ## 🔧 Develop
 

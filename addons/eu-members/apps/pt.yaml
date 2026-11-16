@@ -1,12 +1,24 @@
 # ERP's add-on for Portugal, on the European Union's: certified invoices (series and ATCUD, the signed hash chain, the QR code), NIF checks, the small business exemption and the construction reverse charge. Ferrum localization.md L2.
 id: pt
 name: "Portugal"
-version: 0.1.0
+version: 0.2.0
 publisher: cbferrum
 summary: "Certified invoices (series and ATCUD, the signed hash chain, the QR code), NIF checks, article 53 and the construction reverse charge for ERP in Portugal"
 categories: [finance]
 runtime: native
-platform: ">=0.3.1, <0.4"
+platform: ">=0.3.9, <0.4"
+# What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
+# pt.<key> and read at each use; the variable, when set, still wins.
+operator_settings:
+  - key: certificate
+    env: FERRUM_PT_CERTIFICATE
+    applies: live
+    doc: The AT's certificate number of this software, printed on certified invoices. The signing key is Portugal's secret signing.key.
+  - key: key_version
+    env: FERRUM_PT_KEY_VERSION
+    default: "1"
+    applies: live
+    doc: The signing key's version, as the AT knows it.
 requires: {erp: ">=0.4", eu: ">=0.1"}
 parent: erp
 packages: [pt]

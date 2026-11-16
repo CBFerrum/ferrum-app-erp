@@ -520,7 +520,7 @@ pub struct CarrierHook;
 
 #[async_trait]
 impl DocHook for CarrierHook {
-    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
             .map_err(|e| Error::field("description", format!("is not a carrier description: {e}")))?;
         let test = crate::util::b(doc, "test");
@@ -528,10 +528,7 @@ impl DocHook for CarrierHook {
             return Err(Error::field("description", p));
         }
         plan("carrier_check", &desc, test, doc.get("fixtures")).map_err(|m| Error::field("description", m))?;
-        // Typed secrets are written into the vault in this transaction (they are out of `doc` by now), and moved into the
-        // carrier's connection on another one (`sync`): the workspace's keys are made first, on a connection of their
-        // own, so that the second does not wait on keys this transaction made until it times out.
-        crate::keys::ready(hc.kernel, hc.ctx.tenant).await
+        Ok(())
     }
 
     /// The carrier's connections follow what is saved, and typed secrets move into them.

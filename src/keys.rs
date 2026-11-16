@@ -26,17 +26,6 @@ fn handle(k: &Kernel) -> Result<Vault> {
     held.iter().rev().find(|(a, _)| *a == at).map(|(_, v)| v.clone()).ok_or_else(missing)
 }
 
-/// Makes the workspace's key and ERP's own key in it if they are not there yet, each in a transaction of its own:
-/// before ERP writes a secret field in a transaction that something then uses the vault beside, on another
-/// connection, which would otherwise wait on keys made in that transaction until it timed out.
-/// Nothing while the vault is closed: then nothing is written into it either.
-pub(crate) async fn ready(k: &Kernel, tenant: Uuid) -> Result<()> {
-    match handle(k)?.seal(k, ferrum_kernel::vault::Scope::Workspace(tenant), "erp-ready", b"").await {
-        Ok(_) | Err(Error::Unavailable(_)) => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
 /// The value of one of ERP's own secret fields, read in `tx`: none when it is not set. A closed vault refuses, and
 /// says why; never with a value.
 pub(crate) async fn field(k: &Kernel, tx: &mut Tx, tenant: Uuid, entity: &str, record: Uuid, field: &str) -> Result<Option<Zeroizing<String>>> {
