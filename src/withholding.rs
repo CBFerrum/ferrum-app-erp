@@ -8,7 +8,7 @@
 //! was: those rows are the party's year so far, which thresholds read, and what the report lists.
 //! A submitted document's rows count; a cancelled one's do not, and its postings are reversed.
 
-use crate::ledger::{Line, load_open_item};
+use crate::ledger::{Line, load_open_item, round_as};
 use crate::pricing::{Side, breakup};
 use crate::util::{Company, b, d, date, get, id, money, round, rows, s, set};
 use chrono::{Months, NaiveDate};
@@ -317,7 +317,7 @@ pub(crate) async fn payment(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &Company, r
             continue;
         }
         let part = d(&bill, if c.gross { "base_grand_total" } else { "base_net_total" });
-        let base = round(amount * rate * part / whole, co.precision);
+        let base = round_as(amount * rate * part / whole, co.precision, co.rounding);
         let mut rows_ = withhold(hc, &c, "supplier", supplier, on, base, Decimal::ZERO, this, co.precision).await?;
         for w in rows_.iter_mut() {
             set(w, "against", inv.to_string());
@@ -333,7 +333,7 @@ pub(crate) async fn payment(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &Company, r
         && let Some(c) = category(hc, cat, on).await?
         && matches!(c.applies.as_str(), "On Bill" | "On Payment")
     {
-        out.extend(withhold(hc, &c, "supplier", supplier, on, round(advanced * rate, co.precision), Decimal::ZERO, this, co.precision).await?);
+        out.extend(withhold(hc, &c, "supplier", supplier, on, round_as(advanced * rate, co.precision, co.rounding), Decimal::ZERO, this, co.precision).await?);
     }
     finish(doc, out, rate, co.precision)?;
     Ok(d(doc, "withholding_amount"))

@@ -6,7 +6,7 @@
 
 use crate::flow::sync_invoice_outstanding;
 use crate::ledger::{self, Entry, Line, OpenItem};
-use crate::util::{company, d, date, get, id, money, round, s, set};
+use crate::util::{company, d, date, get, id, money, s, set};
 use async_trait::async_trait;
 use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result};
 use rust_decimal::Decimal;
@@ -51,7 +51,7 @@ impl DocHook for OpeningInvoiceHook {
         // is the one the old books carried it at).
         let rate = if id(doc, "currency") == Some(co.currency_id) { Decimal::ONE } else { d(doc, "conversion_rate") };
         set(doc, "conversion_rate", money(rate));
-        set(doc, "base_amount", money(round(d(doc, "amount") * rate, co.precision)));
+        set(doc, "base_amount", money(ledger::round_as(d(doc, "amount") * rate, co.precision, co.rounding)));
         if d(doc, "docstatus").is_zero() {
             set(doc, "status", "Draft");
             set(doc, "outstanding_amount", money(d(doc, "amount")));

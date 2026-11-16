@@ -11,6 +11,7 @@ use crate::common::{installed, is_new, opt_date};
 use crate::rules;
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate};
+use ferrum_app_erp::ledger;
 use ferrum_domain::util::{b, company, currency, d, date, get, id, money, round, rows, s, set};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result, Tx};
 use rust_decimal::Decimal;
@@ -146,7 +147,7 @@ impl DocHook for ScheduleHook {
         };
         for r in schedule.iter_mut() {
             let amount = d(r, "payment_amount");
-            set(r, "base_payment_amount", money(round(amount * rate, co.precision)));
+            set(r, "base_payment_amount", money(ledger::round_as(amount * rate, co.precision, co.rounding)));
             set(r, "discount_amount", money(round(amount * d(r, "discount_percent") / Decimal::ONE_HUNDRED, precision)));
         }
         let last_due = schedule.iter().filter_map(|r| opt_date(r, "due_date")).max();

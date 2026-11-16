@@ -37,8 +37,8 @@ impl DocHook for JournalEntryHook {
             } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
                 errors.push(at("debit_in_currency", format!("a debit or a credit in {code}, one of the two")));
             } else {
-                set(l, "debit", money(round(d(l, "debit_in_currency") * rate, co.precision)));
-                set(l, "credit", money(round(d(l, "credit_in_currency") * rate, co.precision)));
+                set(l, "debit", money(ledger::round_as(d(l, "debit_in_currency") * rate, co.precision, co.rounding)));
+                set(l, "credit", money(ledger::round_as(d(l, "credit_in_currency") * rate, co.precision, co.rounding)));
             }
         }
         if !errors.is_empty() {
@@ -325,7 +325,7 @@ async fn transfer_values(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &crate::util::
         None => exchange_rate(hc.kernel, hc.ctx, hc.tx, from, co.currency_id, on).await?,
     };
     let paid = d(doc, "paid_amount");
-    let base_paid = round(paid * rate, co.precision);
+    let base_paid = ledger::round_as(paid * rate, co.precision, co.rounding);
     let (_, to_precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, to).await?;
     let received = d(doc, "received_amount");
     let (received, target, base_received) = if to == from {
@@ -337,13 +337,13 @@ async fn transfer_values(hc: &mut HookCtx<'_>, doc: &mut Doc, co: &crate::util::
         match given("target_exchange_rate") {
             Some(t) => {
                 let r = if received > Decimal::ZERO { received } else { round(base_paid / t, to_precision) };
-                (r, t, round(r * t, co.precision))
+                (r, t, ledger::round_as(r * t, co.precision, co.rounding))
             }
             None if received > Decimal::ZERO => (received, (base_paid / received).round_dp(9), base_paid),
             None => {
                 let t = exchange_rate(hc.kernel, hc.ctx, hc.tx, to, co.currency_id, on).await?;
                 let r = round(base_paid / t, to_precision);
-                (r, t, round(r * t, co.precision))
+                (r, t, ledger::round_as(r * t, co.precision, co.rounding))
             }
         }
     };
@@ -492,7 +492,7 @@ impl DocHook for PaymentEntryHook {
             }
         };
         set(doc, "exchange_rate", money(rate));
-        set(doc, "base_paid_amount", money(round(d(doc, "paid_amount") * rate, co.precision)));
+        set(doc, "base_paid_amount", money(ledger::round_as(d(doc, "paid_amount") * rate, co.precision, co.rounding)));
         let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
         let mut refs = rows(doc, "references");
         let mut allocated = Decimal::ZERO;
@@ -671,10 +671,10 @@ impl DocHook for PaymentEntryHook {
             let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::invalid("invoice is no longer open"))?;
             if discount > Decimal::ZERO {
                 let account = id(&r, "discount_account").ok_or_else(|| Error::field("discount_account", "is required"))?;
-                let base = round(discount * rate, co.precision);
+                let base = ledger::round_as(discount * rate, co.precision, co.rounding);
                 lines.extend(discount_lines(hc, &item.entity, inv, base, receive, account, b(&r, "discount_reduces_tax"), &co, &mut discount_taxes).await?);
             }
-            let base_at_invoice = round(amount * item.exchange_rate, co.precision);
+            let base_at_invoice = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
             ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * base_at_invoice).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
             lines.push(
@@ -693,7 +693,7 @@ impl DocHook for PaymentEntryHook {
         }
         let unallocated = d(doc, "unallocated_amount");
         if unallocated > Decimal::ZERO {
-            let base_un = round(unallocated * rate, co.precision);
+            let base_un = ledger::round_as(unallocated * rate, co.precision, co.rounding);
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
             lines.push(
                 Line::new(party_account, sign * base_un, &co.currency_code)
@@ -731,7 +731,7 @@ impl DocHook for PaymentEntryHook {
         for r in rows(doc, "deductions") {
             let (amount, Some(account)) = (d(&r, "amount"), id(&r, "account")) else { continue };
             lines.push(
-                Line::new(account, round(amount * rate, co.precision), &co.currency_code)
+                Line::new(account, ledger::round_as(amount * rate, co.precision, co.rounding), &co.currency_code)
                     .txn(amount, &code, rate)
                     .cost_center(id(&r, "cost_center"))
                     .dims(crate::dimensions::of(r.get("dimensions")))

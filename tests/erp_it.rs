@@ -2000,4 +2000,38 @@ async fn scenario() {
     assert_eq!(dec(&pi["outstanding_amount"]), n("1000"));
     assert_eq!(t.gl("CGST Input").await - cgst_before, n("90"));
     assert_eq!((t.gl("CGST RCM Payable").await, t.gl("SGST RCM Payable").await), (n("-90"), n("-90")));
+
+    // ───────────── a company that rounds half to even converts as it rounds ─────────────
+    // 10.10 dollars at 83.25 are 840.825 rupees: 840.82 to a company that rounds half to even, on the
+    // invoice and on its payment at the same rate, which leaves nothing receivable and no exchange
+    // difference.
+    let even = t
+        .insert(
+            "Company",
+            json!({"company_name": "Even Books GmbH", "abbr": "EBG", "default_currency": inr["id"], "country": "Germany", "rounding_mode": "Half Even"}),
+        )
+        .await;
+    let even = t.get("Company", uid(&even)).await;
+    let sold = json!({"company": even["id"], "customer": abroad.to_string(), "currency": usd["id"], "conversion_rate": "83.25",
+                      "items": [{"description": "Advice", "qty": "1", "price_list_rate": "10.10"}]});
+    let sold = t.submit("SalesInvoice", uid(&t.insert("SalesInvoice", sold).await)).await;
+    assert_eq!(dec(&sold["base_grand_total"]), n("840.82"));
+    let paid = json!({"company": even["id"], "payment_type": "Receive", "customer": abroad.to_string(), "bank_account": even["default_bank_account"],
+                      "currency": usd["id"], "exchange_rate": "83.25", "paid_amount": "10.10",
+                      "references": [{"invoice_type": "Sales Invoice", "invoice": sold["id"], "allocated_amount": "10.10"}]});
+    let paid = uid(&t.submit("PaymentEntry", uid(&t.insert("PaymentEntry", paid).await)).await);
+    let paid = t.get("PaymentEntry", paid).await;
+    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+    let (receivable, left): (Decimal, Decimal) = sqlx::query_as(
+        "select (select coalesce(sum(debit - credit), 0) from journal_line where tenant_id = $1 and against_id = $2), \
+         (select base_outstanding from open_item where tenant_id = $1 and id = $2)",
+    )
+    .bind(tenant)
+    .bind(uid(&sold))
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let difference = paid.get("exchange_difference").map(dec).unwrap_or_default();
+    assert_eq!((dec(&paid["base_paid_amount"]), receivable, left, difference), (n("840.82"), Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
 }

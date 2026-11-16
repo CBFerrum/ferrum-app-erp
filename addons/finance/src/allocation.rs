@@ -144,7 +144,7 @@ async fn pairs(hc: &mut HookCtx<'_>, doc: &Doc, co: &Company, lock: bool) -> Res
                 return Err(bad(i, "allocated_amount", format!("{what} has {} left, not {}", room.normalize(), total.normalize())));
             }
         }
-        let (invoice_base, credit_base, _) = difference(invoice.exchange_rate, credit.exchange_rate, take, co.precision, customer);
+        let (invoice_base, credit_base, _) = difference(invoice.exchange_rate, credit.exchange_rate, take, co.precision, co.rounding, customer);
         out.push(Pair { invoice: invoice.clone(), credit: credit.clone(), take, invoice_base, credit_base });
     }
     Ok(out)
@@ -192,7 +192,7 @@ impl DocHook for AllocationHook {
             let take = d(r, "allocated_amount");
             total += take;
             let g = match (credit, invoice) {
-                (Some(c), Some(i)) => difference(i.exchange_rate, c.exchange_rate, take, co.precision, customer).2,
+                (Some(c), Some(i)) => difference(i.exchange_rate, c.exchange_rate, take, co.precision, co.rounding, customer).2,
                 _ => Decimal::ZERO,
             };
             gain += g;

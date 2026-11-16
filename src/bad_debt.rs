@@ -34,7 +34,7 @@ impl DocHook for WriteOffHook {
         }
         if let (Some(cid), Some(reason)) = (id(doc, "company"), id(doc, "reason")) {
             let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
-            set(doc, "base_amount", money(round(d(doc, "amount") * item.exchange_rate, co.precision)));
+            set(doc, "base_amount", money(ledger::round_as(d(doc, "amount") * item.exchange_rate, co.precision, co.rounding)));
             let r = get(hc.kernel, hc.ctx, hc.tx, "WriteOffReason", reason).await?;
             let row = rows(&r, "accounts").into_iter().find(|a| id(a, "company") == Some(cid));
             set(doc, "write_off_account", row.and_then(|a| id(&a, "account")).map(|a| json!(a.to_string())).unwrap_or(Value::Null));
@@ -66,7 +66,7 @@ impl DocHook for WriteOffHook {
         // Locked: a payment and a write-off of the same invoice at once settle it once.
         let item = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, true).await?.ok_or_else(|| Error::field("invoice", "is not open"))?;
         let amount = d(doc, "amount");
-        let base = round(amount * item.exchange_rate, co.precision);
+        let base = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
         ledger::allocate(hc.tx, hc.ctx, co.id, inv, ENTITY, wid, on, amount, base).await?;
         let invoice = match hc.ctx.schema.entity(&item.entity) {
             Some(_) if item.entity != "JournalEntry" => get(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await.unwrap_or_default(),

@@ -1449,9 +1449,9 @@ impl DocHook for InvoiceHook {
                 .ok_or_else(|| Error::field("return_against", "original invoice is not open"))?;
             let settle = (-total_txn).min(item.outstanding);
             if settle > Decimal::ZERO {
-                let base = round(settle * item.exchange_rate, co.precision);
+                let base = ledger::round_as(settle * item.exchange_rate, co.precision, co.rounding);
                 ledger::allocate(hc.tx, hc.ctx, co.id, orig, n.invoice, iid, on, settle, base).await?;
-                ledger::allocate(hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -round(settle * rate, co.precision)).await?;
+                ledger::allocate(hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -ledger::round_as(settle * rate, co.precision, co.rounding)).await?;
                 sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, orig).await?;
             }
         }
