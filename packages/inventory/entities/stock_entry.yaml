@@ -45,6 +45,8 @@
     - {name: transit_status, type: select, options: [In Transit, Partly Received, Received], read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: items, type: table, of: StockEntryItem, required: true}
     - {name: total_amount, type: currency, read_only: true, in_list: true}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The company's tax registrations (label and value), as the countries' add-ons say, kept as the draft was last saved"}
     - {name: remarks, type: text}
   rules:
     - {name: time_format, check: "doc.posting_time == null || doc.posting_time.matches('^[0-2][0-9]:[0-5][0-9](:[0-5][0-9])?$')", message: "Posting time must be HH:MM or HH:MM:SS"}

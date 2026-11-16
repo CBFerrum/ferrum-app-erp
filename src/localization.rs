@@ -150,16 +150,35 @@ pub fn registered_business(ctx: &Ctx, entity: &str, record: &Doc) -> bool {
     installed(ctx).iter().any(|l| l.registered(ctx, entity, record) == Some(true))
 }
 
-/// A draft sale's `tax_registrations`, for its print and receipt: the seller's (the company's) and
-/// the buyer's registrations and whether the buyer is a registered business, as the countries say.
+fn listed(ids: Vec<TaxId>) -> Vec<Value> {
+    ids.into_iter().map(|t| json!({"label": t.label, "value": t.value})).collect()
+}
+
+/// A draft sale's or purchase's `tax_registrations`, for its print and receipt: the seller's and the buyer's
+/// registrations, and whether the buyer is a registered business, as the countries say. The company sells on a sale
+/// and buys on a purchase; `party` is the customer or the supplier.
 pub(crate) fn fill_tax_registrations(ctx: &Ctx, ent: &EffEntity, doc: &mut Doc, company: &Doc, party: Option<&Doc>, side: Side) {
-    if side != Side::Selling || ent.field("tax_registrations").is_none() || doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
+    if ent.field("tax_registrations").is_none() || doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
         return;
     }
-    let list = |ids: Vec<TaxId>| ids.into_iter().map(|t| json!({"label": t.label, "value": t.value})).collect::<Vec<_>>();
-    let buyer = party.map(|p| list(tax_ids(ctx, "Customer", p))).unwrap_or_default();
-    let registered = party.is_some_and(|p| registered_business(ctx, "Customer", p));
-    set(doc, "tax_registrations", json!({"seller": list(tax_ids(ctx, "Company", company)), "buyer": buyer, "buyer_registered": registered}));
+    let ours = (listed(tax_ids(ctx, "Company", company)), registered_business(ctx, "Company", company));
+    let theirs = match (side, party) {
+        (Side::Selling, Some(p)) => (listed(tax_ids(ctx, "Customer", p)), registered_business(ctx, "Customer", p)),
+        (Side::Buying, Some(p)) => (listed(tax_ids(ctx, "Supplier", p)), registered_business(ctx, "Supplier", p)),
+        (_, None) => (Vec::new(), false),
+    };
+    let (seller, buyer) = if side == Side::Selling { (ours, theirs) } else { (theirs, ours) };
+    set(doc, "tax_registrations", json!({"seller": seller.0, "buyer": buyer.0, "buyer_registered": buyer.1}));
+}
+
+/// A draft payment's, journal's or stock entry's `tax_registrations`, for its print: the company's registrations and
+/// those of the customer or supplier it names (`party`: the entity and the record), as the countries say.
+pub(crate) fn fill_voucher_registrations(ctx: &Ctx, ent: &EffEntity, doc: &mut Doc, company: &Doc, party: Option<(&str, &Doc)>) {
+    if ent.field("tax_registrations").is_none() || doc.get("docstatus").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        return;
+    }
+    let party = party.map(|(entity, p)| listed(tax_ids(ctx, entity, p))).unwrap_or_default();
+    set(doc, "tax_registrations", json!({"company": listed(tax_ids(ctx, "Company", company)), "party": party}));
 }
 
 static ALL: RwLock<Vec<Arc<dyn Localization>>> = RwLock::new(Vec::new());

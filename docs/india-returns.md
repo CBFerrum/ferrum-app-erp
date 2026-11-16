@@ -5,7 +5,7 @@ period of India's is in ERP's code.
 
 - **TDS categories** (Withholding Category): sections 194C (individual or HUF, others), 194H, 194J(a), 194J(b),
   194I(a), 194I(b) and 194Q, each with its dated rates and per-document and yearly thresholds, booked on the bill,
-  rounded to whole rupees, to each company's TDS Payable (account number 2132 of the standard chart) unless the
+  rounded to whole rupees, to each company's Withholding Tax Payable (account number 2132 of the standard chart) unless the
   category names an account for the company. A party's lower-deduction certificate is a Withholding Certificate.
 - **GSTR-3B and GSTR-1** (Tax Return Definition, country IN, monthly): boxes summed from the tax ledger by tax
   (CGST, SGST, IGST Output and Input), category, reverse charge and document kind; formulas for totals and the net

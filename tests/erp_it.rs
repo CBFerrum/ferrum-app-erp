@@ -1266,7 +1266,7 @@ async fn scenario() {
     assert_eq!(t.gl("Creditors").await - creditors_before, n("-177"), "150 + CGST 13.5 + SGST 13.5");
     // Paying with tax withheld: 167 leaves the bank, 10 is owed to the tax office, all 177 is settled.
     let bank_before = t.gl("Primary Bank").await;
-    let tds = t.find_one("Account", json!({"account_name": "TDS Payable"})).await;
+    let tds = t.find_one("Account", json!({"account_name": "Withholding Tax Payable"})).await;
     let pay = t
         .insert(
             "PaymentEntry",
@@ -1281,7 +1281,7 @@ async fn scenario() {
     t.submit("PaymentEntry", uid(&pay)).await;
     assert_eq!(dec(&t.get("PurchaseInvoice", uid(&bill)).await["outstanding_amount"]), Decimal::ZERO);
     assert_eq!(t.gl("Creditors").await, creditors_before);
-    assert_eq!(t.gl("TDS Payable").await, n("-10"));
+    assert_eq!(t.gl("Withholding Tax Payable").await, n("-10"));
     assert_eq!(t.gl("Primary Bank").await - bank_before, n("-167"));
     // An opening balance entered as a journal entry line is offered and paid like a bill.
     let creditors = t.find_one("Account", json!({"account_name": "Creditors"})).await;

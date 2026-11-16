@@ -47,7 +47,11 @@ impl DocHook for StockEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let p = purpose(doc).to_string();
         let precision = match id(doc, "company") {
-            Some(c) => company(hc.kernel, hc.ctx, hc.tx, c).await?.precision,
+            Some(c) => {
+                let co = company(hc.kernel, hc.ctx, hc.tx, c).await?;
+                crate::localization::fill_voucher_registrations(hc.ctx, hc.entity, doc, &co.doc, None);
+                co.precision
+            }
             None => 2,
         };
         if p == MANUFACTURE && !hc.ctx.schema.packages.iter().any(|x| x == "manufacturing") {

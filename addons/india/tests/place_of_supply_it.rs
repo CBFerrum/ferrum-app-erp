@@ -149,4 +149,24 @@ async fn scenario() {
     let plain = order(json!({})).await;
     assert_eq!(plain["in_place_of_supply"], json!("29"));
     assert_eq!(accounts(&plain), ["IGST 18%"]);
+
+    // ERP's own layouts print the company's and the party's registrations through its seam, under India's label: a
+    // sales order (the company sells), a purchase order (it buys), and a journal entry (the company's alone).
+    let supplier = insert("Supplier", json!({"supplier_name": "Shakti Steels", "in_gstin": gstin("27AAACS1111C1Z")})).await;
+    let account = |name: &'static str| all("Account", json!({"company": co["id"], "account_name": name}));
+    let (cash, sales) = (account("Cash").await.remove(0), account("Sales").await.remove(0));
+    let so = insert("SalesOrder", json!({"company": co["id"], "customer": customer["id"], "items": [{"item": item["id"], "qty": "1"}]})).await;
+    let po =
+        insert("PurchaseOrder", json!({"company": co["id"], "supplier": supplier["id"], "items": [{"item": item["id"], "qty": "1", "price_list_rate": "50"}]}))
+            .await;
+    let je =
+        insert("JournalEntry", json!({"company": co["id"], "accounts": [{"account": cash["id"], "debit": "10"}, {"account": sales["id"], "credit": "10"}]}))
+            .await;
+    let registration = |v: &Value| format!("<span class=\"muted\">GSTIN</span> {}", v.as_str().unwrap());
+    for (entity, d, theirs) in [("SalesOrder", &so, Some(&customer)), ("PurchaseOrder", &po, Some(&supplier)), ("JournalEntry", &je, None)] {
+        let html = k.render_print(&ctx, entity, d["id"].as_str().unwrap().parse().unwrap()).await.expect("print");
+        for g in [Some(&co["in_gstin"]), theirs.map(|p| &p["in_gstin"])].into_iter().flatten() {
+            assert!(html.contains(&registration(g)), "{entity} prints {g}");
+        }
+    }
 }
