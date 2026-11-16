@@ -17,13 +17,15 @@ fn carriers() {
     run(scenario());
 }
 
-/// A carrier on a local port: rates, labels (counted, refusing a call without the key), tracking, cancelling.
-async fn carrier() -> (String, Arc<AtomicUsize>) {
+/// A carrier on a local port: rates, labels (counted, refusing a call without the key), tracking (counted), cancelling.
+async fn carrier() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     use axum::Json;
     use axum::http::HeaderMap;
     use axum::routing::{get, post};
     let labels = Arc::new(AtomicUsize::new(0));
     let counted = labels.clone();
+    let tracks = Arc::new(AtomicUsize::new(0));
+    let tracked = tracks.clone();
     let app = axum::Router::new()
         .route(
             "/v1/rates",
@@ -52,12 +54,18 @@ async fn carrier() -> (String, Arc<AtomicUsize>) {
                 }
             }),
         )
-        .route("/v1/track/{t}", get(|| async { Json(json!({"tracking": {"state": "IN_TRANSIT"}})) }))
+        .route(
+            "/v1/track/{t}",
+            get(move || {
+                tracked.fetch_add(1, Ordering::SeqCst);
+                async { Json(json!({"tracking": {"state": "IN_TRANSIT"}})) }
+            }),
+        )
         .route("/v1/cancel/{id}", post(|| async { Json(json!({"ok": true})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (url, labels)
+    (url, labels, tracks)
 }
 
 async fn scenario() {
@@ -65,7 +73,7 @@ async fn scenario() {
         std::env::var("FERRUM_ERP_SHIPPING_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_erp_shipping_test".into());
     let settings = KernelSettings { webhooks_allow_private: true, ..KernelSettings::default() };
     let t = T::boot_with(url, settings, |_, _| {}).await;
-    let (base, label_calls) = carrier().await;
+    let (base, label_calls, track_calls) = carrier().await;
     let c = t.company.clone();
     let wh = t.find_one("Warehouse", json!({"warehouse_name": "Stores", "company": c})).await["id"].as_str().unwrap().to_string();
     let products = t.find_one("ItemGroup", json!({"group_name": "Products"})).await;
@@ -164,6 +172,36 @@ async fn scenario() {
     assert_eq!(ferrum_app_erp::shipping::upkeep(&t.k, &t.ctx, 100).await.expect("the upkeep's tracking query"), 1);
     assert_eq!(t.get("CarrierShipment", sid).await["status"], "In Transit");
     assert_eq!(ferrum_app_erp::shipping::upkeep(&t.k, &t.ctx, 100).await.unwrap(), 0, "tracked a moment ago: not due again");
+    // Every replica runs the upkeep: one finding the shipment due while another is tracking it leaves it to that one,
+    // so the carrier is asked once. Due again; one upkeep holds it (asking the carrier) as another starts.
+    let mut first = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query("update e_carrier_shipment set last_tracked_at = now() - interval '7 hours' where id = $1").bind(sid).execute(&mut *first).await.unwrap();
+    first.commit().await.unwrap();
+    let asked = track_calls.load(Ordering::SeqCst);
+    let mut first = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query("select id from e_carrier_shipment where id = $1 for update").bind(sid).execute(&mut *first).await.unwrap();
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
+    let second = {
+        let (k, ctx) = (t.k.clone(), t.ctx.clone());
+        tokio::spawn(async move { ferrum_app_erp::shipping::upkeep(&k, &ctx, 100).await })
+    };
+    // Until the second waits for the first, or is done: either comes, however loaded the machine.
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&t.k.db.pool)
+            .await
+            .unwrap();
+        if waits || second.is_finished() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    // The first records the carrier's answer, as tracking does.
+    sqlx::query("update e_carrier_shipment set last_tracked_at = now() where id = $1").bind(sid).execute(&mut *first).await.unwrap();
+    first.commit().await.unwrap();
+    assert_eq!(second.await.unwrap().expect("the second upkeep"), 0, "the second upkeep leaves what the first tracks");
+    assert_eq!(track_calls.load(Ordering::SeqCst), asked, "the carrier is asked once");
 
     // The invoice made from the delivery charges the label once.
     let inv = t.action("DeliveryNote", uid(&dn), "make_sales_invoice", json!({})).await.expect("an invoice");

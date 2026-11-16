@@ -793,27 +793,34 @@ pub async fn freight_lines(hc: &mut HookCtx<'_>, delivery: Uuid, conversion_rate
         .collect())
 }
 
-/// The upkeep's tracking: labelled shipments whose connection tracks every so many hours and that were
-/// last tracked longer ago, at most `limit` of them, each in its own transaction.
+/// A labelled shipment the upkeep tracks: its connection tracks every so many hours, and it was last tracked longer ago.
+macro_rules! due {
+    () => {
+        "select s.id from e_carrier_shipment s join e_carrier_connection c on c.tenant_id = s.tenant_id and c.id = s.carrier \
+         where s.tenant_id = $1 and s.status in ('Label Bought', 'In Transit', 'Exception') and s.tracking_number is not null and c.enabled \
+         and coalesce(c.track_every_hours, 0) > 0 and (s.last_tracked_at is null or s.last_tracked_at < now() - make_interval(hours => c.track_every_hours::int))"
+    };
+}
+
+/// The upkeep's tracking: labelled shipments due, at most `limit` of them, each in its own transaction. Every replica
+/// runs it: a shipment is tracked only if it is still due under its lock, so one another upkeep is tracking, or has
+/// just tracked, is left to it and the carrier is asked once.
 pub async fn upkeep(k: &Kernel, ctx: &Ctx, limit: i64) -> Result<usize> {
     if ctx.schema.entity("CarrierShipment").is_none() {
         return Ok(0);
     }
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let due: Vec<Uuid> = sqlx::query_scalar(
-        "select s.id from e_carrier_shipment s join e_carrier_connection c on c.tenant_id = s.tenant_id and c.id = s.carrier \
-         where s.tenant_id = $1 and s.status in ('Label Bought', 'In Transit', 'Exception') and s.tracking_number is not null and c.enabled \
-         and coalesce(c.track_every_hours, 0) > 0 and (s.last_tracked_at is null or s.last_tracked_at < now() - make_interval(hours => c.track_every_hours::int)) \
-         order by s.last_tracked_at nulls first limit $2",
-    )
-    .bind(ctx.tenant)
-    .bind(limit)
-    .fetch_all(&mut *tx)
-    .await?;
+    let due: Vec<Uuid> =
+        sqlx::query_scalar(concat!(due!(), " order by s.last_tracked_at nulls first limit $2")).bind(ctx.tenant).bind(limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     let mut done = 0;
     for sid in due {
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        let still: Option<Uuid> =
+            sqlx::query_scalar(concat!(due!(), " and s.id = $2 for update of s skip locked")).bind(ctx.tenant).bind(sid).fetch_optional(&mut *tx).await?;
+        if still.is_none() {
+            continue;
+        }
         match track(k, ctx, &mut tx, sid).await {
             Ok(_) => {
                 tx.commit().await?;
