@@ -335,8 +335,8 @@ impl Site for HmrcSite {
                 let mut tx = k.db.tenant_tx(req.tenant).await?;
                 // The user must be able to change the company, and the state must be the one issued.
                 let company = k.get_tx(&user, &mut tx, "Company", cid, false).await?;
-                let expected = k.secret(&mut tx, req.tenant, "Company", cid, "gb_hmrc_state").await?;
-                let secret = k.secret(&mut tx, req.tenant, "Company", cid, "gb_hmrc_client_secret").await?;
+                let expected = crate::keys::field(k, &mut tx, req.tenant, "Company", cid, "gb_hmrc_state").await?.map(|v| v.to_string());
+                let secret = crate::keys::field(k, &mut tx, req.tenant, "Company", cid, "gb_hmrc_client_secret").await?.map(|v| v.to_string());
                 tx.commit().await?;
                 if expected.as_deref() != Some(state.as_str()) {
                     return Ok(html(
@@ -402,9 +402,9 @@ impl Mtd {
     async fn token(&self, k: &Kernel, ctx: &Ctx, api: &str, company: &Doc, force: bool) -> Result<String> {
         let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        let access = k.secret(&mut tx, ctx.tenant, "Company", cid, "gb_hmrc_access_token").await?;
-        let refresh = k.secret(&mut tx, ctx.tenant, "Company", cid, "gb_hmrc_refresh_token").await?;
-        let secret = k.secret(&mut tx, ctx.tenant, "Company", cid, "gb_hmrc_client_secret").await?;
+        let access = crate::keys::field(k, &mut tx, ctx.tenant, "Company", cid, "gb_hmrc_access_token").await?.map(|v| v.to_string());
+        let refresh = crate::keys::field(k, &mut tx, ctx.tenant, "Company", cid, "gb_hmrc_refresh_token").await?.map(|v| v.to_string());
+        let secret = crate::keys::field(k, &mut tx, ctx.tenant, "Company", cid, "gb_hmrc_client_secret").await?.map(|v| v.to_string());
         tx.commit().await?;
         let fresh = s(company, "gb_hmrc_token_expires")
             .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())

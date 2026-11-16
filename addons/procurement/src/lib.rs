@@ -17,6 +17,7 @@
 //!   quality, price against quotations and RFQ responses; its standing warns about or blocks new
 //!   RFQs and purchase orders for that supplier.
 
+mod keys;
 mod material_request;
 mod quotation;
 mod reorder;
@@ -43,8 +44,12 @@ pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta:
     ferrum_meta::catalog::load_embedded(EMBEDDED)
 }
 
-/// Registers this app's document hooks, the supplier mail sender and the supplier portal.
+/// Registers this app's document hooks, the supplier mail sender and the supplier portal. Call it inside the platform's
+/// registration of the app, `hooks.app("procurement", …)`: it takes its own vault handle there, which reads its secret
+/// fields (`keys.rs`).
 pub fn register(h: &mut HookRegistry) {
+    let site: Arc<dyn ferrum_kernel::Site> = Arc::new(rfq::SupplierPortal);
+    keys::remember(&site, h.vault());
     h.register("MaterialRequest", Arc::new(material_request::MaterialRequestHook))
         .register("PurchaseOrder", Arc::new(material_request::PurchaseOrderLinks))
         .register("PurchaseReceipt", Arc::new(material_request::ReceiptLinks))
@@ -56,7 +61,7 @@ pub fn register(h: &mut HookRegistry) {
         .register("SupplierScorecard", Arc::new(scorecard::ScorecardHook))
         .register("Item", Arc::new(reorder::ItemReorderHook))
         .add_event_sink(Arc::new(rfq::RfqMailer))
-        .add_site(PACKAGE, Arc::new(rfq::SupplierPortal));
+        .add_site(PACKAGE, site);
 }
 
 /// This app's reports.

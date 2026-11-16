@@ -30,8 +30,9 @@ fn uid(doc: &Doc) -> Uuid {
 
 async fn fresh_kernel() -> Arc<Kernel> {
     let url = std::env::var("FERRUM_DE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_de_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("the shared packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_eu::packages().expect("the EU's package"));
@@ -39,7 +40,9 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     // The EU's rules first: Germany's adjust them.
     ferrum_eu::register(&mut hooks);
     ferrum_de::register(&mut hooks);
@@ -63,6 +66,16 @@ impl T {
     async fn first(&self, entity: &str, filters: Value) -> Doc {
         let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&filters).unwrap(), ..Default::default() };
         self.k.list(&self.ctx, entity, &q).await.unwrap().rows.remove(0)
+    }
+}
+
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
     }
 }
 

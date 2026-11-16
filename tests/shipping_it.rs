@@ -236,4 +236,17 @@ async fn scenario() {
             t.sql(&format!("select count(*) from {table} t where $1::uuid is not null and (t::text like '%key-123%' or t::text like '%hook-456%' or t::text like '%key-999%')"), uuid::Uuid::nil()).await;
         assert_eq!(n, vec![(0,)], "a carrier secret rests in {table}");
     }
+    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
+    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let past: Vec<_> =
+        t.k.legacy_key(vec![])
+            .await
+            .unwrap()
+            .uses
+            .into_iter()
+            .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
+            .map(|u| u.1)
+            .collect();
+    assert!(past.is_empty(), "read past the vault: {past:?}");
 }

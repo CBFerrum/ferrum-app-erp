@@ -244,7 +244,7 @@ impl IrpConnector {
             .map(|u| u.trim_end_matches('/').to_string())
             .ok_or_else(|| Error::invalid("set the company's IRP API address: the one NIC gave at registration, or your GSP's"))?;
         let mut tx = k.db.tenant_tx(tenant).await?;
-        let mut secret = async |field: &str| k.secret(&mut tx, tenant, "Company", cid, field).await;
+        let mut secret = async |field: &str| crate::keys::field(k, &mut tx, tenant, "Company", cid, field).await.map(|v| v.map(|v| v.to_string()));
         let client_secret = secret("in_irp_client_secret").await?;
         let password = secret("in_irp_password").await?;
         let extra = secret("in_irp_gsp_headers").await?;
@@ -345,7 +345,8 @@ impl IrpConnector {
             .bind(format!("ferrum-india|irp-session|{}|{}", cfg.tenant, cfg.company))
             .execute(&mut *tx)
             .await?;
-        let kept = k.secret(&mut tx, cfg.tenant, "Company", cfg.company, SESSION).await?.as_deref().and_then(Session::from_text);
+        let kept =
+            crate::keys::field(k, &mut tx, cfg.tenant, "Company", cfg.company, SESSION).await?.map(|v| v.to_string()).as_deref().and_then(Session::from_text);
         if let Some(s) = kept.filter(|s| s.until > Utc::now() && s.endpoint == cfg.endpoint() && Some(s.token.as_str()) != stale) {
             tx.commit().await?;
             return Ok(Ok(s));

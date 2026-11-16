@@ -55,19 +55,24 @@ macro_rules! each_app {
 
 async fn fresh_kernel() -> Arc<Kernel> {
     let url = std::env::var("FERRUM_COUNTRIES_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_countries_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("the shared packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     macro_rules! add {
         ($app:path) => {{
             use $app as app;
             packages.extend(app::packages().expect("a country's package"));
             let names: Vec<String> = app::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
-            hooks.scoped(&names, |h| app::register(h));
+            // As the server registers it: as itself (its id is its package's), owning its package.
+            hooks.app(app::PACKAGE, &names, |h| app::register(h));
+            hooks.own(app::PACKAGE, &names);
             for source in app::reports() {
                 ferrum_domain::reports::add_source(source);
             }
@@ -347,6 +352,16 @@ fn cases() -> Vec<Case> {
     all
 }
 
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
+}
+
 #[test]
 fn countries_end_to_end() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 << 20).build().unwrap();
@@ -363,6 +378,19 @@ async fn scenario() {
         run(&k, &case).await;
     }
     myinvois(&k, &calls, &lhdn).await;
+    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
+    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let past: Vec<_> = k
+        .legacy_key(vec![])
+        .await
+        .unwrap()
+        .uses
+        .into_iter()
+        .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
+        .map(|u| u.1)
+        .collect();
+    assert!(past.is_empty(), "read past the vault: {past:?}");
 }
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;

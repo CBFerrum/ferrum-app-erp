@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.27.1, India 0.7.1, United Kingdom 0.2.2, United States 0.1.2, Procurement 0.1.6, Romania 0.1.3, Malaysia 0.2.2: each reads its own secret fields with its own vault handle
+
+- **Each app reads the secret fields its own package declares with its own handle on the vault**, in the same
+  transaction as before, instead of the platform's reader that any app could use, which is deprecated: ERP a carrier
+  connection's credentials, India a company's IRP credentials and session, the United Kingdom a company's HMRC client
+  secret, tokens and sign-in state, the United States a company's AvaTax licence key and a supplier's TIN, Procurement
+  the supplier portal's signing key, Romania a company's ANAF client secret, tokens and sign-in state, Malaysia a
+  company's MyInvois client secret and token. None reads another app's field. People see nothing new; while the vault
+  is closed these reads refuse plainly. Needs a platform with the vault's field reader (0.3.8 on the platform's main
+  from cdec881). No database or interface change.
+- **Each registers as itself to be given that handle**: `hooks.app("erp", &[], ferrum_app_erp::register)` (and
+  `"india"`, `"gb"`, `"us"`, `"procurement"`, `"ro"`, `"my"`), as the server does. A test of another app that
+  registers ERP or one of these with a bare `register(&mut hooks)` stops at boot ("a vault handle was asked for outside
+  an app's registration"); one that reads their fields says they own their packages (`hooks.own`), as the server does.
+- **Saving a carrier on a workspace whose vault keys were not made yet** failed with "current transaction is aborted"
+  once the vault is open: its typed secrets made the workspace's key inside the save's transaction, and moving them
+  into the carrier's connection, on another connection, waited on that key until its lock timed out. ERP's keys in the
+  workspace are now made first, on a connection of their own, as the carrier is checked.
+
 ## ERP 0.27.0, India 0.7.0, United Kingdom 0.2.1, United States 0.1.1, European Union 0.3.1, Malaysia 0.2.1, Romania 0.1.2: calls outside only through the platform, nothing kept per server
 
 - **Every call to a service outside goes through the platform's vetted client, for its workspace.** HMRC, AvaTax,

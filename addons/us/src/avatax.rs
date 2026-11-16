@@ -206,7 +206,7 @@ impl EventSink for AvaTax {
         let Some(cid) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
-        let key = k.secret(&mut tx, ev.tenant_id, "Company", cid, "us_avatax_license_key").await?;
+        let key = crate::keys::field(k, &mut tx, ev.tenant_id, "Company", cid, "us_avatax_license_key").await?.map(|v| v.to_string());
         let current = get(k, &ctx, &mut tx, "SalesInvoice", invoice).await?;
         tx.commit().await?;
         let commit = ev.topic == COMMIT_TOPIC;

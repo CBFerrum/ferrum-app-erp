@@ -74,6 +74,16 @@ impl T {
     }
 }
 
+/// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
+fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
+}
+
 #[test]
 fn batch_expiry() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 << 20).build().unwrap();
@@ -83,14 +93,17 @@ fn batch_expiry() {
 async fn scenario() {
     let url =
         std::env::var("FERRUM_BATCH_EXPIRY_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_batch_expiry_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("platform packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_stock_ops::packages().expect("app packages"));
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     ferrum_stock_ops::register(&mut hooks);
     let k = Kernel::boot(db, Catalog::from_packages(packages).expect("catalog"), hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
