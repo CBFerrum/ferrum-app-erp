@@ -7,7 +7,8 @@
 use crate::util::{d, get, id, rows, s, sys};
 use crate::vat::{INPUT_TAX, OSS_VAT, OUTPUT_TAX, iso_code, vat_country};
 use async_trait::async_trait;
-use ferrum_kernel::{Doc, DocHook, Error, Filter, HookCtx, Result, outbox};
+use ferrum_app_erp::submission::Channel;
+use ferrum_kernel::{Doc, DocHook, Error, Filter, HookCtx, Result};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 use std::fmt::Write;
@@ -657,43 +658,49 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
     Ok(inv)
 }
 
-/// Queues a submitted invoice for the company's Peppol access point (`inv`: the invoice as a
-/// national profile writes it, else EN 16931's).
-pub async fn send_peppol(hc: &mut HookCtx<'_>, doc: &Doc, inv: Option<Invoice>) -> Result<Value> {
-    if matches!(s(doc, "eu_peppol_status"), Some("Sent" | "Pending")) {
-        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "eu_peppol_status").unwrap_or_default().to_lowercase())));
+/// The EU's Peppol channel: a submitted sales invoice to the customer through the company's access point.
+pub const PEPPOL: Channel = peppol("eu_peppol");
+
+/// A Peppol channel whose fields have `prefix` (`<prefix>_status`, `_error`, `_message_id`): the EU's, and each
+/// PINT country's. All hand their invoices to the access point connector on one topic.
+pub const fn peppol(prefix: &'static str) -> Channel {
+    Channel {
+        what: "invoice",
+        prefix,
+        topic: SEND_TOPIC,
+        held: &["Pending", "Sent"],
+        instead: "the invoice went to the customer through Peppol: issue a credit note instead of cancelling it",
     }
-    let inv = match inv {
-        Some(i) => i,
-        None => invoice(hc, doc).await?,
-    };
+}
+
+/// Queues a submitted invoice, as `inv` writes it (EN 16931's, or a PINT specialization's), for the company's Peppol
+/// access point on `channel`.
+pub async fn send_peppol(hc: &mut HookCtx<'_>, doc: &Doc, channel: &Channel, inv: Invoice) -> Result<Value> {
+    channel.sendable(doc)?;
     if !inv.peppol() {
         return Err(Error::invalid("the company and the customer both need a Peppol ID (scheme:identifier) to send through Peppol"));
     }
-    let xml = to_xml(&inv);
-    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
     let (scheme, ident) = inv.buyer.endpoint.clone().unwrap_or_default();
     let (s_scheme, s_ident) = inv.seller.endpoint.clone().unwrap_or_default();
     let event = json!({
-        "invoice": iid, "number": s(doc, "number"), "company": s(doc, "company"),
+        "invoice": id(doc, "id"), "number": s(doc, "number"), "company": s(doc, "company"),
         "sender": format!("{s_scheme}:{s_ident}"), "receiver": format!("{scheme}:{ident}"),
-        "document_type": if inv.credit_note { "credit_note" } else { "invoice" }, "ubl": xml,
+        "document_type": if inv.credit_note { "credit_note" } else { "invoice" }, "profile": inv.customization, "ubl": to_xml(&inv),
     });
-    EInvoiceHook::save(hc, doc, json!({"eu_peppol_status": "Pending", "eu_peppol_error": null, "eu_peppol_message_id": null})).await?;
-    outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-    Ok(json!({"status": "Pending"}))
+    channel.queue(hc, doc, json!({channel.field("message_id"): null}), event).await
+}
+
+/// Records the access point's answer on `channel`, for an invoice waiting for it: the message id it gave (Sent), or why
+/// it failed.
+pub async fn record_peppol(hc: &mut HookCtx<'_>, doc: &Doc, channel: &Channel, answer: std::result::Result<String, String>) -> Result<Value> {
+    match answer {
+        Ok(message) => channel.record(hc, doc, "Sent", None, json!({channel.field("message_id"): message})).await,
+        Err(why) => channel.record(hc, doc, "Failed", Some(why), json!({})).await,
+    }
 }
 
 /// A sales invoice's e-invoice actions.
 pub struct EInvoiceHook;
-
-impl EInvoiceHook {
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-}
 
 fn param<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
     params
@@ -707,10 +714,7 @@ fn param<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
 #[async_trait]
 impl DocHook for EInvoiceHook {
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "eu_peppol_status"), Some("Sent" | "Pending")) {
-            return Err(Error::invalid("the invoice went to the customer through Peppol: issue a credit note instead of cancelling it"));
-        }
-        Ok(())
+        PEPPOL.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -724,22 +728,20 @@ impl DocHook for EInvoiceHook {
                 let xml = to_xml(&inv);
                 Ok(Some(json!({"peppol": inv.peppol(), "file": {"name": format!("{number}.xml"), "type": "application/xml", "content": xml}})))
             }
-            "eu_send_peppol" => send_peppol(hc, doc, None).await.map(Some),
+            "eu_send_peppol" => {
+                PEPPOL.sendable(doc)?;
+                let inv = invoice(hc, doc).await?;
+                send_peppol(hc, doc, &PEPPOL, inv).await.map(Some)
+            }
             "eu_record_peppol" => {
-                if s(doc, "eu_peppol_status") != Some("Pending") {
-                    return Err(Error::invalid("only an invoice waiting for its access point is recorded as sent"));
-                }
+                PEPPOL.waiting(doc, "only an invoice waiting for its access point is recorded as sent")?;
                 let message = param(params, "message_id")?.to_string();
-                Self::save(hc, doc, json!({"eu_peppol_status": "Sent", "eu_peppol_message_id": message, "eu_peppol_error": null})).await?;
-                Ok(Some(json!({"status": "Sent"})))
+                record_peppol(hc, doc, &PEPPOL, Ok(message)).await.map(Some)
             }
             "eu_record_peppol_failure" => {
-                if s(doc, "eu_peppol_status") != Some("Pending") {
-                    return Err(Error::invalid("only an invoice waiting for its access point is recorded as failed"));
-                }
+                PEPPOL.waiting(doc, "only an invoice waiting for its access point is recorded as failed")?;
                 let message = param(params, "message")?.to_string();
-                Self::save(hc, doc, json!({"eu_peppol_status": "Failed", "eu_peppol_error": message})).await?;
-                Ok(Some(json!({"status": "Failed"})))
+                record_peppol(hc, doc, &PEPPOL, Err(message)).await.map(Some)
             }
             _ => Ok(None),
         }

@@ -9,6 +9,7 @@ use crate::tax::{SALES_TAX, account, tax_code, zip5};
 use crate::util::{d, get, id, rows, s, set, sys};
 use async_trait::async_trait;
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::record;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, outbox};
 use rust_decimal::Decimal;
@@ -180,14 +181,6 @@ impl DocHook for InvoiceHook {
 pub struct AvaTax;
 
 impl AvaTax {
-    async fn record(k: &Kernel, ctx: &Ctx, invoice: Uuid, values: Value) -> Result<()> {
-        let Value::Object(v) = values else { return Ok(()) };
-        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        k.set_values_tx(&sys(ctx), &mut tx, "SalesInvoice", invoice, v).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     fn why(v: &Value, status: u16) -> String {
         let e = &v["error"];
         let detail = e["details"].as_array().and_then(|d| d.first()).and_then(|d| d["description"].as_str().or(d["message"].as_str()));
@@ -216,7 +209,7 @@ impl EventSink for AvaTax {
         }
         // Cancelled before it was recorded: never recorded (its void finds it voided).
         if commit && current.get("docstatus").and_then(Value::as_i64) == Some(2) {
-            return Self::record(k, &ctx, invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await;
+            return record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await;
         }
         let failed = |why: &str| {
             if commit {
@@ -226,10 +219,10 @@ impl EventSink for AvaTax {
             }
         };
         let Some(base) = host(s(&company, "us_avatax_mode").unwrap_or("Off")) else {
-            return Self::record(k, &ctx, invoice, failed("the company no longer reports to AvaTax")).await;
+            return record(k, &ctx, "SalesInvoice", invoice, failed("the company no longer reports to AvaTax")).await;
         };
         let (Some(account_id), Some(key)) = (s(&company, "us_avatax_account_id"), key) else {
-            return Self::record(k, &ctx, invoice, failed("set the company's AvaTax account ID and license key")).await;
+            return record(k, &ctx, "SalesInvoice", invoice, failed("set the company's AvaTax account ID and license key")).await;
         };
         let client_id = format!("Ferrum; {}; Rust; 2; ferrum-us", env!("CARGO_PKG_VERSION"));
         let url = if commit {
@@ -244,7 +237,7 @@ impl EventSink for AvaTax {
                 client.post(url).basic_auth(account_id, Some(&key)).header("X-Avalara-Client", client_id.as_str()).header("Accept", "application/json")
             }
             // An address that is not to be called: said on the invoice, and not tried again.
-            Err(Error::Invalid(m)) => return Self::record(k, &ctx, invoice, failed(&m)).await,
+            Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, failed(&m)).await,
             Err(e) => return Err(e),
         };
         if commit {
@@ -257,29 +250,30 @@ impl EventSink for AvaTax {
                     let theirs = v["totalTaxCalculated"].as_f64().or(v["totalTax"].as_f64()).unwrap_or(ours);
                     let differs = (theirs - ours).abs() > 0.005;
                     let note = differs.then(|| format!("AvaTax works out {theirs:.2} of tax; the invoice charged {ours:.2}"));
-                    Self::record(
+                    record(
                         k,
                         &ctx,
+                        "SalesInvoice",
                         invoice,
                         json!({"us_avatax_status": if differs { "Differs" } else { "Committed" }, "us_avatax_tax": format!("{theirs:.2}"), "us_avatax_error": note}),
                     )
                     .await
                 }
-                401 | 403 => Self::record(k, &ctx, invoice, failed(&format!("AvaTax refused the credentials: {}", Self::why(&v, code)))).await,
+                401 | 403 => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax refused the credentials: {}", Self::why(&v, code)))).await,
                 429 | 500.. => Err(Error::internal(format!("AvaTax is busy ({code}); trying again"))),
-                _ => Self::record(k, &ctx, invoice, failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
+                _ => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
             };
         }
         let reply = call.json(&json!({"code": "DocVoided"})).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
         let code = reply.status().as_u16();
         let v: Value = reply.json().await.unwrap_or(Value::Null);
         match code {
-            200 | 201 => Self::record(k, &ctx, invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await,
+            200 | 201 => record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await,
             // Never recorded there (it failed): nothing to void. Not yet recorded (its commit is
             // still being retried): later.
-            404 if status == Some("Failed") => Self::record(k, &ctx, invoice, json!({"us_avatax_status": "Voided"})).await,
+            404 if status == Some("Failed") => record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided"})).await,
             404 | 429 | 500.. => Err(Error::internal(format!("AvaTax could not void yet ({code}); trying again"))),
-            _ => Self::record(k, &ctx, invoice, failed(&format!("AvaTax did not void it: {}", Self::why(&v, code)))).await,
+            _ => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax did not void it: {}", Self::why(&v, code)))).await,
         }
     }
 }

@@ -11,8 +11,9 @@
 use crate::member::{Member, Rules};
 use crate::util::{get, id, s, set, sys};
 use async_trait::async_trait;
+use ferrum_app_erp::submission::Channel;
 use ferrum_eu::ubl::{Invoice, invoice, to_xml};
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result, outbox};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use serde_json::{Value, json};
 
 pub const CIUS_RO: &str = "urn:cen.eu:en16931:2017#compliant#urn:efactura.mfinante.ro:CIUS-RO:1.0.1";
@@ -181,25 +182,21 @@ pub async fn efactura(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
 /// answer; CIFs checked on companies and customers.
 pub struct EfacturaHook;
 
-impl EfacturaHook {
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-}
+/// ANAF's e-Factura: an invoice it has is not uploaded again or cancelled.
+const EFACTURA: Channel = Channel {
+    what: "invoice",
+    prefix: "ro_efactura",
+    topic: UPLOAD_TOPIC,
+    held: &["Pending", "Uploaded", "Validated"],
+    instead: "ANAF has this invoice: issue a credit note (storno) instead of cancelling it",
+};
 
 async fn upload(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
-    if matches!(s(doc, "ro_efactura_status"), Some("Pending" | "Uploaded" | "Validated")) {
-        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "ro_efactura_status").unwrap_or_default().to_lowercase())));
-    }
+    EFACTURA.sendable(doc)?;
     let inv = efactura(hc, doc).await?;
-    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
     let cif = inv.seller.vat.as_deref().and_then(cif).unwrap_or_default();
-    let event = json!({"invoice": iid, "company": s(doc, "company"), "number": inv.number, "cif": cif, "standard": "UBL", "xml": to_xml(&inv)});
-    EfacturaHook::save(hc, doc, json!({"ro_efactura_status": "Pending", "ro_efactura_error": null})).await?;
-    outbox::enqueue(hc.tx, hc.ctx.tenant, UPLOAD_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-    Ok(json!({"status": "Pending"}))
+    let event = json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "number": inv.number, "cif": cif, "standard": "UBL", "xml": to_xml(&inv)});
+    EFACTURA.queue(hc, doc, json!({}), event).await
 }
 
 #[async_trait]
@@ -233,10 +230,7 @@ impl DocHook for EfacturaHook {
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "ro_efactura_status"), Some("Pending" | "Uploaded" | "Validated")) {
-            return Err(Error::invalid("ANAF has this invoice: issue a credit note (storno) instead of cancelling it"));
-        }
-        Ok(())
+        EFACTURA.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -263,14 +257,9 @@ impl DocHook for EfacturaHook {
                     _ => return Err(Error::field("upload_index", "is required (ANAF's index_incarcare), or the state")),
                 };
                 let download = params.get("download_id").and_then(Value::as_str).map(str::to_string);
-                Self::save(
-                    hc,
-                    doc,
-                    json!({"ro_efactura_status": status, "ro_upload_index": index.map(str::to_string).or(s(doc, "ro_upload_index").map(str::to_string)),
-                           "ro_download_id": download.or(s(doc, "ro_download_id").map(str::to_string)), "ro_efactura_error": error}),
-                )
-                .await?;
-                Ok(Some(json!({"status": status})))
+                let ids = json!({"ro_upload_index": index.map(str::to_string).or(s(doc, "ro_upload_index").map(str::to_string)),
+                                 "ro_download_id": download.or(s(doc, "ro_download_id").map(str::to_string))});
+                EFACTURA.record(hc, doc, status, error, ids).await.map(Some)
             }
             _ => Ok(None),
         }

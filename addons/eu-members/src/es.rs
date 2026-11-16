@@ -16,8 +16,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ferrum_app_erp::localization::{Localization, ship_to};
 use ferrum_app_erp::pricing::Side;
+use ferrum_app_erp::submission::{self, Channel};
 use ferrum_eu::vat::{OUTPUT_TAX, account, kind_of};
-use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx, outbox};
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use ferrum_meta::EffEntity;
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
@@ -26,6 +27,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub const SEND_TOPIC: &str = "es.verifactu.send_requested";
+
+/// VERI*FACTU: each invoice's record (and its annulment's, when it is cancelled) sent to AEAT. Cancelling is never
+/// refused: the annulment is a record of its own.
+const VERIFACTU: Channel = Channel { what: "record", prefix: "es_verifactu", topic: SEND_TOPIC, held: &["Pending"], instead: "" };
 pub const QR_TEST: &str = "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR";
 pub const QR_PRODUCTION: &str = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
 pub const QR_TEXT: &str = "Factura verificable en la sede electrónica de la AEAT";
@@ -362,38 +367,35 @@ impl DocHook for VerifactuHook {
         let production = s(&company, "es_verifactu_env") == Some("Production");
         let send = b(&company, "es_verifactu");
         let url = qr_url(production, &issuer, &number, &date, &total);
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(values) = json!({
+        let mut values = json!({
             "es_tipo_factura": kind, "es_huella": huella, "es_huella_anterior": if previous.is_empty() { None } else { Some(previous.clone()) },
             "es_fecha_gen": generated, "es_qr_url": url, "es_qr_text": if send { "VERI*FACTU" } else { "" },
-            "es_verifactu_status": if send { Some("Pending") } else { None }, "es_verifactu_error": null,
-        }) else {
-            return Err(Error::internal("record"));
-        };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", iid, values).await?;
-        if send {
-            let breakdown: Vec<Value> = rows(doc, "tax_breakdown")
-                .iter()
-                .map(|g| {
-                    let category = ferrum_eu::ubl::category_code(s(g, "category"), d(g, "rate"));
-                    let (calificacion, exenta) = qualification(category);
-                    json!({"Impuesto": "01", "ClaveRegimen": "01", "CalificacionOperacion": calificacion, "OperacionExenta": exenta, "TipoImpositivo": amount(d(g, "rate")),
-                           "BaseImponibleOimporteNoSujeto": amount(d(g, "taxable_amount")), "CuotaRepercutida": amount(d(g, "tax_amount"))})
-                })
-                .collect();
-            let record = json!({
-                "RegistroAlta": {
-                    "IDVersion": "1.0", "IDFactura": {"IDEmisorFactura": issuer, "NumSerieFactura": number, "FechaExpedicionFactura": date},
-                    "NombreRazonEmisor": s(&company, "company_name"), "TipoFactura": kind, "DescripcionOperacion": format!("Factura {number}"),
-                    "Destinatarios": if identified { json!([{"NombreRazon": s(&customer, "customer_name"), "NIF": s(doc, "eu_customer_vat").or(s(&customer, "eu_vat_number")).or(s(&customer, "tax_id"))}]) } else { Value::Null },
-                    "Desglose": breakdown, "CuotaTotal": tax, "ImporteTotal": total,
-                    "Encadenamiento": if previous.is_empty() { json!({"PrimerRegistro": "S"}) } else { json!({"RegistroAnterior": {"Huella": previous}}) },
-                    "FechaHoraHusoGenRegistro": generated, "TipoHuella": "01", "Huella": huella,
-                }
-            });
-            outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), json!({"invoice": iid, "company": cid, "record": record}))
-                .await?;
+        });
+        if !send {
+            values["es_verifactu_status"] = Value::Null;
+            values["es_verifactu_error"] = Value::Null;
+            return submission::save(hc, doc, values).await;
         }
+        let breakdown: Vec<Value> = rows(doc, "tax_breakdown")
+            .iter()
+            .map(|g| {
+                let category = ferrum_eu::ubl::category_code(s(g, "category"), d(g, "rate"));
+                let (calificacion, exenta) = qualification(category);
+                json!({"Impuesto": "01", "ClaveRegimen": "01", "CalificacionOperacion": calificacion, "OperacionExenta": exenta, "TipoImpositivo": amount(d(g, "rate")),
+                       "BaseImponibleOimporteNoSujeto": amount(d(g, "taxable_amount")), "CuotaRepercutida": amount(d(g, "tax_amount"))})
+            })
+            .collect();
+        let record = json!({
+            "RegistroAlta": {
+                "IDVersion": "1.0", "IDFactura": {"IDEmisorFactura": issuer, "NumSerieFactura": number, "FechaExpedicionFactura": date},
+                "NombreRazonEmisor": s(&company, "company_name"), "TipoFactura": kind, "DescripcionOperacion": format!("Factura {number}"),
+                "Destinatarios": if identified { json!([{"NombreRazon": s(&customer, "customer_name"), "NIF": s(doc, "eu_customer_vat").or(s(&customer, "eu_vat_number")).or(s(&customer, "tax_id"))}]) } else { Value::Null },
+                "Desglose": breakdown, "CuotaTotal": tax, "ImporteTotal": total,
+                "Encadenamiento": if previous.is_empty() { json!({"PrimerRegistro": "S"}) } else { json!({"RegistroAnterior": {"Huella": previous}}) },
+                "FechaHoraHusoGenRegistro": generated, "TipoHuella": "01", "Huella": huella,
+            }
+        });
+        VERIFACTU.queue(hc, doc, values, json!({"invoice": id(doc, "id"), "company": cid, "record": record})).await?;
         Ok(())
     }
 
@@ -408,23 +410,17 @@ impl DocHook for VerifactuHook {
         let date = day(s(doc, "posting_date").unwrap_or_default());
         let generated = now_with_offset();
         let (previous, huella) = chain(hc, cid, |prev| huella_anulacion(&issuer, &number, &date, prev, &generated)).await?;
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let send = b(&company, "es_verifactu");
-        let Value::Object(values) = json!({"es_huella_anulacion": huella, "es_verifactu_status": if send { Some("Pending") } else { None }}) else {
-            return Ok(());
-        };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", iid, values).await?;
-        if send {
-            let record = json!({
-                "RegistroAnulacion": {
-                    "IDVersion": "1.0", "IDFactura": {"IDEmisorFacturaAnulada": issuer, "NumSerieFacturaAnulada": number, "FechaExpedicionFacturaAnulada": date},
-                    "Encadenamiento": if previous.is_empty() { json!({"PrimerRegistro": "S"}) } else { json!({"RegistroAnterior": {"Huella": previous}}) },
-                    "FechaHoraHusoGenRegistro": generated, "TipoHuella": "01", "Huella": huella,
-                }
-            });
-            outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), json!({"invoice": iid, "company": cid, "record": record}))
-                .await?;
+        if !b(&company, "es_verifactu") {
+            return submission::save(hc, doc, json!({"es_huella_anulacion": huella, "es_verifactu_status": null})).await;
         }
+        let record = json!({
+            "RegistroAnulacion": {
+                "IDVersion": "1.0", "IDFactura": {"IDEmisorFacturaAnulada": issuer, "NumSerieFacturaAnulada": number, "FechaExpedicionFacturaAnulada": date},
+                "Encadenamiento": if previous.is_empty() { json!({"PrimerRegistro": "S"}) } else { json!({"RegistroAnterior": {"Huella": previous}}) },
+                "FechaHoraHusoGenRegistro": generated, "TipoHuella": "01", "Huella": huella,
+            }
+        });
+        VERIFACTU.queue(hc, doc, json!({"es_huella_anulacion": huella}), json!({"invoice": id(doc, "id"), "company": cid, "record": record})).await?;
         Ok(())
     }
 
@@ -432,20 +428,11 @@ impl DocHook for VerifactuHook {
         if name != "es_record_aeat" || hc.entity.field("es_verifactu_status").is_none() {
             return Ok(None);
         }
-        if s(doc, "es_verifactu_status") != Some("Pending") {
-            return Err(Error::invalid("only a record waiting for AEAT is recorded"));
-        }
+        VERIFACTU.waiting(doc, "only a record waiting for AEAT is recorded")?;
         let state = params.get("state").and_then(Value::as_str).unwrap_or_default();
-        let accepted = matches!(state, "Correcto" | "AceptadoConErrores");
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(values) = json!({
-            "es_verifactu_status": if accepted { "Accepted" } else { "Rejected" }, "es_csv": params.get("csv").and_then(Value::as_str),
-            "es_verifactu_error": if state == "Correcto" { None } else { params.get("message").and_then(Value::as_str).map(|m| m.chars().take(2000).collect::<String>()) },
-        }) else {
-            return Ok(None);
-        };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", iid, values).await?;
-        Ok(Some(json!({"status": if accepted { "Accepted" } else { "Rejected" }})))
+        let status = if matches!(state, "Correcto" | "AceptadoConErrores") { "Accepted" } else { "Rejected" };
+        let error = if state == "Correcto" { None } else { params.get("message").and_then(Value::as_str).map(|m| m.chars().take(2000).collect::<String>()) };
+        VERIFACTU.record(hc, doc, status, error, json!({"es_csv": params.get("csv").and_then(Value::as_str)})).await.map(Some)
     }
 }
 

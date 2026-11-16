@@ -11,6 +11,7 @@ use crate::util::{get, id, s, sys};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::record;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, outbox};
 use serde_json::{Map, Value, json};
@@ -185,14 +186,6 @@ impl DocHook for AnafHook {
 pub struct Anaf;
 
 impl Anaf {
-    async fn record(k: &Kernel, ctx: &Ctx, invoice: Uuid, values: Value) -> Result<()> {
-        let Value::Object(v) = values else { return Ok(()) };
-        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        k.set_values_tx(&sys(ctx), &mut tx, "SalesInvoice", invoice, v).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     /// A usable access token: the stored one while it lasts, else a refreshed one.
     async fn token(&self, k: &Kernel, ctx: &Ctx, auth: &str, company: &Doc, force: bool) -> Result<String> {
         let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
@@ -246,7 +239,7 @@ impl EventSink for Anaf {
         loop {
             let token = match self.token(k, &ctx, &auth, &company, forced).await {
                 Ok(t) => t,
-                Err(Error::Invalid(m)) => return Self::record(k, &ctx, invoice, json!({"ro_efactura_error": m})).await,
+                Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_error": m})).await,
                 Err(e) => return Err(e),
             };
             let reached = |e: reqwest::Error| Error::internal(format!("ANAF could not be reached: {e}"));
@@ -275,9 +268,10 @@ impl EventSink for Anaf {
                     let index = attr(&body, "index_incarcare").filter(|_| attr(&body, "ExecutionStatus").as_deref() == Some("0"));
                     let Some(index) = index else {
                         let why = errors(&body).join("; ");
-                        return Self::record(k, &ctx, invoice, json!({"ro_efactura_status": "Rejected", "ro_efactura_error": if why.is_empty() { "ANAF refused the upload".to_string() } else { why }})).await;
+                        return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_status": "Rejected", "ro_efactura_error": if why.is_empty() { "ANAF refused the upload".to_string() } else { why }})).await;
                     };
-                    Self::record(k, &ctx, invoice, json!({"ro_efactura_status": "Uploaded", "ro_upload_index": index, "ro_efactura_error": null})).await?;
+                    record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_status": "Uploaded", "ro_upload_index": index, "ro_efactura_error": null}))
+                        .await?;
                     let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
                     outbox::enqueue(
                         &mut tx,
@@ -294,9 +288,10 @@ impl EventSink for Anaf {
                 200 => {
                     return match attr(&body, "stare").as_deref() {
                         Some("ok") => {
-                            Self::record(
+                            record(
                                 k,
                                 &ctx,
+                                "SalesInvoice",
                                 invoice,
                                 json!({"ro_efactura_status": "Validated", "ro_download_id": attr(&body, "id_descarcare"), "ro_efactura_error": null}),
                             )
@@ -304,9 +299,10 @@ impl EventSink for Anaf {
                         }
                         Some("nok") => {
                             let why = errors(&body).join("; ");
-                            Self::record(
+                            record(
                                 k,
                                 &ctx,
+                                "SalesInvoice",
                                 invoice,
                                 json!({"ro_efactura_status": "Rejected", "ro_download_id": attr(&body, "id_descarcare"),
                                        "ro_efactura_error": if why.is_empty() { "ANAF found errors: download its answer for them".to_string() } else { why }}),
@@ -314,9 +310,10 @@ impl EventSink for Anaf {
                             .await
                         }
                         Some("XML cu erori nepreluat de sistem") => {
-                            Self::record(
+                            record(
                                 k,
                                 &ctx,
+                                "SalesInvoice",
                                 invoice,
                                 json!({"ro_efactura_status": "Rejected", "ro_efactura_error": "ANAF did not take the XML (it has errors)"}),
                             )
@@ -328,7 +325,7 @@ impl EventSink for Anaf {
                 }
                 _ => {
                     let why = errors(&body).join("; ");
-                    return Self::record(k, &ctx, invoice, json!({"ro_efactura_error": format!("ANAF answered {status}: {}", if why.is_empty() { body.chars().take(300).collect() } else { why })})).await;
+                    return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_error": format!("ANAF answered {status}: {}", if why.is_empty() { body.chars().take(300).collect() } else { why })})).await;
                 }
             }
         }

@@ -12,9 +12,10 @@ use crate::member::{Member, Rules};
 use crate::util::{d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use chrono::Utc;
+use ferrum_app_erp::submission::Channel;
 use ferrum_eu::ubl::invoice;
 use ferrum_eu::vat::{INPUT_TAX, OSS_VAT, OUTPUT_TAX};
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result, outbox};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 use std::fmt::Write;
@@ -361,13 +362,14 @@ pub async fn faktura(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Faktura> {
 /// FA(3) on submitted invoices: download, send to KSeF (through the outbox), record its number.
 pub struct KsefHook;
 
-impl KsefHook {
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-}
+/// KSeF: an invoice it has is not sent again or cancelled.
+const KSEF: Channel = Channel {
+    what: "invoice",
+    prefix: "pl_ksef",
+    topic: SEND_TOPIC,
+    held: &["Pending", "Accepted"],
+    instead: "KSeF has this invoice: issue a correction (a credit note) instead of cancelling it",
+};
 
 /// A KSeF number: the seller's NIP, the day, twelve hexadecimal characters and a CRC-8 (polynomial
 /// 0x07) of what comes before, as two.
@@ -412,10 +414,7 @@ impl DocHook for KsefHook {
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "pl_ksef_status"), Some("Pending" | "Accepted")) {
-            return Err(Error::invalid("KSeF has this invoice: issue a correction (a credit note) instead of cancelling it"));
-        }
-        Ok(())
+        KSEF.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -430,19 +429,13 @@ impl DocHook for KsefHook {
             }
             "pl_send_ksef" => send(hc, doc).await.map(Some),
             "pl_record_ksef" => {
-                if s(doc, "pl_ksef_status") != Some("Pending") {
-                    return Err(Error::invalid("only an invoice waiting for KSeF is recorded"));
-                }
+                KSEF.waiting(doc, "only an invoice waiting for KSeF is recorded")?;
                 match params.get("ksef_number").and_then(Value::as_str).map(str::trim) {
-                    Some(n) if ksef_number_ok(n) => {
-                        Self::save(hc, doc, json!({"pl_ksef_status": "Accepted", "pl_ksef_number": n, "pl_ksef_error": null})).await?;
-                        Ok(Some(json!({"status": "Accepted"})))
-                    }
+                    Some(n) if ksef_number_ok(n) => KSEF.record(hc, doc, "Accepted", None, json!({"pl_ksef_number": n})).await.map(Some),
                     Some(_) => Err(Error::field("ksef_number", "is not a KSeF number (its check characters do not hold)")),
                     None => {
                         let why = params.get("message").and_then(Value::as_str).unwrap_or("KSeF refused the invoice").chars().take(2000).collect::<String>();
-                        Self::save(hc, doc, json!({"pl_ksef_status": "Rejected", "pl_ksef_error": why})).await?;
-                        Ok(Some(json!({"status": "Rejected"})))
+                        KSEF.record(hc, doc, "Rejected", Some(why), json!({})).await.map(Some)
                     }
                 }
             }
@@ -452,15 +445,10 @@ impl DocHook for KsefHook {
 }
 
 async fn send(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
-    if matches!(s(doc, "pl_ksef_status"), Some("Pending" | "Accepted")) {
-        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "pl_ksef_status").unwrap_or_default().to_lowercase())));
-    }
+    KSEF.sendable(doc)?;
     let f = faktura(hc, doc).await?;
-    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-    let event = json!({"invoice": iid, "company": s(doc, "company"), "number": f.number, "nip": f.seller_nip, "xml": to_xml(&f)});
-    KsefHook::save(hc, doc, json!({"pl_ksef_status": "Pending", "pl_ksef_error": null})).await?;
-    outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-    Ok(json!({"status": "Pending"}))
+    let event = json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "number": f.number, "nip": f.seller_nip, "xml": to_xml(&f)});
+    KSEF.queue(hc, doc, json!({}), event).await
 }
 
 pub fn rules() -> Rules {

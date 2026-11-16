@@ -14,8 +14,9 @@ use crate::vat::{INPUT_TAX, OUTPUT_TAX, account};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::{Channel, enqueue, record};
 use ferrum_kernel::outbox::Event;
-use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx, outbox};
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -195,6 +196,15 @@ fn server_client(ctx: &Ctx) -> Value {
 
 pub struct VatReturnHook;
 
+/// HMRC: a return it has, or one on its way, is kept as filed.
+const FILING: Channel = Channel {
+    what: "return",
+    prefix: "hmrc",
+    topic: TOPIC,
+    held: &["Filed", "Pending"],
+    instead: "HMRC keeps a filed return: correct its figures in a later return (or, past HMRC's limits, by an error correction notification)",
+};
+
 impl VatReturnHook {
     async fn queue(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let rid = id(doc, "id").ok_or_else(|| Error::internal("return without id"))?;
@@ -204,7 +214,7 @@ impl VatReturnHook {
         let b: [Decimal; 9] = std::array::from_fn(|i| d(doc, &format!("box{}", i + 1)));
         let client = doc.get("client_data").cloned().filter(|v| v.is_object()).unwrap_or_else(|| server_client(hc.ctx));
         let event = json!({"return": rid, "company": cid, "vrn": vrn, "body": body(s(doc, "period_key").unwrap_or_default(), &b), "client": client});
-        outbox::enqueue(hc.tx, hc.ctx.tenant, TOPIC, Some("GbVatReturn"), Some(rid), event).await
+        enqueue(hc, doc, FILING.topic, event).await
     }
 }
 
@@ -244,12 +254,7 @@ impl DocHook for VatReturnHook {
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "hmrc_status"), Some("Filed" | "Pending")) {
-            return Err(Error::invalid(
-                "HMRC keeps a filed return: correct its figures in a later return (or, past HMRC's limits, by an error correction notification)",
-            ));
-        }
-        Ok(())
+        FILING.refuse_cancel(doc)
     }
 }
 
@@ -390,14 +395,6 @@ impl Site for HmrcSite {
 pub struct Mtd;
 
 impl Mtd {
-    async fn record(k: &Kernel, ctx: &Ctx, rid: Uuid, values: Value) -> Result<()> {
-        let Value::Object(v) = values else { return Ok(()) };
-        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-        k.set_values_tx(&sys(ctx), &mut tx, "GbVatReturn", rid, v).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     /// A usable access token: the stored one while it lasts, else a refreshed one.
     async fn token(&self, k: &Kernel, ctx: &Ctx, api: &str, company: &Doc, force: bool) -> Result<String> {
         let cid = id(company, "id").ok_or_else(|| Error::internal("company without id"))?;
@@ -440,8 +437,14 @@ impl EventSink for Mtd {
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
         tx.commit().await?;
         let Some((api, _)) = hosts(s(&company, "gb_hmrc_mode").unwrap_or("Off")) else {
-            return Self::record(k, &ctx, rid, json!({"hmrc_status": "Failed", "hmrc_error": "the company files no returns with HMRC (its mode is Off)"}))
-                .await;
+            return record(
+                k,
+                &ctx,
+                "GbVatReturn",
+                rid,
+                json!({"hmrc_status": "Failed", "hmrc_error": "the company files no returns with HMRC (its mode is Off)"}),
+            )
+            .await;
         };
         let vrn = ev.payload["vrn"].as_str().unwrap_or_default();
         let vendor = vendor_ip(ferrum_kernel::env::var("FERRUM_PUBLIC_IP"), k.settings.public_url.as_deref()).await;
@@ -450,7 +453,7 @@ impl EventSink for Mtd {
         loop {
             let token = match self.token(k, &ctx, &api, &company, forced).await {
                 Ok(t) => t,
-                Err(Error::Invalid(m)) => return Self::record(k, &ctx, rid, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
+                Err(Error::Invalid(m)) => return record(k, &ctx, "GbVatReturn", rid, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
                 Err(e) => return Err(e),
             };
             let (client, url) = HMRC.client(k, ev.tenant_id, &format!("{api}/organisations/vat/{vrn}/returns"), WAIT).await?;
@@ -464,9 +467,10 @@ impl EventSink for Mtd {
             let v: Value = reply.json().await.unwrap_or(Value::Null);
             match status {
                 201 => {
-                    return Self::record(
+                    return record(
                         k,
                         &ctx,
+                        "GbVatReturn",
                         rid,
                         json!({"hmrc_status": "Filed", "processing_date": v["processingDate"], "form_bundle_number": v["formBundleNumber"],
                                "charge_ref_number": v["chargeRefNumber"], "payment_indicator": v["paymentIndicator"], "receipt_id": receipt, "hmrc_error": null}),
@@ -477,7 +481,8 @@ impl EventSink for Mtd {
                 429 | 500.. => return Err(Error::internal(format!("HMRC is busy ({status}); trying again"))),
                 _ => {
                     let why = format!("{} {}", v["code"].as_str().unwrap_or(&status.to_string()), v["message"].as_str().unwrap_or("")).trim().to_string();
-                    return Self::record(k, &ctx, rid, json!({"hmrc_status": "Failed", "hmrc_error": format!("HMRC refused the return: {why}")})).await;
+                    return record(k, &ctx, "GbVatReturn", rid, json!({"hmrc_status": "Failed", "hmrc_error": format!("HMRC refused the return: {why}")}))
+                        .await;
                 }
             }
         }

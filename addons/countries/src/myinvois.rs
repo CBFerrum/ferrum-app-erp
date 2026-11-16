@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::{Channel, enqueue, record};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -28,6 +29,15 @@ use uuid::Uuid;
 pub const SUBMIT_TOPIC: &str = "my.myinvois.submit_requested";
 pub const STATUS_TOPIC: &str = "my.myinvois.status_requested";
 pub const CANCEL_TOPIC: &str = "my.myinvois.cancel_requested";
+
+/// MyInvois: an invoice it is validating is not cancelled (a validated one is, within LHDN's 72 hours).
+const CHANNEL: Channel = Channel {
+    what: "invoice",
+    prefix: "my_einvoice",
+    topic: SUBMIT_TOPIC,
+    held: &["Pending", "Submitted"],
+    instead: "MyInvois is still validating this invoice: cancel it once it is validated",
+};
 const SANDBOX: (&str, &str) = ("https://preprod-api.myinvois.hasil.gov.my", "https://preprod.myinvois.hasil.gov.my");
 const PRODUCTION: (&str, &str) = ("https://api.myinvois.hasil.gov.my", "https://myinvois.hasil.gov.my");
 const MYINVOIS: Provider =
@@ -321,14 +331,6 @@ async fn uses_myinvois(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
     Ok((s(&company, "country_code") == Some("MY") && hosts(s(&company, "my_myinvois_mode").unwrap_or("Off")).is_some()).then_some(company))
 }
 
-async fn set_invoice(k: &Kernel, ctx: &Ctx, invoice: Uuid, values: Value) -> Result<()> {
-    let Value::Object(v) = values else { return Ok(()) };
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    k.set_values_tx(&sys(ctx), &mut tx, "SalesInvoice", invoice, v).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 #[async_trait]
 impl DocHook for MyInvoisHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -336,23 +338,12 @@ impl DocHook for MyInvoisHook {
             return Ok(());
         }
         let body = submission(&document(hc, doc, Utc::now()).await?, s(doc, "number").unwrap_or_default());
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = json!({"my_einvoice_status": "Pending", "my_einvoice_error": null}) else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", iid, v).await?;
-        outbox::enqueue(
-            hc.tx,
-            hc.ctx.tenant,
-            SUBMIT_TOPIC,
-            Some("SalesInvoice"),
-            Some(iid),
-            json!({"invoice": iid, "company": s(doc, "company"), "body": body}),
-        )
-        .await
+        CHANNEL.queue(hc, doc, json!({}), json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "body": body})).await.map(|_| ())
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        match s(doc, "my_einvoice_status") {
-            Some("Pending" | "Submitted") => Err(Error::invalid("MyInvois is still validating this invoice: cancel it once it is validated")),
+        CHANNEL.refuse_cancel(doc)?;
+        match CHANNEL.status(doc) {
             Some("Valid") => {
                 let validated = s(doc, "my_validated_at").and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc));
                 if validated.is_none_or(|t| Utc::now() > t + Duration::hours(72)) {
@@ -368,9 +359,8 @@ impl DocHook for MyInvoisHook {
         if s(doc, "my_einvoice_status") != Some("Valid") || uses_myinvois(hc, doc).await?.is_none() {
             return Ok(());
         }
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let event = json!({"invoice": iid, "company": s(doc, "company"), "uuid": s(doc, "my_uuid"), "reason": format!("Invoice {} cancelled", s(doc, "number").unwrap_or_default())});
-        outbox::enqueue(hc.tx, hc.ctx.tenant, CANCEL_TOPIC, Some("SalesInvoice"), Some(iid), event).await
+        let event = json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "uuid": s(doc, "my_uuid"), "reason": format!("Invoice {} cancelled", s(doc, "number").unwrap_or_default())});
+        enqueue(hc, doc, CANCEL_TOPIC, event).await
     }
 }
 
@@ -437,9 +427,10 @@ impl EventSink for MyInvois {
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
         tx.commit().await?;
         let Some((api, portal)) = hosts(s(&company, "my_myinvois_mode").unwrap_or("Off")) else {
-            return set_invoice(
+            return record(
                 k,
                 &ctx,
+                "SalesInvoice",
                 invoice,
                 json!({"my_einvoice_status": "Failed", "my_einvoice_error": "the company no longer sends e-invoices to MyInvois"}),
             )
@@ -447,7 +438,7 @@ impl EventSink for MyInvois {
         };
         let token = match self.token(k, &ctx, &api, &company).await {
             Ok(t) => t,
-            Err(Error::Invalid(m)) => return set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Failed", "my_einvoice_error": m})).await,
+            Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Failed", "my_einvoice_error": m})).await,
             Err(e) => return Err(e),
         };
         let reached = |e: reqwest::Error| Error::internal(format!("MyInvois could not be reached: {e}"));
@@ -460,11 +451,18 @@ impl EventSink for MyInvois {
                 match status {
                     202 => {
                         if let Some(rejected) = v["rejectedDocuments"].as_array().and_then(|r| r.first()) {
-                            return set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(rejected)})).await;
+                            return record(
+                                k,
+                                &ctx,
+                                "SalesInvoice",
+                                invoice,
+                                json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(rejected)}),
+                            )
+                            .await;
                         }
                         let uid = v["submissionUid"].as_str().or(v["submissionUID"].as_str()).unwrap_or_default().to_string();
                         let uuid = v["acceptedDocuments"][0]["uuid"].as_str().map(str::to_string);
-                        set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Submitted", "my_submission_uid": uid, "my_uuid": uuid})).await?;
+                        record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Submitted", "my_submission_uid": uid, "my_uuid": uuid})).await?;
                         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
                         outbox::enqueue(
                             &mut tx,
@@ -480,7 +478,7 @@ impl EventSink for MyInvois {
                     }
                     401 => Err(Error::internal("MyInvois refused the token; trying again with a new one")),
                     422 | 429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
-                    _ => set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(&v)})).await,
+                    _ => record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(&v)})).await,
                 }
             }
             STATUS_TOPIC => {
@@ -496,9 +494,10 @@ impl EventSink for MyInvois {
                 match summary["status"].as_str().unwrap_or_default() {
                     "Valid" => {
                         let (uuid, long) = (summary["uuid"].as_str().unwrap_or_default(), summary["longId"].as_str().unwrap_or_default());
-                        set_invoice(
+                        record(
                             k,
                             &ctx,
+                            "SalesInvoice",
                             invoice,
                             json!({"my_einvoice_status": "Valid", "my_uuid": uuid, "my_long_id": long, "my_validation_url": format!("{portal}/{uuid}/share/{long}"),
                                    "my_validated_at": summary["dateTimeValidated"].as_str().map(str::to_string).unwrap_or_else(|| Utc::now().to_rfc3339()), "my_einvoice_error": null}),
@@ -507,7 +506,7 @@ impl EventSink for MyInvois {
                     }
                     "Invalid" => {
                         let why = summary["documentStatusReason"].as_str().unwrap_or("LHDN found the e-invoice invalid").to_string();
-                        set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": why})).await
+                        record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": why})).await
                     }
                     // Submitted, in progress: asked again later.
                     _ => Err(Error::internal("MyInvois is still validating the e-invoice; asking again")),
@@ -521,12 +520,13 @@ impl EventSink for MyInvois {
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
-                    200 => set_invoice(k, &ctx, invoice, json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
+                    200 => record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
                     429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
                     _ => {
-                        set_invoice(
+                        record(
                             k,
                             &ctx,
+                            "SalesInvoice",
                             invoice,
                             json!({"my_einvoice_error": format!("MyInvois did not cancel it: {}; issue a credit note", Self::errors(&v))}),
                         )

@@ -13,9 +13,10 @@
 use crate::member::{Member, Rules};
 use crate::util::{d, get, id, rows, s, sys};
 use async_trait::async_trait;
+use ferrum_app_erp::submission::Channel;
 use ferrum_eu::ubl::invoice;
 use ferrum_eu::vat::{INPUT_TAX, OSS_VAT, OUTPUT_TAX};
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result, outbox};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -504,13 +505,14 @@ async fn next_progressive(hc: &mut HookCtx<'_>, company: uuid::Uuid) -> Result<S
 /// FatturaPA on submitted invoices: download, send to SDI (through the outbox), record SDI's receipts.
 pub struct SdiHook;
 
-impl SdiHook {
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-}
+/// SDI: an invoice it has is not sent again or cancelled.
+const SDI: Channel = Channel {
+    what: "invoice",
+    prefix: "it_sdi",
+    topic: SEND_TOPIC,
+    held: &["Pending", "Sent", "Delivered"],
+    instead: "SDI has this invoice: issue a credit note (TD04) instead of cancelling it",
+};
 
 /// SDI's receipts and what each makes of the invoice.
 pub const RECEIPTS: &[(&str, &str)] =
@@ -549,10 +551,7 @@ impl DocHook for SdiHook {
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "it_sdi_status"), Some("Pending" | "Sent" | "Delivered")) {
-            return Err(Error::invalid("SDI has this invoice: issue a credit note (TD04) instead of cancelling it"));
-        }
-        Ok(())
+        SDI.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -578,8 +577,8 @@ impl DocHook for SdiHook {
                     RECEIPTS.iter().find(|(k, _)| *k == kind).map(|(_, s)| *s).ok_or_else(|| Error::field("receipt", "is not one of SDI's receipts"))?;
                 let sdi_id = params.get("sdi_id").and_then(Value::as_str).map(str::to_string);
                 let message = params.get("message").and_then(Value::as_str).map(|m| m.chars().take(2000).collect::<String>());
-                Self::save(hc, doc, json!({"it_sdi_status": status, "it_sdi_id": sdi_id.or(s(doc, "it_sdi_id").map(str::to_string)), "it_sdi_error": if status == "Delivered" { None } else { message }})).await?;
-                Ok(Some(json!({"status": status})))
+                let error = if status == "Delivered" { None } else { message };
+                SDI.record(hc, doc, status, error, json!({"it_sdi_id": sdi_id.or(s(doc, "it_sdi_id").map(str::to_string))})).await.map(Some)
             }
             _ => Ok(None),
         }
@@ -588,16 +587,13 @@ impl DocHook for SdiHook {
 
 /// Writes the invoice's FatturaPA with the next progressive and queues it for SDI.
 async fn send(hc: &mut HookCtx<'_>, doc: &Doc, company: uuid::Uuid) -> Result<Value> {
-    if matches!(s(doc, "it_sdi_status"), Some("Pending" | "Sent" | "Delivered")) {
-        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "it_sdi_status").unwrap_or_default().to_lowercase())));
-    }
+    SDI.sendable(doc)?;
     let progressive = next_progressive(hc, company).await?;
     let f = fattura(hc, doc, &progressive).await?;
-    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-    let event = json!({"invoice": iid, "company": company, "number": f.number, "file_name": f.file_name(), "xml": to_xml(&f)});
-    SdiHook::save(hc, doc, json!({"it_sdi_status": "Pending", "it_sdi_file": f.file_name(), "it_sdi_error": null})).await?;
-    outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-    Ok(json!({"status": "Pending", "file": f.file_name()}))
+    let event = json!({"invoice": id(doc, "id"), "company": company, "number": f.number, "file_name": f.file_name(), "xml": to_xml(&f)});
+    let mut answer = SDI.queue(hc, doc, json!({"it_sdi_file": f.file_name()}), event).await?;
+    answer["file"] = json!(f.file_name());
+    Ok(answer)
 }
 
 pub fn rules() -> Rules {

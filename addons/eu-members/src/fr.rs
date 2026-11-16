@@ -18,10 +18,11 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use ferrum_app_erp::localization::Localization;
 use ferrum_app_erp::pricing::Side;
+use ferrum_app_erp::submission::Channel;
 use ferrum_domain::reports::{Params, ReportSource, col, param_def, period, read_tx, resolve_company};
 use ferrum_eu::ubl::{invoice, to_xml};
 use ferrum_eu::vat::{Kind, OUTPUT_TAX, kind_of, plan};
-use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx, outbox};
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use ferrum_meta::EffEntity;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -195,13 +196,14 @@ async fn ubl(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<String> {
 /// SIREN, SIRET and French VAT numbers checked; e-invoices queued for the PA; its statuses recorded.
 pub struct PaHook;
 
-impl PaHook {
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-}
+/// The PA: an invoice it has is not sent again or cancelled.
+const PA: Channel = Channel {
+    what: "invoice",
+    prefix: "fr_pa",
+    topic: SEND_TOPIC,
+    held: &["Pending", "Deposited", "Approved", "Paid"],
+    instead: "the PA has this invoice: issue a credit note (avoir) instead of cancelling it",
+};
 
 /// The PA's lifecycle statuses Ferrum records, and what each makes of the invoice.
 pub const STATUSES: &[(&str, &str)] =
@@ -238,10 +240,7 @@ impl DocHook for PaHook {
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "fr_pa_status"), Some("Pending" | "Deposited" | "Approved" | "Paid")) {
-            return Err(Error::invalid("the PA has this invoice: issue a credit note (avoir) instead of cancelling it"));
-        }
-        Ok(())
+        PA.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -260,8 +259,7 @@ impl DocHook for PaHook {
                 let status = status.ok_or_else(|| Error::field("status", "is not one of the PA's statuses"))?;
                 let message = params.get("message").and_then(Value::as_str).map(|m| m.chars().take(2000).collect::<String>());
                 let pa_id = params.get("pa_id").and_then(Value::as_str).map(str::to_string).or(s(doc, "fr_pa_id").map(str::to_string));
-                Self::save(hc, doc, json!({"fr_pa_status": status, "fr_pa_id": pa_id, "fr_pa_error": message})).await?;
-                Ok(Some(json!({"status": status})))
+                PA.record(hc, doc, status, message, json!({"fr_pa_id": pa_id})).await.map(Some)
             }
             _ => Ok(None),
         }
@@ -269,15 +267,10 @@ impl DocHook for PaHook {
 }
 
 async fn send(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
-    if matches!(s(doc, "fr_pa_status"), Some("Pending" | "Deposited" | "Approved" | "Paid")) {
-        return Err(Error::invalid(format!("the invoice is already {}", s(doc, "fr_pa_status").unwrap_or_default().to_lowercase())));
-    }
+    PA.sendable(doc)?;
     let xml = ubl(hc, doc).await?;
-    let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-    let event = json!({"invoice": iid, "company": s(doc, "company"), "number": s(doc, "number"), "syntax": "UBL", "xml": xml});
-    PaHook::save(hc, doc, json!({"fr_pa_status": "Pending", "fr_pa_error": null})).await?;
-    outbox::enqueue(hc.tx, hc.ctx.tenant, SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-    Ok(json!({"status": "Pending"}))
+    let event = json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "number": s(doc, "number"), "syntax": "UBL", "xml": xml});
+    PA.queue(hc, doc, json!({}), event).await
 }
 
 /// E-reporting: the sales that are not e-invoices (to consumers, and abroad), by day and rate.
