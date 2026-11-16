@@ -194,15 +194,11 @@ const GST_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("2138", "IGST RCM Payable", "Duties and Taxes", "Liability"),
 ];
 
-/// Whether a company is one India's rules are for: its country is India (by its ISO code), or it
-/// names no country (before countries were set, every company of a workspace with India was
-/// Indian). Without a code (a platform from before codes, a name the code list does not know) the
-/// name decides.
+/// Whether a company is one India's rules are for: its country is India (its ISO code, which the
+/// platform keeps from the country it names). A company that names no country gets none of India's
+/// rules, as it gets no other country's.
 fn indian(company: &Doc) -> bool {
-    match s(company, "country_code") {
-        Some(code) => code == "IN",
-        None => s(company, "country").is_none_or(|c| matches!(c.trim().to_ascii_lowercase().as_str(), "" | "in" | "ind" | "india" | "bharat")),
-    }
+    s(company, "country_code") == Some("IN")
 }
 
 /// India's rules for ERP (its localization): the GST template for the place of supply on sales

@@ -420,7 +420,10 @@ async fn scenario() {
         t.k.insert(&t.ctx, "Company", obj(json!({"company_name": "Bad", "abbr": "BAD", "default_currency": inr["id"], "in_gstin": "27AAPFU0939F1ZX"}))).await;
     assert!(matches!(bad, Err(Error::Validation(ref e)) if e.iter().any(|f| f.field == "in_gstin")), "{bad:?}");
     let company = t
-        .insert("Company", json!({"company_name": "Test Industries Pvt Ltd", "abbr": "TI", "default_currency": inr["id"], "in_gstin": " 27aapfu0939f1zv "}))
+        .insert(
+            "Company",
+            json!({"company_name": "Test Industries Pvt Ltd", "abbr": "TI", "default_currency": inr["id"], "country": "India", "in_gstin": " 27aapfu0939f1zv "}),
+        )
         .await;
     let cid = uid(&company);
     let company = t.get("Company", cid).await;
@@ -1974,7 +1977,7 @@ async fn scenario() {
     assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Company").await.unwrap(), Vec::<String>::new());
     assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Address").await.unwrap(), vec!["Atlantis".to_string()]);
     tx.commit().await.unwrap();
-    assert_eq!((t.get("Company", gmbh).await["country_code"].clone(), t.get("Company", cid).await["country_code"].clone()), (json!("DE"), Value::Null));
+    assert_eq!((t.get("Company", gmbh).await["country_code"].clone(), t.get("Company", cid).await["country_code"].clone()), (json!("DE"), json!("IN")));
     assert_eq!(
         (t.get("Address", uid(&shipping)).await["country_code"].clone(), t.get("Address", uid(&billing)).await["country_code"].clone()),
         (json!("AT"), Value::Null)

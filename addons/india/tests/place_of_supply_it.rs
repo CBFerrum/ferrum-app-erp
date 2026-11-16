@@ -88,7 +88,21 @@ async fn scenario() {
     };
     let inr = first("Currency", json!({"code": "INR"})).await;
     // A company in Maharashtra (27); a customer registered in Karnataka (29).
-    let co = insert("Company", json!({"company_name": "Pune Works", "abbr": "PW", "default_currency": inr["id"], "in_gstin": gstin("27AAPFU0939F1Z")})).await;
+    let co = insert(
+        "Company",
+        json!({"company_name": "Pune Works", "abbr": "PW", "default_currency": inr["id"], "country": "India", "in_gstin": gstin("27AAPFU0939F1Z")}),
+    )
+    .await;
+    // India's rules are for a company in India: one that names no country gets none of them, though the workspace
+    // has India's add-on (beside another country's, it may be that country's company, its country not set yet).
+    let nowhere = insert("Company", json!({"company_name": "Nowhere Ltd", "abbr": "NW", "default_currency": inr["id"]})).await;
+    let all = |entity: &'static str, filters: Value| {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        async move { k.list(&ctx, entity, &ListQuery { filters: ferrum_kernel::query::parse_filters(&filters).unwrap(), ..Default::default() }).await.unwrap().rows }
+    };
+    assert_eq!(all("Account", json!({"company": co["id"], "account_name": "CGST Output"})).await.len(), 1, "India's GST accounts for a company in India");
+    assert!(all("Account", json!({"company": nowhere["id"], "account_name": "CGST Output"})).await.is_empty(), "none for a company not in India");
+    assert!(all("TaxTemplate", json!({"company": nowhere["id"]})).await.is_empty(), "nor India's GST templates");
     let customer = insert("Customer", json!({"customer_name": "Globex", "in_gstin": gstin("29AAGCG1234A1Z")})).await;
     let nos = first("Uom", json!({"uom_name": "Nos"})).await;
     let group = first("ItemGroup", json!({"group_name": "Products"})).await;
