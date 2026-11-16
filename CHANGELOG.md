@@ -1,5 +1,38 @@
 # Changelog
 
+## ERP 0.29.0, Finance 0.7.0, Quality 0.2.0, Portugal 0.3.0, Germany 0.1.1, Manufacturing Execution 0.2.5, Warehouse Management 0.3.2: one way for each thing, nothing kept for data that never shipped
+
+Nothing is installed, so what carried older data or an older way forward goes. Every package's SQL changed: a database
+an earlier build made is made again from empty.
+
+- **Each package's SQL is the schema it builds**, one file per package (accounting two: its journal, and stored
+  value's own ledger). What later files added to or replaced in an earlier one (finance books, the project and
+  dimensions indexes, the period guard that takes its period's row for share) is in the file that creates it; the
+  files that moved or redacted older data (returns made before 0.15.0, stored value's 0.20.0 logs and 0.27.0 codes)
+  and the two declared backfills (an instrument's party, a payment run line's supplier email) are gone.
+- **A stored value code typed on a record is kept one way**: `handle:hint`, its hashes waiting in
+  `stored_value_typed`. A record holding its own hashes opens nothing.
+- **Carriers**: a call's templates read the connection's inputs (`inputs.to.city`, `inputs.shipment.packages`,
+  `inputs.rate.id`), as every connection's templates do; the bare names (`to.city`) they could also read are gone,
+  and `docs/carriers.md`'s two examples read the inputs. A description whose inbound `auth` is not `token` is refused
+  when the carrier is saved: `hmac` was accepted and checked nowhere (such a carrier got no inbound address, so its
+  tracking calls were all refused). The upkeep no longer moves carriers onto connections (each is on its own from its
+  first save), and Refused Inbound Calls is gone (the connection counts them).
+- **Receivables by Installment Due Date is the receivables report broken down** (Finance): the same items, credits
+  included (a credit note or a payment not yet set against anything is a row of its own), the same total, and
+  `truncated` when the report is cut short; it dropped credits, rounded each installment apart and stopped at 20,000
+  rows without saying so. Both read `reports::open_items`.
+- **What is open in the company's currency is what the books hold**: the receivables and payables reports converted
+  what was open again at the document's rate, so an invoice booked part by part (10.05 dollars and 10% tax at 1.5:
+  16.60) showed 16.59. They now show its base less the base its settlements took.
+- **Portugal's signing key is read from its vault alone**: `FERRUM_PT_SIGNING_KEY` is no longer read or copied in.
+  An operator sets the key as Portugal's secret `signing.key` (`PUT /api/operator/secrets/pt/signing.key`, rule
+  `reveal`).
+- **Quality's inspection plans are gone**: nothing read them; which items are inspected, against which template, is
+  the item's (Stock Operations).
+- **Germany** is the EU member states' rules (`ferrum_eu_members::member`) with Germany's data, as every other member
+  state is; nothing changes for a German company.
+
 ## ERP 0.28.3: one way to find or make a person's customer
 
 - **`portal::customer_for(k, ctx, tx, name, email, phone) -> (Uuid, bool)`**, for the apps that bill a person
