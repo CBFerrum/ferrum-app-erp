@@ -6,8 +6,7 @@
 //! company setting) levy 3%, cut to 1% from 2023 to the end of 2027, and credit no input tax. The
 //! unified social credit code's check character is checked (GB 32100-2015).
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED};
-use ferrum_kernel::Doc;
+use crate::engine::{Country, Rate, ReverseCharge, Row};
 
 pub static COUNTRY: Country = Country {
     package: "cn",
@@ -53,24 +52,9 @@ pub fn number(raw: &str) -> Option<String> {
     (check == idx[17]).then_some(n)
 }
 
-fn vat_return(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let output = f.sales_tax(&["13%", "9%", "6%", "Small-scale"]);
-    let input = f.purchases_tax(&["13%", "9%", "6%", REVERSE_CHARGED]);
-    vec![
-        ("13", "Sales at 13%", f.sales_net(&["13%"])),
-        ("9", "Sales at 9%", f.sales_net(&["9%"])),
-        ("6", "Sales at 6%", f.sales_net(&["6%"])),
-        ("S", "Sales under the simplified method (small-scale)", f.sales_net(&["Small-scale"])),
-        ("EXP", "Exports (0%)", f.sales_net(&[EXPORT, ZERO_RATED])),
-        ("EX", "VAT-exempt sales", f.sales_net(&[EXEMPT])),
-        ("OUT", "Output tax", output),
-        ("IN", "Input tax credited (services from abroad included)", input),
-        ("DUE", "VAT payable (input tax carried forward when negative)", output - input),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "cn_vat_return", label: "VAT Return (Summary)", country: &COUNTRY, boxes: vat_return })]
+    Vec::new()
 }
 
 crate::app!("cn");

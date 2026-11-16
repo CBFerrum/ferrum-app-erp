@@ -295,7 +295,7 @@ fn cases() -> Vec<Case> {
             None,
             Some("6%"),
             json!({}),
-            "cn_vat_return",
+            "China VAT Return",
             13,
             13,
             6,
@@ -353,7 +353,7 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz", "jp"] {
+    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz", "jp", "cn"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -406,6 +406,12 @@ fn extras(code: &str) -> Vec<Extra> {
             ("SalesInvoice", false, &[("Goods", Some("Reduced"))][..]),
             ("PurchaseInvoice", false, &[("Goods", Some("Reduced"))]),
             ("SalesInvoice", false, &[("Goods", Some("Standard")), ("Goods", Some("Reduced"))]),
+        ],
+        "cn" => vec![
+            ("SalesInvoice", false, &[("Goods", Some("9%"))][..]),
+            ("SalesInvoice", false, &[("Services", Some("6%"))]),
+            ("PurchaseInvoice", false, &[("Goods", Some("9%"))]),
+            ("PurchaseInvoice", false, &[("Services", Some("6%"))]),
         ],
         _ => vec![],
     });
@@ -493,6 +499,7 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
             ("L", "6"),
             ("NET", "28"),
         ],
+        "cn" => &[("13", "200"), ("9", "100"), ("6", "100"), ("S", "0"), ("EXP", "200"), ("EX", "100"), ("OUT", "41"), ("IN", "34"), ("DUE", "7")],
         _ => &[],
     }
 }
@@ -878,6 +885,20 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
             k.submit(&ctx, doc, uid(&d), None).await.unwrap_or_else(|e| panic!("{code}: extra {n}: {e:?}"));
         }
         check(code, &returned(k, &ctx, case, cid).await, full(code));
+        if code == "cn" {
+            // A small-scale taxpayer: its taxable sales on the simplified method.
+            let mut small = obj(
+                json!({"company_name": "China Small Trading", "abbr": "CNS", "default_currency": currency["id"], "country": case.country, "cn_small_scale": true}),
+            );
+            small.insert(country.number_field.into(), json!(case.number));
+            let small = uid(&insert("Company", Value::Object(small)).await);
+            let s =
+                insert("SalesInvoice", json!({"company": small.to_string(), "customer": home.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]}))
+                    .await;
+            k.submit(&ctx, "SalesInvoice", uid(&s), None).await.expect("small-scale sale");
+            let small = returned(k, &ctx, case, small).await;
+            check("cn small-scale", &small, &[("S", "100"), ("OUT", "1"), ("IN", "0"), ("DUE", "1"), ("13", "0"), ("EXP", "0")]);
+        }
         if code == "sg" {
             // An early-payment discount that takes tax back (0.90 of a 10.90 discount on 109) takes its base and
             // tax off the standard-rated supplies on the payment's day: the return says what the books say.

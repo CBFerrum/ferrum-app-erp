@@ -590,7 +590,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇳🇿 | New Zealand | `ferrum-countries` 0.2.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
 | 🇯🇵 | Japan | `ferrum-countries` 0.2.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
 | 🇲🇽 | Mexico | `ferrum-countries` 0.2.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
-| 🇨🇳 | China | `ferrum-countries` 0.2.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return figures | — |
+| 🇨🇳 | China | `ferrum-countries` 0.2.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
 
 ### 🗣️ Languages and accessibility
 
