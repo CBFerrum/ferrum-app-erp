@@ -8,6 +8,7 @@ Need the same platform as before. No database change. Interface only, each `ui/d
 - The two routes to the screens apps no longer have (`apps/:app/settings`, `x/:app/:page`) are gone from Warehouse
   Management's and Manufacturing Execution's interfaces; they start by their own code, as they keep 5 seconds of
   freshness where `mountApp` fixes 30. The interface lint has no baseline file in any of the three.
+- The sidebar's list of ERP's packages no longer names India's: that package has no modules, so the entry did nothing.
 
 ## ERP 0.30.1, European Union 0.4.1, India 0.7.3, United Kingdom 0.3.1, United States 0.2.1, Malaysia 0.3.1, Singapore, Australia, New Zealand, Japan, United Arab Emirates 0.2.1, Belgium, France, Italy, Poland, Spain 0.1.1, Romania 0.2.1: one way to send a document outside
 
