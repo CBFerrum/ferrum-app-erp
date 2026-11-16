@@ -106,10 +106,24 @@ create constraint trigger wms_stock_matches after insert or update on stock_bala
 create constraint trigger wms_position_matches after insert or update on wms_position
   deferrable initially deferred for each row execute function wms_balance_changed();
 
+-- What a production run asked to have at the line, and how much of what is there is that run's. A
+-- quantity at the line is not a promise to anyone, so without this two runs would both count it.
+create table wms_supply (
+  tenant_id uuid not null,
+  run_id uuid not null,
+  warehouse_id uuid not null,
+  item_id uuid not null,
+  need numeric(28,9) not null check (need >= 0),
+  at_line numeric(28,9) not null default 0 check (at_line >= 0),
+  closed_at timestamptz,
+  primary key (tenant_id, run_id, warehouse_id, item_id)
+);
+create index wms_supply_open on wms_supply (tenant_id, warehouse_id, item_id) where closed_at is null;
+
 do $$
 declare t text;
 begin
-  foreach t in array array['wms_position', 'wms_move', 'wms_scan', 'wms_storage_day'] loop
+  foreach t in array array['wms_position', 'wms_move', 'wms_scan', 'wms_storage_day', 'wms_supply'] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
     execute format(
