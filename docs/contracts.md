@@ -92,6 +92,8 @@ operations:
 | `pricing::calc_input`, `tax_in`, `line_tax_rates`, `tax_breakdown`, `breakup` | The calculation's parts over a document's lines, without reading anything | | |
 | `localization::check(hc, doc, Side)` | Each installed country's checks before a priced document is submitted: call it in `before_submit` | What the countries refuse | Reads only |
 | `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice`, `PurchaseInvoice` or `OpeningInvoice` | | Sets the same values |
+| `portal::customers_of(k, ctx, tx, email) -> Vec<Uuid>` | The customers an address belongs to: those with it as their email, and those of contacts with it (where the workspace's contacts link a customer), oldest first, at most 50 of each; never a disabled one, nor a guest a web shop records unchecked (anyone may type anyone's address at a guest checkout). Read as the system | | Reads only |
+| `portal::suppliers_of(k, ctx, tx, email) -> Vec<Uuid>` | The suppliers an address belongs to, found the same way | | Reads only |
 
 Not in it: closing periods, reports, set-up, the trade documents' own hooks and everything under
 `addons/`. They are ERP's, and apps reach them through documents and reports.
