@@ -3,8 +3,7 @@
 //! the company withholds and pays itself and then claims as input tax. The return summarises the
 //! quarterly BIR Form 2550Q.
 
-use crate::engine::{Country, EXEMPT, EXPORT, Figures, Line, REVERSE_CHARGED, Rate, Return, ReverseCharge, Row, ZERO_RATED, digits};
-use ferrum_kernel::Doc;
+use crate::engine::{Country, Rate, ReverseCharge, Row, digits};
 
 pub static COUNTRY: Country = Country {
     package: "ph",
@@ -31,27 +30,9 @@ pub fn number(raw: &str) -> Option<String> {
     ok.then(|| if n.len() == 9 { format!("{}-{}-{}", &n[..3], &n[3..6], &n[6..]) } else { format!("{}-{}-{}-{}", &n[..3], &n[3..6], &n[6..9], &n[9..]) })
 }
 
-fn q2550(f: &Figures, _company: &Doc) -> Vec<Line> {
-    let output = f.sales_tax(&["Standard"]);
-    let input = f.purchases_tax(&["Standard", REVERSE_CHARGED]);
-    let vatable = f.sales_net(&["Standard"]);
-    let zero = f.sales_net(&[ZERO_RATED, EXPORT]);
-    let exempt = f.sales_net(&[EXEMPT]);
-    vec![
-        ("VS", "VATable sales", vatable),
-        ("ZR", "Zero-rated sales", zero),
-        ("EX", "Exempt sales", exempt),
-        ("TS", "Total sales", vatable + zero + exempt),
-        ("OT", "Output tax due", output),
-        ("DP", "Domestic purchases", f.purchases_net(&["Standard"])),
-        ("NR", "Services rendered by non-residents", f.purchases_net(&[REVERSE_CHARGED])),
-        ("IT", "Total available input tax", input),
-        ("NV", "Net VAT payable (excess input tax when negative)", output - input),
-    ]
-}
-
+/// The return is a definition the package seeds, worked out by ERP's tax returns.
 fn reports_list() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {
-    vec![std::sync::Arc::new(Return { name: "ph_2550q", label: "Quarterly VAT Return (2550Q, Summary)", country: &COUNTRY, boxes: q2550 })]
+    Vec::new()
 }
 
 crate::app!("ph");
