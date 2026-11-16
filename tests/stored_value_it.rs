@@ -346,6 +346,56 @@ async fn scenario() {
     };
     assert_eq!(left, 0, "the submission took what waited for it");
     t.cancel("SalesInvoice", uid(&typed)).await.expect("unused, so cancelled");
+    // Another app's register takes a new card's code and PIN through `typed`: it keeps the handle ERP answers, never the
+    // code's hash, and hands it on with the invoice line it makes; that submission opens the card, once.
+    let (code44, pin44) = ("GIFT-0000-0000-0044", "Zx-7531-q");
+    let sec44 = stored_value::secret(tenant, code44, Some(pin44)).unwrap();
+    let typed_at_till = |code: &'static str, pin: Option<&'static str>| {
+        let t = &t;
+        async move {
+            let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+            let out = stored_value::typed(&t.k, &t.ctx, &mut tx, code, pin).await.unwrap();
+            tx.commit().await.unwrap();
+            out
+        }
+    };
+    let till = typed_at_till(code44, Some(pin44)).await;
+    let kept44 = till.kept.clone().unwrap_or_default();
+    assert!(
+        till.account.is_none()
+            && till.shown == "••••0044"
+            && !kept44.is_empty()
+            && !kept44.contains(&sec44.hash)
+            && !kept44.contains(sec44.pin_hash.as_deref().unwrap()),
+        "{till:?}"
+    );
+    let sys = ferrum_domain::util::elevated(&t.ctx);
+    let handed_on = |kept: &str| {
+        obj(json!({"company": c, "customer": walk_in, "items": [{"item": card, "qty": "1", "stored_value_code": "••••0044", "stored_value_secret": kept}]}))
+    };
+    let handed = t.k.insert(&sys, "SalesInvoice", handed_on(&kept44)).await.expect("the register's line");
+    t.submit("SalesInvoice", uid(&handed)).await;
+    let a44 = t.find(&gift, code44, Some(pin44)).await.unwrap();
+    assert_eq!(t.get("StoredValueAccount", a44).await["pin_hash"], json!(sec44.pin_hash), "the card has the PIN the register took");
+    let again = async {
+        let d = t.k.insert(&sys, "SalesInvoice", handed_on(&kept44)).await?;
+        t.k.submit(&t.ctx, "SalesInvoice", uid(&d), None).await
+    };
+    let e = again.await.expect_err("a handle opens one card");
+    assert!(e.to_string().contains("no longer kept"), "{e}");
+    let known = typed_at_till(code44, None).await;
+    assert_eq!((known.account, known.kept), (Some(a44), None), "a card's code names it, to top up");
+    // A code kept for a draft the register then drops is let go at once: nothing of it waits.
+    let dropped = typed_at_till("GIFT-0000-0000-0045", None).await.kept.unwrap();
+    let left: i64 = {
+        let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+        stored_value::forget(&t.ctx, &mut tx, &dropped).await.unwrap();
+        let n = sqlx::query_scalar("select count(*) from stored_value_typed where tenant_id = $1").bind(tenant).fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        n
+    };
+    assert_eq!(left, 0, "let go");
+    t.cancel("SalesInvoice", uid(&handed)).await.expect("unused, so cancelled");
     // Taxed when redeemed: the voucher's line carries no tax.
     let sold = t.post("SalesInvoice", json!({"company": c, "customer": walk_in, "tax_template": vat, "items": [{"item": voucher, "qty": "1"}]})).await;
     assert_eq!(t.posted(uid(&sold)).await, map(&[("Debtors", "300"), ("Gift Cards", "-300")]));
@@ -790,6 +840,7 @@ async fn scenario() {
         "STORECREDIT-0003",
         "GIFT-0000-0000-0001",
         "GIFT-0000-0000-0042",
+        "GIFT-0000-0000-0044",
         "SHARED-CARD-0001",
         "SHARED-CARD-0002",
     ]
@@ -803,7 +854,7 @@ async fn scenario() {
             .map(str::to_string),
     );
     secrets.extend(secrets.clone().iter().map(|c| c.replace('-', "")));
-    secrets.extend([pin, "Zx-9753-q"].map(String::from));
+    secrets.extend([pin, "Zx-9753-q", "Zx-7531-q"].map(String::from));
     let like: Vec<String> = secrets.iter().map(|s| format!("%{s}%")).collect();
     let mut tx = t.k.db.pool.begin().await.unwrap();
     sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();
