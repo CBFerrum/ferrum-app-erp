@@ -1,4 +1,4 @@
-//! Quality: holds, nonconformance, corrective action and inspection plans. A hold is enforced where
+//! Quality: holds, nonconformance and corrective action. A hold is enforced where
 //! stock leaves or is consumed, by a gate on the documents that do it, so no app has to remember to
 //! check, and it is released only by someone with the authority who did not place it.
 
@@ -26,7 +26,7 @@ pub fn register(h: &mut HookRegistry) {
     for entity in ["DeliveryNote", "SalesInvoice", "StockEntry", "PickList"] {
         h.register(entity, Arc::new(HoldGate(entity)));
     }
-    h.register("QualityHold", Arc::new(HoldHook)).register("InspectionPlan", Arc::new(PlanHook));
+    h.register("QualityHold", Arc::new(HoldHook));
     h.add_site("quality", Arc::new(QualitySite));
 }
 
@@ -109,24 +109,6 @@ impl DocHook for HoldHook {
 
     fn fills(&self) -> &'static [&'static str] {
         &["placed_by"]
-    }
-}
-
-/// An approved plan is evidence of what was checked, so it does not change.
-struct PlanHook;
-
-#[async_trait]
-impl DocHook for PlanHook {
-    async fn validate_change(&self, _hc: &mut HookCtx<'_>, old: Option<&Doc>, doc: &Doc) -> Result<()> {
-        let Some(old) = old else { return Ok(()) };
-        if old.get("status").and_then(Value::as_str) != Some("Draft") {
-            for field in ["item", "revision", "template", "sample_size"] {
-                if old.get(field) != doc.get(field) {
-                    return Err(Error::field(field, "an approved plan does not change: make a new revision"));
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -219,23 +201,8 @@ async fn verify_capa(k: &Kernel, ctx: &Ctx, tx: &mut Tx, capa: Uuid, note: &str)
     set(k, ctx, tx, "Capa", capa, json!({"status": "Verified", "effectiveness_note": note, "verified_by": ctx.email})).await
 }
 
-async fn approve_plan(k: &Kernel, ctx: &Ctx, tx: &mut Tx, plan: Uuid) -> Result<()> {
-    may(ctx, "Quality Manager")?;
-    let doc = k.get_tx(&sys(ctx), tx, "InspectionPlan", plan, true).await?;
-    if doc.get("status").and_then(Value::as_str) != Some("Draft") {
-        return Err(Error::invalid("this plan is not a draft"));
-    }
-    let item = id(&doc, "item").ok_or_else(|| Error::internal("a plan without an item"))?;
-    sqlx::query("update e_inspection_plan set status = 'Superseded' where tenant_id = $1 and item = $2 and status = 'Approved'")
-        .bind(ctx.tenant)
-        .bind(item)
-        .execute(&mut **tx)
-        .await?;
-    set(k, ctx, tx, "InspectionPlan", plan, json!({"status": "Approved", "approved_by": ctx.email})).await
-}
-
-/// Endpoints under `/api/app/quality/`: `POST /holds/{id}/release`, `/ncr/{id}/disposition`,
-/// `/capa/{id}/verify` and `/plans/{id}/approve`.
+/// Endpoints under `/api/app/quality/`: `POST /holds/{id}/release`, `/ncr/{id}/disposition` and
+/// `/capa/{id}/verify`.
 struct QualitySite;
 
 #[async_trait]
@@ -255,7 +222,6 @@ impl Site for QualitySite {
                 decide(k, &ctx, &mut tx, uuid(id)?, &d).await?;
             }
             ("POST", ["capa", id, "verify"]) => verify_capa(k, &ctx, &mut tx, uuid(id)?, &note).await?,
-            ("POST", ["plans", id, "approve"]) => approve_plan(k, &ctx, &mut tx, uuid(id)?).await?,
             _ => return Err(Error::NotFound("route".into())),
         }
         tx.commit().await?;

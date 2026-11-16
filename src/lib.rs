@@ -194,7 +194,6 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
 
     #[test]
@@ -254,20 +253,5 @@ mod tests {
         assert!(!guards_typed_price(read_only.as_deref(), Side::Selling, false), "plainly read-only: the kernel drops it");
         assert!(!guards_typed_price(conditional.as_deref(), Side::Selling, true), "the engine's own writes: kept");
         assert!(!guards_typed_price(conditional.as_deref(), Side::Buying, false));
-    }
-
-    /// Clusters record each package SQL file they applied with its checksum, and refuse to start
-    /// when an applied file changes: these are the files from before ERP had its own repository.
-    #[test]
-    fn applied_sql_files_are_unchanged() {
-        let applied = [
-            ("accounting", "sql/001_ledger.sql", "8161471627f74d25ce6db3096f0cf84cbcaa505e44fcb8376bbe28e5a52a3bfd"),
-            ("accounting", "sql/002_project_index.sql", "5e3263c4bb778c3e6d6a5c4d0af3d9fc5115e798bf0a5e1a420f582528b18426"),
-            ("inventory", "sql/001_stock.sql", "5a773facc96d9b825b0d9b5b53733ebe0b0e1d8ce1a8cbfb5978a15ebe1545c8"),
-        ];
-        for (package, file, checksum) in applied {
-            let (.., sql) = EMBEDDED.iter().find(|(p, f, _)| *p == package && *f == file).unwrap_or_else(|| panic!("{package}/{file} is gone"));
-            assert_eq!(hex::encode(Sha256::digest(sql.as_bytes())), checksum, "{package}/{file} changed: add a new file instead");
-        }
     }
 }

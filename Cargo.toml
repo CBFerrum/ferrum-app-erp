@@ -69,7 +69,6 @@ uuid = { workspace = true }
 # Carrier connections (src/shipping.rs): described HTTP calls, rendered as the platform's message channels are.
 base64 = "0.22"
 hex = { workspace = true }
-hmac = "0.12"
 minijinja = { version = "2", features = ["fuel"] }
 serde = { workspace = true }
 # The integrations' calls (src/providers.rs): the platform's vetted client is this crate's.

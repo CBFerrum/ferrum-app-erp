@@ -19,7 +19,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = { workspace = true }
 sqlx = { workspace = true }
-# What Portugal could not keep in its vault, in the log (never a value).
+# Why Portugal's vault could not be read, in the log (never a value).
 tracing = { workspace = true }
 hex = { workspace = true }
 base64 = "0.22"

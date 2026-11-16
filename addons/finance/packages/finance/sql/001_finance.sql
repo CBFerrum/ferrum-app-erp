@@ -3,6 +3,9 @@
 -- as its invoice; the primary key makes invoice generation exactly-once per period.
 -- fin_daily_run: the day each per-tenant daily upkeep task last ran, so the minute-by-minute
 -- upkeep loop does the heavier scans (overdue customers, subscription statuses) once a day.
+-- fin_subscription_change: each change of a subscription's plans from the day it takes effect, with
+-- its monthly recurring revenue (in the subscription's currency) before and after, so that MRR is
+-- read as it stood on any day. A change dated on or before a later one's day replaces it.
 
 create table fin_subscription_period (
   tenant_id uuid not null references tenant(id) on delete cascade,
@@ -24,10 +27,21 @@ create table fin_daily_run (
   primary key (tenant_id, task)
 );
 
+create table fin_subscription_change (
+  tenant_id uuid not null references tenant(id) on delete cascade,
+  subscription_id uuid not null,
+  effective date not null,
+  mrr_before numeric not null,
+  mrr_after numeric not null,
+  created_at timestamptz not null default clock_timestamp(),
+  foreign key (tenant_id, subscription_id) references e_subscription (tenant_id, id) on delete cascade
+);
+create index fin_subscription_change_of on fin_subscription_change (tenant_id, subscription_id, effective, created_at);
+
 do $$
 declare t text;
 begin
-  foreach t in array array['fin_subscription_period', 'fin_daily_run'] loop
+  foreach t in array array['fin_subscription_period', 'fin_daily_run', 'fin_subscription_change'] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
     execute format(

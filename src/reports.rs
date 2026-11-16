@@ -1860,15 +1860,32 @@ async fn cash_flow(k: &Kernel, tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &P
 
 // ─────────────────────────── receivables / payables ───────────────────────────
 
-async fn ageing(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, kind: &str) -> Result<Value> {
-    let as_of = p.date("as_of")?.unwrap_or_else(today);
-    let party = p.uuid(kind)?;
-    #[allow(clippy::type_complexity)]
+/// A receivable or payable as it stood on a day: what was left of it then, in its currency and in the company's (what
+/// the books held for it: its base less the base its settlements took).
+pub struct Open {
+    pub id: Uuid,
+    pub entity: String,
+    pub number: Option<String>,
+    pub posted: NaiveDate,
+    pub due: Option<NaiveDate>,
+    pub party_name: Option<String>,
+    pub currency: String,
+    pub amount: Decimal,
+    pub outstanding: Decimal,
+    pub base: Decimal,
+}
+
+/// What `kind`'s parties (`customer` or `supplier`; with `party`, that one) still had open on `as_of`, earliest due
+/// first, credits included (a credit note, a payment not yet set against anything): what the receivables and payables
+/// reports age, and what a breakdown of them (Finance's by installment) divides, so that each says the same total.
+/// True when more than [`MAX_ROWS`] items were open and the rest are left out.
+pub async fn open_items(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, kind: &str, party: Option<Uuid>, as_of: NaiveDate) -> Result<(Vec<Open>, bool)> {
     let items: Vec<(Uuid, String, Option<String>, NaiveDate, Option<NaiveDate>, Option<String>, String, Decimal, Decimal, Decimal)> = sqlx::query_as(
         "select o.id, o.entity, o.number, o.posting_date, o.due_date, coalesce(c.customer_name, s.supplier_name), o.currency, o.amount, \
-         o.amount - coalesce((select sum(x.amount) from allocation x where x.tenant_id = o.tenant_id and x.open_item_id = o.id and x.posting_date <= $3), 0), \
-         o.exchange_rate \
-         from open_item o left join e_customer c on c.tenant_id = o.tenant_id and c.id = o.customer_id \
+         o.amount - x.amount, o.base_amount - x.base \
+         from open_item o cross join lateral (select coalesce(sum(a.amount), 0) as amount, coalesce(sum(a.base_amount), 0) as base from allocation a \
+           where a.tenant_id = o.tenant_id and a.open_item_id = o.id and a.posting_date <= $3) x \
+         left join e_customer c on c.tenant_id = o.tenant_id and c.id = o.customer_id \
          left join e_supplier s on s.tenant_id = o.tenant_id and s.id = o.supplier_id \
          where o.tenant_id = $1 and o.company_id = $2 and o.party_kind = $4 and o.posting_date <= $3 and o.status <> 'cancelled' \
          and ($5::uuid is null or o.customer_id = $5 or o.supplier_id = $5) \
@@ -1883,15 +1900,34 @@ async fn ageing(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, kind
     .fetch_all(&mut **tx)
     .await?;
     let truncated = items.len() as i64 > MAX_ROWS;
+    let open = items
+        .into_iter()
+        .take(MAX_ROWS as usize)
+        .filter(|i| !i.8.is_zero())
+        .map(|(id, entity, number, posted, due, party_name, currency, amount, outstanding, base)| Open {
+            id,
+            entity,
+            number,
+            posted,
+            due,
+            party_name,
+            currency,
+            amount,
+            outstanding,
+            base,
+        })
+        .collect();
+    Ok((open, truncated))
+}
+
+async fn ageing(tx: &mut Tx, ctx: &Ctx, co: &ReportCompany, p: &Params<'_>, kind: &str) -> Result<Value> {
+    let as_of = p.date("as_of")?.unwrap_or_else(today);
+    let (items, truncated) = open_items(tx, ctx, co, kind, p.uuid(kind)?, as_of).await?;
     let buckets = ["not_due", "d1_30", "d31_60", "d61_90", "d90_plus"];
     let mut totals: BTreeMap<&str, Decimal> = buckets.iter().map(|b| (*b, Decimal::ZERO)).collect();
     let mut total_outstanding = Decimal::ZERO;
     let mut rows = Vec::new();
-    for (oid, entity, number, posted, due, name, currency, amount, outstanding, rate) in items.into_iter().take(MAX_ROWS as usize) {
-        if outstanding.is_zero() {
-            continue;
-        }
-        let base = crate::util::round(outstanding * rate, co.precision);
+    for Open { id: oid, entity, number, posted, due, party_name: name, currency, amount, outstanding, base } in items {
         let days = (as_of - due.unwrap_or(posted)).num_days();
         let bucket = match days {
             d if d <= 0 => "not_due",

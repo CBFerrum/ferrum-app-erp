@@ -40,10 +40,22 @@ create index mes_genealogy_forward on mes_genealogy (tenant_id, input_item, inpu
 create index mes_genealogy_back on mes_genealogy (tenant_id, output_item, output_lot);
 create trigger mes_genealogy_append_only before update or delete on mes_genealogy for each row execute function ferrum_forbid_change();
 
+-- What a released run has set aside. A balance says what exists, not whose it is: without this, two
+-- runs each find enough and neither has it. Gone when the run closes.
+create table mes_reservation (
+  tenant_id uuid not null,
+  run_id uuid not null,
+  item_id uuid not null,
+  warehouse_id uuid not null,
+  qty numeric(28,9) not null check (qty >= 0),
+  primary key (tenant_id, run_id, item_id, warehouse_id)
+);
+create index mes_reservation_item on mes_reservation (tenant_id, item_id, warehouse_id);
+
 do $$
 declare t text;
 begin
-  foreach t in array array['mes_event', 'mes_genealogy'] loop
+  foreach t in array array['mes_event', 'mes_genealogy', 'mes_reservation'] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
     execute format(

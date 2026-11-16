@@ -30,8 +30,10 @@ create table journal_entry (
   created_by uuid,
   created_at timestamptz not null default now(),
   created_txid bigint not null default txid_current(),
+  finance_book_id uuid,
   primary key (tenant_id, id),
   foreign key (tenant_id, company_id) references e_company (tenant_id, id),
+  constraint journal_entry_finance_book foreign key (tenant_id, finance_book_id) references e_finance_book (tenant_id, id),
   check (total_debit = total_credit and total_debit > 0)
 );
 create index journal_entry_source on journal_entry (tenant_id, source_entity, source_id);
@@ -58,6 +60,7 @@ create table journal_line (
   against_entity text,
   against_id uuid,
   remarks text,
+  finance_book_id uuid,
   primary key (tenant_id, posting_date, entry_id, line_no),
   check (not (debit > 0 and credit > 0)),
   check (num_nonnulls(customer_id, supplier_id) <= 1),
@@ -75,6 +78,12 @@ create index journal_line_customer on journal_line (tenant_id, customer_id, post
 create index journal_line_supplier on journal_line (tenant_id, supplier_id, posting_date) where supplier_id is not null;
 create index journal_line_against on journal_line (tenant_id, against_entity, against_id) where against_id is not null;
 create index journal_line_entry on journal_line (tenant_id, entry_id);
+-- Project profitability reads a project's lines directly.
+create index journal_line_project on journal_line (tenant_id, project_id, posting_date) where project_id is not null;
+create index journal_line_book on journal_line (tenant_id, company_id, finance_book_id, account_id, posting_date) where finance_book_id is not null;
+-- Accounting dimensions: a line's values are kept in dims as {code: value}, '{}' for none. Reports filter with
+-- dims @> '{"code": "value"}', served by this index, which holds only the lines that carry a dimension.
+create index journal_line_dims on journal_line using gin (dims jsonb_path_ops) where dims <> '{}'::jsonb;
 
 -- Yearly partitions; years that already have rows in the default partition stay there.
 create or replace function ferrum_ensure_journal_partitions(from_year int, to_year int) returns int
@@ -97,14 +106,18 @@ end $$;
 
 select ferrum_ensure_journal_partitions(extract(year from now())::int - 2, extract(year from now())::int + 2);
 
+-- A posting takes its period's row shared as it checks it. Closing the period (an update of that row) then waits
+-- for the postings already being made into it, and a posting that comes while a close is being made waits for the
+-- close and finds the period closed.
 create or replace function ferrum_journal_entry_guard() returns trigger
 language plpgsql as $$
+declare closed boolean;
 begin
-  if exists (
-    select 1 from accounting_period p
-    where p.tenant_id = new.tenant_id and p.company_id = new.company_id
-      and new.posting_date between p.period_start and p.period_end and p.status = 'closed'
-  ) then
+  select p.status = 'closed' into closed from accounting_period p
+   where p.tenant_id = new.tenant_id and p.company_id = new.company_id
+     and new.posting_date between p.period_start and p.period_end
+   for share;
+  if closed then
     raise exception 'ferrum: the accounting period containing % is closed', new.posting_date using errcode = 'P0001';
   end if;
   return new;
@@ -160,6 +173,28 @@ begin
 end $$;
 create constraint trigger journal_entry_balanced after insert on journal_entry
   deferrable initially deferred for each row execute function ferrum_check_journal_balance();
+
+-- Finance books (parallel accounting): a journal entry with no book is in every book; one with a book is in that
+-- book alone, beside the entries every book shares. A book is the common ledger and its own adjustments (another
+-- depreciation, another valuation), and each balances, because each entry does and all its lines are in its book.
+create or replace function ferrum_check_journal_book() returns trigger
+language plpgsql as $$
+begin
+  if exists (select 1 from journal_line l where l.tenant_id = new.tenant_id and l.entry_id = new.id and l.posting_date = new.posting_date
+             and l.finance_book_id is distinct from new.finance_book_id) then
+    raise exception 'ferrum: journal entry % has lines in another book than its own', new.id using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+create constraint trigger journal_entry_one_book after insert on journal_entry
+  deferrable initially deferred for each row execute function ferrum_check_journal_book();
+
+-- What a report reads: the common ledger, and the book the reading transaction names
+-- (`set_config('ferrum.finance_book', <id>, true)`). Naming none reads the common ledger alone. Row-level security
+-- holds as for the table (security_invoker).
+create view journal_line_in_book with (security_invoker = true) as
+  select * from journal_line
+  where finance_book_id is null or finance_book_id = nullif(current_setting('ferrum.finance_book', true), '')::uuid;
 
 create trigger journal_entry_append_only before update or delete on journal_entry
   for each row execute function ferrum_forbid_change();

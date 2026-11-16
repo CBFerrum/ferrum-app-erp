@@ -71,8 +71,8 @@ pub fn verify_link(key: &[u8], tenant: Uuid, token: &str, now: i64) -> std::resu
     Ok((rfq, row))
 }
 
-/// The workspace's link-signing key: a secret field of Procurement Settings, made on first use
-/// when `create` is set (sealing it needs the server's secret key, `FERRUM_SECRET_KEY`).
+/// The workspace's link-signing key: a secret field of Procurement Settings, sealed by the vault and read
+/// with Procurement's own handle, made on first use when `create` is set.
 pub async fn signing_key(k: &Kernel, ctx: &Ctx, tx: &mut Tx, create: bool) -> Result<Option<Vec<u8>>> {
     let tenant = ctx.tenant;
     // Creating locks the settings, so two first sends cannot each make a key.

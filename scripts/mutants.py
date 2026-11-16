@@ -33,7 +33,7 @@ TIMEOUT = 600
 MUTANTS = [
     # Finance books: each book is the common ledger and its own entries, and stays so.
     ("books-reversal-leaves-its-book", "src/ledger.rs", "                finance_book: *book,\n", "                finance_book: None,\n", BOOKS),
-    ("books-reports-see-every-book", "packages/accounting/sql/003_finance_books.sql", "  where finance_book_id is null or finance_book_id = nullif(current_setting('ferrum.finance_book', true), '')::uuid;", "  where true;", BOOKS),
+    ("books-reports-see-every-book", "packages/accounting/sql/001_ledger.sql", "  where finance_book_id is null or finance_book_id = nullif(current_setting('ferrum.finance_book', true), '')::uuid;", "  where true;", BOOKS),
     ("books-close-as-one", "addons/finance/src/closing.rs", "            books.entry(book).or_default().push((account, cc, balance));", "            books.entry(None).or_default().push((account, cc, balance));", BOOKS),
     ("books-change-what-parties-owe", "src/accounting.rs", 'if id(doc, "finance_book").is_some() && (s(l, "party_type").is_some() || matches!(typ, "Receivable" | "Payable")) {', "if false {", BOOKS),
     # A group's books: the parent and every company under it, translated, its business with itself taken out.

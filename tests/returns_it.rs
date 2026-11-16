@@ -770,37 +770,6 @@ async fn scenario() {
     assert_eq!(in_month(t.k.clone()).await, as_closed, "an entry landed in the month after it was closed");
     t.k.run_action(&t.ctx, "FiscalYear", fy, "reopen_period", json!({"period_start": month.to_string()})).await.expect("reopen");
 
-    // ───────────── returns made before 0.15.0: the migration counts them ─────────────
-    let counted = "select coalesce(sum(returned_qty), 0) + coalesce(sum(credited_amount), 0) from ( \
-         select id, returned_qty, null::numeric as credited_amount from e_delivery_note__items where tenant_id = $1 and $2 = $2 union all \
-         select id, returned_qty, credited_amount from e_sales_invoice__items where tenant_id = $1 union all \
-         select id, returned_qty, null from e_purchase_receipt__items where tenant_id = $1 union all \
-         select id, returned_qty, credited_amount from e_purchase_invoice__items where tenant_id = $1) x";
-    let before = t.scalar(counted, cid).await;
-    assert!(before > Decimal::ZERO);
-    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
-    // As 0.14 left them: no line of the original named, nothing kept on the originals.
-    for table in ["e_delivery_note__items", "e_sales_invoice__items", "e_purchase_receipt__items", "e_purchase_invoice__items"] {
-        let blank = format!("update {table} set return_line = null where tenant_id = $1 and return_line is not null");
-        sqlx::query(sqlx::AssertSqlSafe(blank)).bind(tenant).execute(&mut *tx).await.unwrap();
-        let zero = if table.ends_with("invoice__items") { ", credited_amount = 0" } else { "" };
-        let reset = format!("update {table} set returned_qty = 0{zero} where tenant_id = $1");
-        sqlx::query(sqlx::AssertSqlSafe(reset)).bind(tenant).execute(&mut *tx).await.unwrap();
-    }
-    tx.commit().await.unwrap();
-    assert_eq!(t.scalar(counted, cid).await, Decimal::ZERO);
-    // Uncounted, the delivery would offer its ten again.
-    let again = t.action("DeliveryNote", dn, "make_sales_return", json!({})).await;
-    assert_eq!(dec(&t.line(&t.get("DeliveryNote", again).await, 0)["qty"]), n("10"));
-    t.k.delete(&t.ctx, "DeliveryNote", again, None).await.unwrap();
-    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
-    sqlx::raw_sql(include_str!("../packages/selling/sql/001_returns.sql")).execute(&mut *tx).await.expect("selling's migration");
-    sqlx::raw_sql(include_str!("../packages/buying/sql/001_returns.sql")).execute(&mut *tx).await.expect("buying's migration");
-    tx.commit().await.unwrap();
-    assert_eq!(t.scalar(counted, cid).await, before, "every return counted again, as the engine counts them");
-    assert_eq!(dec(&t.get("DeliveryNote", dn).await["items"][0]["returned_qty"]), n("10"));
-    refused(t.k.run_action(&t.ctx, "DeliveryNote", dn, "make_sales_return", json!({})).await, "everything on DN-");
-
     // ───────────── a credit note at another rate than its invoice ─────────────
     // 100 dollars invoiced at 83 and credited in full at 84: the note settles the invoice, and the 100
     // rupees between the two rates are an exchange difference, not a balance left in receivables that

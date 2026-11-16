@@ -57,10 +57,73 @@ create table stored_value_attempt (
 create index stored_value_attempt_account on stored_value_attempt (tenant_id, account_id, at) where account_id is not null;
 create index stored_value_attempt_user on stored_value_attempt (tenant_id, user_id, at);
 
+-- A card's code and PIN never come to rest (src/stored_value.rs, prove). The platform logs an
+-- action's parameters and keeps a change's result as its receipt, so a code and PIN go only to the
+-- kind's prove, which keeps their hashes here and answers a random proof: for one operation on one
+-- kind, used once, gone after a few minutes. `effect_key`: the key the operation runs under, so a
+-- retry under it is given the same proof and repeats its receipt.
+create table stored_value_proof (
+  tenant_id uuid not null,
+  proof text not null,
+  kind_id uuid not null,
+  operation text not null,
+  effect_key text,
+  code_hash text not null,
+  code_hint text not null,
+  pin_hash text,
+  made boolean not null default false,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (tenant_id, proof)
+);
+create unique index stored_value_proof_key on stored_value_proof (tenant_id, kind_id, operation, effect_key) where effect_key is not null;
+
+-- Stored value held for an order before it is invoiced (src/stored_value.rs, holds). A hold sets
+-- part of an account's balance aside for one order: nothing is booked and the balance stays, but
+-- nothing else may take what is held. It ends once: released (by hand or when the order is
+-- cancelled), expired (by the upkeep, after the kind's hours), or redeemed (when the order is
+-- invoiced, as a payment from the account); each ending is one update from 'held', so it happens
+-- exactly once whoever races for it.
+create table stored_value_hold (
+  tenant_id uuid not null,
+  id uuid not null,
+  account_id uuid not null,
+  order_entity text not null,
+  order_id uuid not null,
+  amount numeric(28,9) not null check (amount > 0),
+  expires_at timestamptz not null,
+  state text not null default 'held' check (state in ('held', 'released', 'expired', 'redeemed')),
+  invoice_id uuid,
+  payment_id uuid,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  closed_at timestamptz,
+  primary key (tenant_id, id),
+  foreign key (tenant_id, account_id) references e_stored_value_account (tenant_id, id)
+);
+create index stored_value_hold_order on stored_value_hold (tenant_id, order_id) where state = 'held';
+create index stored_value_hold_account on stored_value_hold (tenant_id, account_id) where state = 'held';
+create index stored_value_hold_due on stored_value_hold (tenant_id, expires_at) where state = 'held';
+
+-- A card's code (and PIN) typed on a sales invoice's line or a payment waits here for its document to be submitted
+-- (src/stored_value.rs, `keep`): the code's hash, its last four characters and the PIN's hash, under a random handle.
+-- The record keeps only the handle and the four characters (`handle:hint` in `stored_value_secret`), which
+-- nobody who reads the record, an export or the audit trail can use; the submission that opens the card takes the row.
+create table stored_value_typed (
+  tenant_id uuid not null,
+  handle text not null,
+  code_hash text not null,
+  code_hint text not null,
+  pin_hash text,
+  created_at timestamptz not null default now(),
+  primary key (tenant_id, handle)
+);
+
 do $$
 declare t text;
 begin
-  foreach t in array array['stored_value_entry', 'stored_value_attempt'] loop
+  foreach t in array array['stored_value_entry', 'stored_value_attempt', 'stored_value_proof', 'stored_value_hold', 'stored_value_typed'] loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
     execute format(

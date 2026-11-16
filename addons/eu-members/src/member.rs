@@ -1,8 +1,8 @@
 //! What member states add to the EU's VAT on a company's sales at home: small businesses that
 //! charge no VAT under a national exemption, and the domestic reverse charge on what a member
 //! state lists (construction, scrap and the like) to business customers there; each says so on
-//! the invoice, in the member state's words (Germany's add-on does the same for § 19 and § 13b
-//! UStG).
+//! the invoice, in the member state's words. Germany's add-on (`ferrum-de`) gives its § 19 and
+//! § 13b UStG to these rules too.
 
 use crate::util::{b, get, id, rows, s, set};
 use async_trait::async_trait;

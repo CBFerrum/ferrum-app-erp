@@ -1,7 +1,7 @@
 //! EU member states on the European Union's add-on (Ferrum docs/plan/localization.md, L2), each its
 //! own app: Belgium (Peppol between businesses), Italy (FatturaPA through SDI), Poland (FA(3)
 //! through KSeF) and Romania (CIUS-RO through ANAF's e-Factura), with what member states add to the EU's VAT at home ([`member`]: small
-//! businesses' exemptions, the domestic reverse charge). Germany has its own crate (`ferrum-de`).
+//! businesses' exemptions, the domestic reverse charge). Germany has its own crate (`ferrum-de`), on [`member`] too.
 //!
 //! Each module is an app as Ferrum compiles them in (`MANIFEST`, `packages`, `register`,
 //! `reports`, `maintenance`): its manifest is `apps/<code>.yaml` and its package `packages/<code>`.

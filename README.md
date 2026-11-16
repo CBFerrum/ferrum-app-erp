@@ -494,7 +494,6 @@ Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
   allocating it and the floor from using it; receipts still pass. Whoever placed a hold does not release it.
 - **Nonconformances** with a disposition, and **corrective actions** (CAPA) closed only when someone other than
   the owner has seen them work.
-- **Inspection plans** per item and revision; an approved plan does not change.
 
 ### 🖨️ Print layouts and documents
 
@@ -720,7 +719,7 @@ outside service and a retry never sends twice.
 | ⚙️ Manufacturing Operations | Workstation, Workstation Type, Operation, Routing, Job Card, Production Plan, Subcontracting BOM, Subcontracting Order, Subcontracting Receipt |
 | 🏬 Warehouse | Managed Warehouse, Storage Zone, Storage Bin, Replenishment Rule, Handling Unit, Handling Unit Type, Inbound Shipment, Pick Wave, Warehouse Task, Shipment, Return Authorization, Cycle Count, Storage Contract |
 | 🛠️ Shop Floor | Production Run, Production Revision, Operator Qualification, Downtime Reason |
-| ✅ Quality | Quality Hold, Nonconformance, Corrective Action, Inspection Plan |
+| ✅ Quality | Quality Hold, Nonconformance, Corrective Action |
 | 🌍 Countries | EU VAT Rate; UK VAT Return; US Sales Tax Rate, US Rate Table, US Product Taxability, US Exemption Certificate; Portugal's invoice series |
 
 ### 👥 Roles
@@ -733,7 +732,7 @@ outside service and a retry never sends twice.
 | Purchase Manager / Purchase User | Suppliers, purchase orders, receipts and bills; the manager approves the first band |
 | Stock Manager / Stock User | Items, warehouses, price lists, stock entries, carriers and shipments |
 | Manufacturing Manager / Manufacturing User | BOMs, work orders and MRP runs |
-| Quality Manager / Quality User | Holds, nonconformances, corrective action, inspection plans (Quality) |
+| Quality Manager / Quality User | Holds, nonconformances, corrective action (Quality) |
 | Warehouse Manager / Operator / Viewer | The warehouse's tasks, waves, counts and approvals (WMS) |
 | Production Supervisor / Operator | Releases, runs and reports production (MES) |
 
@@ -961,9 +960,8 @@ First steps in a new workspace:
 
 Portugal's certified invoicing needs the software producer's key, as Portugal's secret `signing.key` in the
 installation's vault (`PUT /api/operator/secrets/pt/signing.key` with `{"value": "<the PEM>", "rule": {"reveal": true}}`),
-and the settings `pt.certificate` and `pt.key_version` (1 unless set). `FERRUM_PT_SIGNING_KEY`, `FERRUM_PT_CERTIFICATE`
-and `FERRUM_PT_KEY_VERSION` still work and win; the key given that way is kept in the vault once. Without a key and a
-certificate number, submitting an invoice there is refused.
+and the settings `pt.certificate` and `pt.key_version` (1 unless set). Without a key and a certificate number,
+submitting an invoice there is refused.
 
 ## 🔧 Develop
 
@@ -1008,9 +1006,8 @@ cargo test --workspace
 `FERRUM_<NAME>_TEST_DATABASE_URL` overrides each database's address (`FERRUM_ERP_TEST_DATABASE_URL`,
 `FERRUM_EU_MEMBERS_TEST_DATABASE_URL` and so on, the database's name in capitals). The end-to-end test
 (`tests/erp_it.rs`) walks a company through opening stock, procure-to-pay, order-to-cash with a fake IRP,
-payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues. Finance's upgrade test
-installs an older release from git history, so clone with the whole history. `scripts/mutants.py` breaks the
-warehouse's, shop floor's and quality's guarantees one at a time and fails if a test does not notice.
+payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues. `scripts/mutants.py`
+breaks the warehouse's, shop floor's and quality's guarantees one at a time and fails if a test does not notice.
 
 ### 🖥️ Interface
 
@@ -1052,7 +1049,7 @@ addons/
 ├── procurement/   material requests, RFQs, supplier quotations and scorecards
 ├── stock-ops/     reconciliation, landed costs, picking, packing, inspection, variants
 ├── mfg-ops/       workstations, routings, job cards, production plans, subcontracting
-├── quality/       holds, nonconformances, corrective action, inspection plans
+├── quality/       holds, nonconformances, corrective action
 ├── wms/           Warehouse, with its own interface
 ├── mes/           Shop Floor, with its own interface
 ├── india/ eu/ de/ gb/ us/ ca/

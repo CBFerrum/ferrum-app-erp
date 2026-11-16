@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::vault::{New, Scope, Vault, Zeroizing};
+use ferrum_kernel::vault::{New, Rule, Scope, Vault, Zeroizing};
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
@@ -242,12 +242,13 @@ async fn scenario() {
     let anaf = fake_anaf(uploads.clone()).await;
     // SAFETY: set before any connector runs, in this test's own process.
     unsafe { std::env::set_var("FERRUM_RO_ANAF_URL", &anaf) };
-    // SAFETY: as above; a throwaway key standing in for a certified producer's.
-    unsafe {
-        std::env::set_var("FERRUM_PT_SIGNING_KEY", include_str!("data/pt_test_key.pem"));
-        std::env::set_var("FERRUM_PT_CERTIFICATE", "9999");
-    }
+    // SAFETY: as above; the certificate number of a throwaway certification.
+    unsafe { std::env::set_var("FERRUM_PT_CERTIFICATE", "9999") };
     let k = fresh_kernel().await;
+    // The producer's key, a throwaway one, in Portugal's vault as an operator sets it: revealed to Portugal alone.
+    let pem = Zeroizing::new(include_str!("data/pt_test_key.pem").as_bytes().to_vec());
+    let reveal = Rule { reveal: true, ..Default::default() };
+    PT_VAULT.get().expect("Portugal's handle").set(&k, Scope::Installation, "signing.key", New::Value(pem), reveal).await.expect("the key");
     belgium(&k).await;
     italy(&k).await;
     poland(&k).await;
@@ -354,43 +355,31 @@ async fn portugal(k: &Arc<Kernel>) {
     assert!(cancelled["pt_qr"].as_str().unwrap().contains("*E:A*"));
 
     // ───────────── the producer's key in Portugal's own vault ─────────────
-    // The environment's key was kept there once, revealed to Portugal alone and sent nowhere.
+    // Revealed to Portugal alone and sent nowhere.
     let vault = PT_VAULT.get().expect("Portugal's handle");
-    let kept = vault.describe(&t.k, Scope::Installation, "signing.key").await.unwrap().expect("adopted");
+    let kept = vault.describe(&t.k, Scope::Installation, "signing.key").await.unwrap().expect("kept");
     assert_eq!((kept.version, kept.rule.reveal, kept.rule.hosts.len()), (1, true, 0));
     let pem = include_str!("data/pt_test_key.pem");
     let marker = pem.lines().nth(1).unwrap();
     assert_eq!(plain_anywhere(&t.k, marker).await, Vec::<String>::new(), "the key is plain in a table");
-    let resolved = |key: Option<&str>| {
-        ferrum_kernel::env::set(
-            [
-                ("FERRUM_PT_SIGNING_KEY".to_string(), key.map(str::to_string)),
-                ("FERRUM_PT_CERTIFICATE".to_string(), Some("8888".to_string())),
-                ("FERRUM_PT_KEY_VERSION".to_string(), None),
-            ]
-            .into(),
-        )
-    };
+    ferrum_kernel::env::set([("FERRUM_PT_CERTIFICATE".to_string(), Some("8888".to_string())), ("FERRUM_PT_KEY_VERSION".to_string(), None)].into());
     let tt = &t;
     let next = move || async move { tt.k.submit(&tt.ctx, "SalesInvoice", uid(&tt.invoice(cid, firm, goods).await), None).await };
-    // The vault holds another value: the environment's key, while it is set, still signs.
-    vault.rotate(&t.k, Scope::Installation, "signing.key", New::Value(Zeroizing::new(b"not a key".to_vec()))).await.unwrap();
-    resolved(Some(pem));
-    let signed = next().await.expect("the environment's key signs");
+    let signed = next().await.expect("the vault's key signs");
     assert!(signed["pt_hash_mention"].as_str().unwrap().ends_with("n.º 8888/AT"), "the stored certificate number");
-    // Nothing in the environment: the vault's key, whatever it holds, is the one.
-    resolved(None);
+    // The vault's key, whatever it holds, is the one: a value that is not a key is refused without being quoted.
+    vault.rotate(&t.k, Scope::Installation, "signing.key", New::Value(Zeroizing::new(b"not a key".to_vec()))).await.unwrap();
     let refused = format!("{:?}", next().await);
     assert!(refused.contains("not an RSA private key") && !refused.contains("not a key\""), "{refused}");
     vault.rotate(&t.k, Scope::Installation, "signing.key", New::Value(Zeroizing::new(pem.as_bytes().to_vec()))).await.unwrap();
-    let from_vault = next().await.expect("the vault's key signs");
+    let from_vault = next().await.expect("the vault's key signs again");
     let previous = signed["pt_hash"].as_str().unwrap();
     let (date, entry, no) =
         (from_vault["posting_date"].as_str().unwrap(), from_vault["pt_system_entry"].as_str().unwrap(), from_vault["pt_document_no"].as_str().unwrap());
     assert!(verify(&format!("{date};{entry};{no};123.00;{previous}"), from_vault["pt_hash"].as_str().unwrap()), "signed with the vault's key, chained");
     vault.remove(&t.k, Scope::Installation, "signing.key").await.unwrap();
     let none = format!("{:?}", next().await);
-    assert!(none.contains("no certification"), "with neither, plainly not set up: {none}");
+    assert!(none.contains("no certification"), "without the key, plainly not set up: {none}");
     ferrum_kernel::env::set(HashMap::new());
 }
 

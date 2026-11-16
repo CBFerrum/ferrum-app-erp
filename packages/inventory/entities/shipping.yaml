@@ -34,7 +34,6 @@
     - {name: freight_item, type: link, to: Item, label: Freight Item, required_if: "doc.freight == 'Charged to Customer'",
        description: "The item a delivery's label cost is charged to the customer as"}
     - {name: track_every_hours, type: int, min: "0", default: 6, label: Track Every (Hours), description: "How often labelled shipments are tracked by the upkeep; 0: only when asked or told"}
-    - {name: refused_calls, type: int, read_only: true, no_copy: true, label: Refused Inbound Calls, description: "Inbound tracking calls refused as unsigned or wrongly signed, before carriers' calls went to connections; the connection counts them now"}
   unique: [[company, connection_name]]
 
 - name: CarrierPackage
