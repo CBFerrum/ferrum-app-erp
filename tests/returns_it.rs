@@ -750,18 +750,22 @@ async fn scenario() {
             in_month(k).await
         })
     };
-    for _ in 0..200 {
+    // Until the second waits, or (without a lock) is done: either comes, however loaded the machine.
+    let mut waited = false;
+    for _ in 0..2400 {
         let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
             .bind(pid)
             .fetch_one(&t.k.db.pool)
             .await
             .unwrap();
         if waits || close.is_finished() {
+            waited = waits;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     posting.commit().await.unwrap();
+    assert!(waited, "the close waited for the posting");
     let as_closed = close.await.unwrap();
     assert_eq!(in_month(t.k.clone()).await, as_closed, "an entry landed in the month after it was closed");
     t.k.run_action(&t.ctx, "FiscalYear", fy, "reopen_period", json!({"period_start": month.to_string()})).await.expect("reopen");
