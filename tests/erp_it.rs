@@ -67,8 +67,8 @@ async fn fresh_kernel() -> (Arc<Kernel>, Arc<ferrum_plugins::PluginHost>) {
     }
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins.clone())));
-    // Secret fields (the IRP credentials) need a key; the fake IRP listens on a local address.
-    let settings = KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([5u8; 32])), webhooks_allow_private: true, ..Default::default() };
+    // The fake IRP listens on a local address, which only a development server calls.
+    let settings = KernelSettings { webhooks_allow_private: true, ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("maintenance");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
@@ -420,7 +420,10 @@ async fn scenario() {
         t.k.insert(&t.ctx, "Company", obj(json!({"company_name": "Bad", "abbr": "BAD", "default_currency": inr["id"], "in_gstin": "27AAPFU0939F1ZX"}))).await;
     assert!(matches!(bad, Err(Error::Validation(ref e)) if e.iter().any(|f| f.field == "in_gstin")), "{bad:?}");
     let company = t
-        .insert("Company", json!({"company_name": "Test Industries Pvt Ltd", "abbr": "TI", "default_currency": inr["id"], "in_gstin": " 27aapfu0939f1zv "}))
+        .insert(
+            "Company",
+            json!({"company_name": "Test Industries Pvt Ltd", "abbr": "TI", "default_currency": inr["id"], "country": "India", "in_gstin": " 27aapfu0939f1zv "}),
+        )
         .await;
     let cid = uid(&company);
     let company = t.get("Company", cid).await;
@@ -1263,7 +1266,7 @@ async fn scenario() {
     assert_eq!(t.gl("Creditors").await - creditors_before, n("-177"), "150 + CGST 13.5 + SGST 13.5");
     // Paying with tax withheld: 167 leaves the bank, 10 is owed to the tax office, all 177 is settled.
     let bank_before = t.gl("Primary Bank").await;
-    let tds = t.find_one("Account", json!({"account_name": "TDS Payable"})).await;
+    let tds = t.find_one("Account", json!({"account_name": "Withholding Tax Payable"})).await;
     let pay = t
         .insert(
             "PaymentEntry",
@@ -1278,7 +1281,7 @@ async fn scenario() {
     t.submit("PaymentEntry", uid(&pay)).await;
     assert_eq!(dec(&t.get("PurchaseInvoice", uid(&bill)).await["outstanding_amount"]), Decimal::ZERO);
     assert_eq!(t.gl("Creditors").await, creditors_before);
-    assert_eq!(t.gl("TDS Payable").await, n("-10"));
+    assert_eq!(t.gl("Withholding Tax Payable").await, n("-10"));
     assert_eq!(t.gl("Primary Bank").await - bank_before, n("-167"));
     // An opening balance entered as a journal entry line is offered and paid like a bill.
     let creditors = t.find_one("Account", json!({"account_name": "Creditors"})).await;
@@ -1974,7 +1977,7 @@ async fn scenario() {
     assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Company").await.unwrap(), Vec::<String>::new());
     assert_eq!(ferrum_domain::countries::backfill(&mut tx, t.ctx.tenant, "Address").await.unwrap(), vec!["Atlantis".to_string()]);
     tx.commit().await.unwrap();
-    assert_eq!((t.get("Company", gmbh).await["country_code"].clone(), t.get("Company", cid).await["country_code"].clone()), (json!("DE"), Value::Null));
+    assert_eq!((t.get("Company", gmbh).await["country_code"].clone(), t.get("Company", cid).await["country_code"].clone()), (json!("DE"), json!("IN")));
     assert_eq!(
         (t.get("Address", uid(&shipping)).await["country_code"].clone(), t.get("Address", uid(&billing)).await["country_code"].clone()),
         (json!("AT"), Value::Null)

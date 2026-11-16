@@ -146,7 +146,7 @@ async fn scenario() {
         let (t, c) = (&t, c.clone());
         async move { t.find_one("Account", json!({"account_name": name, "company": c})).await["id"].clone() }
     };
-    let (payable, collected, input) = (account("TDS Payable").await, account("Output Tax").await, account("Input Tax").await);
+    let (payable, collected, input) = (account("Withholding Tax Payable").await, account("Output Tax").await, account("Input Tax").await);
     let products = t.find_one("ItemGroup", json!({"group_name": "Products"})).await;
     let nos = t.find_one("Uom", json!({"uom_name": "Nos"})).await;
     let work = uid(&t
@@ -193,7 +193,7 @@ async fn scenario() {
     // 800 + 900 + 2900 + 1000 = 5600 > 5000: withheld on this 1000 and the 4600 before it.
     assert_eq!(T::withheld(&b4), vec![(n("1000"), n("5600"), n("10"), n("560"))]);
     assert_eq!((dec(&b4["withholding_amount"]), dec(&b4["outstanding_amount"])), (n("560"), n("440")));
-    assert_eq!(t.posted(uid(&b4)).await, map(&[("Administrative Expenses", "1000"), ("Creditors", "-440"), ("TDS Payable", "-560")]));
+    assert_eq!(t.posted(uid(&b4)).await, map(&[("Administrative Expenses", "1000"), ("Creditors", "-440"), ("Withholding Tax Payable", "-560")]));
 
     // ───────────── crossed, withholding on the part above it only ─────────────
     let s2 = supplier("Trader", &above).await;
@@ -201,7 +201,7 @@ async fn scenario() {
     assert_eq!(T::withheld(&g1), vec![(n("4000"), n("0"), n("10"), n("0"))]);
     let g2 = t.post("PurchaseInvoice", bill(&s2, "1500")).await;
     assert_eq!(T::withheld(&g2), vec![(n("1500"), n("500"), n("10"), n("50"))], "5500 is 500 above the threshold");
-    assert_eq!(t.posted(uid(&g2)).await, map(&[("Administrative Expenses", "1500"), ("Creditors", "-1450"), ("TDS Payable", "-50")]));
+    assert_eq!(t.posted(uid(&g2)).await, map(&[("Administrative Expenses", "1500"), ("Creditors", "-1450"), ("Withholding Tax Payable", "-50")]));
 
     // ───────────── a certificate: 2% up to 1000 of base, then the category's 10% ─────────────
     let s3 = supplier("Consultant", &fees).await;
@@ -215,7 +215,7 @@ async fn scenario() {
     let f2 = t.post("PurchaseInvoice", bill(&s3, "800")).await;
     assert_eq!(T::withheld(&f2), vec![(n("800"), n("400"), n("2"), n("8")), (n("0"), n("400"), n("10"), n("40"))], "400 left under the certificate");
     assert!(f2["withholdings"][0]["certificate"].is_string() && f2["withholdings"][1]["certificate"].is_null());
-    assert_eq!(t.posted(uid(&f2)).await, map(&[("Administrative Expenses", "800"), ("Creditors", "-752"), ("TDS Payable", "-48")]));
+    assert_eq!(t.posted(uid(&f2)).await, map(&[("Administrative Expenses", "800"), ("Creditors", "-752"), ("Withholding Tax Payable", "-48")]));
 
     // ───────────── on payment, part by part, on the bill's net ─────────────
     let s4 = supplier("Agency", &on_payment).await;
@@ -235,7 +235,7 @@ async fn scenario() {
     let pay1 = t.post("PaymentEntry", pay("500", "550")).await;
     assert_eq!(T::withheld(&pay1), vec![(n("500"), n("500"), n("10"), n("50"))]);
     assert_eq!((dec(&pay1["withholding_amount"]), dec(&pay1["unallocated_amount"])), (n("50"), n("0")));
-    assert_eq!(t.posted(uid(&pay1)).await, map(&[("Creditors", "550"), ("Primary Bank", "-500"), ("TDS Payable", "-50")]));
+    assert_eq!(t.posted(uid(&pay1)).await, map(&[("Creditors", "550"), ("Primary Bank", "-500"), ("Withholding Tax Payable", "-50")]));
     assert_eq!(dec(&t.get("PurchaseInvoice", uid(&p_bill)).await["outstanding_amount"]), n("550"));
     let pay2 = t.post("PaymentEntry", pay("500", "550")).await;
     assert_eq!(dec(&t.get("PurchaseInvoice", uid(&p_bill)).await["outstanding_amount"]), n("0"));
@@ -251,7 +251,7 @@ async fn scenario() {
         .await;
     assert_eq!(T::withheld(&advance), vec![(n("900"), n("900"), n("10"), n("90"))], "withheld on what is advanced");
     assert_eq!(dec(&advance["unallocated_amount"]), n("990"), "the landlord's credit: the money and what was withheld from it");
-    assert_eq!(t.posted(uid(&advance)).await, map(&[("Creditors", "990"), ("Primary Bank", "-900"), ("TDS Payable", "-90")]));
+    assert_eq!(t.posted(uid(&advance)).await, map(&[("Creditors", "990"), ("Primary Bank", "-900"), ("Withholding Tax Payable", "-90")]));
     let rent = t.post("PurchaseInvoice", bill(&s5, "1000")).await;
     assert_eq!(T::withheld(&rent), vec![(n("100"), n("100"), n("10"), n("10"))], "900 of it was withheld on with the advance");
     assert_eq!(dec(&rent["withholding_amount"]), n("10"), "100 in all, not 190");
@@ -263,7 +263,7 @@ async fn scenario() {
     credit["items"][0]["qty"] = json!("-1");
     let note = t.post("PurchaseInvoice", credit).await;
     assert_eq!(T::withheld(&note), vec![(n("-500"), n("-2800"), n("10"), n("-280"))], "half of the bill: half of what it withheld");
-    assert_eq!(t.posted(uid(&note)).await, map(&[("Administrative Expenses", "-500"), ("Creditors", "220"), ("TDS Payable", "280")]));
+    assert_eq!(t.posted(uid(&note)).await, map(&[("Administrative Expenses", "-500"), ("Creditors", "220"), ("Withholding Tax Payable", "280")]));
 
     // ───────────── a cancelled bill gives back what it withheld and leaves the year ─────────────
     t.k.cancel(&t.ctx, "PurchaseInvoice", uid(&g2), None).await.expect("cancel");
@@ -298,5 +298,5 @@ async fn scenario() {
     .to_string();
     let s3 = uid(&t.insert("Supplier", json!({"supplier_name": "Seeded Co", "withholding_category": seeded})).await).to_string();
     let b = t.post("PurchaseInvoice", bill(&s3, "100")).await;
-    assert_eq!(t.posted(uid(&b)).await.get("TDS Payable").copied(), Some(n("-10")));
+    assert_eq!(t.posted(uid(&b)).await.get("Withholding Tax Payable").copied(), Some(n("-10")));
 }

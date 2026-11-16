@@ -236,8 +236,10 @@ fn best_rule<'a>(rules: &'a Rules, item: &Doc, qty: Decimal, party: Option<&Doc>
 }
 
 /// Picks the default tax template for the company/kind whose condition matches the document. One whose
-/// condition does not compile cannot say whether it applies: the document is refused, naming it, rather
-/// than priced without its tax (or with a tax that is not its own).
+/// condition does not compile, or cannot be worked out for this document (it reads a field the document
+/// does not have, or compares unlike values), cannot say whether it applies: the document is refused,
+/// naming it, rather than priced without its tax (or with a tax that is not its own). A pricing rule's
+/// condition is taken the same way in both cases too: there, as applying to no one.
 async fn default_template(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, side: Side, cel_doc: &Value) -> Result<Option<Doc>> {
     let templates = find(
         k,
@@ -253,19 +255,22 @@ async fn default_template(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, sid
     let mut chosen = None;
     for t in templates {
         let applies = match condition(&t) {
-            None => true,
-            Some(Ok(e)) => e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user: &user }).unwrap_or(false),
-            Some(Err(e)) => {
-                let title = s(&t, "title").unwrap_or("the default tax template");
-                return Err(Error::field(
-                    "tax_template",
-                    format!("the condition of {title} does not compile ({e}): correct or clear it, or choose a tax template"),
-                ));
+            None => Ok(true),
+            Some(Ok(e)) => {
+                e.eval_bool(&Scope { doc: cel_doc, old: None, parent: None, user: &user }).map_err(|e| format!("cannot be worked out for this document ({e})"))
             }
+            Some(Err(e)) => Err(format!("does not compile ({e})")),
         };
-        if applies {
-            chosen = Some(t);
-            break;
+        match applies {
+            Ok(true) => {
+                chosen = Some(t);
+                break;
+            }
+            Ok(false) => {}
+            Err(why) => {
+                let title = s(&t, "title").unwrap_or("the default tax template");
+                return Err(Error::field("tax_template", format!("the condition of {title} {why}: correct or clear it, or choose a tax template")));
+            }
         }
     }
     // Lists carry no child rows: load the chosen template whole, with its tax rows.

@@ -49,6 +49,7 @@ impl DocHook for JournalEntryHook {
         let cr: Decimal = lines.iter().map(|l| round(d(l, "credit"), co.precision)).sum();
         set(doc, "total_debit", money(dr));
         set(doc, "total_credit", money(cr));
+        crate::localization::fill_voucher_registrations(hc.ctx, hc.entity, doc, &co.doc, None);
         Ok(())
     }
 
@@ -444,6 +445,13 @@ impl DocHook for PaymentEntryHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        let named = match party(doc) {
+            _ if transfer(doc) => None,
+            (Some(c), _, _) => Some(("Customer", get(hc.kernel, &sys(hc.ctx), hc.tx, "Customer", c).await?)),
+            (_, Some(sup), _) => Some(("Supplier", get(hc.kernel, &sys(hc.ctx), hc.tx, "Supplier", sup).await?)),
+            _ => None,
+        };
+        crate::localization::fill_voucher_registrations(hc.ctx, hc.entity, doc, &co.doc, named.as_ref().map(|(e, p)| (*e, p)));
         if transfer(doc) {
             return transfer_values(hc, doc, &co).await;
         }

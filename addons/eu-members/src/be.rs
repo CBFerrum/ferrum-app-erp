@@ -94,7 +94,8 @@ impl DocHook for BelgiumHook {
 
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         if hc.entity.def.name == "SalesInvoice" && peppol_due(hc, doc).await? {
-            ferrum_eu::ubl::send_peppol(hc, doc, None).await?;
+            let inv = ferrum_eu::ubl::invoice(hc, doc).await?;
+            ferrum_eu::ubl::send_peppol(hc, doc, &ferrum_eu::ubl::PEPPOL, inv).await?;
         }
         Ok(())
     }
@@ -110,7 +111,7 @@ async fn peppol_due(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<bool> {
     }
     let customer = get(hc.kernel, &ctx, hc.tx, "Customer", cust).await?;
     let vat = s(doc, "eu_customer_vat").or(s(&customer, "eu_vat_number")).unwrap_or_default().to_uppercase();
-    Ok(vat.starts_with("BE") && !matches!(s(doc, "eu_peppol_status"), Some("Sent" | "Pending")) && doc.get("docstatus").and_then(Value::as_i64) != Some(2))
+    Ok(vat.starts_with("BE") && !ferrum_eu::ubl::PEPPOL.holds(doc) && doc.get("docstatus").and_then(Value::as_i64) != Some(2))
 }
 
 pub fn rules() -> Rules {

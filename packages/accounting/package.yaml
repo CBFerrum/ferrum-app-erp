@@ -35,7 +35,7 @@ overlays:
       - {op: add_field, column: true, after: parent_company, field: {name: ownership_percent, type: percent, min: "0", max: "100", default: 100, label: Held by the Parent (%),
           description: "The share of this company its parent company holds; the rest is non-controlling interests in the group's books"}}
       # The letterhead and bank details printed on documents (print/ layouts of selling, buying, accounting, inventory).
-      - {op: add_field, after: tax_id, field: {name: acc_address_line1, type: data, label: Address Line 1, description: "Printed at the top of every document; India's registered address is used where this is empty"}}
+      - {op: add_field, after: tax_id, field: {name: acc_address_line1, type: data, label: Address Line 1, description: "Printed at the top of every document"}}
       - {op: add_field, after: acc_address_line1, field: {name: acc_address_line2, type: data, label: Address Line 2}}
       - {op: add_field, after: acc_address_line2, field: {name: acc_city, type: data, label: City, max_length: 80}}
       - {op: add_field, after: acc_city, field: {name: acc_region, type: data, label: State / Region, max_length: 80}}

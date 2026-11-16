@@ -60,14 +60,13 @@
   {% if co.acc_logo %}<img class="logo" src="{{ co.acc_logo }}" alt="">{% endif %}
   <div>
    <div class="co-name" dir="auto">{{ co.company_name or dt.company }}</div>
-   {% set generic = [co.acc_address_line1, co.acc_address_line2, co.acc_city, co.acc_region, co.acc_postal_code]|select|list|length > 0 %}
-   {% set street = [co.acc_address_line1, co.acc_address_line2]|select|join("\n") if generic else co.in_address %}
-   {% set cityline = [[co.acc_city, co.acc_region]|select|join(", "), co.acc_postal_code]|select|join(" ") if generic else [co.in_city, co.in_pincode]|select|join(" ") %}
+   {% set street = [co.acc_address_line1, co.acc_address_line2]|select|join("\n") %}
+   {% set cityline = [[co.acc_city, co.acc_region]|select|join(", "), co.acc_postal_code]|select|join(" ") %}
    {% for ln in [street, cityline, co.country]|select %}<div class="pre" dir="auto">{{ ln }}</div>{% endfor %}
    {% set contact = [co.acc_phone, co.acc_email, co.acc_website]|select|join(" · ") %}
    {% if contact %}<div class="muted" dir="auto">{{ contact }}</div>{% endif %}
    {% if co.tax_id %}<div><span class="muted">Tax ID</span> {{ co.tax_id }}</div>{% endif %}
-   {% if co.in_gstin and co.in_gstin != co.tax_id %}<div><span class="muted">GSTIN</span> {{ co.in_gstin }}</div>{% endif %}
+   {% for t in (doc.tax_registrations or {}).buyer or [] %}{% if t.value != co.tax_id %}<div><span class="muted">{{ t.label }}</span> {{ t.value }}</div>{% endif %}{% endfor %}
   </div>
  </div>
  <div class="title">
@@ -84,7 +83,7 @@
   <div class="strong" dir="auto">{{ su.supplier_name or doc.supplier_name }}</div>
   {% if ba %}{{ addr(ba) }}{% elif su.address %}<div class="pre" dir="auto">{{ su.address }}</div>{% endif %}
   {% if su.tax_id %}<div><span class="muted">Tax ID</span> {{ su.tax_id }}</div>{% endif %}
-  {% if su.in_gstin %}<div><span class="muted">GSTIN</span> {{ su.in_gstin }}</div>{% endif %}
+  {% for t in (doc.tax_registrations or {}).seller or [] %}{% if t.value != su.tax_id %}<div><span class="muted">{{ t.label }}</span> {{ t.value }}</div>{% endif %}{% endfor %}
   {% if su.email %}<div dir="auto">{{ su.email }}</div>{% endif %}
  </div>
  {% if sa %}<div><h2>Deliver to</h2>{{ addr(sa) }}</div>{% endif %}

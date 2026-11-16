@@ -13,8 +13,9 @@
 use crate::engine::{Country, NOT_SUBJECT, account};
 use crate::util::{d, get, id, rows, s, sys};
 use async_trait::async_trait;
-use ferrum_eu::ubl::{Invoice, Line, Party, Subtotal, endpoint, to_xml, unit_code};
-use ferrum_kernel::{Doc, DocHook, Error, Filter, HookCtx, Result, outbox};
+use ferrum_app_erp::submission::Channel;
+use ferrum_eu::ubl::{Invoice, Line, Party, Subtotal, endpoint, peppol, to_xml, unit_code};
+use ferrum_kernel::{Doc, DocHook, Error, Filter, HookCtx, Result};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 
@@ -35,6 +36,8 @@ pub struct Pint {
     pub execution_id: Option<&'static str>,
     /// Tax amounts in whole units (Japan's).
     pub whole_tax: bool,
+    /// Its Peppol channel on a sales invoice (`<package>_peppol_status` ...).
+    pub channel: Channel,
 }
 
 fn digits_only(v: &str) -> String {
@@ -54,6 +57,7 @@ pub static SG: Pint = Pint {
     },
     execution_id: None,
     whole_tax: false,
+    channel: peppol("sg_peppol"),
 };
 
 pub static AU: Pint = Pint {
@@ -64,6 +68,7 @@ pub static AU: Pint = Pint {
     code: anz_code,
     execution_id: None,
     whole_tax: false,
+    channel: peppol("au_peppol"),
 };
 
 pub static NZ: Pint = Pint {
@@ -75,6 +80,7 @@ pub static NZ: Pint = Pint {
     code: anz_code,
     execution_id: None,
     whole_tax: false,
+    channel: peppol("nz_peppol"),
 };
 
 fn anz_code(c: &str) -> &'static str {
@@ -101,6 +107,7 @@ pub static JP: Pint = Pint {
     },
     execution_id: None,
     whole_tax: true,
+    channel: peppol("jp_peppol"),
 };
 
 pub static AE: Pint = Pint {
@@ -116,6 +123,7 @@ pub static AE: Pint = Pint {
     },
     execution_id: Some("00000000"),
     whole_tax: false,
+    channel: peppol("ae_peppol"),
 };
 
 fn r2(v: Decimal) -> Decimal {
@@ -304,48 +312,16 @@ fn category_text(code: &str) -> &'static str {
 /// when the company says so), record the access point's answer.
 pub struct PintHook(pub &'static Country, pub &'static Pint);
 
-impl PintHook {
-    fn field(&self, f: &str) -> String {
-        format!("{}_{f}", self.0.package)
-    }
-
-    async fn save(&self, hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-
-    async fn send(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
-        let status = self.field("peppol_status");
-        if matches!(s(doc, &status), Some("Sent" | "Pending")) {
-            return Err(Error::invalid(format!("the invoice is already {}", s(doc, &status).unwrap_or_default().to_lowercase())));
-        }
-        let inv = invoice(hc, doc, self.0, self.1).await?;
-        let iid = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let (scheme, ident) = inv.buyer.endpoint.clone().unwrap_or_default();
-        let (s_scheme, s_ident) = inv.seller.endpoint.clone().unwrap_or_default();
-        let event = json!({
-            "invoice": iid, "number": s(doc, "number"), "company": s(doc, "company"), "sender": format!("{s_scheme}:{s_ident}"), "receiver": format!("{scheme}:{ident}"),
-            "document_type": if inv.credit_note { "credit_note" } else { "invoice" }, "profile": inv.customization, "ubl": to_xml(&inv),
-        });
-        let mut values = serde_json::Map::new();
-        values.insert(status, json!("Pending"));
-        values.insert(self.field("peppol_error"), Value::Null);
-        self.save(hc, doc, Value::Object(values)).await?;
-        outbox::enqueue(hc.tx, hc.ctx.tenant, ferrum_eu::ubl::SEND_TOPIC, Some("SalesInvoice"), Some(iid), event).await?;
-        Ok(json!({"status": "Pending"}))
-    }
-}
-
 #[async_trait]
 impl DocHook for PintHook {
     async fn on_submit(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if hc.entity.def.name != "SalesInvoice" || hc.entity.field(&self.field("peppol_status")).is_none() {
+        let ch = &self.1.channel;
+        if hc.entity.def.name != "SalesInvoice" || hc.entity.field(&ch.field("status")).is_none() {
             return Ok(());
         }
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let company = get(hc.kernel, &sys(hc.ctx), hc.tx, "Company", cid).await?;
-        if s(&company, "country_code") != Some(self.0.country) || !crate::util::b(&company, &self.field("peppol_on_submit")) {
+        if s(&company, "country_code") != Some(self.0.country) || !crate::util::b(&company, &format!("{}_peppol_on_submit", self.0.package)) {
             return Ok(());
         }
         let customer = match id(doc, "customer") {
@@ -353,23 +329,22 @@ impl DocHook for PintHook {
             None => return Ok(()),
         };
         // To customers on Peppol only (a Peppol ID, or a registration number that gives one).
-        let reachable = s(&customer, &self.field("peppol_id")).is_some() || s(&customer, self.0.number_field).and_then(self.1.endpoint_of).is_some();
+        let reachable = s(&customer, &ch.field("id")).is_some() || s(&customer, self.0.number_field).and_then(self.1.endpoint_of).is_some();
         if reachable {
-            self.send(hc, doc).await?;
+            ch.sendable(doc)?;
+            let inv = invoice(hc, doc, self.0, self.1).await?;
+            ferrum_eu::ubl::send_peppol(hc, doc, ch, inv).await?;
         }
         Ok(())
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, &self.field("peppol_status")), Some("Sent" | "Pending")) {
-            return Err(Error::invalid("the invoice went to the customer through Peppol: issue a credit note instead of cancelling it"));
-        }
-        Ok(())
+        self.1.channel.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
-        let code = self.0.package;
-        if hc.entity.field(&self.field("peppol_status")).is_none() || !name.starts_with(&format!("{code}_")) {
+        let (code, ch) = (self.0.package, &self.1.channel);
+        if hc.entity.field(&ch.field("status")).is_none() || !name.starts_with(&format!("{code}_")) {
             return Ok(None);
         }
         let action = &name[code.len() + 1..];
@@ -379,34 +354,19 @@ impl DocHook for PintHook {
                 let file = format!("{}.xml", inv.number.replace(['/', '\\'], "-"));
                 Ok(Some(json!({"file": {"name": file, "type": "application/xml", "content": to_xml(&inv)}})))
             }
-            "send_peppol" => self.send(hc, doc).await.map(Some),
+            "send_peppol" => {
+                ch.sendable(doc)?;
+                let inv = invoice(hc, doc, self.0, self.1).await?;
+                ferrum_eu::ubl::send_peppol(hc, doc, ch, inv).await.map(Some)
+            }
             "record_peppol" => {
-                if s(doc, &self.field("peppol_status")) != Some("Pending") {
-                    return Err(Error::invalid("only an invoice waiting for its access point is recorded"));
-                }
+                ch.waiting(doc, "only an invoice waiting for its access point is recorded")?;
                 let message = params.get("message_id").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty());
-                let mut values = serde_json::Map::new();
-                match message {
-                    Some(m) => {
-                        values.insert(self.field("peppol_status"), json!("Sent"));
-                        values.insert(self.field("peppol_message_id"), json!(m));
-                        values.insert(self.field("peppol_error"), Value::Null);
-                    }
-                    None => {
-                        let why = params
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .unwrap_or("the access point refused the invoice")
-                            .chars()
-                            .take(2000)
-                            .collect::<String>();
-                        values.insert(self.field("peppol_status"), json!("Failed"));
-                        values.insert(self.field("peppol_error"), json!(why));
-                    }
-                }
-                let status = values.get(&self.field("peppol_status")).cloned();
-                self.save(hc, doc, Value::Object(values)).await?;
-                Ok(Some(json!({"status": status})))
+                let answer = match message {
+                    Some(m) => Ok(m.to_string()),
+                    None => Err(params.get("error").and_then(Value::as_str).unwrap_or("the access point refused the invoice").chars().take(2000).collect()),
+                };
+                ferrum_eu::ubl::record_peppol(hc, doc, ch, answer).await.map(Some)
             }
             _ => Ok(None),
         }

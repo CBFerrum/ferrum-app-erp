@@ -6,7 +6,7 @@ depends: [selling, buying]
 field_prefix: in_
 
 # Country content as data (FN-28, FN-38 in part), arriving when an administrator updates the app; an accountant edits
-# them. Withholding (TDS) categories book to each company's TDS Payable (account 2132 of the standard chart) unless the
+# them. Withholding (TDS) categories book to each company's Withholding Tax Payable (account 2132 of the standard chart) unless the
 # category names an account for the company. The returns are definitions over the tax ledger; what their boxes cannot
 # say is By Hand and listed in the README.
 seed:

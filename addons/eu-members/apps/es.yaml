@@ -1,7 +1,7 @@
 # ERP's add-on for Spain, on the European Union's: VERI*FACTU invoicing records chained by their fingerprints, the verification QR code, the recargo de equivalencia, and the Canary Islands, Ceuta and Melilla outside the VAT area. Ferrum localization.md L2.
 id: es
 name: "Spain"
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: "VERI*FACTU invoicing records and QR codes, the recargo de equivalencia, and the Canary Islands, Ceuta and Melilla for ERP in Spain"
 categories: [finance]

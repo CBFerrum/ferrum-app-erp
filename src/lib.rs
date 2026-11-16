@@ -39,6 +39,7 @@ pub mod shipping;
 pub mod stock;
 pub mod stock_entry;
 pub mod stored_value;
+pub mod submission;
 pub mod tax_return;
 pub mod trade;
 pub mod withholding;

@@ -400,10 +400,18 @@ async fn scenario() {
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let broken = t.k.insert(&t.ctx, "SalesOrder", obj(plain)).await;
+    let broken = t.k.insert(&t.ctx, "SalesOrder", obj(plain.clone())).await;
     assert!(broken.is_err(), "priced without its tax: {:?}", broken.as_ref().map(|d| d["total_taxes"].clone()));
     let said = message(broken);
     assert!(said.contains("VAT for Globex"), "{said}");
     let refused = message(t.k.insert(&t.ctx, "TaxTemplate", obj(template("VAT typed in", "doc.customer_name == 'Globex"))).await);
     assert!(refused.starts_with("condition: "), "{refused}");
+    // One that compiles (the form takes it) but cannot be worked out for the document, reading a field the
+    // document does not have, cannot say whether it applies either: refused the same way, as a pricing rule's
+    // condition is taken the same way whether it does not compile or cannot be worked out.
+    t.k.update(&t.ctx, "TaxTemplate", globex_tax, obj(json!({"condition": "doc.export_licence == 'L-1'"})), None).await.expect("it compiles");
+    let unsaid = t.k.insert(&t.ctx, "SalesOrder", obj(plain)).await;
+    assert!(unsaid.is_err(), "priced without its tax: {:?}", unsaid.as_ref().map(|d| d["total_taxes"].clone()));
+    let said = message(unsaid);
+    assert!(said.contains("VAT for Globex") && said.contains("export_licence"), "{said}");
 }

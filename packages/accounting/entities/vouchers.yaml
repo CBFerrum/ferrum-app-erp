@@ -40,6 +40,8 @@
     - {name: currency, type: link, to: Currency, fetch_from: company.default_currency, read_only: true}
     - {name: finance_book, type: link, to: FinanceBook, in_filter: true, description: "Empty, the entry is in every book; with a book, it adjusts that book alone"}
     - {name: accounts, type: table, of: JournalEntryAccount, required: true}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The company's tax registrations (label and value), as the countries' add-ons say, kept as the draft was last saved"}
     - {name: total_debit, type: currency, currency: currency, read_only: true, in_list: true}
     - {name: total_credit, type: currency, currency: currency, read_only: true}
     - {name: remark, type: text}
@@ -151,6 +153,8 @@
     - {name: stored_value_units, type: decimal, min: "0", label: Units, no_copy: true, visible_if: "doc.stored_value_account != null",
        description: "For a kind that holds units: how many are taken (or given back); they pay for its items' lines on the invoice"}
     - {name: dimensions, type: json, description: "Accounting dimensions by code for every line the payment books, e.g. {\"department\": \"Sales\"}"}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The company's tax registrations (label and value) and the customer's or supplier's paid, as the countries' add-ons say, kept as the draft was last saved"}
     - {name: remarks, type: text}
   rules:
     - {name: positive, check: "doc.paid_amount > 0.0", message: "Paid amount must be greater than zero", on: submit}

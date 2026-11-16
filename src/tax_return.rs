@@ -10,7 +10,7 @@
 
 use crate::util::{company, d, date, id, money, rows, s, set};
 use async_trait::async_trait;
-use chrono::{Months, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -258,6 +258,9 @@ impl DocHook for ReturnHook {
         let to = period_end(from, s(&def, "frequency"));
         set(doc, "to_date", to.to_string());
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
+        // The period alone while its figures are worked out: invoices being posted into it are waited for and counted,
+        // and one that comes now waits for this return and, once it is filed, is refused.
+        take_months(hc.tx, cid, from, to, true).await?;
         let kept: HashMap<String, (Decimal, Option<String>)> = rows(doc, "boxes")
             .iter()
             .filter_map(|r| Some((s(r, "code")?.to_string(), (d(r, "adjustment"), s(r, "adjustment_reason").map(str::to_string)))))
@@ -313,10 +316,13 @@ impl DocHook for ReturnHook {
     }
 }
 
-/// Refuses to submit or cancel an invoice dated in a filed return's period: its figures are kept as filed.
+/// Refuses to submit or cancel an invoice dated in a filed return's period: its figures are kept as filed. The
+/// invoice's month is held (shared) to the end of its transaction, so a return of the period being worked out at once
+/// waits for it, or it for the return.
 pub async fn check_open(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
     let Some(ent) = hc.ctx.schema.entity("TaxReturn") else { return Ok(()) };
     let (Some(cid), Ok(on)) = (id(doc, "company"), date(doc, "posting_date")) else { return Ok(()) };
+    take_months(hc.tx, cid, on, on, false).await?;
     let filed: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "select coalesce(number, '') from {} where tenant_id = $1 and company = $2 and docstatus = 1 and $3 between from_date and to_date limit 1",
         ferrum_kernel::ddl::q(&ent.table)
@@ -332,6 +338,19 @@ pub async fn check_open(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         ))),
         None => Ok(()),
     }
+}
+
+/// Holds a company's months from `from`'s to `to`'s to the end of the transaction: alone (a return being worked out)
+/// or shared (an invoice being posted or cancelled). No row is there for every company and month, so a lock per
+/// company and month, taken in month order.
+async fn take_months(tx: &mut Tx, company: Uuid, from: NaiveDate, to: NaiveDate, alone: bool) -> Result<()> {
+    let lock = if alone { "select pg_advisory_xact_lock(hashtextextended($1, 0))" } else { "select pg_advisory_xact_lock_shared(hashtextextended($1, 0))" };
+    let mut month = from.with_day(1).unwrap_or(from);
+    while month <= to {
+        sqlx::query(lock).bind(format!("erp-tax-month:{company}:{}", month.format("%Y-%m"))).execute(&mut **tx).await?;
+        month = month.checked_add_months(Months::new(1)).unwrap_or(NaiveDate::MAX);
+    }
+    Ok(())
 }
 
 /// The documents behind a box of a return (`tax_return`, `box`): each with its base and tax.

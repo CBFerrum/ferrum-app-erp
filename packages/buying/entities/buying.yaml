@@ -51,6 +51,8 @@
     - {name: items, type: table, of: PurchaseOrderItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The seller's and the buyer's tax registrations (label and value) and whether the buyer is a registered business, as the countries' add-ons say, kept as the draft was last priced"}
     - {name: total, type: currency, read_only: true}
     - {name: net_total, type: currency, read_only: true}
     - {name: total_taxes, type: currency, read_only: true}
@@ -146,6 +148,8 @@
     - {name: items, type: table, of: PurchaseReceiptItem, required: true}
     - {name: taxes, type: table, of: TaxRow}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The seller's and the buyer's tax registrations (label and value) and whether the buyer is a registered business, as the countries' add-ons say, kept as the draft was last priced"}
     - {name: total, type: currency, read_only: true}
     - {name: net_total, type: currency, read_only: true}
     - {name: total_taxes, type: currency, read_only: true}
@@ -249,6 +253,8 @@
     - {name: withholdings, type: table, of: WithholdingLine, read_only: true, label: Withholding}
     - {name: withholding_amount, type: currency, currency: currency, read_only: true, label: Withheld, description: "Deducted from what the supplier is owed and booked to the category's account"}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: tax_registrations, type: json, read_only: true, no_copy: true, label: Tax Registrations,
+       description: "The seller's and the buyer's tax registrations (label and value) and whether the buyer is a registered business, as the countries' add-ons say, kept as the draft was last priced"}
     - {name: total, type: currency, currency: currency, read_only: true}
     - {name: discount_amount, type: currency, currency: currency, read_only: true}
     - {name: net_total, type: currency, currency: currency, read_only: true}

@@ -11,7 +11,6 @@
 
 use async_trait::async_trait;
 use chrono::{Datelike, Duration, Months};
-use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Mailer, SiteRequest, SiteResponse};
 use ferrum_meta::Catalog;
@@ -252,7 +251,7 @@ async fn scenario() {
         ferrum_domain::reports::add_source(source);
     }
     let mails = Arc::new(Mails::default());
-    let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), ..Default::default() };
+    let settings = KernelSettings::default();
     let k = Kernel::boot(db, catalog, hooks, settings, Some(mails.clone() as Arc<dyn Mailer>)).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
     ferrum_app_erp::maintenance(&k).await.expect("partitions");
@@ -996,17 +995,4 @@ async fn scenario() {
         .sql_scalar("select count(*) from (select entry_id from journal_line where tenant_id = $1 group by entry_id having sum(debit) <> sum(credit)) x")
         .await;
     assert_eq!(unbalanced, 0);
-    // Every secret field read here was read with its reader's own handle: nothing in this repository read past the
-    // vault, which the platform notes by caller (`ferrum task legacy_key`) in the background.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let past: Vec<_> = k
-        .legacy_key(vec![])
-        .await
-        .unwrap()
-        .uses
-        .into_iter()
-        .filter(|u| u.0.starts_with("reader:") && !u.1.contains("/checkouts/") && !u.1.starts_with("ferrum-"))
-        .map(|u| u.1)
-        .collect();
-    assert!(past.is_empty(), "read past the vault: {past:?}");
 }

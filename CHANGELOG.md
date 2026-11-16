@@ -1,5 +1,64 @@
 # Changelog
 
+## ERP 0.30.1, European Union 0.4.1, India 0.7.3, United Kingdom 0.3.1, United States 0.2.1, Malaysia 0.3.1, Singapore, Australia, New Zealand, Japan, United Arab Emirates 0.2.1, Belgium, France, Italy, Poland, Spain 0.1.1, Romania 0.2.1: one way to send a document outside
+
+No database or interface change: every channel keeps its fields, actions, topics and statuses.
+
+- **`ferrum_app_erp::submission`**: what a document sent to a receiver outside goes through, for every channel. A
+  `Channel` names its fields (`<prefix>_status`, `<prefix>_error`), its topic and the statuses in which the receiver
+  has the document; the engine marks the document Pending and queues what the channel built (`queue`), refuses sending
+  again and cancelling while the receiver has it (`sendable`, `refuse_cancel`), refuses an answer for a document not
+  waiting for one (`waiting`), records the answer (`record`), and records a connector's answer in a transaction of its
+  own (`submission::record`). Each add-on keeps only what is its own: the document it builds, the connector that talks
+  to its receiver, and how it reads the answer.
+- **One Peppol sender**: the EU's and the PINT countries' (Singapore, Australia, New Zealand, Japan, the United Arab
+  Emirates) both queue through `ferrum_eu::ubl::send_peppol` and record through `record_peppol`, each on its own fields;
+  the access point's event now carries the profile for the EU's invoices too.
+- On the engine: Belgium's, France's (PA), Italy's (SDI), Poland's (KSeF), Romania's (e-Factura), Spain's
+  (VERI*FACTU), Malaysia's (MyInvois), India's (e-invoice and e-way bill), the United Kingdom's (MTD return) and the
+  United States' (AvaTax) channels; the seven copies of the refuse-cancel guard, the ten copies of the hook's save and
+  the five of the connector's are gone.
+
+## ERP 0.30.0: the base names no country in its layouts, chart or manifest
+
+Seven documents gain a read-only Tax Registrations field; no interface change. ferrum-app-hr's suite looks the chart's
+TDS Payable up by name: it is Withholding Tax Payable now.
+
+- **Every layout prints the registrations the countries' add-ons give.** ERP's nine print layouts read India's
+  fields (`in_gstin`, and `in_address`, `in_city`, `in_pincode` where the letterhead was empty): seven printed a GSTIN
+  and no other country's registration. A layout now prints the document's `tax_registrations`, which ERP keeps on a
+  draft through its localization seam (`Localization::tax_ids`), each under the label its country gives: the seller's
+  and the buyer's on a sale and on a purchase (deliveries, receipts and orders included: the company sells on a sale and
+  buys on a purchase), the company's and the party's on a payment, the company's on a journal and a stock entry. The
+  letterhead's address is the company's letterhead fields. India's own sales invoice layout is unchanged.
+- **The standard chart's withholding accounts are Withholding Tax Receivable (1152) and Withholding Tax Payable
+  (2132)**, for every company; India's TDS categories book to 2132 as before.
+- **ERP's manifest no longer opens India's records**: they open where every other country's do, in the records of the
+  app they belong to.
+
+## ERP 0.29.1, India 0.7.2: four faults, each shown failing first
+
+No database or interface change.
+
+- **Two carrier upkeeps at once ask the carrier once.** Every replica runs the upkeep: one that listed a due shipment
+  while another was tracking it waited for its lock and then asked the carrier again. A shipment is now taken still due
+  under its lock (`skip locked`): one another upkeep is tracking is left to it, one tracked a moment ago is not due.
+  Track on a shipment still asks the carrier each time.
+- **Filing a tax return and an invoice of its period take turns.** An invoice whose check passed before a return was
+  filed landed in the filed period, counted by no return. An invoice being submitted or cancelled now holds its month
+  (shared) to its end, and a return being worked out holds its period's months alone (an advisory lock per company and
+  month: there is no row every posting and every return share). A return filed while an invoice of its period is being
+  submitted waits for it and counts it; an invoice submitted while its return is being filed waits, then is refused.
+- **A default tax template whose condition cannot be worked out for a document is said, not passed over.** A
+  condition that compiles but fails on the document (a field it does not have, unlike values compared) counted as "does
+  not apply", leaving the document untaxed. The document is now refused, naming the template, as for a condition that
+  does not compile. Each engine takes both failures one way: a pricing rule's applies to no one, a tax template's
+  refuses the document.
+- **India's rules are for companies in India** (India 0.7.2). A company that named no country was taken as Indian: in a
+  workspace with India beside another country, such a company got India's GST accounts and its default 18% GST
+  templates. Only a company whose country is India (country code IN) gets them now, as with every other country's
+  add-on. A company made for India must say so (the platform's demo company names none).
+
 ## ERP 0.29.0, Finance 0.7.0, Quality 0.2.0, Portugal 0.3.0, Germany 0.1.1, Manufacturing Execution 0.2.5, Warehouse Management 0.3.2: one way for each thing, nothing kept for data that never shipped
 
 Nothing is installed, so what carried older data or an older way forward goes. Every package's SQL changed: a database

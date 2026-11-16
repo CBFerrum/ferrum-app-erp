@@ -13,7 +13,8 @@ use crate::gst::{FOREIGN, state_name, validate_gstin};
 use crate::util::{d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
-use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result, outbox};
+use ferrum_app_erp::submission::{Channel, enqueue, save};
+use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Map, Value, json};
@@ -716,19 +717,30 @@ impl EInvoiceHook {
         };
         Ok(Sources { invoice: doc.clone(), company, customer, lines, taxes, original, currency })
     }
-
-    async fn save(hc: &mut HookCtx<'_>, doc: &Doc, values: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let Value::Object(v) = values else { return Ok(()) };
-        hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "SalesInvoice", inv, v).await
-    }
-
-    async fn emit(hc: &mut HookCtx<'_>, doc: &Doc, topic: &str, payload: Value) -> Result<()> {
-        let inv = id(doc, "id").ok_or_else(|| Error::internal("invoice without id"))?;
-        let event = json!({"invoice": inv, "number": s(doc, "number"), "company": s(doc, "company"), "payload": payload});
-        outbox::enqueue(hc.tx, hc.ctx.tenant, topic, Some("SalesInvoice"), Some(inv), event).await
-    }
 }
+
+/// What the IRP's connector is handed: the invoice, and what it sends.
+fn event(doc: &Doc, payload: Value) -> Value {
+    json!({"invoice": id(doc, "id"), "number": s(doc, "number"), "company": s(doc, "company"), "payload": payload})
+}
+
+/// The invoice's e-invoice at the IRP: one made there, or being made or cancelled, holds the invoice.
+const E_INVOICE: Channel = Channel {
+    what: "e-invoice",
+    prefix: "in_e_invoice",
+    topic: "india.e_invoice.requested",
+    held: &["Generated", "Pending", "Cancelling"],
+    instead: "cancel the e-invoice at the IRP first (within 24 hours of its acknowledgement) and record that here, or record that its request failed; after 24 hours issue a credit note instead",
+};
+
+/// The invoice's e-way bill: one made, or being made or cancelled, holds the invoice.
+const E_WAY_BILL: Channel = Channel {
+    what: "e-way bill",
+    prefix: "in_e_way_bill",
+    topic: "india.e_way_bill.requested",
+    held: &["Generated", "Pending", "Cancelling"],
+    instead: "cancel the e-way bill first (within 24 hours of making it), or record that its request failed",
+};
 
 fn file(name: &str, content: &Value) -> Value {
     json!({"name": name, "type": "application/json", "content": serde_json::to_string_pretty(content).unwrap_or_default()})
@@ -754,15 +766,8 @@ fn param(params: &Value, key: &str, max: usize) -> Result<Option<String>> {
 #[async_trait]
 impl DocHook for EInvoiceHook {
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        if matches!(s(doc, "in_e_way_bill_status"), Some("Generated" | "Cancelling" | "Pending")) {
-            return Err(Error::invalid("cancel the e-way bill first (within 24 hours of making it), or record that its request failed"));
-        }
-        if matches!(s(doc, "in_e_invoice_status"), Some("Generated" | "Cancelling" | "Pending")) {
-            return Err(Error::invalid(
-                "cancel the e-invoice at the IRP first (within 24 hours of its acknowledgement) and record that here, or record that its request failed; after 24 hours issue a credit note instead",
-            ));
-        }
-        Ok(())
+        E_WAY_BILL.refuse_cancel(doc)?;
+        E_INVOICE.refuse_cancel(doc)
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -779,13 +784,9 @@ impl DocHook for EInvoiceHook {
                 json!({"payload": payload, "file": file(&format!("{}-e-invoice.json", number.replace('/', "-")), &json!([payload]))})
             }
             "request_e_invoice" => {
-                if matches!(status.as_str(), "Generated" | "Pending" | "Cancelling") {
-                    return Err(Error::invalid(format!("the e-invoice is already {}", status.to_lowercase())));
-                }
+                E_INVOICE.sendable(doc)?;
                 let payload = Self::sources(hc, doc).await?.e_invoice()?;
-                Self::save(hc, doc, json!({"in_e_invoice_status": "Pending", "in_e_invoice_error": null})).await?;
-                Self::emit(hc, doc, "india.e_invoice.requested", payload).await?;
-                json!({"status": "Pending"})
+                E_INVOICE.queue(hc, doc, json!({}), event(doc, payload)).await?
             }
             "record_e_invoice" => {
                 let irn = answer_field(params, "Irn").ok_or_else(|| Error::field("response", "the IRP's answer has no Irn"))?;
@@ -852,7 +853,7 @@ impl DocHook for EInvoiceHook {
                     v["in_e_way_bill_valid_till"] = json!(answer_field(params, "EwbValidTill"));
                     v["in_e_way_bill_status"] = json!("Generated");
                 }
-                Self::save(hc, doc, v).await?;
+                save(hc, doc, v).await?;
                 json!({"status": "Generated", "irn": irn})
             }
             "record_e_invoice_failure" => {
@@ -860,8 +861,7 @@ impl DocHook for EInvoiceHook {
                     return Ok(Some(json!({"status": status})));
                 }
                 let message = param(params, "message", 2000)?.unwrap_or_else(|| "the IRP refused the e-invoice".into());
-                Self::save(hc, doc, json!({"in_e_invoice_status": "Failed", "in_e_invoice_error": message})).await?;
-                json!({"status": "Failed"})
+                E_INVOICE.record(hc, doc, "Failed", Some(message), json!({})).await?
             }
             "cancel_e_invoice" => {
                 if status != "Generated" {
@@ -880,8 +880,8 @@ impl DocHook for EInvoiceHook {
                 };
                 let remark = param(params, "remark", 100)?.ok_or_else(|| Error::field("remark", "say why, in at most 100 characters"))?;
                 let payload = json!({"Irn": s(doc, "in_irn"), "CnlRsn": reason, "CnlRem": remark});
-                Self::save(hc, doc, json!({"in_e_invoice_status": "Cancelling"})).await?;
-                Self::emit(hc, doc, "india.e_invoice.cancel_requested", payload.clone()).await?;
+                save(hc, doc, json!({"in_e_invoice_status": "Cancelling"})).await?;
+                enqueue(hc, doc, "india.e_invoice.cancel_requested", event(doc, payload.clone())).await?;
                 json!({"status": "Cancelling", "payload": payload})
             }
             "record_e_invoice_cancellation" => {
@@ -891,7 +891,7 @@ impl DocHook for EInvoiceHook {
                 if let Some(irn) = answer_field(params, "Irn").filter(|i| Some(i.as_str()) != s(doc, "in_irn")) {
                     return Err(Error::field("response", format!("this cancellation is for another IRN ({irn})")));
                 }
-                Self::save(hc, doc, json!({"in_e_invoice_status": "Cancelled", "in_e_invoice_cancelled_at": answer_field(params, "CancelDate").unwrap_or_else(|| Utc::now().to_rfc3339())})).await?;
+                save(hc, doc, json!({"in_e_invoice_status": "Cancelled", "in_e_invoice_cancelled_at": answer_field(params, "CancelDate").unwrap_or_else(|| Utc::now().to_rfc3339())})).await?;
                 json!({"status": "Cancelled"})
             }
             "record_e_invoice_cancellation_failure" => {
@@ -899,11 +899,11 @@ impl DocHook for EInvoiceHook {
                     return Ok(Some(json!({"status": status})));
                 }
                 let message = param(params, "message", 2000)?.unwrap_or_else(|| "the IRP refused the cancellation".into());
-                Self::save(hc, doc, json!({"in_e_invoice_status": "Generated", "in_e_invoice_error": message})).await?;
+                save(hc, doc, json!({"in_e_invoice_status": "Generated", "in_e_invoice_error": message})).await?;
                 json!({"status": "Generated"})
             }
             "set_transport" => {
-                if matches!(ewb.as_str(), "Generated" | "Pending" | "Cancelling") {
+                if E_WAY_BILL.holds(doc) {
                     return Err(Error::invalid(format!("the e-way bill is {}: cancel it before changing the transport", ewb.to_lowercase())));
                 }
                 let mut v = Map::new();
@@ -937,7 +937,7 @@ impl DocHook for EInvoiceHook {
                     NaiveDate::parse_from_str(&day, "%Y-%m-%d").map_err(|_| Error::field("in_transport_doc_date", "a date (YYYY-MM-DD)"))?;
                     v.insert("in_transport_doc_date".into(), json!(day));
                 }
-                Self::save(hc, doc, Value::Object(v)).await?;
+                save(hc, doc, Value::Object(v)).await?;
                 json!({"saved": true})
             }
             "e_way_bill_json" => {
@@ -946,13 +946,9 @@ impl DocHook for EInvoiceHook {
                 json!({"payload": payload, "by_irn": status == "Generated", "file": file(&format!("{}-e-way-bill.json", number.replace('/', "-")), &content)})
             }
             "request_e_way_bill" => {
-                if matches!(ewb.as_str(), "Generated" | "Pending" | "Cancelling") {
-                    return Err(Error::invalid(format!("the e-way bill is already {}", ewb.to_lowercase())));
-                }
+                E_WAY_BILL.sendable(doc)?;
                 let payload = Self::sources(hc, doc).await?.e_way_bill()?;
-                Self::save(hc, doc, json!({"in_e_way_bill_status": "Pending", "in_e_way_bill_error": null})).await?;
-                Self::emit(hc, doc, "india.e_way_bill.requested", json!({"by_irn": status == "Generated", "bill": payload})).await?;
-                json!({"status": "Pending"})
+                E_WAY_BILL.queue(hc, doc, json!({}), event(doc, json!({"by_irn": status == "Generated", "bill": payload}))).await?
             }
             "record_e_way_bill" => {
                 let no = answer_field(params, "EwbNo")
@@ -970,7 +966,7 @@ impl DocHook for EInvoiceHook {
                 }
                 let made = answer_field(params, "EwbDt").or_else(|| answer_field(params, "ewayBillDate"));
                 let valid = answer_field(params, "EwbValidTill").or_else(|| answer_field(params, "validUpto"));
-                Self::save(
+                save(
                     hc,
                     doc,
                     json!({"in_ewaybill_no": no, "in_e_way_bill_date": made, "in_e_way_bill_valid_till": valid, "in_e_way_bill_status": "Generated", "in_e_way_bill_error": null}),
@@ -983,8 +979,7 @@ impl DocHook for EInvoiceHook {
                     return Ok(Some(json!({"status": ewb})));
                 }
                 let message = param(params, "message", 2000)?.unwrap_or_else(|| "the portal refused the e-way bill".into());
-                Self::save(hc, doc, json!({"in_e_way_bill_status": "Failed", "in_e_way_bill_error": message})).await?;
-                json!({"status": "Failed"})
+                E_WAY_BILL.record(hc, doc, "Failed", Some(message), json!({})).await?
             }
             "cancel_e_way_bill" => {
                 if ewb != "Generated" {
@@ -1000,15 +995,15 @@ impl DocHook for EInvoiceHook {
                 };
                 let remark = param(params, "remark", 50)?.ok_or_else(|| Error::field("remark", "say why, in at most 50 characters"))?;
                 let payload = json!({"ewbNo": s(doc, "in_ewaybill_no").and_then(|n| n.parse::<u64>().ok()), "cancelRsnCode": reason, "cancelRmrk": remark});
-                Self::save(hc, doc, json!({"in_e_way_bill_status": "Cancelling"})).await?;
-                Self::emit(hc, doc, "india.e_way_bill.cancel_requested", payload.clone()).await?;
+                save(hc, doc, json!({"in_e_way_bill_status": "Cancelling"})).await?;
+                enqueue(hc, doc, "india.e_way_bill.cancel_requested", event(doc, payload.clone())).await?;
                 json!({"status": "Cancelling", "payload": payload})
             }
             "record_e_way_bill_cancellation" => {
                 if !matches!(ewb.as_str(), "Generated" | "Cancelling") {
                     return Ok(Some(json!({"status": ewb})));
                 }
-                Self::save(hc, doc, json!({"in_e_way_bill_status": "Cancelled"})).await?;
+                save(hc, doc, json!({"in_e_way_bill_status": "Cancelled"})).await?;
                 json!({"status": "Cancelled"})
             }
             _ => return Ok(None),
