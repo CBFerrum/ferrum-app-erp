@@ -107,4 +107,60 @@ async fn scenario() {
     assert_eq!(boxes(&t.get("TaxReturn", rid).await)["NET"], n(13), "kept as filed");
     let csv = String::from_utf8(t.k.render_document(&t.ctx, "accounting.tax_return_csv", rid, None, false).await.expect("export").bytes).unwrap();
     assert!(csv.lines().any(|l| l == "NET,Payable,13.00,0.00,,13.00") && csv.contains("MAN,Entered by hand,0.00,3.00,Margin scheme sales,3.00"), "{csv}");
+
+    // Filing and an invoice of the period at once take turns. A return filed while an invoice of its
+    // period is being submitted waits for it and counts it ...
+    let month = |back: u32| first.checked_sub_months(chrono::Months::new(back)).unwrap();
+    let dated = |day: NaiveDate| {
+        let mut v = sale(&full, "1");
+        v["posting_date"] = json!(day.to_string());
+        v
+    };
+    let return_for = |from: NaiveDate| json!({"definition": def, "company": c, "from_date": from.to_string()});
+    let held = uid(&t.insert("SalesInvoice", dated(month(1))).await);
+    let ret = uid(&t.insert("TaxReturn", return_for(month(1))).await);
+    let mut invoicing = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    t.k.submit_tx(&t.ctx, &mut invoicing, "SalesInvoice", held, None).await.expect("the invoice, being submitted");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *invoicing).await.unwrap();
+    let filing = {
+        let (k, ctx) = (t.k.clone(), t.ctx.clone());
+        tokio::spawn(async move { k.submit(&ctx, "TaxReturn", ret, None).await })
+    };
+    let waited = waits_on(&t, pid, &filing).await;
+    invoicing.commit().await.unwrap();
+    let filed = filing.await.unwrap().expect("filed");
+    assert_eq!(boxes(&filed)["OUT"], n(10), "the return counts the invoice submitted as it was filed");
+    assert!(waited, "filing waited for the invoice being submitted");
+    // ... and an invoice submitted while its period's return is being filed waits for it, then is refused.
+    let late = uid(&t.insert("SalesInvoice", dated(month(2))).await);
+    let ret = uid(&t.insert("TaxReturn", return_for(month(2))).await);
+    let mut filing = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    t.k.submit_tx(&t.ctx, &mut filing, "TaxReturn", ret, None).await.expect("the return, being filed");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *filing).await.unwrap();
+    let invoicing = {
+        let (k, ctx) = (t.k.clone(), t.ctx.clone());
+        tokio::spawn(async move { k.submit(&ctx, "SalesInvoice", late, None).await })
+    };
+    let waited = waits_on(&t, pid, &invoicing).await;
+    filing.commit().await.unwrap();
+    let late = invoicing.await.unwrap();
+    assert!(matches!(&late, Err(e) if format!("{e:?}").contains("is filed for")), "an invoice submitted into a period as it was filed: {late:?}");
+    assert!(waited, "the invoice waited for the filing");
+}
+
+/// Until a backend waits for a lock `pid` holds (true), or `task` is done without that (false), however loaded the
+/// machine.
+async fn waits_on<R>(t: &T, pid: i32, task: &tokio::task::JoinHandle<R>) -> bool {
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&t.k.db.pool)
+            .await
+            .unwrap();
+        if waits || task.is_finished() {
+            return waits;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
 }
