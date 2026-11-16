@@ -22,3 +22,32 @@ overlays:
           description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
       - {op: add_field, after: th_vat_category, field: {name: th_kind, type: select, label: "Goods or Services (Thailand)", options: [Goods, Services],
           description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+
+seed:
+  # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "Thailand PP 30"
+        country: TH
+        frequency: Monthly
+        notes: "The Revenue Department's PP.30 from the tax ledger: the boxes in capitals sum the ledger, the form's numbered boxes are formulas over them. The period is a month: set the frequency to the one the company files for."
+        boxes:
+          - {code: "STD", label: "Standard-rated sales", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "ZR", label: "Zero-rated sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "EXM", label: "Exempted sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "OUT_TAX", label: "Output tax", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "IN_BASE", label: "Standard-rated purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "RC", label: "Services from abroad", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "IN_TAX", label: "Input tax on standard-rated purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "RC_TAX", label: "Tax on services from abroad", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "1", label: "Sales amount", kind: Formula, formula: "STD + ZR + EXP + EXM"}
+          - {code: "2", label: "Less sales subject to 0% tax rate", kind: Formula, formula: "ZR + EXP"}
+          - {code: "3", label: "Less exempted sales", kind: Formula, formula: "EXM"}
+          - {code: "4", label: "Taxable sales amount", kind: Formula, formula: "STD"}
+          - {code: "5", label: "Output tax this month", kind: Formula, formula: "OUT_TAX"}
+          - {code: "6", label: "Purchase amount entitled to deduction of input tax", kind: Formula, formula: "IN_BASE + RC"}
+          - {code: "7", label: "Input tax this month", kind: Formula, formula: "IN_TAX + RC_TAX"}
+          - {code: "8", label: "Tax payable", kind: Formula, formula: "max(OUT_TAX - IN_TAX - RC_TAX, 0)"}
+          - {code: "9", label: "Excess tax payment", kind: Formula, formula: "max(IN_TAX + RC_TAX - OUT_TAX, 0)"}

@@ -581,7 +581,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
 | 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
 | 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
-| 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 | — |
+| 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
 | 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q | — |
 | 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT | — |
 | 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.2.0 | VAT 15%, reverse charge | ZATCA's VAT return | — |
