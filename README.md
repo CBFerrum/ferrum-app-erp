@@ -961,9 +961,8 @@ First steps in a new workspace:
 
 Portugal's certified invoicing needs the software producer's key, as Portugal's secret `signing.key` in the
 installation's vault (`PUT /api/operator/secrets/pt/signing.key` with `{"value": "<the PEM>", "rule": {"reveal": true}}`),
-and the settings `pt.certificate` and `pt.key_version` (1 unless set). `FERRUM_PT_SIGNING_KEY`, `FERRUM_PT_CERTIFICATE`
-and `FERRUM_PT_KEY_VERSION` still work and win; the key given that way is kept in the vault once. Without a key and a
-certificate number, submitting an invoice there is refused.
+and the settings `pt.certificate` and `pt.key_version` (1 unless set). Without a key and a certificate number,
+submitting an invoice there is refused.
 
 ## 🔧 Develop
 
