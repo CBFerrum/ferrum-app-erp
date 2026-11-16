@@ -6,7 +6,7 @@ use crate::budget::{actual, ordered, requested};
 use crate::common::{fiscal_year, fiscal_year_of};
 use crate::rules::{self, MONTHS};
 use crate::subscription::{self, Sub};
-use crate::terms::{open_installments, schedules};
+use crate::terms::{Installment, open_installments, schedules};
 use async_trait::async_trait;
 use chrono::{Datelike, Duration, NaiveDate};
 use ferrum_domain::reports::{Params, ReportCompany, ReportSource, col, param_def, period, read_tx, resolve_company, today};
@@ -495,6 +495,11 @@ async fn upcoming_subscriptions(
 
 // ───────────────────────────── receivables by due date ─────────────────────────────
 
+/// The receivables (or payables) report by installment: what it says is open (`ferrum_app_erp::reports::open_items`),
+/// each invoice in its payment schedule's installments with what each still has open, aged from its own due date. An
+/// item's figure in the company's currency is shared by what its installments have open, the last taking what rounding
+/// leaves, so the total is the report's. A credit (a credit note, a payment not yet set against anything) has no
+/// installments: it is one row.
 async fn by_due_date(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>) -> Result<Value> {
     let as_of = p.date("as_of")?.unwrap_or_else(today);
     let supplier_side = p.str("party_type") == Some("Supplier");
@@ -506,36 +511,25 @@ async fn by_due_date(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>)
     } else {
         ("customer", "SalesInvoice", "e_sales_invoice", p.uuid("customer")?)
     };
-    let items: Vec<(Uuid, String, Option<String>, NaiveDate, Option<NaiveDate>, Option<String>, String, Decimal, Decimal, Decimal)> = sqlx::query_as(
-        "select o.id, o.entity, o.number, o.posting_date, o.due_date, coalesce(c.customer_name, s.supplier_name), trim(o.currency), o.amount, \
-         o.amount - coalesce((select sum(x.amount) from allocation x where x.tenant_id = o.tenant_id and x.open_item_id = o.id and x.posting_date <= $3), 0), \
-         o.exchange_rate from open_item o left join e_customer c on c.tenant_id = o.tenant_id and c.id = o.customer_id \
-         left join e_supplier s on s.tenant_id = o.tenant_id and s.id = o.supplier_id \
-         where o.tenant_id = $1 and o.company_id = $2 and o.party_kind = $4 and o.posting_date <= $3 and o.status <> 'cancelled' and o.amount > 0 \
-         and ($5::uuid is null or o.customer_id = $5 or o.supplier_id = $5) order by coalesce(o.due_date, o.posting_date), o.posting_date limit 20000",
-    )
-    .bind(ctx.tenant)
-    .bind(co.id)
-    .bind(as_of)
-    .bind(kind)
-    .bind(party)
-    .fetch_all(&mut **tx)
-    .await?;
-    let ids: Vec<Uuid> = items.iter().filter(|i| i.1 == entity).map(|i| i.0).collect();
+    let (items, truncated) = ferrum_app_erp::reports::open_items(tx, ctx, co, kind, party, as_of).await?;
+    let ids: Vec<Uuid> = items.iter().filter(|i| i.entity == entity).map(|i| i.id).collect();
     let plans = schedules(tx, ctx.tenant, table, &ids).await?;
     let buckets = ["not_due", "d1_30", "d31_60", "d61_90", "d90_plus"];
     let mut totals: BTreeMap<&str, Decimal> = buckets.iter().map(|b| (*b, Decimal::ZERO)).collect();
     let mut total = Decimal::ZERO;
     let mut rows = Vec::new();
-    for (iid, ent, number, posted, due, name, currency, amount, outstanding, rate) in items {
-        if outstanding <= Decimal::ZERO {
-            continue;
-        }
-        for (inst, open) in open_installments(plans.get(&iid), amount, outstanding, due.unwrap_or(posted)) {
-            if open <= Decimal::ZERO {
-                continue;
-            }
-            let base = round(open * rate, co.precision);
+    for o in items {
+        let due = o.due.unwrap_or(o.posted);
+        let parts: Vec<(Installment, Decimal)> = if o.amount > Decimal::ZERO {
+            open_installments(plans.get(&o.id), o.amount, o.outstanding, due).into_iter().filter(|(_, open)| *open > Decimal::ZERO).collect()
+        } else {
+            vec![(Installment { description: String::new(), due, amount: o.amount }, o.outstanding)]
+        };
+        let mut left = o.base;
+        let last = parts.len().saturating_sub(1);
+        for (n, (inst, open)) in parts.into_iter().enumerate() {
+            let base = if n == last { left } else { round(o.base * open / o.outstanding, co.precision) };
+            left -= base;
             let days = (as_of - inst.due).num_days();
             let b = match days {
                 x if x <= 0 => "not_due",
@@ -546,8 +540,8 @@ async fn by_due_date(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>)
             };
             *totals.entry(b).or_default() += base;
             total += base;
-            let mut r = json!({"party": name, "voucher_type": ent, "voucher_id": iid, "voucher_no": number, "installment": inst.description,
-                "due_date": inst.due, "currency": currency, "installment_amount": money(inst.amount), "outstanding": money(open),
+            let mut r = json!({"party": o.party_name, "voucher_type": o.entity, "voucher_id": o.id, "voucher_no": o.number, "installment": inst.description,
+                "due_date": inst.due, "currency": o.currency, "installment_amount": money(inst.amount), "outstanding": money(open),
                 "outstanding_base": money(base), "days_overdue": days.max(0)});
             for x in buckets {
                 r[x] = money(if x == b { base } else { Decimal::ZERO });
@@ -569,7 +563,7 @@ async fn by_due_date(ctx: &Ctx, tx: &mut Tx, co: &ReportCompany, p: &Params<'_>)
             col("d1_30", "1-30", "currency"), col("d31_60", "31-60", "currency"), col("d61_90", "61-90", "currency"), col("d90_plus", "90+", "currency")],
         "rows": rows,
         "totals": t,
-        "meta": {"as_of": as_of},
+        "meta": {"as_of": as_of, "truncated": truncated},
     }))
 }
 

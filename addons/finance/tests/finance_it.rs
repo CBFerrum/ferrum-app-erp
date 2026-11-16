@@ -711,6 +711,17 @@ async fn scenario() {
     assert_eq!((rows[0]["due_date"].clone(), dec(&rows[0]["outstanding"]), dec(&rows[0]["d1_30"])), (json!("2026-03-02"), n("266.66"), n("266.66")));
     assert_eq!((rows[1]["due_date"].clone(), dec(&rows[1]["not_due"])), (json!("2026-03-15"), n("333.35")));
     assert_eq!(dec(&due["totals"]["outstanding_base"]), n("600.01"));
+    // What the customer owes is one total: by installment it is the receivables report's, broken down. A credit note
+    // not yet set against anything lowers both, and is one row of its own.
+    let goodwill = json!({"company": cid, "customer": initech.to_string(), "posting_date": "2026-03-06", "is_return": true, "return_reason": "Goodwill",
+                          "items": [{"item": unit.to_string(), "qty": "-50"}]});
+    let goodwill = t.make(&am, "SalesInvoice", goodwill).await;
+    let asked = [("company", cid.clone()), ("as_of", "2026-03-10".to_string()), ("customer", initech.to_string())];
+    let (owed, due) = (t.report(&am, "receivables", &asked).await, t.report(&am, "receivables_by_due_date", &asked).await);
+    assert_eq!(dec(&owed["totals"]["outstanding_base"]), n("550.01"), "{owed}");
+    assert_eq!(dec(&due["totals"]["outstanding_base"]), dec(&owed["totals"]["outstanding_base"]), "one total: {due}");
+    let credit: Vec<&Value> = due["rows"].as_array().unwrap().iter().filter(|r| r["voucher_id"] == goodwill["id"]).collect();
+    assert_eq!((credit.len(), dec(&credit[0]["outstanding"])), (1, n("-50")), "{due}");
 
     // ───────────── advances settle invoices ─────────────
     let invoice = |customer: Uuid, date: &str, amount: &str| json!({"company": cid, "customer": customer.to_string(), "posting_date": date, "items": [{"item": unit.to_string(), "qty": amount}]});
