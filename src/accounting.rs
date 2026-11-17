@@ -527,10 +527,24 @@ impl DocHook for PaymentEntryHook {
         if transfer(doc) {
             return check_transfer(hc, doc, cid).await;
         }
-        if d(doc, "unallocated_amount") < Decimal::ZERO {
-            let msg =
-                if d(doc, "total_deductions").is_zero() { "allocations exceed the paid amount" } else { "allocations exceed the paid amount and deductions" };
-            return Err(Error::field("references", msg));
+        let currency = id(doc, "currency").ok_or_else(|| Error::field("currency", "is required"))?;
+        let (code, places) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, currency).await?;
+        // A payment is booked to its currency's places: a finer figure (99.995 rupees) would leave its
+        // lines apart by a rounding nobody typed.
+        let fine = |v: Decimal| (v != v.round_dp(places)).then(|| format!("{} has more decimal places than {code} is booked in ({places})", v.normalize()));
+        let mut errors: Vec<FieldError> = fine(d(doc, "paid_amount")).map(|m| FieldError::new("paid_amount", m)).into_iter().collect();
+        for (table, fields) in [("deductions", &["amount"][..]), ("references", &["allocated_amount", "discount_amount"][..])] {
+            for (i, r) in rows(doc, table).iter().enumerate() {
+                errors.extend(fields.iter().filter_map(|f| fine(d(r, f)).map(|m| FieldError::new(*f, m).in_row(table, i))));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(Error::Validation(errors));
+        }
+        let over = -d(doc, "unallocated_amount");
+        if over > Decimal::ZERO {
+            let what = if d(doc, "total_deductions").is_zero() { "the paid amount" } else { "the paid amount and deductions" };
+            return Err(Error::field("references", format!("allocations exceed {what} by {} {code}", over.normalize())));
         }
         if let Some(bank) = id(doc, "bank_account")
             && !crate::stored_value::pays(doc)

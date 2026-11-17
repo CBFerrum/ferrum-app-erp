@@ -457,25 +457,22 @@ async fn scenario() {
     refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Pay", "customer", globex))).await, "a payment to a customer gives back their credit: tick Refund");
     refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Receive", "supplier", acme))).await, "money from a supplier gives back their credit: tick Refund");
 
-    // ───────────── a payment in the company's currency has no exchange difference ─────────────
-    // Half a paisa of bank charges cannot be booked in rupees: the payment's lines would come to a paisa
-    // more than the invoice gives up. That is refused as unbalanced, not booked as an exchange gain in a
-    // company of one currency.
+    // ───────────── a payment that does not add up is told where and by how much ─────────────
+    // In the company's currency there is no exchange difference to balance a payment with: one that does
+    // not add up is refused when it is saved, as a person's mistake, and nothing is posted. 95 paid and 4
+    // of bank charges do not settle an invoice of 100; half a paisa cannot be booked in rupees.
     let charged =
         uid(&t.insert("SalesInvoice", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]})).await);
     t.submit("SalesInvoice", charged).await;
-    let gain_before = t.gl("Exchange Gain or Loss").await;
-    let short = uid(&t
-        .insert(
-            "PaymentEntry",
-            json!({"company": c, "payment_type": "Receive", "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": "99.995",
-                   "deductions": [{"account": account("Bank Charges").await, "amount": "0.005"}],
-                   "references": [{"invoice": charged.to_string(), "allocated_amount": "100"}]}),
-        )
-        .await);
-    let unbalanced = t.k.submit(&t.ctx, "PaymentEntry", short, None).await;
-    assert!(matches!(unbalanced, Err(Error::Internal(ref m)) if m.contains("unbalanced")), "{unbalanced:?}");
+    let (gain_before, charges) = (t.gl("Exchange Gain or Loss").await, account("Bank Charges").await);
+    let paying = |paid: &str, charged_for: &str| {
+        obj(json!({"company": c, "payment_type": "Receive", "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": paid,
+                   "deductions": [{"account": charges, "amount": charged_for}], "references": [{"invoice": charged.to_string(), "allocated_amount": "100"}]}))
+    };
+    refused(t.k.insert(&t.ctx, "PaymentEntry", paying("95", "4")).await, "allocations exceed the paid amount and deductions by 1 INR");
+    refused(t.k.insert(&t.ctx, "PaymentEntry", paying("99.995", "0.005")).await, "99.995 has more decimal places than INR is booked in (2)");
     assert_eq!(t.gl("Exchange Gain or Loss").await, gain_before);
+    assert_eq!(dec(&t.get("SalesInvoice", charged).await["outstanding_amount"]), n("100"), "nothing was paid");
     t.cancel("SalesInvoice", charged).await;
 
     // ───────────── an overpayment: part applied, the rest given back ─────────────
