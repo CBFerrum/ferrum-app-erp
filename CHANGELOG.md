@@ -1,5 +1,16 @@
 # Changelog
 
+## ERP 0.32.2, India 0.8.1: its interface rebuilt on today's kit, India asks for the platform that reads its setting
+
+Patches: nothing another app calls changes.
+
+- **The Customize page no longer offers the change-set export and import.** The platform removed
+  `/api/customize/export` and `/api/customize/import`, and the interface is rebuilt on Ferrum-Frontend `5e2661f`,
+  whose kit dropped the two buttons. Customizations travel in packs.
+- **India's manifest asks for the platform that reads operator settings.** India declares `irp_hosts`
+  (`FERRUM_IN_IRP_HOSTS`) under `operator_settings`, which the platform reads from 0.3.9, while its manifest still
+  said `platform: ">=0.3.8, <0.4"`. It now says `">=0.3.9, <0.4"`, as the platform's app check requires.
+
 ## ERP 0.32.1, United Kingdom 0.3.2, Romania 0.2.2: the sign-in callback pages escape what they show
 
 Patches: nothing another app calls changes.
