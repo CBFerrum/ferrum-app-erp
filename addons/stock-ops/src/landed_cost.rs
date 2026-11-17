@@ -577,7 +577,7 @@ impl DocHook for LandedCostHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let vid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         let all = shares(hc, doc).await?;
         let by_key = group(&all);
         let keys: Vec<(Uuid, Uuid)> = by_key.keys().copied().collect();

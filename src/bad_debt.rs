@@ -105,7 +105,7 @@ impl DocHook for WriteOffHook {
         }
         let wid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         ledger::unallocate(hc.kernel, hc.tx, hc.ctx, ENTITY, wid, on).await?;
         ledger::reverse(hc.tx, hc.ctx, ENTITY, wid, on, co.precision).await?;
         Ok(())

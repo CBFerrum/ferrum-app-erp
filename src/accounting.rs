@@ -789,7 +789,7 @@ impl DocHook for PaymentEntryHook {
         }
         crate::instruments::payment_cancelled(hc, doc).await?;
         // Allocations, ledger and receivables all reverse on the same date, so as-of reports agree.
-        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         undo_payment(hc.kernel, hc.ctx, hc.tx, doc, on).await
     }
 

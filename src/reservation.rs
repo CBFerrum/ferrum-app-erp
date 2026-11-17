@@ -115,19 +115,21 @@ pub async fn policy(tx: &mut Tx, tenant: Uuid, company: Uuid, item: Uuid) -> Res
     Ok(Policy { hold: chosen.as_deref() == Some("Hold"), on_submit: on.as_deref() != Some("On Demand"), days: days.filter(|d| *d > 0) })
 }
 
-/// What open orders hold of an item in a warehouse, in stock units, but the line `except`.
-pub async fn held(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid, except: Option<Uuid>) -> Result<Decimal> {
+/// What open orders hold of an item in a warehouse, in stock units, but the line `except`: a hold lasts through its
+/// last day, the workspace's.
+pub async fn held(tx: &mut Tx, ctx: &Ctx, item: Uuid, warehouse: Uuid, except: Option<Uuid>) -> Result<Decimal> {
     Ok(sqlx::query_scalar(
         "select coalesce(sum(least(l.stock_reserved_qty, greatest(l.qty - coalesce(l.delivered_qty, 0), 0) * coalesce(nullif(l.conversion_factor, 0), 1))), 0) \
          from e_sales_order__items l join e_sales_order o on o.tenant_id = l.tenant_id and o.id = l.parent_id \
          where l.tenant_id = $1 and l.item = $2 and coalesce(l.warehouse, o.set_warehouse) = $3 and coalesce(l.stock_reserved_qty, 0) > 0 \
-         and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and (l.reserved_until is null or l.reserved_until >= current_date) \
+         and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and (l.reserved_until is null or l.reserved_until >= $5) \
          and l.id is distinct from $4",
     )
-    .bind(tenant)
+    .bind(ctx.tenant)
     .bind(item)
     .bind(warehouse)
     .bind(except)
+    .bind(ctx.today())
     .fetch_one(&mut **tx)
     .await?)
 }
@@ -170,7 +172,7 @@ pub async fn check_issue(
         }
         _ => None,
     };
-    let others = held(tx, ctx.tenant, item, warehouse, own).await?;
+    let others = held(tx, ctx, item, warehouse, own).await?;
     Ok((others > Decimal::ZERO && need > on_hand - others).then_some(others))
 }
 
@@ -216,7 +218,7 @@ pub async fn reserve_order(k: &Kernel, ctx: &Ctx, tx: &mut Tx, order: Uuid, aske
         }
         let bal = crate::stock::lock_balances(tx, ctx.tenant, company, &[(item, wh)]).await?;
         let on_hand = bal.get(&(item, wh)).map(|b| b.0).unwrap_or_default();
-        let free = (on_hand - held(tx, ctx.tenant, item, wh, Some(line)).await?).max(Decimal::ZERO);
+        let free = (on_hand - held(tx, ctx, item, wh, Some(line)).await?).max(Decimal::ZERO);
         let now = open.min(free);
         let mut v = Doc::new();
         v.insert("stock_reserved_qty".into(), crate::util::money(now));
@@ -315,7 +317,7 @@ pub async fn availability(ctx: &Ctx, tx: &mut Tx, company: Uuid, item: Uuid, qty
     let mut out = Vec::new();
     for wh in whs {
         let (on_hand, reserved) = balances.iter().find(|b| b.0 == wh).map(|b| (b.1, b.2)).unwrap_or_default();
-        let hold = held(tx, ctx.tenant, item, wh, None).await?;
+        let hold = held(tx, ctx, item, wh, None).await?;
         let now = on_hand - reserved.max(hold);
         let mut coming: Vec<&(Uuid, NaiveDate, Decimal, String, Uuid)> = incoming.iter().filter(|i| i.0 == wh).collect();
         coming.sort_by_key(|i| i.1);

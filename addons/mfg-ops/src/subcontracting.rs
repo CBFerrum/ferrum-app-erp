@@ -769,7 +769,7 @@ impl DocHook for SubcontractingReceiptHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let rid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         let keys: Vec<(Uuid, Uuid)> =
             sqlx::query_as("select item_id, warehouse_id from stock_move where tenant_id = $1 and source_entity = 'SubcontractingReceipt' and source_id = $2")
                 .bind(hc.ctx.tenant)

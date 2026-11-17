@@ -230,15 +230,11 @@ pub async fn period_open(tx: &mut Tx, tenant: Uuid, company: Uuid, on: NaiveDate
 }
 
 /// Where to date the reversal of a document's stock and ledger postings: on the document's own
-/// date and time while its period is open (so reports never show a phantom gap), else now.
-pub async fn reversal_point(tx: &mut Tx, tenant: Uuid, company: Uuid, doc: &ferrum_kernel::Doc) -> Result<(NaiveDate, chrono::DateTime<chrono::Utc>)> {
+/// date and time while its period is open (so reports never show a phantom gap), else on today,
+/// the workspace's day, at the present moment.
+pub async fn reversal_point(tx: &mut Tx, ctx: &Ctx, company: Uuid, doc: &ferrum_kernel::Doc) -> Result<(NaiveDate, chrono::DateTime<chrono::Utc>)> {
     let on = crate::util::date(doc, "posting_date")?;
-    if period_open(tx, tenant, company, on).await? {
-        Ok((on, crate::util::posting_ts(doc)?))
-    } else {
-        let now = chrono::Utc::now();
-        Ok((now.date_naive(), now))
-    }
+    if period_open(tx, ctx.tenant, company, on).await? { Ok((on, crate::util::posting_ts(doc)?)) } else { Ok((ctx.today(), chrono::Utc::now())) }
 }
 
 #[derive(sqlx::FromRow)]

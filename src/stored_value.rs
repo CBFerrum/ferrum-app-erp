@@ -319,7 +319,7 @@ pub(crate) struct Move {
 /// Appends one entry to a locked account and brings the account up to it: balance, value, last use,
 /// expiry and state. Refuses to take it below nothing, telling what it holds.
 pub(crate) async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, acc: &mut Account, kind: &Kind, op: Uuid, m: Move) -> Result<Uuid> {
-    let on = m.on.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    let on = m.on.unwrap_or_else(|| ctx.today());
     let balance = acc.balance() + m.amount;
     if balance < Decimal::ZERO {
         return Err(acc.short(kind, -m.amount));
@@ -645,7 +645,7 @@ pub(crate) async fn issue_value(
     }
     kind.check_load(Decimal::ZERO, amount)?;
     let co = company(k, ctx, tx, kind.company).await?;
-    let on = chrono::Utc::now().date_naive();
+    let on = ctx.today();
     let made = proven.as_ref().is_some_and(|p| p.1);
     let (mut acc, _) = open(k, ctx, tx, &kind, holder, proven.map(|p| p.0), made, on).await?;
     let value = if kind.units { Decimal::ZERO } else { round(amount, co.precision) };
@@ -686,7 +686,7 @@ pub async fn adjust(k: &Kernel, ctx: &Ctx, tx: &mut Tx, account: Uuid, amount: D
         (true, false) => round(amount, co.precision),
         (false, _) => -acc.release(-amount, co.precision),
     };
-    let on = chrono::Utc::now().date_naive();
+    let on = ctx.today();
     let op = Uuid::now_v7();
     let lines =
         vec![Line::new(kind.adjustment()?, value, &co.currency_code).remarks(reason), Line::new(kind.liability, -value, &co.currency_code).remarks(reason)];
@@ -1395,7 +1395,7 @@ async fn hold_value(k: &Kernel, ctx: &Ctx, tx: &mut Tx, kind_id: Uuid, sec: &Sec
     }
     let found = found(k, ctx, tx, Some(kind_id), sec).await?;
     let acc = lock(ctx, tx, found).await?;
-    acc.usable(&kd, chrono::Utc::now().date_naive())?;
+    acc.usable(&kd, ctx.today())?;
     if acc.holder.is_some_and(|h| Some(h) != id(&so, "customer")) {
         return Err(Error::invalid("it is held by another customer"));
     }
@@ -1771,7 +1771,7 @@ async fn refund_value(
                     return Err(Error::field("proof", format!("{} is used with a PIN: give the new card's code and PIN", kd.name)));
                 }
                 None => {
-                    let on = chrono::Utc::now().date_naive();
+                    let on = ctx.today();
                     open(k, ctx, tx, &kd, cn.get("customer").and_then(Value::as_str).and_then(|c| c.parse().ok()), Some(sec), made, on).await?.0.id
                 }
             };
@@ -1801,7 +1801,7 @@ async fn transfer_value(
         return Err(Error::invalid(format!("{} cannot be transferred", kd.name)));
     }
     let from = found(k, ctx, tx, Some(kind_id), sec).await?;
-    let on = chrono::Utc::now().date_naive();
+    let on = ctx.today();
     // The other card: one of the kind's by its code, or a new one (with the code made for it, if any).
     let to = match to {
         Some((sec, false)) => match lookup(k, ctx, tx, Some(kind_id), &sec, false).await? {
@@ -1882,7 +1882,7 @@ async fn reverse_op(k: &Kernel, ctx: &Ctx, tx: &mut Tx, op: Uuid) -> Result<Valu
         _ => {
             let acc = current(ctx, tx, account).await?;
             let co = company(k, ctx, tx, acc.company).await?;
-            let on = chrono::Utc::now().date_naive();
+            let on = ctx.today();
             ledger::reverse(tx, ctx, SOURCE, op, on, co.precision).await?;
             if reverse_entries(k, ctx, tx, SOURCE, op, on, "this operation").await? == 0 {
                 return Err(Error::invalid("it was already reversed"));
@@ -1899,7 +1899,7 @@ pub(crate) async fn cash_out(k: &Kernel, ctx: &Ctx, tx: &mut Tx, account: Uuid, 
     if !kd.cash_out || kd.units {
         return Err(Error::invalid(format!("{} is not cashed out", kd.name)));
     }
-    let on = chrono::Utc::now().date_naive();
+    let on = ctx.today();
     acc.usable(&kd, on)?;
     let amount = amount.unwrap_or(acc.balance());
     if amount <= Decimal::ZERO || amount > acc.balance() {

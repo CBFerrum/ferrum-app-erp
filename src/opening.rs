@@ -192,7 +192,7 @@ impl DocHook for OpeningInvoiceHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         ledger::cancel_open_item(hc.tx, hc.ctx, oid).await?;
         ledger::reverse(hc.tx, hc.ctx, "OpeningInvoice", oid, on, co.precision).await?;
         sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, "OpeningInvoice", oid).await
