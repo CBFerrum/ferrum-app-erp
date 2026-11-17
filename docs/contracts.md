@@ -75,7 +75,7 @@ operations:
 
 | Operation | What it does | What it refuses | Called twice |
 |---|---|---|---|
-| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one hashed journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
+| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
 | `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed or there is none | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |

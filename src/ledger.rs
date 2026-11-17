@@ -1,16 +1,14 @@
 //! Posting engine for the universal journal plus the AR/AP open-item subledger.
 //!
 //! Every financial effect goes through `post`: lines are merged, signs normalized, rounded,
-//! checked to balance exactly, hashed and appended. The database re-checks balance at commit and
+//! checked to balance exactly and appended. The database re-checks balance at commit and
 //! refuses edits, deletes and postings into closed periods. Cancellation appends reversals.
 
 use crate::util::round;
 use chrono::NaiveDate;
-use ferrum_kernel::value::canonical_json;
 use ferrum_kernel::{Ctx, Error, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -185,18 +183,9 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
             })
         })
         .collect();
-    let mut h = Sha256::new();
-    h.update(canonical_json(&json!({
-        "company": entry.company, "posting_date": entry.posting_date, "source": [entry.source_entity, entry.source_id],
-        "lines": line_rows.iter().map(|r| {
-            let mut r = r.clone();
-            if let Value::Object(m) = &mut r { m.remove("tenant_id"); m.remove("entry_id"); }
-            r
-        }).collect::<Vec<_>>(),
-    })));
     sqlx::query(
         "insert into journal_entry (tenant_id, id, company_id, posting_date, source_entity, source_id, source_number, memo, \
-         total_debit, total_credit, entry_hash, created_by, reversal_of, finance_book_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12, $13)",
+         total_debit, total_credit, created_by, reversal_of, finance_book_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12)",
     )
     .bind(ctx.tenant)
     .bind(entry_id)
@@ -207,7 +196,6 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
     .bind(&entry.source_number)
     .bind(&entry.memo)
     .bind(debit.to_string())
-    .bind(h.finalize().to_vec())
     .bind((!ctx.user.is_nil()).then_some(ctx.user))
     .bind(entry.reversal_of)
     .bind(entry.finance_book)

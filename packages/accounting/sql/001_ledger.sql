@@ -26,7 +26,6 @@ create table journal_entry (
   memo text,
   total_debit numeric(28,9) not null,
   total_credit numeric(28,9) not null,
-  entry_hash bytea not null,
   created_by uuid,
   created_at timestamptz not null default now(),
   created_txid bigint not null default txid_current(),

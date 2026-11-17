@@ -156,6 +156,9 @@ async fn scenario() {
     .await
     .unwrap();
     assert_eq!(net, Decimal::ZERO);
+    // An entry carries no hash that nothing chains or checks: it would claim a seal the journal does not have.
+    let hashed = "select count(*) from information_schema.columns where table_name = 'journal_entry' and column_name = 'entry_hash' and $1::uuid is not null";
+    assert_eq!(count(&mut tx, hashed, source).await, 0, "journal_entry.entry_hash");
     tx.commit().await.unwrap();
 
     // ── open items: opened once, never paid beyond what is owed, not cancelled while paid ──
