@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
 use ferrum_app_erp::providers::Provider;
 use ferrum_app_erp::submission::{Channel, enqueue, record};
+use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -320,7 +321,9 @@ async fn token_request(k: &Kernel, tenant: Uuid, api: &str, wait: Wait, form: &[
 /// The package's HTTP endpoints.
 pub struct HmrcSite;
 
+/// A page of plain text: the title and the text are escaped, as they may carry the query's words.
 fn html(status: u16, title: &str, text: &str) -> SiteResponse {
+    let (title, text) = (esc(title), esc(text));
     SiteResponse::text(status, "text/html; charset=utf-8", format!("<!doctype html><meta charset=utf-8><title>{title}</title><h1>{title}</h1><p>{text}</p>"))
 }
 
