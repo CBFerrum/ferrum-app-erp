@@ -122,6 +122,20 @@ impl T {
             .unwrap()
             .unwrap_or_default()
     }
+    /// The open FIFO layers, oldest first: (quantity left, unit cost).
+    async fn layers(&self, item: Uuid, wh: Uuid) -> Vec<(Decimal, Decimal)> {
+        let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
+        let open: Vec<(Decimal, Decimal)> = sqlx::query_as(
+            "select qty_remaining, unit_cost from cost_layer where tenant_id = $1 and item_id = $2 and warehouse_id = $3 and qty_remaining > 0 order by posting_ts, seq",
+        )
+        .bind(self.tenant)
+        .bind(item)
+        .bind(wh)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        open.into_iter().map(|(q, c)| (q.normalize(), c.normalize())).collect()
+    }
     async fn batch(&self, item: Uuid, batch: &str) -> Decimal {
         let mut tx = self.k.db.tenant_tx(self.tenant).await.unwrap();
         sqlx::query_scalar("select coalesce(sum(qty), 0) from stock_move where tenant_id = $1 and item_id = $2 and batch_no = $3")
@@ -331,6 +345,22 @@ async fn scenario() {
     assert_eq!((dec(&reval["difference_amount"]), t.gl("Stock Adjustment").await), (n("7"), n("16")));
     t.cancel(&stock_manager, "StockReconciliation", uid(&reval)).await;
     assert_eq!(t.stock(reco_a, stores).await, (n("7"), n("77")));
+    // FIFO below zero (negative stock allowed for the while), counted with a rate: the count is one layer at the rate,
+    // and the whole change, the shortfall's value with it, is the count's.
+    let reco_f = item("RECO-F", json!({"valuation_method": "FIFO"})).await;
+    t.update(&a, "Company", cid, json!({"allow_negative_stock": true})).await;
+    t.receive(reco_f, stores, "1", "15", json!({})).await;
+    t.issue(reco_f, stores, "3").await;
+    assert_eq!(t.stock(reco_f, stores).await, (n("-2"), n("-30")));
+    let adjustment = t.gl("Stock Adjustment").await;
+    let short = json!({"company": co, "items": [{"item": reco_f.to_string(), "warehouse": stores.to_string(), "qty": "5", "valuation_rate": "10"}]});
+    let short = t.insert(&stock_user, "StockReconciliation", short).await;
+    let short = t.submit(&stock_user, "StockReconciliation", uid(&short)).await;
+    assert_eq!((t.stock(reco_f, stores).await, t.layers(reco_f, stores).await), ((n("5"), n("50")), vec![(n("5"), n("10"))]));
+    assert_eq!((dec(&short["difference_amount"]), t.gl("Stock Adjustment").await - adjustment), (n("80"), n("-80")));
+    t.cancel(&stock_manager, "StockReconciliation", uid(&short)).await;
+    assert_eq!((t.stock(reco_f, stores).await, t.layers(reco_f, stores).await, t.gl("Stock Adjustment").await), ((n("-2"), n("-30")), vec![], adjustment));
+    t.update(&a, "Company", cid, json!({"allow_negative_stock": false})).await;
     let twice = t
         .refused(
             &stock_user,

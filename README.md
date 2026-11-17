@@ -357,7 +357,9 @@ add-on brings it.
 
 ### 📦 Stock and warehouses
 
-- **Stock ledger.** Append-only, with moving-average and FIFO cost layers, valued once at posting.
+- **Stock ledger.** Append-only, with moving-average and FIFO cost layers, valued once at posting. Where a company
+  allows negative stock, a receipt into a FIFO shortfall covers it at its own cost first, the difference to stock
+  adjustment, so the layers always hold what is on hand.
 - **Warehouses** in a tree per company, each holding Stock, Transit or Rejected goods; only Stock is offered to
   orders and promising.
 - **Stock entries** for opening stock, receipts, issues, transfers and manufacture. **Ship now, receive later:** a transfer

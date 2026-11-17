@@ -10,7 +10,9 @@ create table stock_move (
   warehouse_id uuid not null,
   posting_date date not null,
   posting_ts timestamptz not null,
-  qty numeric(28,9) not null check (qty <> 0),
+  -- A move without quantity changes value alone: a FIFO receipt revaluing the shortfall it covers at its own cost
+  -- (source StockValueAdjustment, its line the receipt's move), or that taken back.
+  qty numeric(28,9) not null check (qty <> 0 or value <> 0),
   valuation_rate numeric(28,12) not null check (valuation_rate >= 0),
   value numeric(28,9) not null,
   qty_after numeric(28,9) not null,

@@ -119,12 +119,21 @@ pub(crate) fn plan(
             } else if batch.is_some() {
                 return Err(format!("batch {} of {} is below zero; count it without a valuation rate first", batch.unwrap_or_default(), info.code));
             } else {
-                // Negative stock (allowed by the company): one receipt brings it to the count at the rate.
+                // Negative stock (allowed by the company): one receipt brings it to the count at the rate. FIFO closes
+                // what is short at the value it holds first (a receipt into negative stock covers it at its own cost),
+                // so the count is one fresh layer at the rate and the whole change stays on this count's account.
                 let value = target - cur.value;
                 if value < Decimal::ZERO {
                     return Err(format!("{} cannot be revalued to {} at this rate from its negative balance", info.code, counted.normalize()));
                 }
-                inn.push(mv(counted - cur.qty, Some(r), vec![], Some(value)));
+                if info.fifo {
+                    inn.push(mv(-cur.qty, None, vec![], Some(-cur.value)));
+                    if counted > Decimal::ZERO {
+                        inn.push(mv(counted, Some(r), vec![], None));
+                    }
+                } else {
+                    inn.push(mv(counted - cur.qty, Some(r), vec![], Some(value)));
+                }
             }
         }
     }
@@ -387,6 +396,11 @@ mod tests {
         let (out, inn) = plan(&info(false, false), wh, None, None, &negative, n("5"), &[], Some(n("10")), 2).unwrap();
         assert!(out.is_empty());
         assert_eq!((qtys(&inn), inn[0].exact_value), (vec![n("7")], Some(n("70"))), "from -2 (-20) to 5 x 10");
+        let fifo = ItemInfo { fifo: true, ..info(false, false) };
+        let short = Current { value: n("-30"), ..negative };
+        let (_, inn) = plan(&fifo, wh, None, None, &short, n("5"), &[], Some(n("10")), 2).unwrap();
+        let shape: Vec<_> = inn.iter().map(|m| (m.qty, m.rate, m.exact_value)).collect();
+        assert_eq!(shape, [(n("2"), None, Some(n("30"))), (n("5"), Some(n("10")), None)], "FIFO: the 2 short closed at their 30, then 5 x 10");
     }
 
     #[test]

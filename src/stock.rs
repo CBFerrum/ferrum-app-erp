@@ -3,7 +3,9 @@
 //! Each move is valued once, from the balance state at posting time; nothing is ever re-valued
 //! later (no repost cascades). Balances are locked in a fixed (item, warehouse) order so
 //! concurrent postings cannot deadlock, and quantity checks happen under that lock, so stock can
-//! never go negative unless the company allows it.
+//! never go negative unless the company allows it. A FIFO receipt into negative stock first covers
+//! what is short at its own cost (the difference from what the shortfall left at goes to stock
+//! adjustment, as a move of value alone), so the open layers always hold what the balance holds.
 
 use crate::ledger::{Entry, Line};
 use crate::util::{Company, round};
@@ -200,12 +202,17 @@ pub async fn post_moves(
     let mut bal = lock_balances(tx, ctx.tenant, company.id, &keys).await?;
 
     let mut posted = Vec::with_capacity(moves.len());
+    // Value the engine changes on its own, per warehouse: booked to stock adjustment at the end.
+    let (mut revalued, mut cancelling) = (Vec::new(), false);
     for m in moves {
         let item = &items[&m.item];
         let fifo = item.valuation_method.as_deref() == Some("FIFO");
         let (q, v, r) = bal.get(&(m.item, m.warehouse)).copied().unwrap_or_default();
         let move_id = Uuid::now_v7();
-        let (rate, value, nq, nv, nr);
+        let (rate, value, nq, mut nv, nr);
+        // FIFO: the units of a receipt that cover a shortfall and the shortfall's change of value; taking a
+        // receipt back, that change to reverse.
+        let (mut covered, mut shortfall, mut undo) = (Decimal::ZERO, Decimal::ZERO, None);
         if m.qty > Decimal::ZERO {
             let unit = m.rate.unwrap_or(r);
             if unit < Decimal::ZERO {
@@ -213,8 +220,16 @@ pub async fn post_moves(
             }
             value = m.exact_value.map(|x| x.abs()).unwrap_or_else(|| round(m.qty * unit, p));
             rate = (value / m.qty).round_dp(12);
+            // A FIFO receipt into negative stock first covers what is short, at its own cost rather than the
+            // value the shortfall left at; only what is left over opens a layer.
+            if fifo && q < Decimal::ZERO {
+                covered = (-q).min(m.qty);
+                let left_at = if covered == -q { -v } else { round(v * covered / q, p) };
+                let costs = if covered == m.qty { value } else { round(value * covered / m.qty, p) };
+                shortfall = left_at - costs;
+            }
             nq = q + m.qty;
-            nv = v + value;
+            nv = v + shortfall + value;
             nr = if nq > Decimal::ZERO { (nv / nq).round_dp(12).max(Decimal::ZERO) } else { rate };
         } else {
             let need = -m.qty;
@@ -254,19 +269,8 @@ pub async fn post_moves(
                 }
             }
             let mut out = if let Some(x) = m.exact_value {
-                if let Some(layer_move) = m.reverse_layer_of.filter(|_| fifo) {
-                    let n = sqlx::query("update cost_layer set qty_remaining = 0 where tenant_id = $1 and source_move_id = $2 and qty_remaining = qty_in")
-                        .bind(ctx.tenant)
-                        .bind(layer_move)
-                        .execute(&mut **tx)
-                        .await?
-                        .rows_affected();
-                    if n == 0 {
-                        return Err(Error::invalid(format!(
-                            "stock of {} from this receipt has already been used; cancel the documents that consumed it first",
-                            item.item_code
-                        )));
-                    }
+                if let Some(receipt) = m.reverse_layer_of.filter(|_| fifo) {
+                    undo = retire(tx, ctx.tenant, receipt, source_id, &item.item_code, &warehouses[&m.warehouse].2).await?;
                 }
                 x.abs()
             } else if fifo {
@@ -285,6 +289,10 @@ pub async fn post_moves(
             rate = if need.is_zero() { Decimal::ZERO } else { (out / need).round_dp(12) };
             nv = v - out;
             nr = if nq > Decimal::ZERO { (nv / nq).round_dp(12).max(Decimal::ZERO) } else { r };
+        }
+        if !shortfall.is_zero() {
+            revalue(tx, ctx, company.id, &m, (posting_date, ts), source_id, (move_id, None), (rate, shortfall), (q, v + shortfall)).await?;
+            revalued.push((m.warehouse, shortfall));
         }
         let serial_text = (!m.serials.is_empty()).then(|| m.serials.join("\n"));
         sqlx::query(
@@ -312,7 +320,13 @@ pub async fn post_moves(
         .bind(m.reversal_of)
         .execute(&mut **tx)
         .await?;
-        if fifo && m.qty > Decimal::ZERO {
+        if let Some((of, change)) = undo {
+            nv -= change;
+            revalue(tx, ctx, company.id, &m, (posting_date, ts), source_id, (move_id, Some(of)), (rate, -change), (nq, nv)).await?;
+            revalued.push((m.warehouse, -change));
+            cancelling = true;
+        }
+        if fifo && m.qty > covered {
             sqlx::query(
                 "insert into cost_layer (tenant_id, id, item_id, warehouse_id, posting_ts, qty_in, qty_remaining, unit_cost, source_move_id) \
                  values ($1, $2, $3, $4, $5, $6::numeric, $6::numeric, $7::numeric, $8)",
@@ -322,7 +336,7 @@ pub async fn post_moves(
             .bind(m.item)
             .bind(m.warehouse)
             .bind(ts)
-            .bind(m.qty.to_string())
+            .bind((m.qty - covered).to_string())
             .bind(rate.to_string())
             .bind(move_id)
             .execute(&mut **tx)
@@ -383,7 +397,120 @@ pub async fn post_moves(
         .execute(&mut **tx)
         .await?;
     }
+    let why = if cancelling { "taken back on cancelling" } else { "covered by" };
+    book_differences(tx, ctx, company, posting_date, source_id, format!("Negative stock at the receipt's cost, {why} {source_entity}"), &revalued).await?;
     Ok(posted)
+}
+
+/// Appends a move of value alone: a FIFO receipt's change of the value of the shortfall it covers, or its reversal.
+/// It is the `StockValueAdjustment` of the document, like the entry that books it, and its line is the move it goes
+/// with.
+#[allow(clippy::too_many_arguments)]
+async fn revalue(
+    tx: &mut Tx,
+    ctx: &Ctx,
+    company: Uuid,
+    m: &MoveIn,
+    (on, ts): (NaiveDate, DateTime<Utc>),
+    source_id: Uuid,
+    (with, reversal_of): (Uuid, Option<Uuid>),
+    (rate, value): (Decimal, Decimal),
+    (qty_after, value_after): (Decimal, Decimal),
+) -> Result<()> {
+    sqlx::query(
+        "insert into stock_move (tenant_id, id, company_id, item_id, warehouse_id, posting_date, posting_ts, qty, valuation_rate, value, \
+         qty_after, value_after, source_entity, source_id, source_line_id, reversal_of) \
+         values ($1, $2, $3, $4, $5, $6, $7, 0, $8::numeric, $9::numeric, $10::numeric, $11::numeric, 'StockValueAdjustment', $12, $13, $14)",
+    )
+    .bind(ctx.tenant)
+    .bind(Uuid::now_v7())
+    .bind(company)
+    .bind(m.item)
+    .bind(m.warehouse)
+    .bind(on)
+    .bind(ts)
+    .bind(rate.to_string())
+    .bind(value.to_string())
+    .bind(qty_after.to_string())
+    .bind(value_after.to_string())
+    .bind(source_id)
+    .bind(with)
+    .bind(reversal_of)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Takes back a FIFO receipt (its move `receipt`): the layer it opened, which nothing may have taken from, and what it
+/// covered of a shortfall, which is exact only while no other document has moved the item in the warehouse since.
+/// Answers the receipt's change of the shortfall's value (its move and value), to reverse with it.
+async fn retire(tx: &mut Tx, tenant: Uuid, receipt: Uuid, source_id: Uuid, code: &str, wname: &str) -> Result<Option<(Uuid, Decimal)>> {
+    let (qty, after, seq, item, wh): (Decimal, Decimal, i64, Uuid, Uuid) =
+        sqlx::query_as("select qty, qty_after, seq, item_id, warehouse_id from stock_move where tenant_id = $1 and id = $2")
+            .bind(tenant)
+            .bind(receipt)
+            .fetch_one(&mut **tx)
+            .await?;
+    let covered = (qty - after).max(Decimal::ZERO).min(qty);
+    if covered > Decimal::ZERO {
+        let since: bool = sqlx::query_scalar(
+            "select exists (select 1 from stock_move where tenant_id = $1 and item_id = $2 and warehouse_id = $3 and seq > $4 and source_id <> $5)",
+        )
+        .bind(tenant)
+        .bind(item)
+        .bind(wh)
+        .bind(seq)
+        .bind(source_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if since {
+            return Err(Error::invalid(format!(
+                "{code} in {wname} has moved since this receipt covered what was short; cancel the later documents first, or return the goods"
+            )));
+        }
+    }
+    if covered < qty {
+        let n = sqlx::query("update cost_layer set qty_remaining = 0 where tenant_id = $1 and source_move_id = $2 and qty_remaining = qty_in")
+            .bind(tenant)
+            .bind(receipt)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Err(Error::invalid(format!("stock of {code} from this receipt has already been used; cancel the documents that consumed it first")));
+        }
+    }
+    Ok(sqlx::query_as(
+        "select id, value from stock_move where tenant_id = $1 and source_entity = 'StockValueAdjustment' and source_id = $2 and source_line_id = $3",
+    )
+    .bind(tenant)
+    .bind(source_id)
+    .bind(receipt)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// Books value the engine changed on its own, `(warehouse, change)`, between the warehouse's stock account and the
+/// stock adjustment account, as the document's `StockValueAdjustment`: a ledger reversal of the document never undoes it.
+async fn book_differences(tx: &mut Tx, ctx: &Ctx, company: &Company, on: NaiveDate, source_id: Uuid, memo: String, changes: &[(Uuid, Decimal)]) -> Result<()> {
+    let mut entry = Entry::new(company.id, on, "StockValueAdjustment", source_id, None);
+    for &(wh, change) in changes.iter().filter(|c| !c.1.is_zero()) {
+        let account: Option<Uuid> =
+            sqlx::query_scalar("select account from e_warehouse where tenant_id = $1 and id = $2").bind(ctx.tenant).bind(wh).fetch_one(&mut **tx).await?;
+        let account = match account {
+            Some(a) => a,
+            None => company.require("default_inventory_account", "default inventory account")?,
+        };
+        let adjust = company.require("stock_adjustment_account", "stock adjustment account")?;
+        entry.lines.push(Line::new(account, change, &company.currency_code));
+        entry.lines.push(Line::new(adjust, -change, &company.currency_code).remarks(memo.clone()));
+    }
+    if entry.lines.is_empty() {
+        return Ok(());
+    }
+    entry.memo = Some(memo);
+    crate::ledger::post(tx, ctx, entry, company.precision).await?;
+    Ok(())
 }
 
 async fn consume_layers(tx: &mut Tx, tenant: Uuid, item: Uuid, wh: Uuid, need: Decimal, fallback_rate: Decimal, p: u32) -> Result<Decimal> {
@@ -474,29 +601,8 @@ pub async fn reverse_moves(
         .collect();
     // Reversed issues put serials back in stock; reversed receipts take them out.
     let posted = post_moves(tx, ctx, company, source_entity, source_id, posting_date, ts, moves, "consumed").await?;
-    let mut entry = Entry::new(company.id, posting_date, "StockValueAdjustment", source_id, None);
-    entry.memo = Some(format!("Stock value difference on cancelling {source_entity}"));
-    for (p, original) in posted.iter().zip(originals) {
-        let diff = p.value + original;
-        if diff.is_zero() {
-            continue;
-        }
-        let account: Option<Uuid> = sqlx::query_scalar("select account from e_warehouse where tenant_id = $1 and id = $2")
-            .bind(ctx.tenant)
-            .bind(p.warehouse)
-            .fetch_one(&mut **tx)
-            .await?;
-        let account = match account {
-            Some(a) => a,
-            None => company.require("default_inventory_account", "default inventory account")?,
-        };
-        let adjust = company.require("stock_adjustment_account", "stock adjustment account")?;
-        entry.lines.push(Line::new(account, diff, &company.currency_code));
-        entry.lines.push(Line::new(adjust, -diff, &company.currency_code).remarks("Stock value difference on cancellation"));
-    }
-    if !entry.lines.is_empty() {
-        crate::ledger::post(tx, ctx, entry, company.precision).await?;
-    }
+    let diffs: Vec<(Uuid, Decimal)> = posted.iter().zip(originals).map(|(p, original)| (p.warehouse, p.value + original)).collect();
+    book_differences(tx, ctx, company, posting_date, source_id, format!("Stock value difference on cancelling {source_entity}"), &diffs).await?;
     Ok(posted)
 }
 
