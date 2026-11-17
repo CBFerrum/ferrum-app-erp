@@ -611,6 +611,11 @@ async fn romania(k: &Arc<Kernel>, uploads: &Uploads) {
         client_ip: "198.51.100.7".into(),
     };
     use ferrum_kernel::Site;
+    // ANAF's error comes back in the address: a crafted link's text is shown as text, never run.
+    let script = "<script>alert(1)</script>";
+    let refused = site.handle(&t.k, request(json!({"error": script, "error_description": script}))).await.unwrap();
+    let page = String::from_utf8_lossy(&refused.body);
+    assert!(refused.status == 400 && !page.contains("<script") && page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"), "{page}");
     let forged = site.handle(&t.k, request(json!({"code": "CODE-RO", "state": format!("{lid}.forged")}))).await.unwrap();
     assert_eq!(forged.status, 400, "a state Ferrum did not issue is refused");
     let back = site.handle(&t.k, request(json!({"code": "CODE-RO", "state": state}))).await.unwrap();

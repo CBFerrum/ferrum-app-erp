@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_app_erp::providers::Provider;
 use ferrum_app_erp::submission::record;
+use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, outbox};
 use serde_json::{Map, Value, json};
@@ -118,7 +119,9 @@ async fn store_tokens(k: &Kernel, ctx: &Ctx, company: Uuid, answer: &Value, conn
 /// The package's HTTP endpoint: ANAF's sign-in returns here.
 pub struct AnafSite;
 
+/// A page of plain text: the title and the text are escaped, as they may carry the query's words.
 fn html(status: u16, title: &str, text: &str) -> SiteResponse {
+    let (title, text) = (esc(title), esc(text));
     SiteResponse::text(status, "text/html; charset=utf-8", format!("<!doctype html><meta charset=utf-8><title>{title}</title><h1>{title}</h1><p>{text}</p>"))
 }
 

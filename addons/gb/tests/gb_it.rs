@@ -297,6 +297,11 @@ async fn scenario() {
         body: serde_json::to_vec(&body).unwrap(),
         client_ip: "198.51.100.7".into(),
     };
+    // HMRC's error comes back in the address: a crafted link's text is shown as text, never run.
+    let script = "<script>alert(1)</script>";
+    let refused = site.handle(&k, request("GET", "/hmrc/callback", json!({"error": script, "error_description": script}), Value::Null)).await.unwrap();
+    let page = String::from_utf8_lossy(&refused.body);
+    assert!(refused.status == 400 && !page.contains("<script") && page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"), "{page}");
     let forged = site.handle(&k, request("GET", "/hmrc/callback", json!({"code": "CODE-1", "state": format!("{cid}.forged")}), Value::Null)).await.unwrap();
     assert_eq!(forged.status, 400, "a state Ferrum did not issue is refused");
     let back = site.handle(&k, request("GET", "/hmrc/callback", json!({"code": "CODE-1", "state": state}), Value::Null)).await.unwrap();
