@@ -1,5 +1,13 @@
 # Changelog
 
+## ERP 0.32.2: its interface rebuilt on today's kit
+
+Patches: nothing another app calls changes.
+
+- **The Customize page no longer offers the change-set export and import.** The platform removed
+  `/api/customize/export` and `/api/customize/import`, and the interface is rebuilt on Ferrum-Frontend `5e2661f`,
+  whose kit dropped the two buttons. Customizations travel in packs.
+
 ## ERP 0.32.1, United Kingdom 0.3.2, Romania 0.2.2: the sign-in callback pages escape what they show
 
 Patches: nothing another app calls changes.

@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.32.1-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.32.2-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.32.1`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.32.2`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -907,6 +907,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.32.2** The interface is rebuilt on Ferrum-Frontend 5e2661f: the Customize page no longer offers the change-set export and import.
 - [x] **0.32.1** The United Kingdom's and Romania's sign-in callback pages show the query's text as text.
 - [x] **0.32.0** Three money faults fixed: FIFO layers after negative stock, dates from the UTC day, India's IRP called at any host.
 - [x] **0.31.0** Six money faults fixed: postings outside every period, the exchange-difference plug, invoices left behind by settlements, double reversals, duplicate supplier bills, an unchecked hash.
