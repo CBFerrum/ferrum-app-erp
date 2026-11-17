@@ -238,7 +238,8 @@ add-on brings it.
 ### 🌐 Multi-currency and groups
 
 - **Foreign currency** on invoices, orders, payments and party lines, with realised gains and losses worked
-  out on each allocation.
+  out on each allocation. A payment in the company's own currency has none: one whose lines do not balance is
+  refused, never balanced with an exchange difference.
 - **Transfers** between the company's own bank and cash accounts, each side in its account's currency.
 - **Group consolidation.** A company's parent makes a group: a consolidated trial balance, profit and loss and
   balance sheet in the parent's currency, on the parent's chart. Intercompany business is taken out

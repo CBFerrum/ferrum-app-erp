@@ -752,10 +752,12 @@ impl DocHook for PaymentEntryHook {
             );
         }
         lines.extend(crate::withholding::lines(hc, doc, &co).await?);
-        // What is left is the exchange difference between the invoices' booked rates and today's
-        // rate: positive is a gain, credited; negative a loss, debited.
+        // In another currency, what is left is the exchange difference between the invoices' booked
+        // rates and today's, with the rounding of each figure converted at it: positive is a gain,
+        // credited; negative a loss, debited. In the company's own currency nothing is converted, so
+        // there is none: lines that do not balance are refused (`ledger::post`), not booked to it.
         let diff: Decimal = lines.iter().map(|l| l.amount).sum();
-        if !diff.is_zero() {
+        if code != co.currency_code && !diff.is_zero() {
             let gl = co.require("exchange_gain_loss_account", "exchange gain/loss account")?;
             lines.push(Line::new(gl, -diff, &co.currency_code).remarks("Exchange difference"));
             let mut v = Doc::new();
