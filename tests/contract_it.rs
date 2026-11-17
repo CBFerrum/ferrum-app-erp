@@ -38,6 +38,24 @@ async fn count(tx: &mut Tx, sql: &'static str, source: Uuid) -> i64 {
     sqlx::query_scalar(sql).bind(source).fetch_one(&mut **tx).await.unwrap()
 }
 
+/// Whether `first`'s transaction holds `other` up before `other` is done (without a lock it is just
+/// done): one or the other comes, however loaded the machine.
+async fn holds_up<T>(k: &Kernel, first: &mut Tx, other: &tokio::task::JoinHandle<T>) -> bool {
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut **first).await.unwrap();
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || other.is_finished() {
+            return waits;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
+}
+
 const WEBSHOP: &str = "package: webshop\nversion: 0.1.0\nlabel: Web shop\ndepends: [parties]\nfield_prefix: commerce_\n\
                        overlays:\n  - entity: Customer\n    ops:\n      - {op: add_field, field: {name: commerce_guest, type: check}}\n";
 
@@ -218,6 +236,82 @@ async fn scenario() {
     tx.commit().await.unwrap();
     assert_eq!(stock::parse_serials(Some(" A1 \n\nB2,C3 ")), ["A1", "B2", "C3"]);
 
+    // ── reversed once, by two callers at the same moment too ──
+    // With no document's lock to queue them (another app calling the engine twice at once), the second
+    // reversal of an entry, an allocation or a stock move waits for the first and is refused.
+    let twice = Uuid::now_v7();
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::post(&mut tx, &ctx, entry(twice, vec![Line::new(receivable, n("10"), "INR"), Line::new(bank, n("-10"), "INR")]), 2).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::reverse(&mut first, &ctx, "ContractTest", twice, today, 2).await.unwrap();
+    let second = {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = ledger::reverse(&mut tx, &ctx, "ContractTest", twice, today, 2).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second reversal of an entry waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let reversals = "select count(*) from journal_entry where source_entity = 'ContractTest' and source_id = $1 and reversal_of is not null";
+    assert_eq!(count(&mut tx, reversals, twice).await, 1);
+    let owed = OpenItem { id: Uuid::now_v7(), number: Some("CT-2".into()), ..item.clone() };
+    let (paid, more) = (Uuid::now_v7(), Uuid::now_v7());
+    ledger::open_item(&mut tx, &ctx, &owed).await.unwrap();
+    for payment in [paid, more] {
+        ledger::allocate(&k, &mut tx, &ctx, cid, owed.id, "PaymentEntry", payment, today, n("30"), n("30")).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::unallocate(&k, &mut first, &ctx, "PaymentEntry", paid, today).await.unwrap();
+    let second = {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", paid, today).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second unallocation waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    assert_eq!(ledger::load_open_item(&mut tx, tenant, owed.id, false).await.unwrap().unwrap().outstanding, n("70"), "30 given back once");
+    let (received, issued) = (Uuid::now_v7(), Uuid::now_v7());
+    stock::post_moves(&mut tx, &ctx, &co, "ContractTest", received, day, Utc::now(), vec![moved("10", Some("5"))], "Delivered").await.unwrap();
+    stock::post_moves(&mut tx, &ctx, &co, "ContractTest", issued, day, Utc::now(), vec![moved("-4", None)], "Delivered").await.unwrap();
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    stock::reverse_moves(&mut first, &ctx, &co, "ContractTest", issued, day, Utc::now()).await.unwrap();
+    let second = {
+        let (k, ctx, co) = (k.clone(), ctx.clone(), co.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = stock::reverse_moves(&mut tx, &ctx, &co, "ContractTest", issued, day, Utc::now()).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second reversal of a stock move waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let reversed = "select count(*) from stock_move where source_entity = 'ContractTest' and source_id = $1 and reversal_of is not null";
+    assert_eq!(count(&mut tx, reversed, issued).await, 1);
+    drop(tx);
+
     // ── portal::customer_for: a person's customer, found or made once ──
     // Two calls at once for one address make one customer: the second waits for the first, then finds
     // what it made.
@@ -225,7 +319,6 @@ async fn scenario() {
     let mut first = k.db.tenant_tx(tenant).await.unwrap();
     let (ann, made) = portal::customer_for(&k, &ctx, &mut first, "Ann Lee", Some(" Ann@Example.test "), None).await.unwrap();
     assert!(made);
-    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
     let second = {
         let (k, ctx) = (k.clone(), ctx.clone());
         tokio::spawn(async move {
@@ -235,20 +328,7 @@ async fn scenario() {
             found
         })
     };
-    // Until the second waits, or (without a lock) is done: either comes, however loaded the machine.
-    let mut waited = false;
-    for _ in 0..2400 {
-        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
-            .bind(pid)
-            .fetch_one(&k.db.pool)
-            .await
-            .unwrap();
-        if waits || second.is_finished() {
-            waited = waits;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
+    let waited = holds_up(&k, &mut first, &second).await;
     first.commit().await.unwrap();
     assert!(waited, "the second call waited for the first one's lock");
     assert_eq!(second.await.unwrap(), (ann, false), "the second call finds the first one's customer");

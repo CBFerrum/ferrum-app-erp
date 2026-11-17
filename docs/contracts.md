@@ -67,7 +67,8 @@ operations:
   accounting period holds (a company has its current fiscal year from set-up; make the others before posting in them).
 * **Once.** A posting appends on every call: call it once for each event of the source document
   (its submit, its cancel), which the platform's workflow runs once. Reversals act only on what is
-  not reversed yet, so calling one twice reverses once.
+  not reversed yet, so calling one twice reverses once; two at the same moment, in two transactions,
+  reverse once too, as the database refuses the second (`reversal_of` is unique).
 * **Typed.** The signatures are the contract, and the compiler checks them when an app builds
   against an ERP revision. ERP is 0.x: a minor version may change one of them, and says so in the
   changelog. Anything public that is not listed here is ERP's own.

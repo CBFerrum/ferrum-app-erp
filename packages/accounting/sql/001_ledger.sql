@@ -38,6 +38,8 @@ create table journal_entry (
 );
 create index journal_entry_source on journal_entry (tenant_id, source_entity, source_id);
 create index journal_entry_date on journal_entry (tenant_id, company_id, posting_date);
+-- An entry is reversed once: of two reversals made at the same moment, the second waits and is refused.
+create unique index journal_entry_reversal on journal_entry (tenant_id, reversal_of) where reversal_of is not null;
 
 create table journal_line (
   tenant_id uuid not null,
@@ -258,6 +260,8 @@ create table allocation (
 );
 create index allocation_payment on allocation (tenant_id, payment_entity, payment_id);
 create index allocation_item on allocation (tenant_id, open_item_id);
+-- An allocation is undone once, as an entry is reversed once.
+create unique index allocation_reversal on allocation (tenant_id, reversal_of) where reversal_of is not null;
 create trigger allocation_append_only before update or delete on allocation
   for each row execute function ferrum_forbid_change();
 
