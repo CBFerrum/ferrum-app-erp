@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.30.4-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.31.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.30.4`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.31.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -396,7 +396,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.7.0)
+### 💼 Finance add-on (0.7.1)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
   a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
@@ -903,12 +903,12 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.31.0** Six money faults fixed: postings outside every period, the exchange-difference plug, invoices left behind by settlements, double reversals, duplicate supplier bills, an unchecked hash.
 - [x] **0.30.4** A new card's code typed in another app is kept the way ERP keeps one typed on its own records.
 - [x] **0.30.3** Ten countries' returns as definitions their add-ons seed; an early-payment discount that takes tax back takes turns with filing.
 - [x] **0.30.2** ERP's page starts through the frontend's shared start.
 - [x] **0.30.1** One way to send a document outside for every channel, and one Peppol sender.
 - [x] **0.30.0** Every layout prints the tax registrations the countries' add-ons give; the base names no country.
-- [x] **0.29.1** Four faults fixed: carrier upkeeps, filing against invoicing, broken tax conditions, India's rules for Indian companies only.
 
 ### 🔜 Next up
 

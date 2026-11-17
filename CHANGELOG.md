@@ -1,5 +1,45 @@
 # Changelog
 
+## ERP 0.31.0, Finance 0.7.1: six money faults, each shown failing first
+
+The accounting and inventory packages' SQL and buying's Purchase Invoice change: a database an earlier build made is
+made again from empty. `ledger::allocate` and `ledger::unallocate` take the kernel first. No interface change.
+
+- **A posting needs an accounting period.** The database refused a posting into a closed month but let in one on a
+  day no accounting period holds, so a date typed as 2062 for 2026 posted into a year no close can lock. It is
+  refused now ("no accounting period contains 2062-01-01: make the fiscal year it falls in first"). A new company
+  comes with its current fiscal year, by its own Fiscal Year Starts In, and ERP's upkeep makes each company's next
+  year 30 days before it is needed, from the day after its latest year and as many months long, so the books do not
+  stop at a year's end; a company with no year is left alone. Make the years before the first (for opening
+  balances) yourself. An app whose suite posts on a day outside its company's current fiscal year makes that year
+  first.
+- **A payment in the company's own currency books no exchange difference.** A payment booked whatever its lines
+  left to exchange gain or loss, in one currency too: 99.995 rupees received with 0.005 of bank charges against an
+  invoice of 100 booked a gain of 0.01. In the company's own currency there is none now; in another currency, what
+  is left is the exchange difference, as before. A payment that does not add up is refused when it is saved,
+  saying where and by how much: a figure finer than its currency's places, on its field ("99.995 has more decimal
+  places than INR is booked in (2)"), or allocations beyond the money and deductions ("allocations exceed the paid
+  amount and deductions by 1 INR"). One whose lines still do not balance when it is posted (an item another app
+  opened through the engine at a base that is not its amount) is refused as unbalanced, never balanced with an
+  exchange difference.
+- **Settling an item keeps its invoice in step.** `ledger::allocate` and `ledger::unallocate` mirror the item's
+  outstanding amount and status onto its invoice themselves, so a caller that did not (Commerce's refund of a credit
+  note) no longer leaves an invoice showing money it does not have. Both take the kernel first:
+  `ledger::allocate(k, tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount)` and
+  `ledger::unallocate(k, tx, ctx, payment_entity, payment_id, on)`, which answers each item once. Commerce
+  (`src/payment.rs`, `src/refund.rs`) and Point of Sale (`src/closing.rs`) pass `hc.kernel` before `hc.tx`; their
+  own `flow::sync_invoice_outstanding` after these calls is no longer needed.
+- **Reversed once, by the database.** Two reversals of one journal entry, allocation or stock move made at the same
+  moment, in two transactions, both went through. `reversal_of` is unique on `journal_entry`, `allocation` and
+  `stock_move`, and the second is refused.
+- **A supplier's bill is entered once, by the database.** Purchase Invoice's unique key on the supplier and
+  Supplier Invoice No, over drafts and submitted invoices, replaces the lookup that two clerks at once both passed.
+  A bill entered again is refused with the key's message ("another Purchase Invoice already has this Supplier and
+  Supplier Invoice No"), no longer a field error on the number.
+- **No hash that nothing checks.** `journal_entry.entry_hash` and the hashing behind it are gone: nothing read,
+  chained or verified it.
+- Finance's payment allocation and advances call the engine as above and leave the invoices' outstanding to it.
+
 ## ERP 0.30.4: a new card's code typed in another app
 
 No database or interface change.
