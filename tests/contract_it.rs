@@ -165,27 +165,27 @@ async fn scenario() {
     drop(tx);
     let payment = Uuid::now_v7();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    let over = ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("150"), n("150")).await;
+    let over = ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("150"), n("150")).await;
     assert!(matches!(over, Err(Error::Invalid(ref m)) if m.contains("exceeds")), "{over:?}");
-    ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("60"), n("60")).await.unwrap();
+    ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("60"), n("60")).await.unwrap();
     assert_eq!(ledger::load_open_item(&mut tx, tenant, invoice, false).await.unwrap().unwrap().outstanding, n("40"));
     let paid = ledger::cancel_open_item(&mut tx, &ctx, invoice).await;
     assert!(matches!(paid, Err(Error::Invalid(ref m)) if m.contains("payments are allocated")), "{paid:?}");
-    assert_eq!(ledger::unallocate(&mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap(), [invoice]);
-    assert!(ledger::unallocate(&mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap().is_empty(), "undone once");
+    assert_eq!(ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap(), [invoice]);
+    assert!(ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap().is_empty(), "undone once");
     assert_eq!(ledger::load_open_item(&mut tx, tenant, invoice, false).await.unwrap().unwrap().outstanding, n("100"));
     ledger::cancel_open_item(&mut tx, &ctx, invoice).await.unwrap();
-    let cancelled = ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("10"), n("10")).await;
+    let cancelled = ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("10"), n("10")).await;
     assert!(cancelled.is_err(), "a cancelled item takes no payment");
     // A credit (a credit note, an advance) is a negative item: it is given back, as a refund does,
     // by negative allocations, never beyond it and never the other way.
     let credit = OpenItem { id: Uuid::now_v7(), number: Some("CT-CN".into()), amount: n("-50"), base_amount: n("-50"), ..item.clone() };
     ledger::open_item(&mut tx, &ctx, &credit).await.unwrap();
-    let wrong_way = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("20"), n("20")).await;
+    let wrong_way = ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("20"), n("20")).await;
     assert!(matches!(wrong_way, Err(Error::Invalid(_))), "{wrong_way:?}");
-    let beyond = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-60"), n("-60")).await;
+    let beyond = ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-60"), n("-60")).await;
     assert!(matches!(beyond, Err(Error::Invalid(_))), "{beyond:?}");
-    ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-20"), n("-20")).await.unwrap();
+    ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-20"), n("-20")).await.unwrap();
     assert_eq!(ledger::load_open_item(&mut tx, tenant, credit.id, false).await.unwrap().unwrap().outstanding, n("-30"));
     tx.commit().await.unwrap();
 

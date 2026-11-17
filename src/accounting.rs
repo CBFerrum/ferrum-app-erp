@@ -2,7 +2,6 @@
 //! prepayment does: it is taken out again on its reversal day (the day after, unless another is
 //! chosen), once, when the invoice or payment it stood in for is booked.
 
-use crate::flow::sync_invoice_outstanding;
 use crate::ledger::{self, Entry, Line, OpenItem};
 use crate::util::{b, company, d, date, exchange_rate, get, id, money, round, rows, s, set, sys};
 use async_trait::async_trait;
@@ -247,17 +246,12 @@ pub struct PaymentEntryHook;
 pub async fn undo_payment(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, on: chrono::NaiveDate) -> Result<()> {
     let pid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
     let co = company(k, ctx, tx, id(doc, "company").unwrap_or_default()).await?;
-    let items = ledger::unallocate(tx, ctx, "PaymentEntry", pid, on).await?;
+    ledger::unallocate(k, tx, ctx, "PaymentEntry", pid, on).await?;
     if ledger::load_open_item(tx, ctx.tenant, pid, true).await?.is_some_and(|i| i.status != "cancelled") {
         ledger::cancel_open_item(tx, ctx, pid).await?;
     }
     ledger::reverse(tx, ctx, "PaymentEntry", pid, on, co.precision).await?;
     crate::stored_value::reverse_entries(k, ctx, tx, "PaymentEntry", pid, on, "this payment").await?;
-    for inv in items {
-        if let Some(item) = ledger::load_open_item(tx, ctx.tenant, inv, false).await? {
-            sync_invoice_outstanding(k, ctx, tx, &item.entity, inv).await?;
-        }
-    }
     Ok(())
 }
 
@@ -666,7 +660,6 @@ impl DocHook for PaymentEntryHook {
         // A refund takes from a credit (a negative item), so its allocations are negative.
         let item_sign = if refund(doc) { -Decimal::ONE } else { Decimal::ONE };
         let mut lines = Vec::new();
-        let mut touched = Vec::new();
         let mut discount_taxes = Vec::new();
         for r in rows(doc, "references") {
             let discount = d(&r, "discount_amount").max(Decimal::ZERO);
@@ -686,7 +679,7 @@ impl DocHook for PaymentEntryHook {
             // money is worth at today's differs by the exchange difference below.
             let at_rate = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
             let base_at_invoice =
-                item_sign * ledger::allocate(hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * at_rate).await?;
+                item_sign * ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, inv, "PaymentEntry", pid, on, item_sign * amount, item_sign * at_rate).await?;
             let sign = if receive { -Decimal::ONE } else { Decimal::ONE };
             lines.push(
                 Line::new(party_account, sign * base_at_invoice, &co.currency_code)
@@ -695,7 +688,6 @@ impl DocHook for PaymentEntryHook {
                     .supplier(supplier)
                     .against(&item.entity, inv),
             );
-            touched.push((item.entity.clone(), inv));
         }
         if !discount_taxes.is_empty() {
             // The tax taken back is in the tax ledger on the payment's day, as an invoice's tax is on its own.
@@ -773,11 +765,7 @@ impl DocHook for PaymentEntryHook {
         entry.memo = s(doc, "remarks").map(str::to_string);
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         crate::instruments::payment_submitted(hc, doc, &co, receive).await?;
-        crate::stored_value::payment_submitted(hc, doc, &co).await?;
-        for (entity, inv) in touched {
-            sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, inv).await?;
-        }
-        Ok(())
+        crate::stored_value::payment_submitted(hc, doc, &co).await
     }
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {

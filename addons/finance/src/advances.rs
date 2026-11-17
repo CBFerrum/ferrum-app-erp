@@ -10,7 +10,6 @@
 use crate::common::installed;
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_app_erp::flow::sync_invoice_outstanding;
 use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_calc::Rounding;
 use ferrum_domain::util::{company, date, id, money, s};
@@ -94,8 +93,8 @@ impl DocHook for AdvanceHook {
             }
             let (inv_base, adv_base, _) = difference(invoice.exchange_rate, adv_rate, take, co.precision, co.rounding, invoice.customer_id.is_some());
             // What each side gave up: all an item has left when this clears it.
-            let inv_base = ledger::allocate(hc.tx, hc.ctx, co.id, iid, KEY, key, on, take, inv_base).await?;
-            let adv_base = -ledger::allocate(hc.tx, hc.ctx, co.id, pid, KEY, key, on, -take, -adv_base).await?;
+            let inv_base = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, iid, KEY, key, on, take, inv_base).await?;
+            let adv_base = -ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, pid, KEY, key, on, -take, -adv_base).await?;
             let diff = inv_base - adv_base;
             if !diff.is_zero() {
                 // The party account keeps the base difference between the two rates; clear it.
@@ -120,7 +119,6 @@ impl DocHook for AdvanceHook {
                 break;
             }
         }
-        sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, iid).await?;
         Ok(Some(json!({"allocated": money(invoice.outstanding - left), "outstanding": money(left), "advances": used})))
     }
 }
@@ -153,7 +151,7 @@ async fn undo_pairings(hc: &mut HookCtx<'_>, item: Uuid) -> Result<()> {
     .await?;
     let today = hc.ctx.today();
     for key in keys {
-        let touched = ledger::unallocate(hc.tx, hc.ctx, KEY, key, today).await?;
+        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, KEY, key, today).await?;
         let companies: Vec<Uuid> =
             sqlx::query_scalar("select distinct company_id from journal_entry where tenant_id = $1 and source_entity = $2 and source_id = $3")
                 .bind(hc.ctx.tenant)
@@ -164,11 +162,6 @@ async fn undo_pairings(hc: &mut HookCtx<'_>, item: Uuid) -> Result<()> {
         for cid in companies {
             let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
             ledger::reverse(hc.tx, hc.ctx, KEY, key, today, co.precision).await?;
-        }
-        for t in touched {
-            if let Some(o) = ledger::load_open_item(hc.tx, hc.ctx.tenant, t, false).await? {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &o.entity, t).await?;
-            }
         }
     }
     Ok(())

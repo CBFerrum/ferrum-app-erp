@@ -4,7 +4,6 @@
 //! recovery later is money in, credited to the reason's recovery account, with the relief's share
 //! owed again. Approval is the workspace's policy on submitting a write-off, not code.
 
-use crate::flow::sync_invoice_outstanding;
 use crate::ledger::{self, Entry, Line};
 use crate::util::{company, d, date, get, id, money, round, rows, s, set, sys};
 use async_trait::async_trait;
@@ -68,7 +67,7 @@ impl DocHook for WriteOffHook {
         let amount = d(doc, "amount");
         // Written off at the invoice's rate: all it has left in the company's currency when this clears it.
         let at_rate = ledger::round_as(amount * item.exchange_rate, co.precision, co.rounding);
-        let base = ledger::allocate(hc.tx, hc.ctx, co.id, inv, ENTITY, wid, on, amount, at_rate).await?;
+        let base = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, inv, ENTITY, wid, on, amount, at_rate).await?;
         if base != d(doc, "base_amount") {
             let mut v = Doc::new();
             v.insert("base_amount".into(), money(base));
@@ -97,8 +96,7 @@ impl DocHook for WriteOffHook {
         entry.lines.push(Line::new(id(doc, "write_off_account").unwrap_or_default(), base - relieved, &co.currency_code).remarks("Bad debt"));
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         let rows: Vec<Value> = relief.iter().map(|r| json!({"account": r.account, "amount": money(r.amount), "description": r.description})).collect();
-        hc.kernel.set_child_rows_tx(&sys(hc.ctx), hc.tx, ENTITY, "relief", wid, rows.into_iter().filter_map(|v| v.as_object().cloned()).collect()).await?;
-        sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await
+        hc.kernel.set_child_rows_tx(&sys(hc.ctx), hc.tx, ENTITY, "relief", wid, rows.into_iter().filter_map(|v| v.as_object().cloned()).collect()).await
     }
 
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -108,13 +106,8 @@ impl DocHook for WriteOffHook {
         let wid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
-        let items = ledger::unallocate(hc.tx, hc.ctx, ENTITY, wid, on).await?;
+        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, ENTITY, wid, on).await?;
         ledger::reverse(hc.tx, hc.ctx, ENTITY, wid, on, co.precision).await?;
-        for inv in items {
-            if let Some(item) = ledger::load_open_item(hc.tx, hc.ctx.tenant, inv, false).await? {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &item.entity, inv).await?;
-            }
-        }
         Ok(())
     }
 
