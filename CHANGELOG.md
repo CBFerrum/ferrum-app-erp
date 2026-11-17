@@ -1,5 +1,14 @@
 # Changelog
 
+## ERP 0.32.1, United Kingdom 0.3.2, Romania 0.2.2: the sign-in callback pages escape what they show
+
+Patches: nothing another app calls changes.
+
+- **HMRC's and ANAF's callback pages no longer run a link's script.** When the sign-in came back with an error, the
+  United Kingdom's Making Tax Digital callback and Romania's ANAF callback wrote the address's `error_description`
+  into the page as it came, so a signed-in person who followed a crafted link ran that link's script on Ferrum's
+  address. Both pages now escape their title and text with the kernel's HTML escape: the words show as words.
+
 ## ERP 0.32.0, India 0.8.0, Finance 0.7.2, Stock Operations 0.2.2, Manufacturing Operations 0.2.2, Warehouse Management 0.3.4: FIFO below zero, the workspace's day, the IRP's hosts
 
 The inventory package's SQL (`stock_move`) and the Warehouse Management add-on's (`wms_position`) change: a database
