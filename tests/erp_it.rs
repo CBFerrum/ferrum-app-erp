@@ -837,7 +837,21 @@ async fn scenario() {
     t.k.cancel(&t.ctx, "SalesInvoice", ein, None).await.expect("cancelled once its e-invoice is");
 
     // ───────────── e-invoices through a direct IRP connection ─────────────
+    // The company's IRP address, to which its credentials go, is held to NIC's and the known GSPs' hosts and those the
+    // operator adds, on every server: one on another host is refused when it is saved, the stand-in's (127.0.0.1) too
+    // until the operator adds it.
     let irp = fake_irp::start().await;
+    let at = |url: &str| obj(json!({"in_irp_url": url}));
+    for url in ["https://collector.example.net/eivital", irp.url.as_str()] {
+        let refused = t.k.update(&t.ctx, "Company", cid, at(url), None).await;
+        assert!(
+            matches!(&refused, Err(Error::Validation(f)) if f.iter().any(|f| f.field == "in_irp_url" && f.message.contains("FERRUM_IN_IRP_HOSTS"))),
+            "{url}: {:?}",
+            refused.map(|saved| saved["in_irp_url"].clone())
+        );
+    }
+    t.k.update(&t.ctx, "Company", cid, at("https://einv-apisandbox.nic.in/"), None).await.expect("NIC's sandbox");
+    ferrum_kernel::env::set([("FERRUM_IN_IRP_HOSTS".to_string(), Some("127.0.0.1".to_string()))].into());
     t.k.update(
         &t.ctx,
         "Company",
@@ -857,6 +871,22 @@ async fn scenario() {
         let number = t.submit("SalesInvoice", id).await["number"].as_str().unwrap().to_string();
         (id, number)
     };
+    // An address stored before the check (or by hand) is refused again before anything is sent: the request fails,
+    // saying why, and no IRP hears of it.
+    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+    sqlx::query("update e_company set ext = jsonb_set(coalesce(ext, '{}'), '{in_irp_url}', '\"https://collector.example.net\"') where id = $1")
+        .bind(cid)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (stored_before, _) = invoice_for_irp().await;
+    t.action("SalesInvoice", stored_before, "request_e_invoice", json!({})).await;
+    drain().await;
+    let doc = t.get("SalesInvoice", stored_before).await;
+    let error = doc["in_e_invoice_error"].as_str().unwrap_or_default().to_string();
+    assert!(doc["in_e_invoice_status"] == json!("Failed") && error.contains("collector.example.net"), "{}: {error}", doc["in_e_invoice_status"]);
+    t.k.update(&t.ctx, "Company", cid, at(&irp.url), None).await.expect("the stand-in, its host added by the operator");
     let (sent, _) = invoice_for_irp().await;
     t.action("SalesInvoice", sent, "request_e_invoice", json!({})).await;
     drain().await;
@@ -905,7 +935,7 @@ async fn scenario() {
     t.action("SalesInvoice", lost, "record_e_way_bill_cancellation", json!({})).await;
     t.action("SalesInvoice", lost, "cancel_e_invoice", json!({"reason": "Order cancelled", "remark": "Withdrawn"})).await;
     drain().await;
-    for inv in [sent, lost, refused, by_hand] {
+    for inv in [sent, lost, refused, by_hand, stored_before] {
         t.k.cancel(&t.ctx, "SalesInvoice", inv, None).await.expect("cancelled");
     }
 

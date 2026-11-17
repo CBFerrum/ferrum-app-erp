@@ -815,7 +815,9 @@ called at its own address, its production one or its test environment's as the c
 or its variable, `FERRUM_GB_HMRC_URL` and the others, which wins) may stand in for the provider's, but outside
 development only when it is at one of the provider's own hosts: a changed setting cannot send a company's credentials
 anywhere else. The United Kingdom's `gb.public_ip` (`FERRUM_PUBLIC_IP`) names the server's public address in HMRC's
-fraud-prevention headers.
+fraud-prevention headers. India's IRP address is the company's own (NIC's, or its GSP's): it is held to NIC's hosts,
+the GSPs' India knows and those the operator adds in `india.irp_hosts` (`FERRUM_IN_IRP_HOSTS`, hosts separated by
+commas), when it is saved and again before anything is sent, on a development server too.
 
 ## 📊 How it compares
 

@@ -10,12 +10,16 @@
 //! A session (the IRP's token and session key, for six hours) is kept on the company, sealed
 //! (`in_irp_session`), so every replica uses the same one; two that need a new one at the same
 //! moment make one between them.
+//!
+//! The company's address (`in_irp_url`), to which its credentials go, is held to [`IRP`]'s hosts
+//! and those the operator adds, when it is saved and again before anything is sent.
 
 use crate::util::{get, id, s, sys};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use chrono::{DateTime, Duration as Span, NaiveDateTime, TimeZone, Utc};
+use ferrum_app_erp::providers::Provider;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, EventSink, Kernel, Result};
 use serde_json::{Map, Value, json};
@@ -32,6 +36,15 @@ const DUPLICATE: &str = "2150";
 const STALE_TOKEN: &[&str] = &["1005", "1004"];
 /// The company's sealed field that keeps its session.
 const SESSION: &str = "in_irp_session";
+
+/// The hosts a company's IRP address may be on: NIC's API (its sandbox, and production behind the
+/// first and second e-invoice portals) and the GSPs' whose pass-through hosts are known. An
+/// operator adds another GSP's in `india.irp_hosts` (`FERRUM_IN_IRP_HOSTS`).
+pub const IRP: Provider = Provider {
+    name: "the IRP",
+    env: "FERRUM_IN_IRP_HOSTS",
+    hosts: &["einv-apisandbox.nic.in", "api.einvoice1.gst.gov.in", "api.einvoice2.gst.gov.in", "api.gsp.vayana.com", "einvapi.charteredinfo.com"],
+};
 
 // ───────────────────────────── crypto ─────────────────────────────
 
@@ -243,6 +256,8 @@ impl IrpConnector {
             .filter(|u| !u.is_empty())
             .map(|u| u.trim_end_matches('/').to_string())
             .ok_or_else(|| Error::invalid("set the company's IRP API address: the one NIC gave at registration, or your GSP's"))?;
+        // Again before anything is sent: the address may have been stored before it was checked.
+        IRP.check_company(&base)?;
         let mut tx = k.db.tenant_tx(tenant).await?;
         let mut secret = async |field: &str| crate::keys::field(k, &mut tx, tenant, "Company", cid, field).await.map(|v| v.map(|v| v.to_string()));
         let client_secret = secret("in_irp_client_secret").await?;

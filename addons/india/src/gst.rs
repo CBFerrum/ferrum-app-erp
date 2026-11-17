@@ -147,6 +147,12 @@ impl DocHook for PartyGstHook {
         {
             errors.push(FieldError::new("in_state_code", format!("'{sc}' is not a GST state code")));
         }
+        // A company's IRP address, to which its credentials go: only NIC's, a known GSP's or one the operator adds.
+        if let Some(url) = s(doc, "in_irp_url").map(str::trim).filter(|u| !u.is_empty())
+            && let Err(Error::Invalid(m)) = crate::irp::IRP.check_company(url)
+        {
+            errors.push(FieldError::new("in_irp_url", m));
+        }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 }
