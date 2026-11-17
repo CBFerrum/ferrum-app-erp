@@ -573,7 +573,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.8.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇮🇳 | India | `ferrum-india` 0.8.1 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
 | 🇪🇺 | European Union | `ferrum-eu` 0.4.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.1.1 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.1 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
