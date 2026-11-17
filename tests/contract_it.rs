@@ -116,6 +116,14 @@ async fn scenario() {
         assert!(posted.unwrap().is_some());
     }
     assert_eq!(count(&mut tx, entries, source).await, 2);
+    // Only on a day an accounting period holds: the company has its current fiscal year, and 2062 typed
+    // for 2026 is refused by the database.
+    let lines = vec![Line::new(receivable, n("100"), "INR"), Line::new(bank, n("-100"), "INR")];
+    let far = Entry { posting_date: chrono::NaiveDate::from_ymd_opt(2062, 1, 1).unwrap(), ..entry(source, lines) };
+    let mut outside = k.db.tenant_tx(tenant).await.unwrap();
+    let refused = ledger::post(&mut outside, &ctx, far, 2).await;
+    assert!(matches!(refused, Err(Error::Invalid(ref m)) if m.contains("no accounting period")), "{refused:?}");
+    drop(outside);
 
     // ── ledger::reverse: what is not reversed yet, once ──
     assert_eq!(ledger::reverse(&mut tx, &ctx, "ContractTest", source, today, 2).await.unwrap(), 2);

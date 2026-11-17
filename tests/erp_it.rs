@@ -327,6 +327,15 @@ impl T {
         assert_eq!(page.rows.len(), 1, "{entity} {filters}");
         page.rows[0].clone()
     }
+    /// A company's fiscal year from `start` to `end`: the one it was made with, when it was made in
+    /// that year, else made here.
+    async fn fiscal_year(&self, company: Uuid, name: &str, start: &str, end: &str) -> Uuid {
+        let filters = ferrum_kernel::query::parse_filters(&json!({"company": company.to_string(), "start_date": start})).unwrap();
+        match self.k.list(&self.ctx, "FiscalYear", &ListQuery { filters, ..Default::default() }).await.unwrap().rows.first() {
+            Some(made) => uid(made),
+            None => uid(&self.insert("FiscalYear", json!({"year_name": name, "company": company.to_string(), "start_date": start, "end_date": end})).await),
+        }
+    }
     /// Debit minus credit on an account (by name) across all postings.
     async fn gl(&self, account: &str) -> Decimal {
         let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
@@ -1105,8 +1114,8 @@ async fn scenario() {
     assert_eq!(t.get("MrpRun", mrp_id).await["status"], json!("Orders Created"));
 
     // ───────────── period closing ─────────────
-    let fy = t.insert("FiscalYear", json!({"year_name": "2026-27", "company": cid.to_string(), "start_date": "2026-04-01", "end_date": "2027-03-31"})).await;
-    t.action("FiscalYear", uid(&fy), "close_period", json!({"period_start": "2026-05-01"})).await;
+    let fy = t.fiscal_year(cid, "2026-27", "2026-04-01", "2027-03-31").await;
+    t.action("FiscalYear", fy, "close_period", json!({"period_start": "2026-05-01"})).await;
     let je = t
         .insert(
             "JournalEntry",
@@ -1116,7 +1125,7 @@ async fn scenario() {
         .await;
     let closed = t.k.submit(&t.ctx, "JournalEntry", uid(&je), None).await;
     assert!(matches!(closed, Err(Error::Invalid(ref m)) if m.contains("closed")), "{closed:?}");
-    t.action("FiscalYear", uid(&fy), "reopen_period", json!({"period_start": "2026-05-01"})).await;
+    t.action("FiscalYear", fy, "reopen_period", json!({"period_start": "2026-05-01"})).await;
     t.submit("JournalEntry", uid(&je)).await;
 
     // ───────────── concurrent issues never overdraw stock ─────────────
@@ -1569,8 +1578,13 @@ async fn scenario() {
 
     // ───────────── a company outside India, in the same workspace ─────────────
     // India's rules act only for companies of its country.
-    let gmbh =
-        uid(&t.insert("Company", json!({"company_name": "Test Industries GmbH", "abbr": "TIG", "default_currency": inr["id"], "country": "Germany"})).await);
+    let gmbh = uid(&t
+        .insert(
+            "Company",
+            json!({"company_name": "Test Industries GmbH", "abbr": "TIG", "default_currency": inr["id"], "country": "Germany", "fy_start_month": 1}),
+        )
+        .await);
+    let tig_year = t.fiscal_year(gmbh, "TIG 2026", "2026-01-01", "2026-12-31").await;
     let of_gmbh = |entity: &'static str, more: Value| {
         let mut f = json!({"company": gmbh.to_string()});
         f.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap_or_default());
@@ -1717,8 +1731,6 @@ async fn scenario() {
     // One invoice that cannot be recognised holds back no other. February's service waits while
     // February is closed, and the accountant is told which and why; the year's support beside it is
     // recognised, in the daily upkeep's round over every company as in the accountant's.
-    let tig_year =
-        uid(&t.insert("FiscalYear", json!({"year_name": "TIG 2026", "company": gmbh.to_string(), "start_date": year(1, 1), "end_date": year(12, 31)})).await);
     let february = json!({"company": gmbh.to_string(), "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "28",
                           "enable_deferred_revenue": true, "service_start_date": year(2, 1), "service_end_date": year(2, 28)}]});
     let february = uid(&t.submit("SalesInvoice", uid(&t.insert("SalesInvoice", february).await)).await);

@@ -259,14 +259,19 @@ async fn scenario() {
     // ───────────── company, years, cost centers, accounts, parties ─────────────
     let inr = t.find_one("Currency", json!({"code": "INR"})).await;
     let eur = t.find_one("Currency", json!({"code": "EUR"})).await;
-    let company = t.insert(&a, "Company", json!({"company_name": "Fin Co", "abbr": "FC", "default_currency": inr["id"]})).await;
+    let company = t.insert(&a, "Company", json!({"company_name": "Fin Co", "abbr": "FC", "default_currency": inr["id"], "fy_start_month": 1})).await;
     t.company = uid(&company);
     let cid = t.company.to_string();
+    // The year the company is made in comes with it; the others are made here.
     let mut years = HashMap::new();
-    for y in [2024, 2025, 2026] {
-        let fy = t
-            .insert(&a, "FiscalYear", json!({"year_name": y.to_string(), "company": cid, "start_date": format!("{y}-01-01"), "end_date": format!("{y}-12-31")}))
-            .await;
+    for y in [2024, 2025, 2026, 2027, 2028] {
+        let fy = match t.list("FiscalYear", json!({"company": cid, "start_date": format!("{y}-01-01")})).await.pop() {
+            Some(made) => made,
+            None => {
+                let named = json!({"year_name": y.to_string(), "company": cid, "start_date": format!("{y}-01-01"), "end_date": format!("{y}-12-31")});
+                t.insert(&a, "FiscalYear", named).await
+            }
+        };
         years.insert(y, uid(&fy));
     }
     let main = uid(&t.find_one("CostCenter", json!({"cost_center_name": "Main", "company": cid})).await);

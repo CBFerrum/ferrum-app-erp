@@ -119,8 +119,8 @@ fn standard_account(company: Uuid, currency: &Value, entry: &(&str, &str, &str, 
     d
 }
 
-/// Creates the standard chart, cost center, warehouses and default links. Idempotent: a company
-/// with accounts already is left to [`complete_chart`].
+/// Creates the standard chart, cost center, warehouses, default links and the current fiscal year.
+/// Idempotent: a company with accounts already is left to [`complete_chart`].
 pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> {
     let k = hc.kernel;
     let sctx = sys(hc.ctx);
@@ -155,6 +155,20 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
             w.insert("account".into(), json!(ids.get(account).cloned()));
             k.insert_tx(&sctx, hc.tx, "Warehouse", w).await?;
         }
+    }
+    // Its current fiscal year, by its own start month, with its months, unless it has years of its own
+    // already: nothing posts outside an accounting period.
+    if k.find_tx(&sctx, hc.tx, "FiscalYear", &[Filter::eq("company", company.to_string())], None, 1).await?.is_empty() {
+        let month = co.get("fy_start_month").and_then(Value::as_u64).unwrap_or(4).clamp(1, 12) as u32;
+        let today = hc.ctx.today();
+        let start = ferrum_domain::reports::fy_start(today, month);
+        let end = start.checked_add_months(chrono::Months::new(12)).and_then(|d| d.pred_opt()).unwrap_or(start);
+        let mut fy = Doc::new();
+        fy.insert("year_name".into(), json!(ferrum_kernel::numbering::fiscal_year_label(today, month)));
+        fy.insert("company".into(), json!(company.to_string()));
+        fy.insert("start_date".into(), json!(start.to_string()));
+        fy.insert("end_date".into(), json!(end.to_string()));
+        k.insert_tx(&sctx, hc.tx, "FiscalYear", fy).await?;
     }
     let mut v = Doc::new();
     for &(field, account) in DEFAULTS {

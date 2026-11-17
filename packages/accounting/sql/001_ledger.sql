@@ -106,9 +106,10 @@ end $$;
 
 select ferrum_ensure_journal_partitions(extract(year from now())::int - 2, extract(year from now())::int + 2);
 
--- A posting takes its period's row shared as it checks it. Closing the period (an update of that row) then waits
--- for the postings already being made into it, and a posting that comes while a close is being made waits for the
--- close and finds the period closed.
+-- A posting needs an open period of its company on its day: a day in no fiscal year (2062 typed for 2026) is
+-- refused, as is a closed month. It takes its period's row shared as it checks it. Closing the period (an update of
+-- that row) then waits for the postings already being made into it, and a posting that comes while a close is being
+-- made waits for the close and finds the period closed.
 create or replace function ferrum_journal_entry_guard() returns trigger
 language plpgsql as $$
 declare closed boolean;
@@ -117,6 +118,9 @@ begin
    where p.tenant_id = new.tenant_id and p.company_id = new.company_id
      and new.posting_date between p.period_start and p.period_end
    for share;
+  if not found then
+    raise exception 'ferrum: no accounting period contains %: make the fiscal year it falls in first', new.posting_date using errcode = 'P0001';
+  end if;
   if closed then
     raise exception 'ferrum: the accounting period containing % is closed', new.posting_date using errcode = 'P0001';
   end if;

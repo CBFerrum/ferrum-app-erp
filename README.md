@@ -219,8 +219,10 @@ add-on brings it.
 - **Finance books.** IFRS beside local rules, or a tax book beside both: an entry with no book is in every
   book, an entry with a book adjusts that one alone. Statements, the general ledger and year-end closing take
   a book.
-- **Fiscal years and period locks.** Close and reopen an accounting period from the fiscal year; nothing posts
-  into a closed month.
+- **Fiscal years and period locks.** A new company comes with its current fiscal year, by its own start month;
+  make the years before it (for the old books) and the next one before posting in them, since nothing posts on a
+  day no fiscal year holds. Close and reopen an accounting period from the fiscal year; nothing posts into a closed
+  month.
 - **Journal entries.** Entry types, party lines in the party's own currency with their own due dates,
   reversing entries on a chosen day (accruals that take themselves out the day after, once, by the daily
   upkeep).
@@ -962,7 +964,8 @@ app.</sub>
 First steps in a new workspace:
 
 1. **Make the company** (Setup → Company): currency, fiscal year start, then **Create Standard Chart of
-   Accounts**. Fill the letterhead and bank details printed on documents.
+   Accounts**. Fill the letterhead and bank details printed on documents. The company's current fiscal year is
+   made with it; make an earlier one for opening balances dated before it.
 2. **Install the company's country** from Apps, which adds its tax accounts and templates; for e-invoicing or
    filing, connect the country's service on the company.
 3. **Give roles**: Accounts, Sales, Purchase, Stock and Manufacturing managers and users.

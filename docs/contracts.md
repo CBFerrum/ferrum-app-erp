@@ -63,7 +63,8 @@ operations:
   its own: what it writes commits or rolls back with the caller's document action. An `Err` is
   returned to the platform, which rolls the whole action back, so nothing half done survives.
 * **Append only.** Postings, moves and allocations are never changed or deleted; undoing appends
-  reversals, and the database refuses edits, deletes and postings into a closed period.
+  reversals, and the database refuses edits, deletes, postings into a closed period and postings on a day no
+  accounting period holds (a company has its current fiscal year from set-up; make the others before posting in them).
 * **Once.** A posting appends on every call: call it once for each event of the source document
   (its submit, its cancel), which the platform's workflow runs once. Reversals act only on what is
   not reversed yet, so calling one twice reverses once.
@@ -73,9 +74,9 @@ operations:
 
 | Operation | What it does | What it refuses | Called twice |
 |---|---|---|---|
-| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one hashed journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period | Two entries |
+| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one hashed journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
-| `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed | Reverses once |
+| `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed or there is none | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |
 | `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount) -> Decimal` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back. A settlement that clears what is outstanding takes all the item has left in the company's currency, whatever `base_amount` says, and every call returns the base it took: post that, and any difference from the money's own value as an exchange difference | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
 | `ledger::unallocate(tx, ctx, payment_entity, payment_id, on) -> Vec<Uuid>` | Reverses what a payment allocated, restoring what is outstanding; returns the items | | Undoes once |
