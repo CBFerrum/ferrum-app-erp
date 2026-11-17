@@ -12,7 +12,6 @@ use crate::advances::difference;
 use crate::common::installed;
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use ferrum_app_erp::flow::sync_invoice_outstanding;
 use ferrum_app_erp::ledger::{self, Entry, Line};
 use ferrum_domain::util::{Company, company, d, date, id, money, rows, s, set, sys};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
@@ -229,12 +228,11 @@ impl DocHook for AllocationHook {
         let number = s(doc, "number").map(str::to_string);
         let mut entry = Entry::new(co.id, on, ENTITY, pid, number.clone());
         entry.memo = Some(format!("Exchange difference on payment allocation {}", number.unwrap_or_default()));
-        let mut touched = Vec::new();
         let mut gains = Vec::new();
         for p in &found {
             // What each side gave up: all an item has left when the pair clears it.
-            let invoice_base = ledger::allocate(hc.tx, hc.ctx, co.id, p.invoice.id, ENTITY, pid, on, p.take, p.invoice_base).await?;
-            let credit_base = -ledger::allocate(hc.tx, hc.ctx, co.id, p.credit.id, ENTITY, pid, on, -p.take, -p.credit_base).await?;
+            let invoice_base = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, p.invoice.id, ENTITY, pid, on, p.take, p.invoice_base).await?;
+            let credit_base = -ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, p.credit.id, ENTITY, pid, on, -p.take, -p.credit_base).await?;
             let diff = invoice_base - credit_base;
             gains.push(if customer { -diff } else { diff });
             if !diff.is_zero() {
@@ -249,11 +247,6 @@ impl DocHook for AllocationHook {
                         .against(&p.invoice.entity, p.invoice.id),
                 );
                 entry.lines.push(Line::new(gl, -sign * diff, &co.currency_code).remarks("Exchange difference"));
-            }
-            for item in [&p.invoice, &p.credit] {
-                if !touched.contains(&(item.entity.clone(), item.id)) {
-                    touched.push((item.entity.clone(), item.id));
-                }
             }
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
@@ -273,9 +266,6 @@ impl DocHook for AllocationHook {
             v.insert("exchange_difference".into(), money(total));
             hc.kernel.set_values_tx(&sctx, hc.tx, ENTITY, pid, v).await?;
         }
-        for (entity, item) in touched {
-            sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &entity, item).await?;
-        }
         Ok(())
     }
 
@@ -284,13 +274,8 @@ impl DocHook for AllocationHook {
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
         // Allocations and ledger reverse on the same date, so as-of reports agree.
         let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
-        let items = ledger::unallocate(hc.tx, hc.ctx, ENTITY, pid, on).await?;
+        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, ENTITY, pid, on).await?;
         ledger::reverse(hc.tx, hc.ctx, ENTITY, pid, on, co.precision).await?;
-        for item in items {
-            if let Some(o) = ledger::load_open_item(hc.tx, hc.ctx.tenant, item, false).await? {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, &o.entity, item).await?;
-            }
-        }
         Ok(())
     }
 }

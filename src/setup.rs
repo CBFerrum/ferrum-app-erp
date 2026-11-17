@@ -4,8 +4,8 @@
 
 use crate::util::{date, id, rows, s, sys};
 use async_trait::async_trait;
-use chrono::{Datelike, NaiveDate};
-use ferrum_kernel::{Doc, DocHook, Error, Filter, HookCtx, Result};
+use chrono::{Datelike, Duration, Months, NaiveDate};
+use ferrum_kernel::{Ctx, Doc, DocHook, Error, Filter, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -119,8 +119,8 @@ fn standard_account(company: Uuid, currency: &Value, entry: &(&str, &str, &str, 
     d
 }
 
-/// Creates the standard chart, cost center, warehouses and default links. Idempotent: a company
-/// with accounts already is left to [`complete_chart`].
+/// Creates the standard chart, cost center, warehouses, default links and the current fiscal year.
+/// Idempotent: a company with accounts already is left to [`complete_chart`].
 pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> {
     let k = hc.kernel;
     let sctx = sys(hc.ctx);
@@ -155,6 +155,13 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
             w.insert("account".into(), json!(ids.get(account).cloned()));
             k.insert_tx(&sctx, hc.tx, "Warehouse", w).await?;
         }
+    }
+    // Its current fiscal year, by its own start month, with its months, unless it has years of its own
+    // already: nothing posts outside an accounting period.
+    if k.find_tx(&sctx, hc.tx, "FiscalYear", &[Filter::eq("company", company.to_string())], None, 1).await?.is_empty() {
+        let month = co.get("fy_start_month").and_then(Value::as_u64).unwrap_or(4).clamp(1, 12) as u32;
+        let start = ferrum_domain::reports::fy_start(hc.ctx.today(), month);
+        make_year(k, hc.ctx, hc.tx, company, start, 12).await?;
     }
     let mut v = Doc::new();
     for &(field, account) in DEFAULTS {
@@ -246,6 +253,51 @@ impl DocHook for CompanyHook {
         };
         Ok(Some(json!({"created": false, "added": added, "defaults_set": linked, "message": message})))
     }
+}
+
+/// Makes a company's fiscal year of `months` from `start` as a person does, its months made by the
+/// FiscalYear hook, under the name the platform gives the year that starts on `start`.
+async fn make_year(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, start: NaiveDate, months: u32) -> Result<()> {
+    let end = start.checked_add_months(Months::new(months)).and_then(|d| d.pred_opt()).unwrap_or(start);
+    let mut fy = Doc::new();
+    fy.insert("year_name".into(), json!(ferrum_kernel::numbering::fiscal_year_label(start, start.month())));
+    fy.insert("company".into(), json!(company.to_string()));
+    fy.insert("start_date".into(), json!(start.to_string()));
+    fy.insert("end_date".into(), json!(end.to_string()));
+    k.insert_tx(&sys(ctx), tx, "FiscalYear", fy).await.map(|_| ())
+}
+
+/// Upkeep on the workspace's `today`: each company's next fiscal year is made 30 days before it is
+/// needed, so the books do not stop at a year's end. It starts the day after the company's latest year
+/// and is as many months long, so a year of the company's own shape keeps it. A company with no year is
+/// left as it is, and no year further out is ever made: a day in none is still refused.
+pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<()> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let due: Vec<(Uuid, NaiveDate, NaiveDate)> = sqlx::query_as(
+        "select distinct on (f.company) f.company, f.start_date, f.end_date from e_fiscal_year f where f.tenant_id = $1 \
+         and not exists (select 1 from e_fiscal_year h where h.tenant_id = f.tenant_id and h.company = f.company and $2 between h.start_date and h.end_date) \
+         order by f.company, f.end_date desc",
+    )
+    .bind(ctx.tenant)
+    .bind(today + Duration::days(30))
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.rollback().await?;
+    for (company, start, end) in due {
+        let next = end + Duration::days(1);
+        let months = (next.year() - start.year()) * 12 + next.month() as i32 - start.month() as i32;
+        // Each company in a transaction of its own: one whose year cannot be made (on two replicas at
+        // once, the second finds it made) holds up no other.
+        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        match make_year(k, ctx, &mut tx, company, next, months.max(1) as u32).await {
+            Ok(()) => tx.commit().await?,
+            Err(e) => {
+                tx.rollback().await?;
+                tracing::warn!(tenant = %ctx.tenant, %company, "next fiscal year not made: {e}");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn month_starts(start: NaiveDate, end: NaiveDate) -> Vec<(NaiveDate, NaiveDate)> {

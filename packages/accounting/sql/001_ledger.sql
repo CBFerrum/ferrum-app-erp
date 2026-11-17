@@ -26,7 +26,6 @@ create table journal_entry (
   memo text,
   total_debit numeric(28,9) not null,
   total_credit numeric(28,9) not null,
-  entry_hash bytea not null,
   created_by uuid,
   created_at timestamptz not null default now(),
   created_txid bigint not null default txid_current(),
@@ -38,6 +37,8 @@ create table journal_entry (
 );
 create index journal_entry_source on journal_entry (tenant_id, source_entity, source_id);
 create index journal_entry_date on journal_entry (tenant_id, company_id, posting_date);
+-- An entry is reversed once: of two reversals made at the same moment, the second waits and is refused.
+create unique index journal_entry_reversal on journal_entry (tenant_id, reversal_of) where reversal_of is not null;
 
 create table journal_line (
   tenant_id uuid not null,
@@ -106,9 +107,10 @@ end $$;
 
 select ferrum_ensure_journal_partitions(extract(year from now())::int - 2, extract(year from now())::int + 2);
 
--- A posting takes its period's row shared as it checks it. Closing the period (an update of that row) then waits
--- for the postings already being made into it, and a posting that comes while a close is being made waits for the
--- close and finds the period closed.
+-- A posting needs an open period of its company on its day: a day in no fiscal year (2062 typed for 2026) is
+-- refused, as is a closed month. It takes its period's row shared as it checks it. Closing the period (an update of
+-- that row) then waits for the postings already being made into it, and a posting that comes while a close is being
+-- made waits for the close and finds the period closed.
 create or replace function ferrum_journal_entry_guard() returns trigger
 language plpgsql as $$
 declare closed boolean;
@@ -117,6 +119,9 @@ begin
    where p.tenant_id = new.tenant_id and p.company_id = new.company_id
      and new.posting_date between p.period_start and p.period_end
    for share;
+  if not found then
+    raise exception 'ferrum: no accounting period contains %: make the fiscal year it falls in first', new.posting_date using errcode = 'P0001';
+  end if;
   if closed then
     raise exception 'ferrum: the accounting period containing % is closed', new.posting_date using errcode = 'P0001';
   end if;
@@ -254,6 +259,8 @@ create table allocation (
 );
 create index allocation_payment on allocation (tenant_id, payment_entity, payment_id);
 create index allocation_item on allocation (tenant_id, open_item_id);
+-- An allocation is undone once, as an entry is reversed once.
+create unique index allocation_reversal on allocation (tenant_id, reversal_of) where reversal_of is not null;
 create trigger allocation_append_only before update or delete on allocation
   for each row execute function ferrum_forbid_change();
 

@@ -34,6 +34,8 @@ create index stock_move_source on stock_move (tenant_id, source_entity, source_i
 create index stock_move_date on stock_move (tenant_id, company_id, posting_date);
 create index stock_move_batch on stock_move (tenant_id, item_id, batch_no) where batch_no is not null;
 create index stock_move_serial on stock_move (tenant_id, item_id, serial_no) where serial_no is not null;
+-- A move is reversed once: of two reversals made at the same moment, the second waits and is refused.
+create unique index stock_move_reversal on stock_move (tenant_id, reversal_of) where reversal_of is not null;
 
 create trigger stock_move_append_only before update or delete on stock_move
   for each row execute function ferrum_forbid_change();

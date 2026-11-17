@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.30.4-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.31.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.30.4`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.31.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -219,8 +219,10 @@ add-on brings it.
 - **Finance books.** IFRS beside local rules, or a tax book beside both: an entry with no book is in every
   book, an entry with a book adjusts that one alone. Statements, the general ledger and year-end closing take
   a book.
-- **Fiscal years and period locks.** Close and reopen an accounting period from the fiscal year; nothing posts
-  into a closed month.
+- **Fiscal years and period locks.** A new company comes with its current fiscal year, by its own start month,
+  and upkeep makes each company's next year 30 days before it starts, as long as the one before it. Nothing posts
+  on a day no fiscal year holds: make the years before the first (for the old books) yourself. Close and reopen an accounting period from the fiscal year; nothing posts into a closed
+  month.
 - **Journal entries.** Entry types, party lines in the party's own currency with their own due dates,
   reversing entries on a chosen day (accruals that take themselves out the day after, once, by the daily
   upkeep).
@@ -236,7 +238,8 @@ add-on brings it.
 ### 🌐 Multi-currency and groups
 
 - **Foreign currency** on invoices, orders, payments and party lines, with realised gains and losses worked
-  out on each allocation.
+  out on each allocation. A payment in the company's own currency has none: one whose lines do not balance is
+  refused, never balanced with an exchange difference.
 - **Transfers** between the company's own bank and cash accounts, each side in its account's currency.
 - **Group consolidation.** A company's parent makes a group: a consolidated trial balance, profit and loss and
   balance sheet in the parent's currency, on the parent's chart. Intercompany business is taken out
@@ -342,7 +345,8 @@ add-on brings it.
 - **Purchase orders**, **purchase receipts** and **purchase invoices** with three-way matching against orders
   and receipts, Update Items on a submitted order, Close and Re-open, and allowances for over-receipt.
 - **Bills straight to an account** (rent, electricity, a consultant's fee), deferred expense over a service
-  period, returns, debit notes and refunds.
+  period, returns, debit notes and refunds. A supplier's invoice number is entered once per supplier, draft or
+  submitted, two clerks at once too: the database refuses the second.
 - **Rejected goods.** A receipt's rejected quantity goes to a rejected-goods warehouse at no value and is
   never billed; Return Rejected Goods makes the return or a debit note.
 - **Approved manufacturers and suppliers** per item, with their part numbers and priority.
@@ -392,7 +396,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.7.0)
+### 💼 Finance add-on (0.7.1)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
   a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
@@ -899,12 +903,12 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.31.0** Six money faults fixed: postings outside every period, the exchange-difference plug, invoices left behind by settlements, double reversals, duplicate supplier bills, an unchecked hash.
 - [x] **0.30.4** A new card's code typed in another app is kept the way ERP keeps one typed on its own records.
 - [x] **0.30.3** Ten countries' returns as definitions their add-ons seed; an early-payment discount that takes tax back takes turns with filing.
 - [x] **0.30.2** ERP's page starts through the frontend's shared start.
 - [x] **0.30.1** One way to send a document outside for every channel, and one Peppol sender.
 - [x] **0.30.0** Every layout prints the tax registrations the countries' add-ons give; the base names no country.
-- [x] **0.29.1** Four faults fixed: carrier upkeeps, filing against invoicing, broken tax conditions, India's rules for Indian companies only.
 
 ### 🔜 Next up
 
@@ -962,7 +966,8 @@ app.</sub>
 First steps in a new workspace:
 
 1. **Make the company** (Setup → Company): currency, fiscal year start, then **Create Standard Chart of
-   Accounts**. Fill the letterhead and bank details printed on documents.
+   Accounts**. Fill the letterhead and bank details printed on documents. The company's current fiscal year is
+   made with it; make an earlier one for opening balances dated before it.
 2. **Install the company's country** from Apps, which adds its tax accounts and templates; for e-invoicing or
    filing, connect the country's service on the company.
 3. **Give roles**: Accounts, Sales, Purchase, Stock and Manufacturing managers and users.

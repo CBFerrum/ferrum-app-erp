@@ -457,6 +457,24 @@ async fn scenario() {
     refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Pay", "customer", globex))).await, "a payment to a customer gives back their credit: tick Refund");
     refused(t.k.insert(&t.ctx, "PaymentEntry", obj(untick("Receive", "supplier", acme))).await, "money from a supplier gives back their credit: tick Refund");
 
+    // ───────────── a payment that does not add up is told where and by how much ─────────────
+    // In the company's currency there is no exchange difference to balance a payment with: one that does
+    // not add up is refused when it is saved, as a person's mistake, and nothing is posted. 95 paid and 4
+    // of bank charges do not settle an invoice of 100; half a paisa cannot be booked in rupees.
+    let charged =
+        uid(&t.insert("SalesInvoice", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]})).await);
+    t.submit("SalesInvoice", charged).await;
+    let (gain_before, charges) = (t.gl("Exchange Gain or Loss").await, account("Bank Charges").await);
+    let paying = |paid: &str, charged_for: &str| {
+        obj(json!({"company": c, "payment_type": "Receive", "customer": globex.to_string(), "bank_account": bank, "currency": inr["id"], "paid_amount": paid,
+                   "deductions": [{"account": charges, "amount": charged_for}], "references": [{"invoice": charged.to_string(), "allocated_amount": "100"}]}))
+    };
+    refused(t.k.insert(&t.ctx, "PaymentEntry", paying("95", "4")).await, "allocations exceed the paid amount and deductions by 1 INR");
+    refused(t.k.insert(&t.ctx, "PaymentEntry", paying("99.995", "0.005")).await, "99.995 has more decimal places than INR is booked in (2)");
+    assert_eq!(t.gl("Exchange Gain or Loss").await, gain_before);
+    assert_eq!(dec(&t.get("SalesInvoice", charged).await["outstanding_amount"]), n("100"), "nothing was paid");
+    t.cancel("SalesInvoice", charged).await;
+
     // ───────────── an overpayment: part applied, the rest given back ─────────────
     let small =
         uid(&t.insert("SalesInvoice", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "2"}]})).await);
@@ -671,6 +689,36 @@ async fn scenario() {
     t.submit("PaymentEntry", paid_in).await;
     assert_eq!(t.posted(paid_in).await, map(&[("Creditors", "-60"), ("Primary Bank", "60")]), "the supplier pays back: debit bank, credit payable");
     assert_eq!(dec(&t.get("PurchaseInvoice", rebate).await["outstanding_amount"]), Decimal::ZERO);
+    // One supplier's bill keyed in by two clerks at the same moment is kept once: the second waits for
+    // the first and is refused, as one entered after it is.
+    let bill = obj(
+        json!({"company": c, "supplier": acme.to_string(), "bill_no": "ACME/77", "items": [{"item": advice.to_string(), "qty": "1", "price_list_rate": "10"}]}),
+    );
+    let mut first = t.k.db.tenant_tx(tenant).await.unwrap();
+    t.k.insert_tx(&t.ctx, &mut first, "PurchaseInvoice", bill.clone()).await.expect("the first clerk's bill");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
+    let second = {
+        let (k, ctx, bill) = (t.k.clone(), t.ctx.clone(), bill.clone());
+        tokio::spawn(async move { k.insert(&ctx, "PurchaseInvoice", bill).await })
+    };
+    let mut waited = false;
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&t.k.db.pool)
+            .await
+            .unwrap();
+        if waits || second.is_finished() {
+            waited = waits;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    first.commit().await.unwrap();
+    assert!(waited, "the second clerk's bill waits for the first");
+    assert!(matches!(second.await.unwrap(), Err(Error::Conflict(_))), "and is refused");
+    let again = t.k.insert(&t.ctx, "PurchaseInvoice", bill).await;
+    assert!(matches!(again, Err(Error::Conflict(ref m)) if m.contains("Supplier Invoice No")), "{again:?}");
 
     // ───────────── what the books report with returns and refunds in them ─────────────
     let ar = ferrum_domain::reports::run(&t.k, &t.ctx, "receivables", &[("company".to_string(), c.clone())].into_iter().collect()).await.unwrap();
@@ -788,4 +836,23 @@ async fn scenario() {
     assert_eq!(t.gl("Exchange Gain or Loss").await - gain_before, n("-100"), "a gain of 100 against the 100 more given back in sales");
     t.cancel("SalesInvoice", note).await;
     assert_eq!((t.gl("Debtors").await, t.gl("Exchange Gain or Loss").await), (t.scalar(open_base, cid).await, gain_before));
+
+    // ───────────── another app settling a credit through the engine keeps the note in step ─────────────
+    // As Commerce's refund does: it gives a credit note's credit back against a journal of its own. The
+    // note then shows nothing left to give, and the credit again once that is undone.
+    let sale = uid(&t.insert("SalesInvoice", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]})).await);
+    t.submit("SalesInvoice", sale).await;
+    let paid_in = t.action("SalesInvoice", sale, "make_payment", json!({})).await;
+    t.submit("PaymentEntry", paid_in).await;
+    let credit = t.action("SalesInvoice", sale, "make_credit_note", json!({})).await;
+    assert_eq!(dec(&t.submit("SalesInvoice", credit).await["outstanding_amount"]), n("-100"));
+    let (journal, today) = (Uuid::now_v7(), chrono::Utc::now().date_naive());
+    let mut tx = t.k.db.tenant_tx(tenant).await.unwrap();
+    ferrum_app_erp::ledger::allocate(&t.k, &mut tx, &t.ctx, cid, credit, "JournalEntry", journal, today, n("-100"), n("-100")).await.unwrap();
+    let shown = t.k.get_tx(&t.ctx, &mut tx, "SalesInvoice", credit, false).await.unwrap();
+    assert_eq!(dec(&shown["outstanding_amount"]), Decimal::ZERO, "the credit is given back");
+    ferrum_app_erp::ledger::unallocate(&t.k, &mut tx, &t.ctx, "JournalEntry", journal, today).await.unwrap();
+    let shown = t.k.get_tx(&t.ctx, &mut tx, "SalesInvoice", credit, false).await.unwrap();
+    assert_eq!(dec(&shown["outstanding_amount"]), n("-100"), "and owed again once that is undone");
+    tx.rollback().await.unwrap();
 }

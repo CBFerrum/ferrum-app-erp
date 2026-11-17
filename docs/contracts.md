@@ -63,22 +63,25 @@ operations:
   its own: what it writes commits or rolls back with the caller's document action. An `Err` is
   returned to the platform, which rolls the whole action back, so nothing half done survives.
 * **Append only.** Postings, moves and allocations are never changed or deleted; undoing appends
-  reversals, and the database refuses edits, deletes and postings into a closed period.
+  reversals, and the database refuses edits, deletes, postings into a closed period and postings on a day no
+  accounting period holds (a company has its current fiscal year from set-up, and upkeep makes its next one 30 days
+  before it is needed; make earlier ones before posting in them).
 * **Once.** A posting appends on every call: call it once for each event of the source document
   (its submit, its cancel), which the platform's workflow runs once. Reversals act only on what is
-  not reversed yet, so calling one twice reverses once.
+  not reversed yet, so calling one twice reverses once; two at the same moment, in two transactions,
+  reverse once too, as the database refuses the second (`reversal_of` is unique).
 * **Typed.** The signatures are the contract, and the compiler checks them when an app builds
   against an ERP revision. ERP is 0.x: a minor version may change one of them, and says so in the
   changelog. Anything public that is not listed here is ERP's own.
 
 | Operation | What it does | What it refuses | Called twice |
 |---|---|---|---|
-| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one hashed journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period | Two entries |
+| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
-| `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed | Reverses once |
+| `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed or there is none | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |
-| `ledger::allocate(tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount) -> Decimal` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back. A settlement that clears what is outstanding takes all the item has left in the company's currency, whatever `base_amount` says, and every call returns the base it took: post that, and any difference from the money's own value as an exchange difference | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
-| `ledger::unallocate(tx, ctx, payment_entity, payment_id, on) -> Vec<Uuid>` | Reverses what a payment allocated, restoring what is outstanding; returns the items | | Undoes once |
+| `ledger::allocate(k, tx, ctx, company, item, payment_entity, payment_id, on, amount, base_amount) -> Decimal` | Settles part of an open item with a payment; a credit (a negative item) takes a negative amount, as a refund gives it back. A settlement that clears what is outstanding takes all the item has left in the company's currency, whatever `base_amount` says, and every call returns the base it took: post that, and any difference from the money's own value as an exchange difference. The item's invoice then shows what is left on it (`flow::sync_invoice_outstanding`) | `Error::Invalid` beyond what is outstanding, against its sign, or on a cancelled item | Two allocations |
+| `ledger::unallocate(k, tx, ctx, payment_entity, payment_id, on) -> Vec<Uuid>` | Reverses what a payment allocated, restoring what is outstanding and what the items' invoices show; returns the items | | Undoes once |
 | `ledger::cancel_open_item(tx, ctx, id)` | Cancels an item: nothing outstanding, no payment taken | `Error::Invalid` while payments are allocated to it | Stays cancelled |
 | `ledger::load_open_item(tx, tenant, id, lock) -> Option<OpenItemRow>` | Reads an item, locked for the transaction when asked | | |
 | `stock::lock_balances(tx, tenant, company, keys)` | Locks the balances a document will touch in a fixed order, so concurrent postings cannot deadlock | | Re-entrant |
@@ -89,7 +92,7 @@ operations:
 | `pricing::calculate(k, ctx, tx, &EffEntity, &mut Doc, Side) -> Company` | Fills a priced document's prices, discounts, item tax rates, taxes and totals, after the installed countries choose its taxes. On a person's selling save it drops a typed `price_list_rate` on a new line with an item (or one whose item changed) only when the line entity declares that field with a `read_only_if`; a plainly editable price (a cashier's override) is kept, a plainly read-only one is the kernel's to drop, and elevated writes are untouched | Field errors: no company, no posting date, what the countries refuse | The same document, the same figures |
 | `pricing::calc_input`, `tax_in`, `line_tax_rates`, `tax_breakdown`, `breakup` | The calculation's parts over a document's lines, without reading anything | | |
 | `localization::check(hc, doc, Side)` | Each installed country's checks before a priced document is submitted: call it in `before_submit` | What the countries refuse | Reads only |
-| `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice`, `PurchaseInvoice` or `OpeningInvoice` | | Sets the same values |
+| `flow::sync_invoice_outstanding(k, ctx, tx, entity, invoice)` | Mirrors an open item's outstanding amount and status onto its `SalesInvoice`, `PurchaseInvoice` or `OpeningInvoice`. `allocate` and `unallocate` call it themselves: an app that settles items does not | | Sets the same values |
 | `portal::customers_of(k, ctx, tx, email) -> Vec<Uuid>` | The customers an address belongs to: those with it as their email, and those of contacts with it (where the workspace's contacts link a customer), oldest first, at most 50 of each; never a disabled one, nor a guest a web shop records unchecked (anyone may type anyone's address at a guest checkout). Read as the system | | Reads only |
 | `portal::suppliers_of(k, ctx, tx, email) -> Vec<Uuid>` | The suppliers an address belongs to, found the same way | | Reads only |
 | `portal::customer_for(k, ctx, tx, name, email: Option<&str>, phone: Option<&str>) -> (Uuid, bool)` | A person's customer, found or made, for an app that bills a person: the oldest whose own email is `email` (without one, whose own phone has `phone`'s digits, 6 to 20 of them), never a disabled one nor a web shop's guest, and never through a contact's email (that names someone acting for a customer, often their employer); else an Individual customer made with `ctx`'s rights, holding the name, email and phone. Serialized per workspace and address by a lock held to the end of the caller's transaction, so two calls at once make one customer; with neither an email nor a phone it always makes one. Answers whether it made it now | What saving a Customer refuses: a blank name, a malformed email or phone, `ctx` without the right to create one | Finds the one it made |

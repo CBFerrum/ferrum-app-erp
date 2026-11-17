@@ -38,6 +38,24 @@ async fn count(tx: &mut Tx, sql: &'static str, source: Uuid) -> i64 {
     sqlx::query_scalar(sql).bind(source).fetch_one(&mut **tx).await.unwrap()
 }
 
+/// Whether `first`'s transaction holds `other` up before `other` is done (without a lock it is just
+/// done): one or the other comes, however loaded the machine.
+async fn holds_up<T>(k: &Kernel, first: &mut Tx, other: &tokio::task::JoinHandle<T>) -> bool {
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut **first).await.unwrap();
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || other.is_finished() {
+            return waits;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
+}
+
 const WEBSHOP: &str = "package: webshop\nversion: 0.1.0\nlabel: Web shop\ndepends: [parties]\nfield_prefix: commerce_\n\
                        overlays:\n  - entity: Customer\n    ops:\n      - {op: add_field, field: {name: commerce_guest, type: check}}\n";
 
@@ -116,6 +134,44 @@ async fn scenario() {
         assert!(posted.unwrap().is_some());
     }
     assert_eq!(count(&mut tx, entries, source).await, 2);
+    // Only on a day an accounting period holds: the company has its current fiscal year, and 2062 typed
+    // for 2026 is refused by the database.
+    let lines = vec![Line::new(receivable, n("100"), "INR"), Line::new(bank, n("-100"), "INR")];
+    let far = Entry { posting_date: chrono::NaiveDate::from_ymd_opt(2062, 1, 1).unwrap(), ..entry(source, lines) };
+    let mut outside = k.db.tenant_tx(tenant).await.unwrap();
+    let refused = ledger::post(&mut outside, &ctx, far, 2).await;
+    assert!(matches!(refused, Err(Error::Invalid(ref m)) if m.contains("no accounting period")), "{refused:?}");
+    drop(outside);
+    // The books do not stop at a year's end: upkeep makes the next year 30 days before it is needed. Run
+    // 20 days before the company's only year (set-up's) ends, it makes the year after, once, whose first
+    // day posts; a day two years out is still refused, and a company whose years were deleted gets none.
+    let year = find(&k, &ctx, "FiscalYear", json!({"company": cid.to_string()})).await;
+    let end = chrono::NaiveDate::parse_from_str(year["end_date"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+    let bare = k.insert(&ctx, "Company", obj(json!({"company_name": "Bare Co", "abbr": "BC", "default_currency": inr["id"]}))).await.unwrap();
+    let bare_year = find(&k, &ctx, "FiscalYear", json!({"company": bare["id"]})).await;
+    k.delete(&ctx, "FiscalYear", id(&bare_year["id"]), None).await.unwrap();
+    for _ in 0..2 {
+        ferrum_app_erp::setup::upkeep(&k, &ctx, end - chrono::Duration::days(20)).await.unwrap();
+    }
+    let (next, mut outside) = (end + chrono::Duration::days(1), k.db.tenant_tx(tenant).await.unwrap());
+    let on = |day: chrono::NaiveDate| Entry {
+        posting_date: day,
+        ..entry(Uuid::now_v7(), vec![Line::new(receivable, n("1"), "INR"), Line::new(bank, n("-1"), "INR")])
+    };
+    let first_day = ledger::post(&mut outside, &ctx, on(next), 2).await;
+    assert!(matches!(first_day, Ok(Some(_))), "the next year's first day posts: {first_day:?}");
+    let beyond = ledger::post(&mut outside, &ctx, on(next + chrono::Months::new(24)), 2).await;
+    assert!(matches!(beyond, Err(Error::Invalid(ref m)) if m.contains("no accounting period")), "{beyond:?}");
+    drop(outside);
+    let years = |company: &Value| {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&json!({"company": company})).unwrap(), ..Default::default() };
+        async move { k.list(&ctx, "FiscalYear", &q).await.unwrap().rows.iter().map(|y| (y["start_date"].clone(), y["end_date"].clone())).collect::<Vec<_>>() }
+    };
+    let made = years(&company["id"]).await;
+    let last = next + chrono::Months::new(12) - chrono::Duration::days(1);
+    assert!(made.len() == 2 && made.contains(&(json!(next.to_string()), json!(last.to_string()))), "the year after, once: {made:?}");
+    assert!(years(&bare["id"]).await.is_empty(), "a company with no year gets none");
 
     // ── ledger::reverse: what is not reversed yet, once ──
     assert_eq!(ledger::reverse(&mut tx, &ctx, "ContractTest", source, today, 2).await.unwrap(), 2);
@@ -130,6 +186,9 @@ async fn scenario() {
     .await
     .unwrap();
     assert_eq!(net, Decimal::ZERO);
+    // An entry carries no hash that nothing chains or checks: it would claim a seal the journal does not have.
+    let hashed = "select count(*) from information_schema.columns where table_name = 'journal_entry' and column_name = 'entry_hash' and $1::uuid is not null";
+    assert_eq!(count(&mut tx, hashed, source).await, 0, "journal_entry.entry_hash");
     tx.commit().await.unwrap();
 
     // ── open items: opened once, never paid beyond what is owed, not cancelled while paid ──
@@ -157,28 +216,45 @@ async fn scenario() {
     drop(tx);
     let payment = Uuid::now_v7();
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    let over = ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("150"), n("150")).await;
+    let over = ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("150"), n("150")).await;
     assert!(matches!(over, Err(Error::Invalid(ref m)) if m.contains("exceeds")), "{over:?}");
-    ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("60"), n("60")).await.unwrap();
+    ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("60"), n("60")).await.unwrap();
     assert_eq!(ledger::load_open_item(&mut tx, tenant, invoice, false).await.unwrap().unwrap().outstanding, n("40"));
     let paid = ledger::cancel_open_item(&mut tx, &ctx, invoice).await;
     assert!(matches!(paid, Err(Error::Invalid(ref m)) if m.contains("payments are allocated")), "{paid:?}");
-    assert_eq!(ledger::unallocate(&mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap(), [invoice]);
-    assert!(ledger::unallocate(&mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap().is_empty(), "undone once");
+    assert_eq!(ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap(), [invoice]);
+    assert!(ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", payment, today).await.unwrap().is_empty(), "undone once");
     assert_eq!(ledger::load_open_item(&mut tx, tenant, invoice, false).await.unwrap().unwrap().outstanding, n("100"));
     ledger::cancel_open_item(&mut tx, &ctx, invoice).await.unwrap();
-    let cancelled = ledger::allocate(&mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("10"), n("10")).await;
+    let cancelled = ledger::allocate(&k, &mut tx, &ctx, cid, invoice, "PaymentEntry", payment, today, n("10"), n("10")).await;
     assert!(cancelled.is_err(), "a cancelled item takes no payment");
     // A credit (a credit note, an advance) is a negative item: it is given back, as a refund does,
     // by negative allocations, never beyond it and never the other way.
     let credit = OpenItem { id: Uuid::now_v7(), number: Some("CT-CN".into()), amount: n("-50"), base_amount: n("-50"), ..item.clone() };
     ledger::open_item(&mut tx, &ctx, &credit).await.unwrap();
-    let wrong_way = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("20"), n("20")).await;
+    let wrong_way = ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("20"), n("20")).await;
     assert!(matches!(wrong_way, Err(Error::Invalid(_))), "{wrong_way:?}");
-    let beyond = ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-60"), n("-60")).await;
+    let beyond = ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-60"), n("-60")).await;
     assert!(matches!(beyond, Err(Error::Invalid(_))), "{beyond:?}");
-    ledger::allocate(&mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-20"), n("-20")).await.unwrap();
+    ledger::allocate(&k, &mut tx, &ctx, cid, credit.id, "PaymentEntry", payment, today, n("-20"), n("-20")).await.unwrap();
     assert_eq!(ledger::load_open_item(&mut tx, tenant, credit.id, false).await.unwrap().unwrap().outstanding, n("-30"));
+    tx.commit().await.unwrap();
+
+    // ── a payment in the company's currency never balances with an exchange difference ──
+    // ERP's documents open an item in the company's currency at its amount, so such a payment adds up by
+    // construction. An app that opens one through the engine with another base (its own fault) makes the
+    // payment's lines differ by that much: refused as unbalanced, never booked as an exchange gain or loss.
+    let odd = OpenItem { id: Uuid::now_v7(), entity: "JournalEntry".into(), number: Some("CT-ODD".into()), base_amount: n("100.50"), ..item.clone() };
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::open_item(&mut tx, &ctx, &odd).await.unwrap();
+    tx.commit().await.unwrap();
+    let paying = json!({"company": cid, "payment_type": "Receive", "customer": customer, "bank_account": bank, "paid_amount": "100",
+                        "references": [{"invoice": odd.id, "allocated_amount": "100"}]});
+    let paying = k.insert(&ctx, "PaymentEntry", obj(paying)).await.expect("it adds up as typed");
+    let posted = k.submit(&ctx, "PaymentEntry", id(&paying["id"]), None).await;
+    assert!(matches!(posted, Err(Error::Internal(ref m)) if m.contains("unbalanced")), "{posted:?}");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::cancel_open_item(&mut tx, &ctx, odd.id).await.unwrap();
     tx.commit().await.unwrap();
 
     // ── stock: never issued beyond what is there; reversed exactly, once ──
@@ -210,6 +286,82 @@ async fn scenario() {
     tx.commit().await.unwrap();
     assert_eq!(stock::parse_serials(Some(" A1 \n\nB2,C3 ")), ["A1", "B2", "C3"]);
 
+    // ── reversed once, by two callers at the same moment too ──
+    // With no document's lock to queue them (another app calling the engine twice at once), the second
+    // reversal of an entry, an allocation or a stock move waits for the first and is refused.
+    let twice = Uuid::now_v7();
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::post(&mut tx, &ctx, entry(twice, vec![Line::new(receivable, n("10"), "INR"), Line::new(bank, n("-10"), "INR")]), 2).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::reverse(&mut first, &ctx, "ContractTest", twice, today, 2).await.unwrap();
+    let second = {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = ledger::reverse(&mut tx, &ctx, "ContractTest", twice, today, 2).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second reversal of an entry waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let reversals = "select count(*) from journal_entry where source_entity = 'ContractTest' and source_id = $1 and reversal_of is not null";
+    assert_eq!(count(&mut tx, reversals, twice).await, 1);
+    let owed = OpenItem { id: Uuid::now_v7(), number: Some("CT-2".into()), ..item.clone() };
+    let (paid, more) = (Uuid::now_v7(), Uuid::now_v7());
+    ledger::open_item(&mut tx, &ctx, &owed).await.unwrap();
+    for payment in [paid, more] {
+        ledger::allocate(&k, &mut tx, &ctx, cid, owed.id, "PaymentEntry", payment, today, n("30"), n("30")).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::unallocate(&k, &mut first, &ctx, "PaymentEntry", paid, today).await.unwrap();
+    let second = {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = ledger::unallocate(&k, &mut tx, &ctx, "PaymentEntry", paid, today).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second unallocation waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    assert_eq!(ledger::load_open_item(&mut tx, tenant, owed.id, false).await.unwrap().unwrap().outstanding, n("70"), "30 given back once");
+    let (received, issued) = (Uuid::now_v7(), Uuid::now_v7());
+    stock::post_moves(&mut tx, &ctx, &co, "ContractTest", received, day, Utc::now(), vec![moved("10", Some("5"))], "Delivered").await.unwrap();
+    stock::post_moves(&mut tx, &ctx, &co, "ContractTest", issued, day, Utc::now(), vec![moved("-4", None)], "Delivered").await.unwrap();
+    tx.commit().await.unwrap();
+    let mut first = k.db.tenant_tx(tenant).await.unwrap();
+    stock::reverse_moves(&mut first, &ctx, &co, "ContractTest", issued, day, Utc::now()).await.unwrap();
+    let second = {
+        let (k, ctx, co) = (k.clone(), ctx.clone(), co.clone());
+        tokio::spawn(async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            let done = stock::reverse_moves(&mut tx, &ctx, &co, "ContractTest", issued, day, Utc::now()).await;
+            if done.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            done
+        })
+    };
+    assert!(holds_up(&k, &mut first, &second).await, "the second reversal of a stock move waits for the first");
+    first.commit().await.unwrap();
+    assert!(second.await.unwrap().is_err(), "and is refused");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    let reversed = "select count(*) from stock_move where source_entity = 'ContractTest' and source_id = $1 and reversal_of is not null";
+    assert_eq!(count(&mut tx, reversed, issued).await, 1);
+    drop(tx);
+
     // ── portal::customer_for: a person's customer, found or made once ──
     // Two calls at once for one address make one customer: the second waits for the first, then finds
     // what it made.
@@ -217,7 +369,6 @@ async fn scenario() {
     let mut first = k.db.tenant_tx(tenant).await.unwrap();
     let (ann, made) = portal::customer_for(&k, &ctx, &mut first, "Ann Lee", Some(" Ann@Example.test "), None).await.unwrap();
     assert!(made);
-    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
     let second = {
         let (k, ctx) = (k.clone(), ctx.clone());
         tokio::spawn(async move {
@@ -227,20 +378,7 @@ async fn scenario() {
             found
         })
     };
-    // Until the second waits, or (without a lock) is done: either comes, however loaded the machine.
-    let mut waited = false;
-    for _ in 0..2400 {
-        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
-            .bind(pid)
-            .fetch_one(&k.db.pool)
-            .await
-            .unwrap();
-        if waits || second.is_finished() {
-            waited = waits;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
+    let waited = holds_up(&k, &mut first, &second).await;
     first.commit().await.unwrap();
     assert!(waited, "the second call waited for the first one's lock");
     assert_eq!(second.await.unwrap(), (ann, false), "the second call finds the first one's customer");

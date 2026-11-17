@@ -10,7 +10,7 @@ use crate::pricing::{Side, breakup, calculate};
 use crate::stock::{self, MoveIn, Posted, parse_serials};
 use crate::util::{Company, b, company, d, date, get, id, money, posting_ts, round, rows, s, set, stock_qty, sys, unit_factor};
 use async_trait::async_trait;
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -1187,7 +1187,6 @@ impl DocHook for InvoiceHook {
     }
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let n = names(self.0);
         let ret = b(doc, "is_return");
         let mut errors = Vec::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
@@ -1215,28 +1214,7 @@ impl DocHook for InvoiceHook {
         if self.0 == Side::Selling {
             crate::stored_value::check_invoice(hc, doc).await?;
         }
-        if self.0 == Side::Buying
-            && let (Some(supplier), Some(bill)) = (id(doc, "supplier"), s(doc, "bill_no"))
-        {
-            let dupes = hc
-                .kernel
-                .find_tx(
-                    &sys(hc.ctx),
-                    hc.tx,
-                    n.invoice,
-                    &[
-                        Filter::eq("supplier", supplier.to_string()),
-                        Filter::eq("bill_no", bill),
-                        Filter { field: "docstatus".into(), op: ferrum_kernel::Op::Ne, value: json!(2) },
-                    ],
-                    None,
-                    2,
-                )
-                .await?;
-            if dupes.iter().any(|x| id(x, "id") != id(doc, "id")) {
-                return Err(Error::field("bill_no", "this supplier invoice number was already entered"));
-            }
-        }
+        // A supplier's bill entered twice is refused by its unique key (supplier, bill_no).
         Ok(())
     }
 
@@ -1450,8 +1428,8 @@ impl DocHook for InvoiceHook {
             let settle = (-total_txn).min(item.outstanding);
             if settle > Decimal::ZERO {
                 let at = |r: Decimal| ledger::round_as(settle * r, co.precision, co.rounding);
-                let given = ledger::allocate(hc.tx, hc.ctx, co.id, orig, n.invoice, iid, on, settle, at(item.exchange_rate)).await?;
-                let taken = -ledger::allocate(hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -at(rate)).await?;
+                let given = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, orig, n.invoice, iid, on, settle, at(item.exchange_rate)).await?;
+                let taken = -ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, iid, n.invoice, iid, on, -settle, -at(rate)).await?;
                 // Each side gave up its own base: what they differ by (the two rates, or what each
                 // document's rounding left) is an exchange difference, cleared from the party's account.
                 let diff = given - taken;
@@ -1470,7 +1448,6 @@ impl DocHook for InvoiceHook {
                     e.lines.push(Line::new(gl, -sign * diff, &co.currency_code).remarks("Exchange difference"));
                     ledger::post(hc.tx, hc.ctx, e, co.precision).await?;
                 }
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, orig).await?;
             }
         }
         sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, iid).await?;
@@ -1554,7 +1531,7 @@ impl DocHook for InvoiceHook {
         count_return(hc, n.invoice, doc, -Decimal::ONE).await?;
         count_debit_note(hc, doc, -Decimal::ONE).await?;
         crate::promotion::count_uses(hc, doc, -1).await?;
-        let touched = ledger::unallocate(hc.tx, hc.ctx, n.invoice, iid, on).await?;
+        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, n.invoice, iid, on).await?;
         ledger::cancel_open_item(hc.tx, hc.ctx, iid).await?;
         if b(doc, "update_stock") {
             stock::reverse_moves(hc.tx, hc.ctx, &co, n.invoice, iid, on, ts).await?;
@@ -1562,11 +1539,6 @@ impl DocHook for InvoiceHook {
         ledger::reverse(hc.tx, hc.ctx, n.invoice, iid, on, co.precision).await?;
         if self.0 == Side::Selling {
             crate::stored_value::reverse_entries(hc.kernel, hc.ctx, hc.tx, n.invoice, iid, on, "this sale").await?;
-        }
-        for t in touched {
-            if t != iid {
-                sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, t).await?;
-            }
         }
         sync_invoice_outstanding(hc.kernel, hc.ctx, hc.tx, n.invoice, iid).await?;
         let mut orders = Vec::new();

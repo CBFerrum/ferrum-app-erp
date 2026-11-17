@@ -130,19 +130,25 @@ impl T {
     async fn account(&self, name: &str) -> Uuid {
         uid(&self.find_one("Account", json!({"account_name": name, "company": self.company.to_string()})).await)
     }
-    /// A new company in rupees with the standard chart and the fiscal year 2026; later sections
-    /// work in it.
+    /// A new company in rupees with the standard chart and the fiscal year 2026 (its own when it is
+    /// made in 2026); later sections work in it.
     async fn open_company(&mut self, name: &str, abbr: &str) -> String {
-        let company = self.insert(&self.admin, "Company", json!({"company_name": name, "abbr": abbr, "default_currency": self.inr.to_string()})).await;
+        let company = json!({"company_name": name, "abbr": abbr, "default_currency": self.inr.to_string(), "fy_start_month": 1});
+        let company = self.insert(&self.admin, "Company", company).await;
         self.company = uid(&company);
         let cid = self.company.to_string();
-        self.insert(
-            &self.admin,
-            "FiscalYear",
-            json!({"year_name": format!("{abbr} 2026"), "company": cid, "start_date": "2026-01-01", "end_date": "2026-12-31"}),
-        )
-        .await;
+        self.year_2026(&cid, abbr).await;
         cid
+    }
+    /// The company's fiscal year 2026: the one it was made with, when it was made in 2026, else made here.
+    async fn year_2026(&self, cid: &str, abbr: &str) -> Uuid {
+        match self.list("FiscalYear", json!({"company": cid, "start_date": "2026-01-01"})).await.pop() {
+            Some(made) => uid(&made),
+            None => {
+                let named = json!({"year_name": format!("{abbr} 2026"), "company": cid, "start_date": "2026-01-01", "end_date": "2026-12-31"});
+                uid(&self.insert(&self.admin, "FiscalYear", named).await)
+            }
+        }
     }
     fn journal(&self, date: &str, lines: Value) -> Value {
         json!({"company": self.company.to_string(), "posting_date": date, "accounts": lines})
@@ -992,7 +998,7 @@ async fn overview(t: &mut T) {
     let (a, am, au) = (t.admin.clone(), t.am.clone(), t.au.clone());
     let cid = t.open_company("Overview Co", "OV").await;
     t.insert(&a, "FiscalYear", json!({"year_name": "OV 2025", "company": cid, "start_date": "2025-01-01", "end_date": "2025-12-31"})).await;
-    let fy26 = uid(&t.find_one("FiscalYear", json!({"year_name": "OV 2026", "company": cid})).await);
+    let fy26 = t.year_2026(&cid, "OV").await;
     let bank = t.account("Primary Bank").await;
     let capital = t.account("Capital Stock").await;
     let unit = uid(&t.find_one("Item", json!({"item_code": "UNIT"})).await);
@@ -1131,7 +1137,7 @@ async fn finance_books(t: &mut T) {
         .await;
     assert_eq!(reversals_in_ifrs, 1);
     // The year closes in every book: income and expense at zero in each, retained earnings each book's own result.
-    let fy = uid(&t.find_one("FiscalYear", json!({"company": cid.clone()})).await);
+    let fy = t.year_2026(&cid, "BK").await;
     let pcv = t.make(&am, "PeriodClosingVoucher", json!({"company": cid.clone(), "fiscal_year": fy.to_string()})).await;
     assert_eq!(dec(&pcv["net_profit"]), n("-1000"), "the profit it records is the common books'");
     for (book, result) in [(None, "-1000"), (Some(tax), "-1500"), (Some(ifrs), "-1000")] {
@@ -1162,15 +1168,10 @@ async fn group_company(t: &T, name: &str, abbr: &str, currency: Uuid, parent: Uu
         .insert(
             &t.admin,
             "Company",
-            json!({"company_name": name, "abbr": abbr, "default_currency": currency.to_string(), "parent_company": parent.to_string()}),
+            json!({"company_name": name, "abbr": abbr, "default_currency": currency.to_string(), "parent_company": parent.to_string(), "fy_start_month": 1}),
         )
         .await);
-    t.insert(
-        &t.admin,
-        "FiscalYear",
-        json!({"year_name": format!("{abbr} 2026"), "company": c.to_string(), "start_date": "2026-01-01", "end_date": "2026-12-31"}),
-    )
-    .await;
+    t.year_2026(&c.to_string(), abbr).await;
     c
 }
 

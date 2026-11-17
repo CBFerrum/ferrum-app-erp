@@ -1,16 +1,14 @@
 //! Posting engine for the universal journal plus the AR/AP open-item subledger.
 //!
 //! Every financial effect goes through `post`: lines are merged, signs normalized, rounded,
-//! checked to balance exactly, hashed and appended. The database re-checks balance at commit and
+//! checked to balance exactly and appended. The database re-checks balance at commit and
 //! refuses edits, deletes and postings into closed periods. Cancellation appends reversals.
 
 use crate::util::round;
 use chrono::NaiveDate;
-use ferrum_kernel::value::canonical_json;
-use ferrum_kernel::{Ctx, Error, Result, Tx};
+use ferrum_kernel::{Ctx, Error, Kernel, Result, Tx};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -185,18 +183,9 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
             })
         })
         .collect();
-    let mut h = Sha256::new();
-    h.update(canonical_json(&json!({
-        "company": entry.company, "posting_date": entry.posting_date, "source": [entry.source_entity, entry.source_id],
-        "lines": line_rows.iter().map(|r| {
-            let mut r = r.clone();
-            if let Value::Object(m) = &mut r { m.remove("tenant_id"); m.remove("entry_id"); }
-            r
-        }).collect::<Vec<_>>(),
-    })));
     sqlx::query(
         "insert into journal_entry (tenant_id, id, company_id, posting_date, source_entity, source_id, source_number, memo, \
-         total_debit, total_credit, entry_hash, created_by, reversal_of, finance_book_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12, $13)",
+         total_debit, total_credit, created_by, reversal_of, finance_book_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $9::numeric, $10, $11, $12)",
     )
     .bind(ctx.tenant)
     .bind(entry_id)
@@ -207,7 +196,6 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
     .bind(&entry.source_number)
     .bind(&entry.memo)
     .bind(debit.to_string())
-    .bind(h.finalize().to_vec())
     .bind((!ctx.user.is_nil()).then_some(ctx.user))
     .bind(entry.reversal_of)
     .bind(entry.finance_book)
@@ -443,9 +431,11 @@ pub async fn load_open_item(tx: &mut Tx, tenant: Uuid, id: Uuid, lock: bool) -> 
 /// currency; the database refuses over-allocation. A settlement that clears what is outstanding takes
 /// all the item has left in the company's currency, whatever `base_amount` says: an invoice's base is
 /// its parts' (net and each tax) rounded apart, which the caller's conversion of the whole can miss by
-/// a unit. Answers the base taken, for the caller to post; unallocating gives back the same.
+/// a unit. Answers the base taken, for the caller to post; unallocating gives back the same. The
+/// item's invoice shows what is left on it ([`crate::flow::sync_invoice_outstanding`]), whoever settles it.
 #[allow(clippy::too_many_arguments)]
 pub async fn allocate(
+    k: &Kernel,
     tx: &mut Tx,
     ctx: &Ctx,
     company: Uuid,
@@ -456,8 +446,8 @@ pub async fn allocate(
     amount: Decimal,
     base_amount: Decimal,
 ) -> Result<Decimal> {
-    let base: Option<Decimal> = sqlx::query_scalar(
-        "select case when outstanding = $3::numeric then base_outstanding else $4::numeric end from open_item \
+    let base: Option<(Decimal, String)> = sqlx::query_as(
+        "select case when outstanding = $3::numeric then base_outstanding else $4::numeric end, entity from open_item \
          where tenant_id = $1 and id = $2 and status <> 'cancelled' \
          and abs(outstanding) >= abs($3::numeric) and sign(outstanding) * sign($3::numeric) >= 0 for update",
     )
@@ -467,7 +457,7 @@ pub async fn allocate(
     .bind(base_amount.to_string())
     .fetch_optional(&mut **tx)
     .await?;
-    let Some(base_amount) = base else {
+    let Some((base_amount, entity)) = base else {
         return Err(Error::invalid("the allocated amount exceeds what is outstanding on the invoice (or it was cancelled)"));
     };
     sqlx::query(
@@ -495,14 +485,16 @@ pub async fn allocate(
     .bind(base_amount.to_string())
     .execute(&mut **tx)
     .await?;
+    crate::flow::sync_invoice_outstanding(k, ctx, tx, &entity, item).await?;
     Ok(base_amount)
 }
 
-/// Reverses every allocation a payment made (append-only), restoring the items' outstanding.
-/// Returns the affected open-item ids.
-pub async fn unallocate(tx: &mut Tx, ctx: &Ctx, payment_entity: &str, payment_id: Uuid, on: NaiveDate) -> Result<Vec<Uuid>> {
-    let rows: Vec<(Uuid, Uuid, Uuid, Decimal, Decimal)> = sqlx::query_as(
-        "select a.id, a.company_id, a.open_item_id, a.amount, a.base_amount from allocation a where a.tenant_id = $1 \
+/// Reverses every allocation a payment made (append-only), restoring the items' outstanding and what
+/// their invoices show. Returns the affected open-item ids.
+pub async fn unallocate(k: &Kernel, tx: &mut Tx, ctx: &Ctx, payment_entity: &str, payment_id: Uuid, on: NaiveDate) -> Result<Vec<Uuid>> {
+    let rows: Vec<(Uuid, Uuid, Uuid, Decimal, Decimal, String)> = sqlx::query_as(
+        "select a.id, a.company_id, a.open_item_id, a.amount, a.base_amount, o.entity from allocation a \
+         join open_item o on o.tenant_id = a.tenant_id and o.id = a.open_item_id where a.tenant_id = $1 \
          and a.payment_entity = $2 and a.payment_id = $3 and a.reversal_of is null \
          and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id)",
     )
@@ -511,8 +503,8 @@ pub async fn unallocate(tx: &mut Tx, ctx: &Ctx, payment_entity: &str, payment_id
     .bind(payment_id)
     .fetch_all(&mut **tx)
     .await?;
-    let mut items = Vec::new();
-    for (alloc, company, item, amount, base) in rows {
+    let mut items: Vec<(Uuid, String)> = Vec::new();
+    for (alloc, company, item, amount, base, entity) in rows {
         sqlx::query(
             "update open_item set outstanding = outstanding + $3::numeric, base_outstanding = base_outstanding + $4::numeric, \
              status = case when status = 'cancelled' then status else 'open' end, updated_at = now() where tenant_id = $1 and id = $2",
@@ -539,9 +531,14 @@ pub async fn unallocate(tx: &mut Tx, ctx: &Ctx, payment_entity: &str, payment_id
         .bind(alloc)
         .execute(&mut **tx)
         .await?;
-        items.push(item);
+        if !items.iter().any(|(i, _)| *i == item) {
+            items.push((item, entity));
+        }
     }
-    Ok(items)
+    for (item, entity) in &items {
+        crate::flow::sync_invoice_outstanding(k, ctx, tx, entity, *item).await?;
+    }
+    Ok(items.into_iter().map(|(item, _)| item).collect())
 }
 
 /// Cancels an open item; refused when payments are still allocated to it.

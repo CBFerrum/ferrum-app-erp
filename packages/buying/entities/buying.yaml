@@ -272,6 +272,8 @@
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}}
     - {name: dimensions, type: json, description: "Accounting dimensions by code for every line it books, each line's own over these"}
     - {name: remarks, type: text}
+  # A supplier's bill is entered once, draft or submitted, two clerks at once too: the database keeps it.
+  unique: [[supplier, bill_no]]
   rules:
     - {name: due_after_posting, check: "doc.due_date == null || doc.due_date >= doc.posting_date", message: "Due date cannot be before the posting date"}
     # An invoice made from an order or a receipt holds a draft's place with PENDING-<its number>.

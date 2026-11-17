@@ -134,9 +134,9 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
     vec![Arc::new(reports::ErpReports)]
 }
 
-/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions, deferred
-/// lines recognised, journal entries reversed on their reversal day, and stored value warned of and
-/// expired.
+/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions, each company's
+/// next fiscal year, deferred lines recognised, journal entries reversed on their reversal day, and
+/// stored value warned of and expired.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let year = chrono::Utc::now().year();
     let mut tx = k.db.system_tx().await?;
@@ -163,6 +163,10 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             continue;
         }
         let ctx = ferrum_kernel::Ctx::system(tenant, schema);
+        // Each company's next fiscal year, on the workspace's own day, before anything is posted in it.
+        if let Err(e) = setup::upkeep(k, &ctx, ctx.today()).await {
+            tracing::warn!(%tenant, "next fiscal years: {e}");
+        }
         let mut tx = k.db.tenant_tx(tenant).await?;
         match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
             Ok((_, left)) => {
