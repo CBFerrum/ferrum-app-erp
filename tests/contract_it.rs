@@ -240,6 +240,23 @@ async fn scenario() {
     assert_eq!(ledger::load_open_item(&mut tx, tenant, credit.id, false).await.unwrap().unwrap().outstanding, n("-30"));
     tx.commit().await.unwrap();
 
+    // ── a payment in the company's currency never balances with an exchange difference ──
+    // ERP's documents open an item in the company's currency at its amount, so such a payment adds up by
+    // construction. An app that opens one through the engine with another base (its own fault) makes the
+    // payment's lines differ by that much: refused as unbalanced, never booked as an exchange gain or loss.
+    let odd = OpenItem { id: Uuid::now_v7(), entity: "JournalEntry".into(), number: Some("CT-ODD".into()), base_amount: n("100.50"), ..item.clone() };
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::open_item(&mut tx, &ctx, &odd).await.unwrap();
+    tx.commit().await.unwrap();
+    let paying = json!({"company": cid, "payment_type": "Receive", "customer": customer, "bank_account": bank, "paid_amount": "100",
+                        "references": [{"invoice": odd.id, "allocated_amount": "100"}]});
+    let paying = k.insert(&ctx, "PaymentEntry", obj(paying)).await.expect("it adds up as typed");
+    let posted = k.submit(&ctx, "PaymentEntry", id(&paying["id"]), None).await;
+    assert!(matches!(posted, Err(Error::Internal(ref m)) if m.contains("unbalanced")), "{posted:?}");
+    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+    ledger::cancel_open_item(&mut tx, &ctx, odd.id).await.unwrap();
+    tx.commit().await.unwrap();
+
     // ── stock: never issued beyond what is there; reversed exactly, once ──
     let group = find(&k, &ctx, "ItemGroup", json!({"group_name": "Products"})).await;
     let uom = find(&k, &ctx, "Uom", json!({"uom_name": "Nos"})).await;
