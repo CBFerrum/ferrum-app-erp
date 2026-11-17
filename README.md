@@ -7,14 +7,14 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.27.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.30.4-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-data-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-interface-0ea5e9?style=flat-square&logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-interface-3178c6?style=flat-square&logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-222%20Rust%20%C2%B7%20202%20UI-16a34a?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-223%20Rust%20%C2%B7%20202%20UI-16a34a?style=flat-square)
 
 ### Accounting, selling, buying, stock and manufacturing on one append-only ledger you run yourself.
 
@@ -56,14 +56,14 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.27.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.30.4`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
-| 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 23 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
-| ➕ **Add-ons** | 7 for operations and finance (58 more entities, 23 more reports) and 26 country add-ons, all in this repository |
-| 🔗 **Depends on** | Ferrum platform `>=0.3.6, <0.4` (its shared core, parties, products and project records) |
+| 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
+| ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
+| 🔗 **Depends on** | Ferrum platform `>=0.3.9, <0.4` (its shared core, parties, products and project records) |
 | 🤝 **Works with** | Point of Sale, Commerce, CRM, HR, Assets, Field Service and Bookings, which post through its engine; Operations, which carries the warehouse's and shop floor's devices |
 | 🗣️ **Languages** | English, Arabic and Hindi; pages mirror right to left |
-| 🧪 **Tests** | 222 Rust tests (71 in the app, 151 in its add-ons) against a real PostgreSQL, 202 interface tests |
+| 🧪 **Tests** | 223 Rust tests (72 in the app, 151 in its add-ons) against a real PostgreSQL, 202 interface tests |
 | 📄 **Licence** | AGPL-3.0-or-later; the Finance, Procurement, Stock Operations, Manufacturing Operations, Quality, Warehouse and Shop Floor add-ons AGPL-3.0-only |
 
 ## 📸 Screenshots
@@ -392,7 +392,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.6.2)
+### 💼 Finance add-on (0.7.0)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
   a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
@@ -415,9 +415,9 @@ add-on brings it.
 - **Subscriptions** with plans, trials, billing anchors, proration on plan changes and cancellation; revenue
   earned over the days it pays for; MRR, ARR, churn and net revenue retention.
 - **Reports:** Finance Overview (Accounts today), Budget Variance, Bank Reconciliation Statement, Cash Flow
-  Forecast, Receivables by Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
+  Forecast, Receivables by Installment Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
 
-### 📋 Procurement add-on (0.1.5)
+### 📋 Procurement add-on (0.1.6)
 
 - **Material requests** to buy, transfer, issue, manufacture or receive from a customer, each line tracking
   what was ordered and received; purchase requests become purchase orders grouped by preferred supplier.
@@ -455,7 +455,7 @@ add-on brings it.
 - **Reports:** Job Card Summary, Capacity Planning, Work Order Operations, Production Plan Status,
   Subcontracting Status.
 
-### 🏬 Warehouse Management add-on (WMS, 0.3.1)
+### 🏬 Warehouse Management add-on (WMS, 0.3.3)
 
 Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, count, see a bin and work a task.
 
@@ -473,7 +473,7 @@ Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, cou
 - **People and robots on one task list**, robots through the platform's Operations app; a robot arriving moves
   nothing until the destination is scanned. Tried on a simulated fleet only.
 
-### 🛠️ Manufacturing Execution add-on (Shop Floor, 0.2.4)
+### 🛠️ Manufacturing Execution add-on (Shop Floor, 0.2.6)
 
 Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
 
@@ -489,7 +489,7 @@ Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
 - Discrete manufacturing only, and tried on a simulated press only. It sends machines an approved job number,
   never controller logic.
 
-### ✅ Quality add-on (0.1.0)
+### ✅ Quality add-on (0.2.0)
 
 - **Quality holds** by item and lot that stop ERP from shipping or consuming that stock, the warehouse from
   allocating it and the floor from using it; receipts still pass. Whoever placed a hold does not release it.
@@ -509,7 +509,8 @@ Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
 | 📤 Files | Tax return CSV, India's GSTR-3B JSON and GSTR-1 CSV, ISO 20022 pain.001 and CSV bank files, remittance advice |
 
 Every printed document carries the company's **letterhead** (address, contact, logo), its bank details, default
-terms and a footer, filled in once on the company.
+terms and a footer, filled in once on the company, and the tax registrations of the seller and the buyer that the
+countries' add-ons give, each under its country's label.
 
 ### 🖥️ ERP's own screens
 
@@ -552,7 +553,7 @@ history. Desks show only where their package is installed and only to people who
 
 ### 🔌 For other apps
 
-- **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow` and
+- **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow`, `portal` and
   `localization`; [docs/contracts.md](docs/contracts.md) says how each operation behaves (in the caller's
   transaction, appending, what it refuses, whether calling twice does it twice).
 - **Contracted capabilities**: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`, and
@@ -566,32 +567,44 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.7.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
-| 🇪🇺 | European Union | `ferrum-eu` 0.3.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
-| 🇩🇪 | Germany | `ferrum-de` 0.1.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
-| 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
-| 🇫🇷 | France | `ferrum-eu-members` 0.1.0 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
-| 🇮🇹 | Italy | `ferrum-eu-members` 0.1.0 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
-| 🇵🇱 | Poland | `ferrum-eu-members` 0.1.0 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
-| 🇵🇹 | Portugal | `ferrum-eu-members` 0.1.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
-| 🇷🇴 | Romania | `ferrum-eu-members` 0.1.2 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
-| 🇪🇸 | Spain | `ferrum-eu-members` 0.1.0 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
-| 🇬🇧 | United Kingdom | `ferrum-gb` 0.2.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
-| 🇺🇸 | United States | `ferrum-us` 0.1.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
+| 🇮🇳 | India | `ferrum-india` 0.7.3 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇪🇺 | European Union | `ferrum-eu` 0.4.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
+| 🇩🇪 | Germany | `ferrum-de` 0.1.1 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
+| 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.1 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
+| 🇫🇷 | France | `ferrum-eu-members` 0.1.1 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
+| 🇮🇹 | Italy | `ferrum-eu-members` 0.1.1 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
+| 🇵🇱 | Poland | `ferrum-eu-members` 0.1.1 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
+| 🇵🇹 | Portugal | `ferrum-eu-members` 0.3.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
+| 🇷🇴 | Romania | `ferrum-eu-members` 0.2.1 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
+| 🇪🇸 | Spain | `ferrum-eu-members` 0.1.1 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
+| 🇬🇧 | United Kingdom | `ferrum-gb` 0.3.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
+| 🇺🇸 | United States | `ferrum-us` 0.2.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
 | 🇨🇦 | Canada | `ferrum-ca` 0.1.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
-| 🇸🇬 | Singapore | `ferrum-countries` 0.2.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.2.1 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
-| 🇮🇩 | Indonesia | `ferrum-countries` 0.2.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
-| 🇹🇭 | Thailand | `ferrum-countries` 0.2.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
-| 🇵🇭 | Philippines | `ferrum-countries` 0.2.0 | VAT 12% | 2550Q as a return definition | — |
-| 🇻🇳 | Vietnam | `ferrum-countries` 0.2.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
-| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.2.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
-| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.2.0 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
-| 🇦🇺 | Australia | `ferrum-countries` 0.2.0 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
-| 🇳🇿 | New Zealand | `ferrum-countries` 0.2.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
-| 🇯🇵 | Japan | `ferrum-countries` 0.2.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
+| 🇸🇬 | Singapore | `ferrum-countries` 0.3.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.4.0 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
+| 🇮🇩 | Indonesia | `ferrum-countries` 0.3.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
+| 🇹🇭 | Thailand | `ferrum-countries` 0.3.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
+| 🇵🇭 | Philippines | `ferrum-countries` 0.3.0 | VAT 12% | 2550Q as a return definition | — |
+| 🇻🇳 | Vietnam | `ferrum-countries` 0.3.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
+| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.3.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
+| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.2.1 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
+| 🇦🇺 | Australia | `ferrum-countries` 0.2.1 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
+| 🇳🇿 | New Zealand | `ferrum-countries` 0.3.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
+| 🇯🇵 | Japan | `ferrum-countries` 0.3.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
 | 🇲🇽 | Mexico | `ferrum-countries` 0.2.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
-| 🇨🇳 | China | `ferrum-countries` 0.2.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
+| 🇨🇳 | China | `ferrum-countries` 0.3.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
+
+Rates, item categories, withholding categories and, for India, Ireland's VAT3 and the ten countries marked "as a
+return definition", the return forms are records the add-on seeds and an accountant can edit. What stays in each
+add-on's code is its choice of taxes, its number checks, the documents it builds and its client for an authority.
+Australia's, the United Arab Emirates' and Mexico's returns are code, because a definition cannot yet sum an invoice's
+grand total, choose boxes by the company's emirate or count tax when it is paid. Add-ons send a document to a receiver
+outside through one engine (`ferrum_app_erp::submission`), and call authorities through the platform's vetted client
+(`ferrum_app_erp::providers`).
+
+Every client for an authority or a network (the IRP, VIES and TEDB, a Peppol access point, HMRC, AvaTax, MyInvois, SDI,
+KSeF, ANAF, AEAT, the French plateforme agréée) is tested here against a stand-in service only; none has been run
+against the real one. What the add-ons compute and produce is described here, not certified to meet a country's law.
 
 ### 🗣️ Languages and accessibility
 
@@ -886,12 +899,12 @@ app.</sub>
 
 ### ✅ Recently shipped
 
-- [x] **0.26.3** Pickers in ERP's own screens offer only the record's company's records.
-- [x] **0.26.2** Every link to a company's master limited to the record's company, across ERP and six add-ons.
-- [x] **0.26.1** Desks say what they need, and which add-on brings a missing one.
-- [x] **0.26.0** One basket pricing crate for the server and the till, built to WebAssembly, with a versioned snapshot.
-- [x] **0.25.1** Eight desks: payment runs, stored value, promotions, tax returns, withholding, shipping, planning, numbering.
-- [x] **0.25.0** Numbering series per document, carriers through the platform's connections, approvals that ship.
+- [x] **0.30.4** A new card's code typed in another app is kept the way ERP keeps one typed on its own records.
+- [x] **0.30.3** Ten countries' returns as definitions their add-ons seed; an early-payment discount that takes tax back takes turns with filing.
+- [x] **0.30.2** ERP's page starts through the frontend's shared start.
+- [x] **0.30.1** One way to send a document outside for every channel, and one Peppol sender.
+- [x] **0.30.0** Every layout prints the tax registrations the countries' add-ons give; the base names no country.
+- [x] **0.29.1** Four faults fixed: carrier upkeeps, filing against invoicing, broken tax conditions, India's rules for Indian companies only.
 
 ### 🔜 Next up
 
@@ -942,8 +955,9 @@ app.</sub>
 - **ERP** ships in the official Ferrum server image, compiled in, and is recorded as installed in every workspace
   that has accounting. An administrator upgrades it from **Apps** (`/store/`) when a new version arrives.
 - **Add-ons** (Finance, Procurement, Stock Operations, Manufacturing Operations, Quality, Warehouse, Shop Floor,
-  and each country) install from **Apps**. Warehouse and Shop Floor also need the platform's Operations app;
-  Germany and the EU's member states need the European Union add-on.
+  and each country) install from **Apps**. Warehouse and Shop Floor also need the platform's Operations app and
+  Quality; Quality and Warehouse need Stock Operations, and Shop Floor needs Manufacturing Operations. Germany and the
+  EU's member states need the European Union add-on.
 
 First steps in a new workspace:
 
@@ -1008,7 +1022,7 @@ cargo test --workspace
 `FERRUM_EU_MEMBERS_TEST_DATABASE_URL` and so on, the database's name in capitals). The end-to-end test
 (`tests/erp_it.rs`) walks a company through opening stock, procure-to-pay, order-to-cash with a fake IRP,
 payments, credit notes, manufacturing, MRP, period closing and concurrent stock issues. `scripts/mutants.py`
-breaks the warehouse's, shop floor's and quality's guarantees one at a time and fails if a test does not notice.
+breaks the warehouse's, shop floor's, quality's and finance books' guarantees one at a time and fails if a test does not notice.
 
 ### 🖥️ Interface
 
