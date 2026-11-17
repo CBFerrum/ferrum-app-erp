@@ -345,7 +345,8 @@ add-on brings it.
 - **Purchase orders**, **purchase receipts** and **purchase invoices** with three-way matching against orders
   and receipts, Update Items on a submitted order, Close and Re-open, and allowances for over-receipt.
 - **Bills straight to an account** (rent, electricity, a consultant's fee), deferred expense over a service
-  period, returns, debit notes and refunds.
+  period, returns, debit notes and refunds. A supplier's invoice number is entered once per supplier, draft or
+  submitted, two clerks at once too: the database refuses the second.
 - **Rejected goods.** A receipt's rejected quantity goes to a rejected-goods warehouse at no value and is
   never billed; Return Rejected Goods makes the return or a debit note.
 - **Approved manufacturers and suppliers** per item, with their part numbers and priority.

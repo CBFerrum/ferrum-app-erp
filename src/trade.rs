@@ -10,7 +10,7 @@ use crate::pricing::{Side, breakup, calculate};
 use crate::stock::{self, MoveIn, Posted, parse_serials};
 use crate::util::{Company, b, company, d, date, get, id, money, posting_ts, round, rows, s, set, stock_qty, sys, unit_factor};
 use async_trait::async_trait;
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -1187,7 +1187,6 @@ impl DocHook for InvoiceHook {
     }
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
-        let n = names(self.0);
         let ret = b(doc, "is_return");
         let mut errors = Vec::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
@@ -1215,28 +1214,7 @@ impl DocHook for InvoiceHook {
         if self.0 == Side::Selling {
             crate::stored_value::check_invoice(hc, doc).await?;
         }
-        if self.0 == Side::Buying
-            && let (Some(supplier), Some(bill)) = (id(doc, "supplier"), s(doc, "bill_no"))
-        {
-            let dupes = hc
-                .kernel
-                .find_tx(
-                    &sys(hc.ctx),
-                    hc.tx,
-                    n.invoice,
-                    &[
-                        Filter::eq("supplier", supplier.to_string()),
-                        Filter::eq("bill_no", bill),
-                        Filter { field: "docstatus".into(), op: ferrum_kernel::Op::Ne, value: json!(2) },
-                    ],
-                    None,
-                    2,
-                )
-                .await?;
-            if dupes.iter().any(|x| id(x, "id") != id(doc, "id")) {
-                return Err(Error::field("bill_no", "this supplier invoice number was already entered"));
-            }
-        }
+        // A supplier's bill entered twice is refused by its unique key (supplier, bill_no).
         Ok(())
     }
 

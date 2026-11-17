@@ -692,6 +692,36 @@ async fn scenario() {
     t.submit("PaymentEntry", paid_in).await;
     assert_eq!(t.posted(paid_in).await, map(&[("Creditors", "-60"), ("Primary Bank", "60")]), "the supplier pays back: debit bank, credit payable");
     assert_eq!(dec(&t.get("PurchaseInvoice", rebate).await["outstanding_amount"]), Decimal::ZERO);
+    // One supplier's bill keyed in by two clerks at the same moment is kept once: the second waits for
+    // the first and is refused, as one entered after it is.
+    let bill = obj(
+        json!({"company": c, "supplier": acme.to_string(), "bill_no": "ACME/77", "items": [{"item": advice.to_string(), "qty": "1", "price_list_rate": "10"}]}),
+    );
+    let mut first = t.k.db.tenant_tx(tenant).await.unwrap();
+    t.k.insert_tx(&t.ctx, &mut first, "PurchaseInvoice", bill.clone()).await.expect("the first clerk's bill");
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *first).await.unwrap();
+    let second = {
+        let (k, ctx, bill) = (t.k.clone(), t.ctx.clone(), bill.clone());
+        tokio::spawn(async move { k.insert(&ctx, "PurchaseInvoice", bill).await })
+    };
+    let mut waited = false;
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&t.k.db.pool)
+            .await
+            .unwrap();
+        if waits || second.is_finished() {
+            waited = waits;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    first.commit().await.unwrap();
+    assert!(waited, "the second clerk's bill waits for the first");
+    assert!(matches!(second.await.unwrap(), Err(Error::Conflict(_))), "and is refused");
+    let again = t.k.insert(&t.ctx, "PurchaseInvoice", bill).await;
+    assert!(matches!(again, Err(Error::Conflict(ref m)) if m.contains("Supplier Invoice No")), "{again:?}");
 
     // ───────────── what the books report with returns and refunds in them ─────────────
     let ar = ferrum_domain::reports::run(&t.k, &t.ctx, "receivables", &[("company".to_string(), c.clone())].into_iter().collect()).await.unwrap();

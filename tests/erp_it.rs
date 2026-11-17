@@ -534,7 +534,7 @@ async fn scenario() {
         .k
         .insert(&t.ctx, "PurchaseInvoice", obj(json!({"company": cid.to_string(), "supplier": acme.to_string(), "bill_no": "ACME/778", "items": [{"item": raw.to_string(), "qty": "1", "price_list_rate": "12"}]})))
         .await;
-    assert!(matches!(dup, Err(Error::Validation(ref e)) if e.iter().any(|f| f.field == "bill_no")), "duplicate supplier invoice: {dup:?}");
+    assert!(matches!(dup, Err(Error::Conflict(ref m)) if m.contains("Supplier Invoice No")), "duplicate supplier invoice: {dup:?}");
 
     // ───────────── order to cash (inter-state GST) ─────────────
     let so = t
