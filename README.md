@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.31.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.32.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.31.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.32.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -357,7 +357,9 @@ add-on brings it.
 
 ### 📦 Stock and warehouses
 
-- **Stock ledger.** Append-only, with moving-average and FIFO cost layers, valued once at posting.
+- **Stock ledger.** Append-only, with moving-average and FIFO cost layers, valued once at posting. Where a company
+  allows negative stock, a receipt into a FIFO shortfall covers it at its own cost first, the difference to stock
+  adjustment, so the layers always hold what is on hand.
 - **Warehouses** in a tree per company, each holding Stock, Transit or Rejected goods; only Stock is offered to
   orders and promising.
 - **Stock entries** for opening stock, receipts, issues, transfers and manufacture. **Ship now, receive later:** a transfer
@@ -396,7 +398,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.7.1)
+### 💼 Finance add-on (0.7.2)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
   a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
@@ -433,7 +435,7 @@ add-on brings it.
 - **Reports:** Material Request Status, Procurement Tracker, Supplier Quotation Comparison, Supplier Scorecard
   Ranking, Purchase Analytics.
 
-### 🗃️ Stock Operations add-on (0.2.1)
+### 🗃️ Stock Operations add-on (0.2.2)
 
 - **Stock reconciliation** of counted quantities (and rates), cancelled exactly.
 - **Landed cost vouchers** that add freight, duty and other charges to received stock still on hand.
@@ -446,7 +448,7 @@ add-on brings it.
 - **Reports:** Stock Reconciliation Variance, Landed Cost Allocation, Pick List Status, Quality Inspection
   Summary, Variant Stock Matrix, Stock Ageing.
 
-### ⚙️ Manufacturing Operations add-on (0.2.1)
+### ⚙️ Manufacturing Operations add-on (0.2.2)
 
 - **Workstations** with an hour rate, working hours, holidays and parallel capacity; **operations** and
   **routings** that cost a BOM's operating time into finished goods.
@@ -459,7 +461,7 @@ add-on brings it.
 - **Reports:** Job Card Summary, Capacity Planning, Work Order Operations, Production Plan Status,
   Subcontracting Status.
 
-### 🏬 Warehouse Management add-on (WMS, 0.3.3)
+### 🏬 Warehouse Management add-on (WMS, 0.3.4)
 
 Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, count, see a bin and work a task.
 
@@ -571,7 +573,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.7.3 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇮🇳 | India | `ferrum-india` 0.8.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
 | 🇪🇺 | European Union | `ferrum-eu` 0.4.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.1.1 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.1 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
@@ -813,7 +815,9 @@ called at its own address, its production one or its test environment's as the c
 or its variable, `FERRUM_GB_HMRC_URL` and the others, which wins) may stand in for the provider's, but outside
 development only when it is at one of the provider's own hosts: a changed setting cannot send a company's credentials
 anywhere else. The United Kingdom's `gb.public_ip` (`FERRUM_PUBLIC_IP`) names the server's public address in HMRC's
-fraud-prevention headers.
+fraud-prevention headers. India's IRP address is the company's own (NIC's, or its GSP's): it is held to NIC's hosts,
+the GSPs' India knows and those the operator adds in `india.irp_hosts` (`FERRUM_IN_IRP_HOSTS`, hosts separated by
+commas), when it is saved and again before anything is sent, on a development server too.
 
 ## 📊 How it compares
 
@@ -903,12 +907,12 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.32.0** Three money faults fixed: FIFO layers after negative stock, dates from the UTC day, India's IRP called at any host.
 - [x] **0.31.0** Six money faults fixed: postings outside every period, the exchange-difference plug, invoices left behind by settlements, double reversals, duplicate supplier bills, an unchecked hash.
 - [x] **0.30.4** A new card's code typed in another app is kept the way ERP keeps one typed on its own records.
 - [x] **0.30.3** Ten countries' returns as definitions their add-ons seed; an early-payment discount that takes tax back takes turns with filing.
 - [x] **0.30.2** ERP's page starts through the frontend's shared start.
 - [x] **0.30.1** One way to send a document outside for every channel, and one Peppol sender.
-- [x] **0.30.0** Every layout prints the tax registrations the countries' add-ons give; the base names no country.
 
 ### 🔜 Next up
 

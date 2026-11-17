@@ -11,6 +11,11 @@
 //! the development and test configurations turn on) it is called only when its host is one of the provider's, so a
 //! changed row or environment cannot send a company's credentials anywhere else. It is refused, saying so, rather than
 //! passed over.
+//!
+//! An address a company gives instead (India's IRP: NIC's own, or its GSP's) is held by [`Provider::check_company`] when
+//! it is saved and before each call: to one of the provider's hosts or one the operator adds in the provider's setting
+//! (`india.irp_hosts`, or its variable `FERRUM_IN_IRP_HOSTS`), on every server, a development one too, since it is the
+//! company's to change and not the operator's. A development server's test double is a host its operator adds.
 
 use ferrum_kernel::{Error, Kernel, Result};
 use std::time::Duration;
@@ -20,7 +25,9 @@ use uuid::Uuid;
 pub struct Provider {
     /// Its name, in messages.
     pub name: &'static str,
-    /// The variable of the operator's setting that may stand in for its address (the add-on's `operator_settings`).
+    /// The variable of the operator's setting for it (the add-on's `operator_settings`): an address that may stand in for
+    /// its own ([`Provider::env_address`]), or, for a provider each company gives its own address for, hosts the operator
+    /// adds to its own, separated by commas ([`Provider::check_company`]).
     pub env: &'static str,
     /// Its hosts: production's and its own test environment's.
     pub hosts: &'static [&'static str],
@@ -38,18 +45,40 @@ impl Provider {
         if development {
             return Ok(());
         }
+        self.allowed(url, &[]).map_err(|host| {
+            Error::invalid(format!(
+                "{} is called only at its own addresses ({}), not at {host}: unset the setting {}, which only a development server may point elsewhere",
+                self.name,
+                self.hosts.join(", "),
+                self.env
+            ))
+        })
+    }
+
+    /// Whether a company's address for the provider may be called, when it is saved and before each call: one of the
+    /// provider's hosts or one the operator adds in its setting (`env`, hosts separated by commas), on a development
+    /// server too.
+    pub fn check_company(&self, url: &str) -> Result<()> {
+        let added = ferrum_kernel::env::var(self.env).unwrap_or_default();
+        let added: Vec<String> = added.split(',').map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty()).collect();
+        self.allowed(url, &added).map_err(|host| {
+            Error::invalid(format!(
+                "{} is called only at its own addresses ({}) or one the operator adds in {}, not at {host}",
+                self.name,
+                self.hosts.join(", "),
+                self.env
+            ))
+        })
+    }
+
+    /// The allowlist: `url`'s host is one of the provider's or of `added`; else the host it names, for the refusal (the
+    /// host alone: an address can carry a user name and password).
+    fn allowed(&self, url: &str, added: &[String]) -> std::result::Result<(), String> {
         let host = reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase));
-        if host.as_deref().is_some_and(|h| self.hosts.contains(&h)) {
-            return Ok(());
+        match host {
+            Some(h) if self.hosts.contains(&h.as_str()) || added.contains(&h) => Ok(()),
+            other => Err(other.unwrap_or_else(|| "an address without a host".into())),
         }
-        // The host alone: an address can carry a user name and password.
-        Err(Error::invalid(format!(
-            "{} is called only at its own addresses ({}), not at {}: unset the setting {}, which only a development server may point elsewhere",
-            self.name,
-            self.hosts.join(", "),
-            host.as_deref().unwrap_or("an address without a host"),
-            self.env
-        )))
     }
 
     /// A client for a call to `url` made for `tenant`, and the parsed address: refused for a sandbox (it reaches

@@ -817,7 +817,7 @@ impl DocHook for ShipmentHook {
         let n = names(self.0);
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         let rejected_return = b(doc, "rejected_return");
         if rejected_return {
             count_rejected(hc, doc, -Decimal::ONE).await?;
@@ -1527,7 +1527,7 @@ impl DocHook for InvoiceHook {
         let iid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         crate::tax_return::check_open(hc, doc).await?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, ts) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         count_return(hc, n.invoice, doc, -Decimal::ONE).await?;
         count_debit_note(hc, doc, -Decimal::ONE).await?;
         crate::promotion::count_uses(hc, doc, -1).await?;

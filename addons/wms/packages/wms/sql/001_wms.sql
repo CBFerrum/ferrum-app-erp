@@ -14,7 +14,7 @@ create table wms_position (
   unit_id uuid,
   status text not null default 'Available' check (status in ('Available', 'Inspection', 'Quarantine', 'Hold', 'Damaged')),
   expiry date,
-  received_on date not null default current_date,
+  received_on date not null,
   qty numeric(28,9) not null default 0 check (qty >= 0),
   -- Promised to open tasks. Only stock in place can be allocated.
   allocated numeric(28,9) not null default 0 check (allocated >= 0 and allocated <= qty),

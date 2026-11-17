@@ -112,13 +112,13 @@ async fn find(tx: &mut Tx, tenant: Uuid, k: &Key) -> Result<Option<Held>> {
 
 /// Adds to a position, creating it if it is new. The oldest expiry of what is merged stands, so
 /// nothing is ever shown as lasting longer than it does.
-pub async fn add(tx: &mut Tx, tenant: Uuid, warehouse: Uuid, k: &Key, qty: Decimal, expiry: Option<NaiveDate>, received_on: Option<NaiveDate>) -> Result<()> {
+pub async fn add(tx: &mut Tx, tenant: Uuid, warehouse: Uuid, k: &Key, qty: Decimal, expiry: Option<NaiveDate>, received_on: NaiveDate) -> Result<()> {
     if qty <= Decimal::ZERO {
         return Err(Error::internal("a position is added to by a positive quantity"));
     }
     sqlx::query(
         "insert into wms_position (tenant_id, id, warehouse_id, bin_id, item_id, owner_id, lot, serial, unit_id, status, expiry, received_on, qty) \
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, current_date), $13) \
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
          on conflict (tenant_id, bin_id, item_id, coalesce(owner_id, '00000000-0000-0000-0000-000000000000'), lot, serial, coalesce(unit_id, '00000000-0000-0000-0000-000000000000'), status) \
          do update set qty = wms_position.qty + excluded.qty, expiry = least(wms_position.expiry, excluded.expiry), received_on = least(wms_position.received_on, excluded.received_on)",
     )
@@ -226,7 +226,7 @@ pub async fn arrive(tx: &mut Tx, ctx: &Ctx, warehouse: Uuid, kind: Kind, k: &Key
     if !record(tx, ctx, warehouse, kind, k, qty, Side { bin: None, unit: None, status: None }, to, cause).await? {
         return Ok(false);
     }
-    add(tx, ctx.tenant, warehouse, k, qty, expiry, None).await?;
+    add(tx, ctx.tenant, warehouse, k, qty, expiry, ctx.today()).await?;
     Ok(true)
 }
 
@@ -264,10 +264,10 @@ pub async fn transfer(
     // Locked in one order, so two opposite moves cannot deadlock.
     if from <= to {
         let held = take(tx, ctx.tenant, from, qty, released).await?;
-        add(tx, ctx.tenant, warehouse, to, qty, held.expiry, Some(held.received_on)).await?;
+        add(tx, ctx.tenant, warehouse, to, qty, held.expiry, held.received_on).await?;
     } else {
         let peek = find(tx, ctx.tenant, from).await?.ok_or_else(|| Error::invalid("that stock is not in that bin"))?;
-        add(tx, ctx.tenant, warehouse, to, qty, peek.expiry, Some(peek.received_on)).await?;
+        add(tx, ctx.tenant, warehouse, to, qty, peek.expiry, peek.received_on).await?;
         take(tx, ctx.tenant, from, qty, released).await?;
     }
     Ok(true)

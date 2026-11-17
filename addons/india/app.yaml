@@ -2,12 +2,19 @@
 # GST returns. Its screens are ERP's; recorded as installed wherever its package is.
 id: india
 name: India
-version: 0.7.3
+version: 0.8.0
 publisher: cbferrum
 summary: GST, e-invoices and e-way bills for ERP
 categories: [finance]
 runtime: native
 platform: ">=0.3.8, <0.4"
+# What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
+# india.<key> and read at each use; the variable, when set, still wins.
+operator_settings:
+  - key: irp_hosts
+    env: FERRUM_IN_IRP_HOSTS
+    applies: live
+    doc: More hosts a company's IRP API address may be on (another GSP's, or a development server's test double), separated by commas, beside NIC's and the GSPs' India knows. An address on any other host is refused, when it is saved and before anything is sent, so a company's IRP credentials go nowhere else.
 requires: {erp: ">=0.21"}
 parent: erp
 packages: [india]

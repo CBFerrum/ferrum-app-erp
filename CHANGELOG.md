@@ -1,5 +1,38 @@
 # Changelog
 
+## ERP 0.32.0, India 0.8.0, Finance 0.7.2, Stock Operations 0.2.2, Manufacturing Operations 0.2.2, Warehouse Management 0.3.4: FIFO below zero, the workspace's day, the IRP's hosts
+
+The inventory package's SQL (`stock_move`) and the Warehouse Management add-on's (`wms_position`) change: a database
+an earlier build made is made again from empty. `ledger::reversal_point` and `reservation::held` take the context in
+place of the tenant: Point of Sale passes `hc.ctx` instead of `hc.ctx.tenant` at its three calls of
+`ledger::reversal_point` (`src/closing.rs`, `src/invoice.rs`, `src/session.rs`). Nothing else another app calls
+changes.
+
+- **A FIFO receipt into negative stock covers the shortfall at its own cost.** With negative stock allowed, a FIFO
+  issue beyond what was on hand left no layer for what it was short, and the next receipt opened a layer for its whole
+  quantity: from then on the layers held more than was on hand and later issues were costed from units that were
+  never there (5 in at 10, 8 out, 10 in at 12 left 7 on hand and a layer of 10). A receipt now covers what is short
+  first, at its own cost, and only the rest opens a layer; the difference from what the shortfall left at goes to the
+  stock adjustment account (a move of value alone in the stock ledger and an entry, both the document's
+  `StockValueAdjustment`). The receipt's own move and `Posted` keep its value, so callers book as before and a bill
+  clears Stock Received But Not Billed at what came in. Cancelling such a receipt makes the covered units short again
+  and takes the difference back, while no other document has moved the item in that warehouse since; after that it is
+  refused ("has moved since this receipt covered what was short"), as a receipt whose layer was used already is: a
+  return sends the goods back instead. A stock count with a valuation rate from negative FIFO stock closes the
+  shortfall at what it holds first, so the count is one layer at its rate. Moving average is unchanged.
+- **Today is the workspace's day, not UTC's.** Stored value issued, adjusted, transferred, reversed and paid out on
+  the UTC day; the daily upkeep ran journal templates, cheque reminders, deferred lines' month end and stored value
+  expiry on it; a document cancelled after its month was closed was reversed on it; an order's hold lasted to it; and
+  the Warehouse Management add-on dated a receipt into its bins on it. East of UTC the first hours of a day were dated
+  the day before, west of it the evening the day after. Each now takes the workspace's day.
+- **India's IRP is called only at NIC's and the GSPs' hosts.** A company's IRP API Address could name any host, and
+  its client id and secret, API user and password went there. It is now held to NIC's sandbox and production API
+  hosts and the GSPs India knows (Vayana, TaxPro), and to hosts the operator adds in the new operator setting
+  `india.irp_hosts` (`FERRUM_IN_IRP_HOSTS`, separated by commas), when it is saved and again before anything is sent,
+  on a development server too (whose test doubles' hosts its operator adds). A company whose GSP is another must have
+  the operator add the GSP's host first.
+- Finance, Stock Operations and Manufacturing Operations call `ledger::reversal_point` the new way.
+
 ## ERP 0.31.0, Finance 0.7.1: six money faults, each shown failing first
 
 The accounting and inventory packages' SQL and buying's Purchase Invoice change: a database an earlier build made is

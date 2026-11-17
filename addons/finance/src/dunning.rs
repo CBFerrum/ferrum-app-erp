@@ -349,7 +349,7 @@ impl DocHook for DunningHook {
         if ledger::load_open_item(hc.tx, hc.ctx.tenant, did, true).await?.is_some() {
             ledger::cancel_open_item(hc.tx, hc.ctx, did).await?;
         }
-        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx.tenant, co.id, doc).await?;
+        let (on, _) = ledger::reversal_point(hc.tx, hc.ctx, co.id, doc).await?;
         ledger::reverse(hc.tx, hc.ctx, "Dunning", did, on, co.precision).await?;
         let mut v = Doc::new();
         v.insert("status".into(), json!("Cancelled"));

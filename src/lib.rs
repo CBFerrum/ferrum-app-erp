@@ -9,6 +9,10 @@
 //! apps (Point of Sale, Commerce, Assets, Field Service, HR's payroll, CRM's quotations) build on
 //! the engine's modules; countries plug in through [`localization`] (India is the add-on
 //! `ferrum-india`), and ERP's other add-ons are the other crates of this workspace.
+//!
+//! "Today" is the workspace's day, never the UTC day: a request's from its context (`Ctx::today`), upkeep's from
+//! each workspace's system context. Only moments (a posting's time, a token's expiry, when something was sent) are
+//! taken from the UTC clock.
 
 pub mod accounting;
 pub mod bad_debt;
@@ -134,9 +138,9 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
     vec![Arc::new(reports::ErpReports)]
 }
 
-/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions, each company's
-/// next fiscal year, deferred lines recognised, journal entries reversed on their reversal day, and
-/// stored value warned of and expired.
+/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions (the year before to the year
+/// after UTC's, which holds every workspace's day), and, on each workspace's own day, each company's next fiscal year,
+/// deferred lines recognised, journal entries reversed on their reversal day, and stored value warned of and expired.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     let year = chrono::Utc::now().year();
     let mut tx = k.db.system_tx().await?;
@@ -155,16 +159,17 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
     let mut tx = k.db.system_tx().await?;
     let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    let today = chrono::Utc::now().date_naive();
-    let month_end = today.with_day(1).and_then(|first| first.pred_opt()).unwrap_or(today);
     for tenant in tenants {
         let schema = k.registry.schema(tenant).await?;
         if !schema.packages.iter().any(|p| p == "accounting") {
             continue;
         }
         let ctx = ferrum_kernel::Ctx::system(tenant, schema);
-        // Each company's next fiscal year, on the workspace's own day, before anything is posted in it.
-        if let Err(e) = setup::upkeep(k, &ctx, ctx.today()).await {
+        // Every round of a workspace's upkeep is on its own day, not UTC's.
+        let today = ctx.today();
+        let month_end = today.with_day(1).and_then(|first| first.pred_opt()).unwrap_or(today);
+        // Each company's next fiscal year, before anything is posted in it.
+        if let Err(e) = setup::upkeep(k, &ctx, today).await {
             tracing::warn!(%tenant, "next fiscal years: {e}");
         }
         let mut tx = k.db.tenant_tx(tenant).await?;
