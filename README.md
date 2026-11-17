@@ -219,9 +219,9 @@ add-on brings it.
 - **Finance books.** IFRS beside local rules, or a tax book beside both: an entry with no book is in every
   book, an entry with a book adjusts that one alone. Statements, the general ledger and year-end closing take
   a book.
-- **Fiscal years and period locks.** A new company comes with its current fiscal year, by its own start month;
-  make the years before it (for the old books) and the next one before posting in them, since nothing posts on a
-  day no fiscal year holds. Close and reopen an accounting period from the fiscal year; nothing posts into a closed
+- **Fiscal years and period locks.** A new company comes with its current fiscal year, by its own start month,
+  and upkeep makes each company's next year 30 days before it starts, as long as the one before it. Nothing posts
+  on a day no fiscal year holds: make the years before the first (for the old books) yourself. Close and reopen an accounting period from the fiscal year; nothing posts into a closed
   month.
 - **Journal entries.** Entry types, party lines in the party's own currency with their own due dates,
   reversing entries on a chosen day (accruals that take themselves out the day after, once, by the daily

@@ -64,7 +64,8 @@ operations:
   returned to the platform, which rolls the whole action back, so nothing half done survives.
 * **Append only.** Postings, moves and allocations are never changed or deleted; undoing appends
   reversals, and the database refuses edits, deletes, postings into a closed period and postings on a day no
-  accounting period holds (a company has its current fiscal year from set-up; make the others before posting in them).
+  accounting period holds (a company has its current fiscal year from set-up, and upkeep makes its next one 30 days
+  before it is needed; make earlier ones before posting in them).
 * **Once.** A posting appends on every call: call it once for each event of the source document
   (its submit, its cancel), which the platform's workflow runs once. Reversals act only on what is
   not reversed yet, so calling one twice reverses once; two at the same moment, in two transactions,

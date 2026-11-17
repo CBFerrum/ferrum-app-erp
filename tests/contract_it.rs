@@ -142,6 +142,36 @@ async fn scenario() {
     let refused = ledger::post(&mut outside, &ctx, far, 2).await;
     assert!(matches!(refused, Err(Error::Invalid(ref m)) if m.contains("no accounting period")), "{refused:?}");
     drop(outside);
+    // The books do not stop at a year's end: upkeep makes the next year 30 days before it is needed. Run
+    // 20 days before the company's only year (set-up's) ends, it makes the year after, once, whose first
+    // day posts; a day two years out is still refused, and a company whose years were deleted gets none.
+    let year = find(&k, &ctx, "FiscalYear", json!({"company": cid.to_string()})).await;
+    let end = chrono::NaiveDate::parse_from_str(year["end_date"].as_str().unwrap(), "%Y-%m-%d").unwrap();
+    let bare = k.insert(&ctx, "Company", obj(json!({"company_name": "Bare Co", "abbr": "BC", "default_currency": inr["id"]}))).await.unwrap();
+    let bare_year = find(&k, &ctx, "FiscalYear", json!({"company": bare["id"]})).await;
+    k.delete(&ctx, "FiscalYear", id(&bare_year["id"]), None).await.unwrap();
+    for _ in 0..2 {
+        ferrum_app_erp::setup::upkeep(&k, &ctx, end - chrono::Duration::days(20)).await.unwrap();
+    }
+    let (next, mut outside) = (end + chrono::Duration::days(1), k.db.tenant_tx(tenant).await.unwrap());
+    let on = |day: chrono::NaiveDate| Entry {
+        posting_date: day,
+        ..entry(Uuid::now_v7(), vec![Line::new(receivable, n("1"), "INR"), Line::new(bank, n("-1"), "INR")])
+    };
+    let first_day = ledger::post(&mut outside, &ctx, on(next), 2).await;
+    assert!(matches!(first_day, Ok(Some(_))), "the next year's first day posts: {first_day:?}");
+    let beyond = ledger::post(&mut outside, &ctx, on(next + chrono::Months::new(24)), 2).await;
+    assert!(matches!(beyond, Err(Error::Invalid(ref m)) if m.contains("no accounting period")), "{beyond:?}");
+    drop(outside);
+    let years = |company: &Value| {
+        let (k, ctx) = (k.clone(), ctx.clone());
+        let q = ListQuery { filters: ferrum_kernel::query::parse_filters(&json!({"company": company})).unwrap(), ..Default::default() };
+        async move { k.list(&ctx, "FiscalYear", &q).await.unwrap().rows.iter().map(|y| (y["start_date"].clone(), y["end_date"].clone())).collect::<Vec<_>>() }
+    };
+    let made = years(&company["id"]).await;
+    let last = next + chrono::Months::new(12) - chrono::Duration::days(1);
+    assert!(made.len() == 2 && made.contains(&(json!(next.to_string()), json!(last.to_string()))), "the year after, once: {made:?}");
+    assert!(years(&bare["id"]).await.is_empty(), "a company with no year gets none");
 
     // ── ledger::reverse: what is not reversed yet, once ──
     assert_eq!(ledger::reverse(&mut tx, &ctx, "ContractTest", source, today, 2).await.unwrap(), 2);
