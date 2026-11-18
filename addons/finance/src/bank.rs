@@ -1,8 +1,9 @@
 //! Bank accounts, statement import and reconciliation.
 //!
 //! A bank account ties a company's account at a bank to its GL account. Statements are imported
-//! from CSV with a column mapping; every line becomes a submitted bank transaction carrying a hash
-//! of its content, so importing the same (or an overlapping) statement again skips what is there.
+//! from any file a `StatementFormat` describes (`statement`); every line becomes a submitted bank
+//! transaction carrying a hash of the bank's reference for it, or of its content, so importing the
+//! same (or an overlapping) statement again skips what is there.
 //! Reconciling allocates a transaction to payment entries and journal entries on the bank's GL
 //! account - several at once, partly if need be - never beyond what either side has left; a
 //! voucher cleared in full gets its clearance date. An unmatched line becomes a new payment or
@@ -11,6 +12,7 @@
 use crate::common::{installed, opt_date};
 use crate::reports::bank_statement;
 use crate::rules;
+use crate::statement::{self, Line, Reading};
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use ferrum_domain::reports::Params;
@@ -22,7 +24,6 @@ use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-const MAX_IMPORT_ROWS: usize = 10_000;
 const MAX_IMPORT_BYTES: usize = 5 << 20;
 
 fn ever() -> (NaiveDate, NaiveDate) {
@@ -84,7 +85,8 @@ impl DocHook for BankAccountHook {
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         match name {
-            "import_transactions" => import(hc, doc, params).await.map(Some),
+            "preview_statement" => statement(hc, doc, params, false).await.map(Some),
+            "import_transactions" => statement(hc, doc, params, true).await.map(Some),
             "workbench" => workbench(hc, doc, params).await.map(Some),
             "accept_matches" => accept_matches(hc, params).await.map(Some),
             _ => Ok(None),
@@ -92,138 +94,96 @@ impl DocHook for BankAccountHook {
     }
 }
 
-/// One parsed statement line.
-struct Line {
-    date: NaiveDate,
-    deposit: Decimal,
-    withdrawal: Decimal,
-    description: String,
-    reference: String,
-}
-
-/// The 0-based column a mapping entry names: a header (any case) or a 1-based column number.
-fn column(header: &[String], key: &str, mapping: &Map<String, Value>) -> Result<Option<usize>> {
-    let Some(v) = mapping.get(key).filter(|v| !v.is_null()) else { return Ok(None) };
-    let by_number = match v {
-        Value::Number(n) => n.as_u64().map(|i| i as usize),
-        Value::String(t) => t.trim().parse::<usize>().ok(),
-        _ => None,
+/// The format a statement is read with: the one named, the columns chosen on the screen, the
+/// first enabled format (by name) whose sniff fits the text, or the account's own. `None`: no
+/// format fits.
+async fn choose(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, text: &str) -> Result<Option<(Option<(Uuid, String)>, Reading)>> {
+    let formats: Vec<(Uuid, String, String, Value, bool)> =
+        sqlx::query_as("select id, format_name, kind, reading, coalesce(disabled, false) from e_statement_format where tenant_id = $1 order by format_name")
+            .bind(hc.ctx.tenant)
+            .fetch_all(&mut **hc.tx)
+            .await?;
+    let checked = |(fid, name, kind, reading, _): &(Uuid, String, String, Value, bool)| {
+        statement::reading(kind, reading).map(|r| (Some((*fid, name.clone())), r)).map_err(|m| Error::field("format", format!("{name}: {m}")))
     };
-    if let Some(i) = by_number {
-        return if (1..=header.len()).contains(&i) {
-            Ok(Some(i - 1))
-        } else {
-            Err(Error::field("mapping", format!("{key}: column {i} does not exist (the statement has {})", header.len())))
-        };
+    if let Some(asked) = params.get("format").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+        let f = formats
+            .iter()
+            .find(|f| f.0.to_string() == asked.trim())
+            .filter(|f| !f.4)
+            .ok_or_else(|| Error::field("format", "choose an enabled statement format"))?;
+        return checked(f).map(Some);
     }
-    let name = v.as_str().unwrap_or_default().trim();
-    header
-        .iter()
-        .position(|h| h.trim().eq_ignore_ascii_case(name))
-        .map(Some)
-        .ok_or_else(|| Error::field("mapping", format!("the statement has no column '{name}' (mapped to {key})")))
+    if let Some(inline) = params.get("inline").filter(|v| !v.is_null() && v.as_str().is_none_or(|t| !t.trim().is_empty())) {
+        return statement::reading("Delimited", inline).map(|r| Some((None, r))).map_err(|m| Error::field("inline", m));
+    }
+    for f in formats.iter().filter(|f| !f.4) {
+        if let Ok(r) = statement::reading(&f.2, &f.3)
+            && r.fits(text)
+        {
+            return Ok(Some((Some((f.0, f.1.clone())), r)));
+        }
+    }
+    match id(doc, "statement_format").and_then(|own| formats.iter().find(|f| f.0 == own && !f.4)) {
+        Some(f) => checked(f).map(Some),
+        None => Ok(None),
+    }
 }
 
-/// `import_transactions {csv, mapping: {date, amount | deposit/withdrawal, description?, reference?},
-/// date_format?, decimal_comma?, delimiter?, header_row?, dry_run?}`. Amount columns are signed
-/// (positive is a deposit) unless deposits and withdrawals have columns of their own. All or
-/// nothing: any bad line refuses the whole statement, listing the lines to fix. A dry run writes
-/// nothing: it answers what an import would do (new lines, duplicates, the first lines as read),
-/// and lists bad lines instead of refusing, so a screen can show them next to the mapping.
-async fn import(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
-    hc.ctx.require("BankTransaction", Action::Create)?;
-    hc.ctx.require("BankTransaction", Action::Submit)?;
+/// `preview_statement` (`write` false) and `import_transactions` (`write` true), both `{text, format?, inline?}`.
+/// The text is read with the format chosen (`choose`); statements the file says are another account's are left
+/// out. The preview answers what the import would do (new lines, duplicates, the first lines as read) and
+/// lists lines it cannot read; the import refuses the whole file for any such line, and otherwise stores each
+/// new line as a submitted bank transaction, all in the action's one transaction.
+async fn statement(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, write: bool) -> Result<Value> {
+    if write {
+        hc.ctx.require("BankTransaction", Action::Create)?;
+        hc.ctx.require("BankTransaction", Action::Submit)?;
+    }
     if b(doc, "disabled") {
         return Err(Error::invalid("this bank account is disabled"));
     }
     let bank = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
     let text =
-        params.get("csv").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).ok_or_else(|| Error::field("csv", "paste the statement's CSV text"))?;
+        params.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).ok_or_else(|| Error::field("text", "give the statement file's text"))?;
     if text.len() > MAX_IMPORT_BYTES {
-        return Err(Error::field("csv", "the statement is larger than 5 MB; split it"));
+        return Err(Error::field("text", "the statement is larger than 5 MB; split it"));
     }
-    let mapping = params.get("mapping").and_then(Value::as_object).ok_or_else(|| Error::field("mapping", "map the statement's columns"))?;
-    let delimiter = params.get("delimiter").and_then(Value::as_str).and_then(|t| t.chars().next()).unwrap_or_else(|| rules::detect_delimiter(text));
-    let date_format = params.get("date_format").and_then(Value::as_str);
-    let decimal_comma = params.get("decimal_comma").and_then(Value::as_bool).unwrap_or(false);
-    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
-    let header_row = params.get("header_row").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
-    let records = rules::parse_csv(text, delimiter);
-    if records.len() < header_row {
-        return Err(Error::field("csv", "the statement has no header row"));
-    }
-    let header = &records[header_row - 1];
-    let data = &records[header_row..];
-    if data.len() > MAX_IMPORT_ROWS {
-        return Err(Error::field("csv", format!("at most {MAX_IMPORT_ROWS} lines per import")));
-    }
-    let col_date = column(header, "date", mapping)?.ok_or_else(|| Error::field("mapping", "map the date column"))?;
-    let col_amount = column(header, "amount", mapping)?;
-    let col_deposit = column(header, "deposit", mapping)?;
-    let col_withdrawal = column(header, "withdrawal", mapping)?;
-    if col_amount.is_none() && col_deposit.is_none() && col_withdrawal.is_none() {
-        return Err(Error::field("mapping", "map an amount column, or deposit and withdrawal columns"));
-    }
-    let col_description = column(header, "description", mapping)?;
-    let col_reference = column(header, "reference", mapping)?;
-    let cell = |r: &Vec<String>, c: Option<usize>| c.and_then(|i| r.get(i)).map(|v| v.trim().to_string()).unwrap_or_default();
-
-    let mut lines = Vec::new();
-    let mut errors = Vec::new();
-    let mut skipped = 0usize;
-    for (i, r) in data.iter().enumerate() {
-        let line_no = header_row + i + 1;
-        let amount = |c: Option<usize>| rules::parse_amount(&cell(r, c), decimal_comma);
-        let parsed = (|| -> std::result::Result<Option<(Decimal, Decimal)>, String> {
-            let (dep, wd) = match col_amount {
-                Some(_) => match amount(col_amount)? {
-                    Some(a) if a > Decimal::ZERO => (a, Decimal::ZERO),
-                    Some(a) => (Decimal::ZERO, -a),
-                    None => (Decimal::ZERO, Decimal::ZERO),
-                },
-                None => (amount(col_deposit)?.unwrap_or_default().abs(), amount(col_withdrawal)?.unwrap_or_default().abs()),
-            };
-            if dep.is_zero() && wd.is_zero() {
-                return Ok(None);
+    let Some((format, reading)) = choose(hc, doc, params, text).await? else {
+        return if write { Err(Error::field("format", "choose how this statement is read")) } else { Ok(json!({"format": null})) };
+    };
+    let format = format.map(|(fid, name)| json!({"id": fid, "name": name}));
+    let read = reading.read(text).map_err(|m| Error::field("text", m))?;
+    // Statements of another account are left out, when both the file and the account name one.
+    let (account_name, iban, number): (String, Option<String>, Option<String>) =
+        sqlx::query_as("select account_name, iban, account_number from e_bank_account where tenant_id = $1 and id = $2")
+            .bind(hc.ctx.tenant)
+            .bind(bank)
+            .fetch_one(&mut **hc.tx)
+            .await?;
+    let ours: Vec<String> = [iban, number].into_iter().flatten().filter(|n| !n.trim().is_empty()).collect();
+    let (mut lines, mut other_accounts, mut foreign) = (Vec::new(), 0usize, None);
+    for (account, statement_lines) in read.statements {
+        match account {
+            Some(a) if !ours.is_empty() && !ours.iter().any(|o| rules::same_account(&a, o)) => {
+                other_accounts += 1;
+                foreign.get_or_insert(a);
             }
-            if !dep.is_zero() && !wd.is_zero() {
-                return Err("has both a deposit and a withdrawal".into());
-            }
-            Ok(Some((dep, wd)))
-        })();
-        match parsed {
-            Err(m) => errors.push(format!("line {line_no}: {m}")),
-            Ok(None) => skipped += 1,
-            Ok(Some((deposit, withdrawal))) => match rules::parse_statement_date(&cell(r, Some(col_date)), date_format) {
-                None => errors.push(format!(
-                    "line {line_no}: '{}' is not a date{}",
-                    cell(r, Some(col_date)),
-                    date_format.map(|f| format!(" in the format {f}")).unwrap_or_default()
-                )),
-                Some(date) => lines.push(Line { date, deposit, withdrawal, description: cell(r, col_description), reference: cell(r, col_reference) }),
-            },
+            _ => lines.extend(statement_lines),
         }
     }
-    if !errors.is_empty() {
-        if dry_run {
-            return Ok(
-                json!({"dry_run": true, "imported": 0, "duplicates": 0, "skipped": skipped, "errors": errors.iter().take(50).collect::<Vec<_>>(), "preview": []}),
-            );
-        }
-        let shown: Vec<FieldError> = errors.iter().take(50).map(|m| FieldError::new("csv", m.clone())).collect();
-        return Err(Error::Validation(shown));
+    if let Some(a) = foreign.filter(|_| lines.is_empty()) {
+        return Err(Error::field("text", format!("this statement is for account {}, not {account_name}", rules::mask(&a))));
     }
-    // Identical lines within one statement are numbered so each keeps its own identity.
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    let hashes: Vec<String> = lines
-        .iter()
-        .map(|l| {
-            let base = rules::statement_hash(bank, l.date, l.deposit - l.withdrawal, &l.description, &l.reference, 0);
-            let n = seen.entry(base).or_insert(0);
-            *n += 1;
-            rules::statement_hash(bank, l.date, l.deposit - l.withdrawal, &l.description, &l.reference, *n)
-        })
-        .collect();
+    if !read.errors.is_empty() {
+        if write {
+            return Err(Error::Validation(read.errors.iter().take(50).map(|m| FieldError::new("text", m.clone())).collect()));
+        }
+        return Ok(json!({"format": format, "imported": 0, "duplicates": 0, "skipped": read.skipped, "other_accounts": other_accounts,
+                         "errors": read.errors.iter().take(50).collect::<Vec<_>>(), "from_date": null, "to_date": null, "preview": []}));
+    }
+    let ids = statement::identities(bank, &lines);
+    let hashes: Vec<String> = ids.iter().map(|(h, _)| h.clone()).collect();
     let existing: HashSet<String> = sqlx::query_scalar::<_, String>(
         "select transaction_hash from e_bank_transaction where tenant_id = $1 and bank_account = $2 and transaction_hash = any($3) and docstatus < 2",
     )
@@ -234,44 +194,42 @@ async fn import(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value
     .await?
     .into_iter()
     .collect();
-    if dry_run {
-        let fresh: Vec<&Line> = lines.iter().zip(&hashes).filter(|(_, h)| !existing.contains(*h)).map(|(l, _)| l).collect();
+    let fresh: Vec<(&Line, &String)> = lines.iter().zip(&ids).filter(|(_, (h, again))| !again && !existing.contains(h)).map(|(l, (h, _))| (l, h)).collect();
+    let (from_date, to_date) = (fresh.iter().map(|(l, _)| l.date).min(), fresh.iter().map(|(l, _)| l.date).max());
+    let duplicates = lines.len() - fresh.len();
+    if !write {
         let preview: Vec<Value> = lines
             .iter()
-            .zip(&hashes)
+            .zip(&ids)
             .take(10)
-            .map(|(l, h)| {
+            .map(|(l, (h, again))| {
                 json!({"date": l.date, "description": l.description, "reference": l.reference, "deposit": money(l.deposit), "withdrawal": money(l.withdrawal),
-                       "duplicate": existing.contains(h)})
+                       "duplicate": *again || existing.contains(h)})
             })
             .collect();
-        return Ok(json!({"dry_run": true, "imported": fresh.len(), "duplicates": lines.len() - fresh.len(), "skipped": skipped, "errors": [],
-                         "from_date": fresh.iter().map(|l| l.date).min(), "to_date": fresh.iter().map(|l| l.date).max(), "preview": preview}));
+        return Ok(json!({"format": format, "imported": fresh.len(), "duplicates": duplicates, "skipped": read.skipped, "other_accounts": other_accounts,
+                         "errors": [], "from_date": from_date, "to_date": to_date, "preview": preview}));
     }
     // Hashes are engine-set (read-only), so the lines are created with engine rights after the
-    // permission checks above; the audit trail still names the user.
+    // permission checks above; the audit trail still names the user. A line another import stored
+    // meanwhile fails on the unique key [bank_account, transaction_hash], and the whole import with it.
     let engine = elevated(hc.ctx);
-    let mut imported = 0usize;
-    let (mut first, mut last): (Option<NaiveDate>, Option<NaiveDate>) = (None, None);
-    for (l, hash) in lines.iter().zip(&hashes) {
-        if existing.contains(hash) {
-            continue;
-        }
+    let text_or_null = |v: &str| if v.is_empty() { Value::Null } else { json!(v) };
+    for (l, hash) in &fresh {
         let mut t = Doc::new();
         t.insert("bank_account".into(), json!(bank.to_string()));
         t.insert("date".into(), json!(l.date.to_string()));
         t.insert("deposit".into(), money(l.deposit));
         t.insert("withdrawal".into(), money(l.withdrawal));
         t.insert("description".into(), json!(l.description));
-        t.insert("reference_number".into(), if l.reference.is_empty() { Value::Null } else { json!(l.reference) });
+        t.insert("reference_number".into(), text_or_null(&l.reference));
+        t.insert("bank_reference".into(), text_or_null(&l.bank_reference));
         t.insert("transaction_hash".into(), json!(hash));
         let created = hc.kernel.insert_tx(&engine, hc.tx, "BankTransaction", t).await?;
         hc.kernel.submit_tx(&engine, hc.tx, "BankTransaction", id(&created, "id").unwrap_or_default(), None).await?;
-        imported += 1;
-        first = Some(first.map_or(l.date, |f| f.min(l.date)));
-        last = Some(last.map_or(l.date, |x| x.max(l.date)));
     }
-    Ok(json!({"imported": imported, "duplicates": lines.len() - imported, "skipped": skipped, "from_date": first, "to_date": last}))
+    Ok(json!({"format": format, "imported": fresh.len(), "duplicates": duplicates, "skipped": read.skipped, "other_accounts": other_accounts,
+              "from_date": from_date, "to_date": to_date}))
 }
 
 // ───────────────────────────── transactions ─────────────────────────────

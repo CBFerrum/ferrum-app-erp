@@ -19,11 +19,44 @@
     - {name: currency, type: link, to: Currency, description: The GL account's or the company's currency when empty}
     - {name: opening_balance, type: currency, currency: currency, label: Statement Opening Balance, description: The bank's balance on the opening date; the reconciliation statement adds imported transactions to it}
     - {name: opening_date, type: date, label: Statement Opening Date}
+    - {name: statement_format, type: link, to: StatementFormat, label: Statement Format, description: "Read this account's statements with it when an import names none"}
     - {name: is_default, type: check, in_list: true}
     - {name: disabled, type: check, in_filter: true}
   unique: [[company, account_name]]
   actions:
-    - {name: import_transactions, label: Import Bank Statement (CSV), permission: write, hidden: true}
+    # A statement's text is read with a StatementFormat (docs/statement-formats.md): the one named, the columns
+    # chosen on the screen (inline), the first whose sniff fits the text, or the account's own, in that order.
+    - name: preview_statement
+      label: Preview a Bank Statement
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: text, label: Statement, type: text, required: true, description: "The statement file's text, at most 5 MB"}
+        - {name: format, label: Statement Format, type: link, to: StatementFormat, description: "How to read it; when empty, the format whose sniff fits the text, then the account's own"}
+        - {name: inline, label: Columns, type: text, description: "A Delimited reading as JSON, for a CSV whose columns are chosen on the screen"}
+      contract:
+        effect: query
+        returns: {type: object, properties: {format: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}}},
+                  imported: {type: integer}, duplicates: {type: integer}, skipped: {type: integer}, other_accounts: {type: integer},
+                  errors: {type: array, items: {type: string}}, from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]},
+                  preview: {type: array, items: {type: object, properties: {date: {type: string}, description: {type: string}, reference: {type: string},
+                            deposit: {type: string}, withdrawal: {type: string}, duplicate: {type: boolean}}}}}}
+        completion: "What an import of this text would do; nothing is saved"
+    - name: import_transactions
+      label: Import a Bank Statement
+      permission: write
+      hidden: true
+      params:
+        - {name: text, label: Statement, type: text, required: true, description: "The statement file's text, at most 5 MB"}
+        - {name: format, label: Statement Format, type: link, to: StatementFormat, description: "How to read it; when empty, the format whose sniff fits the text, then the account's own"}
+        - {name: inline, label: Columns, type: text, description: "A Delimited reading as JSON, for a CSV whose columns are chosen on the screen"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {format: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}}},
+                  imported: {type: integer}, duplicates: {type: integer}, skipped: {type: integer}, other_accounts: {type: integer},
+                  from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]}}}
+        completion: "Every new line is a submitted bank transaction, or nothing is saved"
     # The reconciliation screen's two calls. The first only reads; the second reconciles lines through
     # their own Reconcile action, so the caller needs the rights on the lines, not on the account.
     - {name: workbench, label: Reconciliation Workbench, permission: read, read_only: true, hidden: true}
@@ -55,6 +88,7 @@
     - {name: date, type: date, required: true, in_list: true, in_filter: true}
     - {name: description, type: text}
     - {name: reference_number, type: data, in_list: true}
+    - {name: bank_reference, type: data, read_only: true, no_copy: true, label: Bank's Reference, description: "The bank's own id of the line, when its statement gives one"}
     - {name: deposit, type: currency, currency: currency, default: 0, min: "0", in_list: true}
     - {name: withdrawal, type: currency, currency: currency, default: 0, min: "0", in_list: true}
     - {name: currency, type: link, to: Currency, fetch_from: bank_account.currency, read_only: true}
@@ -78,3 +112,18 @@
        params: [{name: account, label: Account, type: link, to: Account, required: true, description: "The account to book against, not the bank's own"},
                 {name: remark, label: Remark, type: text}]}
   list: {columns: [date, bank_account, reference_number, deposit, withdrawal, unallocated_amount, status], sort: date desc}
+
+- name: StatementFormat
+  label: Statement Format
+  module: finance
+  kind: master
+  title_field: format_name
+  description: "How a bank's statement file is read: which column, element or tag holds each line's date, amount, text and references."
+  fields:
+    - {name: format_name, type: data, required: true, unique: true, in_list: true}
+    - {name: kind, type: select, options: [Delimited, Markup, Tagged], required: true, in_list: true, in_filter: true,
+       description: "Delimited: rows of columns (CSV). Markup: elements (XML, or SGML with unclosed tags). Tagged: lines that start with :TAG:"}
+    - {name: reading, type: json, required: true, label: Reading, description: "Where each part of a line is; docs/statement-formats.md describes it for each kind"}
+    - {name: notes, type: text}
+    - {name: disabled, type: check, in_filter: true}
+  list: {columns: [format_name, kind, disabled], sort: format_name asc}

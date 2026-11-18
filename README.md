@@ -59,7 +59,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 | 📦 **Version** | `0.33.1`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
-| ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
+| ➕ **Add-ons** | 7 for operations and finance (58 more entities, 23 more reports) and 26 country add-ons, all in this repository |
 | 🔗 **Depends on** | Ferrum platform `>=0.4.0, <0.5` (its shared core, parties, products and project records) |
 | 🤝 **Works with** | Point of Sale, Commerce, CRM, HR, Assets, Field Service and Bookings, which post through its engine; Operations, which carries the warehouse's and shop floor's devices |
 | 🗣️ **Languages** | English, Arabic and Hindi; pages mirror right to left |
@@ -398,12 +398,15 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.8.0)
+### 💼 Finance add-on (0.9.0)
 
-- **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
-  a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
-  the books with the running bank balance, exact matches paired so none is used twice, keyboard shortcuts,
-  many-to-one matches, a payment or journal entry made from a line, the difference always in view.
+- **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CAMT.053, CAMT.052,
+  MT940, OFX and QFX files, or a CSV whose columns are guessed or saved once as the bank's **statement format**
+  (formats are records, so a bank's variant needs no release; a trial run first, lines already there skipped by
+  the bank's own reference, another account's statements left out), and a **reconciliation workbench**:
+  statement lines beside the books with the running bank balance, exact matches paired so none is used twice,
+  keyboard shortcuts, many-to-one matches, a payment or journal entry made from a line, the difference always in
+  view.
 - **Payment allocation**: a party's payments, credit notes and journal credits applied to open invoices in one
   document, oldest first, with each pairing's exchange gain or loss.
 - **Payment runs**: bills due by a day and those whose early-payment discount is open, leaving out bills on hold;
@@ -733,7 +736,7 @@ outside service and a retry never sends twice.
 
 | Add-on | Entities |
 |---|---|
-| 💼 Finance | Bank Account, Bank Transaction, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
+| 💼 Finance | Bank Account, Bank Transaction, Statement Format, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
 | 📋 Procurement | Material Request, Request for Quotation, Supplier Quotation, Supplier Scorecard, Scorecard Period, Procurement Settings |
 | 🗃️ Stock Operations | Stock Reconciliation, Landed Cost Voucher, Pick List, Packing Slip, Batch, Quality Inspection, Quality Inspection Template, Item Attribute, Product Bundle |
 | ⚙️ Manufacturing Operations | Workstation, Workstation Type, Operation, Routing, Job Card, Production Plan, Subcontracting BOM, Subcontracting Order, Subcontracting Receipt |
@@ -803,7 +806,7 @@ Finance's reverses exchange revaluations on their day.
 | SDI, KSeF, ANAF e-Factura, AEAT, French plateforme agréée, LHDN MyInvois | National e-invoicing | The company's channel or OAuth connection in each country |
 | Portugal's certified invoicing | Signed invoices | The producer's key and certificate number set on the server |
 | Carriers | Rates, labels, tracking | The carrier's API keys in a carrier connection |
-| Banks | Payments and reconciliation | A bank file template (pain.001 built in); statements as CSV |
+| Banks | Payments and reconciliation | A bank file template (pain.001 built in); statements as CSV, CAMT.053, CAMT.052, MT940 and OFX, read by statement formats that are records |
 | Label printers | Item, parcel and bin labels | A ZPL printer, or any printer for page labels |
 
 Each connection is set up per company, so a workspace's companies can use different services or none.
@@ -832,7 +835,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Group consolidation with currency translation | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
 | Intercompany invoices mirrored in the other company | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Bank reconciliation workbench | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Bank feeds and statement formats (CAMT.053, MT940, OFX) | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Bank feeds and statement formats (CAMT.053, MT940, OFX) | 🟡 ¹ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Reconciliation rules that match by pattern | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Payment runs with a bank file | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Payment terms and dunning | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -841,15 +844,15 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | E-invoicing networks (Peppol, IRP, SDI, KSeF and more) | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
 | Supplier e-invoices received into bills | ❌ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
 | Country charts of accounts to pick at set-up | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Countries covered by tax localisation | 🟡 ¹ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Countries covered by tax localisation | 🟡 ² | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Audit and statistical files (SAF-T, Intrastat, DATEV) | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | Deferred revenue and expense | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Revenue recognition by performance obligation (IFRS 15) | 🟡 ² | ✅ | ✅ | 🟡 | ❌ | ❌ |
+| Revenue recognition by performance obligation (IFRS 15) | 🟡 ³ | ✅ | ✅ | 🟡 | ❌ | ❌ |
 | Subscriptions billed by period, with MRR | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Budgets checked against actuals and commitments | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Financial report designer | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Fixed assets and depreciation | 🟡 ³ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Quotations in the same app | 🟡 ⁴ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Fixed assets and depreciation | ✅ ⁴ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Quotations in the same app | ✅ ⁵ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Credit limits with hold and release | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Promotions, coupons and buy-X-get-Y shared with the till | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Gift cards and store credit | ✅ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
@@ -857,11 +860,11 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Requests for quotation and supplier scorecards | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ |
 | Blanket orders and purchase agreements | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Drop shipment | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁵ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁶ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Batches, serials and expiry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Transfers through goods in transit | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Available-to-promise and stock reservation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Carrier rates, labels and tracking | 🟡 ⁶ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
+| Carrier rates, labels and tracking | 🟡 ⁷ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
 | Bins, directed putaway and picking by scan | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | BOMs, work orders, routings and subcontracting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | By-products and co-products | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 |
@@ -869,16 +872,17 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Demand forecasting into planning | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Shop floor execution with genealogy and OEE | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
 | Quality holds, nonconformance and corrective action | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ |
-| Customer and supplier portal | 🟡 ⁷ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
+| Customer and supplier portal | 🟡 ⁸ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Same records as CRM, HR, POS and the web shop | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Self-hosted on your own servers | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Open source | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 | No per-user licence fee | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 
-<sub>¹ 26 countries, each an add-on; the leaders cover many more. ² Revenue is deferred and recognised by the day,
-without allocation across performance obligations. ³ In the Ferrum Assets app, which posts to this ledger.
-⁴ In the Ferrum CRM app, which makes ERP's sales orders. ⁵ FIFO and moving average; no standard cost. ⁶ You
-describe each carrier's calls; none ships built in. ⁷ Customers see their invoices; suppliers see requests for
+<sub>¹ CSV, CAMT.053, CAMT.052, MT940 and OFX files; no feed yet. ² 26 countries, each an add-on; the leaders
+cover many more. ³ Revenue is deferred and recognised by the day, without allocation across performance
+obligations. ⁴ Done in the Ferrum Assets app, which posts to this ledger. ⁵ Done in the Ferrum CRM app, which
+makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You describe each carrier's calls; none
+ships built in. ⁸ Customers see their invoices; suppliers see requests for
 quotation, orders and bills. For the leaders, 🟡 means partly, or through another edition, module or partner
 app.</sub>
 
@@ -894,7 +898,7 @@ app.</sub>
 
 ### 🚧 Where the leaders are still ahead
 
-- 🏦 Bank feeds, statement formats beyond CSV and reconciliation rules.
+- 🏦 Bank feeds and reconciliation rules.
 - 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
 - 🛒 Blanket orders, drop shipment, standard costing and demand forecasting.
@@ -907,6 +911,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **Finance 0.9.0** Statements from CAMT.053, CAMT.052, MT940 and OFX files, and a bank's CSV whose columns are saved once, all as statement formats that are records.
 - [x] **0.33.0** Upkeep runs one workspace at a time, on whichever replica is free; the journal's partitions once a day per replica.
 - [x] **0.33.1** A request to an authority, or a supplier's mail, delivered twice is not sent twice: a repeat asks the authority, or leaves it to a person.
 - [x] **0.32.3** A dump of the database holds the journal's lines: its yearly partitions carry the journal's policy.
@@ -923,7 +928,6 @@ app.</sub>
 
 **Banking**
 - [ ] Bank feeds, so transactions arrive without a file.
-- [ ] CAMT.053, MT940 and OFX statements beside CSV.
 - [ ] Reconciliation rules that book a line by its description.
 
 **Tax and compliance**

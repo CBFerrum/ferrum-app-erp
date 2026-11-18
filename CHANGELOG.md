@@ -1,5 +1,37 @@
 # Changelog
 
+## Finance 0.9.0: bank statements from CAMT.053, CAMT.052, MT940 and OFX files, read by formats that are records
+
+A statement used to come in only as a CSV whose columns were mapped on every import. Now a **Statement Format**
+(Finance menu, a new entity) says how a bank's file is read, and Finance has three readers that know no standard:
+Delimited (rows of columns), Markup (XML, or SGML whose leaf tags are not closed) and Tagged (lines that start with
+`:TAG:`). Four formats ship as seed records: ISO 20022 statement (camt.053), ISO 20022 account report (camt.052),
+SWIFT MT940, and OFX and QFX. A bank's own CSV is described once and set on its bank account; a bank's variant of
+a standard is a changed or added record, not a release. docs/statement-formats.md describes every key.
+
+- **Two operations in place of one.** `finance.bank_account.preview_statement` (a query, `read` on the bank
+  account) answers what an import would do, nothing saved; `finance.bank_account.import_transactions` (`write`, and
+  Bank Transaction create and submit) stores every new line as a submitted bank transaction, or nothing. Both take
+  `{text, format?, inline?}` and have contracts. The old `csv`, `mapping`, `date_format`, `decimal_comma`,
+  `delimiter`, `header_row` and `dry_run` parameters are gone: columns chosen by hand are `inline`, a Delimited
+  reading as JSON. The format used is the one named, then `inline`, then the first enabled format whose `sniff` fits
+  the text, then the account's own (Bank Account's new Statement Format field).
+- **A line is stored once.** A line with the bank's own reference (camt's `AcctSvcrRef`, MT940's `//` reference,
+  OFX's `FITID`, kept in Bank Transaction's new Bank's Reference field) is that reference on the account, from any
+  file in any format; a line without one is its content, as before. The unique key on the bank account and the
+  line's hash is unchanged: a file imported twice, or by two people at once, adds each line once.
+- **Another account's statement is left out.** When the file names its account and the bank account has an IBAN or
+  number, other accounts' statements are left out and counted; a file only of them is refused, naming the account
+  masked.
+- **Untrusted text.** At most 5 MB and 10,000 lines; a Markup file nested deeper than 64 levels or not well formed is
+  one error; no DTD or external entity is read; patterns are linear-time, at most 500 characters and 1 MB compiled;
+  descriptions and references are cut to their fields.
+- **The import dialog** reads any of these files, says "Read as" the format that fits, offers the others and "CSV,
+  columns chosen here", and falls back to the column mapping when nothing fits. `ui/dist` rebuilt.
+
+Known ceiling: a line first imported from a CSV without the bank's reference and later from a file with it is not
+recognised as the same line.
+
 ## ERP 0.33.1, United Kingdom 0.4.1, India 0.9.1, Malaysia 0.5.1, Romania 0.3.1, Procurement 0.2.1, United States 0.3.1: a request delivered twice is not sent twice
 
 The outbox delivers each request at least once: again when an attempt fails, and again, even after the connector

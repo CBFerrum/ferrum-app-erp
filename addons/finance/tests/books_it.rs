@@ -289,9 +289,9 @@ async fn bank_workbench(t: &mut T) {
     // The statement, six lines. Importing it for a trial run writes nothing and says what would happen.
     let csv = "Date,Description,Reference,Amount\n02/03/2026,Payment from Acme Corp,INV-1,1500.00\n03/03/2026,Transfer Globex,G-1,800.00\n\
                04/03/2026,Rent March,R-3,-500.00\n05/03/2026,Bank charges,,-25.00\n06/03/2026,Coffee,,-3.50\n06/03/2026,Coffee,,-3.50\n";
-    let mapping = json!({"date": "Date", "description": "Description", "reference": "Reference", "amount": "Amount"});
-    let trial = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"csv": csv, "mapping": mapping, "dry_run": true})).await;
-    assert_eq!((trial["dry_run"].clone(), trial["imported"].clone(), trial["duplicates"].clone()), (json!(true), json!(6), json!(0)), "{trial}");
+    let mapping = json!({"columns": {"date": "Date", "description": "Description", "reference": "Reference", "amount": "Amount"}}).to_string();
+    let trial = t.action(&am, "BankAccount", ba_id, "preview_statement", json!({"text": csv, "inline": mapping})).await;
+    assert_eq!((trial["format"].clone(), trial["imported"].clone(), trial["duplicates"].clone()), (Value::Null, json!(6), json!(0)), "{trial}");
     assert_eq!(
         (trial["from_date"].clone(), trial["to_date"].clone(), trial["preview"].as_array().unwrap().len()),
         (json!("2026-03-02"), json!("2026-03-06"), 6)
@@ -303,15 +303,15 @@ async fn bank_workbench(t: &mut T) {
             &am,
             "BankAccount",
             ba_id,
-            "import_transactions",
-            json!({"csv": "Date,Amount\nsoon,5\n", "mapping": {"date": "Date", "amount": "Amount"}, "dry_run": true}),
+            "preview_statement",
+            json!({"text": "Date,Amount\nsoon,5\n", "inline": json!({"columns": {"date": "Date", "amount": "Amount"}}).to_string()}),
         )
         .await;
     assert_eq!(bad["imported"], json!(0));
     assert!(bad["errors"][0].as_str().unwrap().starts_with("line 2"), "a trial run lists the bad lines instead of refusing: {bad}");
-    let real = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"csv": csv, "mapping": mapping})).await;
+    let real = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"text": csv, "inline": mapping})).await;
     assert_eq!(real["imported"], json!(6));
-    let again = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"csv": csv, "mapping": mapping, "dry_run": true})).await;
+    let again = t.action(&am, "BankAccount", ba_id, "preview_statement", json!({"text": csv, "inline": mapping})).await;
     assert_eq!((again["imported"].clone(), again["duplicates"].clone()), (json!(0), json!(6)), "the same statement again is all duplicates: {again}");
 
     // An accounts user reads the workbench (the account is theirs to read), as of the 31st.
@@ -1026,7 +1026,7 @@ async fn overview(t: &mut T) {
         "BankAccount",
         ops,
         "import_transactions",
-        json!({"csv": csv, "mapping": {"date": "Date", "description": "Description", "amount": "Amount"}}),
+        json!({"text": csv, "inline": json!({"columns": {"date": "Date", "description": "Description", "amount": "Amount"}}).to_string()}),
     )
     .await;
     // Two drafts waiting, and January 2026 closed. Months that have ended and are open: the twelve of 2025 and February to October 2026.

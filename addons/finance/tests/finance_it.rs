@@ -505,12 +505,12 @@ async fn scenario() {
     assert_eq!(seen["masked_number"], json!("•••• 5432"));
     let csv1 = "Date,Description,Reference,Amount\n05/03/2026,Payment from Acme Corp,INV-1001,1500.00\n06/03/2026,Bank charges,,-25.00\n\
                 06/03/2026,Coffee,,-3.50\n06/03/2026,Coffee,,-3.50\n10/03/2026,\"Transfer, Globex\",G-77,\"2,000.00\"\n";
-    let mapping = json!({"date": "Date", "description": "Description", "reference": "Reference", "amount": "Amount"});
-    let e = t.k.run_action(&au, "BankAccount", ba_id, "import_transactions", json!({"csv": csv1, "mapping": mapping})).await.unwrap_err();
+    let mapping = json!({"columns": {"date": "Date", "description": "Description", "reference": "Reference", "amount": "Amount"}}).to_string();
+    let e = t.k.run_action(&au, "BankAccount", ba_id, "import_transactions", json!({"text": csv1, "inline": mapping})).await.unwrap_err();
     assert!(matches!(e, Error::Forbidden(_)), "{e:?}");
-    let first = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"csv": csv1, "mapping": mapping})).await;
+    let first = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"text": csv1, "inline": mapping})).await;
     assert_eq!((first["imported"].clone(), first["duplicates"].clone()), (json!(5), json!(0)), "both coffees are real: {first}");
-    let again = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"csv": csv1, "mapping": mapping})).await;
+    let again = t.action(&am, "BankAccount", ba_id, "import_transactions", json!({"text": csv1, "inline": mapping})).await;
     assert_eq!((again["imported"].clone(), again["duplicates"].clone()), (json!(0), json!(5)), "{again}");
     let csv2 = "Txn Date;Narration;Ref;Debit;Credit\n06.03.2026;Coffee;;3,50;\n10.03.2026;Transfer, Globex;G-77;;2.000,00\n12.03.2026;Rent March;R-3;800,00;\n";
     let overlap = t
@@ -519,7 +519,7 @@ async fn scenario() {
             "BankAccount",
             ba_id,
             "import_transactions",
-            json!({"csv": csv2, "decimal_comma": true, "mapping": {"date": 1, "description": "Narration", "reference": "Ref", "withdrawal": "Debit", "deposit": "Credit"}}),
+            json!({"text": csv2, "inline": json!({"decimal_comma": true, "columns": {"date": 1, "description": "Narration", "reference": "Ref", "withdrawal": "Debit", "deposit": "Credit"}}).to_string()}),
         )
         .await;
     assert_eq!((overlap["imported"].clone(), overlap["duplicates"].clone()), (json!(1), json!(2)), "an overlapping statement adds only what is new: {overlap}");
@@ -529,7 +529,7 @@ async fn scenario() {
             "BankAccount",
             ba_id,
             "import_transactions",
-            json!({"csv": "Date,Description,Amount\nyesterday,Oops,5\n", "mapping": {"date": "Date", "amount": "Amount"}}),
+            json!({"text": "Date,Description,Amount\nyesterday,Oops,5\n", "inline": json!({"columns": {"date": "Date", "amount": "Amount"}}).to_string()}),
         )
         .await
         .unwrap_err();
@@ -1211,5 +1211,116 @@ async fn scenario() {
         .action(&au, "BankTransaction", out, "reconcile", json!({"vouchers": [{"payment_document": "PaymentEntry", "payment_entry": to_till.to_string()}]}))
         .await;
     assert_eq!(r["status"], json!("Reconciled"));
+    statement_files(&t, &am, &au, bank_gl).await;
     t.books_balance().await;
+}
+
+/// Statement files read with the formats Finance ships and with a format of the account's own: a trial run
+/// that writes nothing, an import that stores each line once, the gate's repeat, another account's statement.
+async fn statement_files(t: &T, am: &Ctx, au: &Ctx, bank_gl: Uuid) {
+    let cid = t.company.to_string();
+    let fixture = |name: &str| std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let ba = uid(&t
+        .insert(
+            am,
+            "BankAccount",
+            json!({"account_name": "Euro Current", "company": cid, "account": bank_gl.to_string(), "iban": "GB82 WEST 1234 5698 7654 32"}),
+        )
+        .await);
+    let lines_of = |ba: Uuid| async move { t.list("BankTransaction", json!({"bank_account": ba.to_string()})).await };
+    let camt = fixture("camt053.xml");
+
+    // the_trial_run_writes_nothing_and_needs_only_read: an accounts user (read on the account) runs it.
+    let trial = t.action(au, "BankAccount", ba, "preview_statement", json!({"text": camt})).await;
+    assert_eq!(trial["format"]["name"], json!("ISO 20022 statement (camt.053)"), "the format is found by its sniff: {trial}");
+    assert_eq!((trial["imported"].clone(), trial["duplicates"].clone(), trial["skipped"].clone()), (json!(3), json!(0), json!(1)), "{trial}");
+    assert_eq!((trial["from_date"].clone(), trial["to_date"].clone()), (json!("2026-03-05"), json!("2026-03-10")));
+    assert_eq!(trial["preview"][0]["description"], json!("Acme Corp Invoice INV-1001 & delivery"));
+    assert!(lines_of(ba).await.is_empty(), "a trial run writes nothing");
+    // an_import_without_write_is_refused
+    let e = t.k.run_action(au, "BankAccount", ba, "import_transactions", json!({"text": camt})).await.unwrap_err();
+    assert!(matches!(e, Error::Forbidden(_)), "{e:?}");
+
+    // a_statement_file_is_imported_once
+    let first = t.action(am, "BankAccount", ba, "import_transactions", json!({"text": camt})).await;
+    assert_eq!((first["imported"].clone(), first["format"]["name"].clone()), (json!(3), json!("ISO 20022 statement (camt.053)")), "{first}");
+    let stored = lines_of(ba).await;
+    assert_eq!(stored.len(), 3);
+    assert!(stored.iter().all(|l| l["docstatus"] == json!(1)), "submitted");
+    let mut refs: Vec<&str> = stored.iter().map(|l| l["bank_reference"].as_str().unwrap()).collect();
+    refs.sort();
+    assert_eq!(refs, ["BANK-0001", "BANK-0002", "BANK-0003"]);
+    let again = t.action(am, "BankAccount", ba, "import_transactions", json!({"text": camt})).await;
+    assert_eq!((again["imported"].clone(), again["duplicates"].clone()), (json!(0), json!(3)), "{again}");
+    let seen = t.action(au, "BankAccount", ba, "preview_statement", json!({"text": camt})).await;
+    assert!(seen["preview"].as_array().unwrap().iter().all(|l| l["duplicate"] == json!(true)), "{seen}");
+    assert_eq!(lines_of(ba).await.len(), 3, "nothing twice");
+    // Another format of the same lines: the bank's references make them the same lines; the file's other account is left out.
+    let mt = t.action(am, "BankAccount", ba, "import_transactions", json!({"text": fixture("mt940.sta")})).await;
+    assert_eq!(
+        (mt["format"]["name"].clone(), mt["imported"].clone(), mt["duplicates"].clone(), mt["other_accounts"].clone()),
+        (json!("SWIFT MT940"), json!(1), json!(2), json!(1)),
+        "{mt}"
+    );
+
+    // a_statement_of_another_account_is_refused, naming it masked.
+    let other = uid(&t
+        .insert(am, "BankAccount", json!({"account_name": "Elsewhere", "company": cid, "account": bank_gl.to_string(), "iban": "DE89 3704 0044 0532 0130 00"}))
+        .await);
+    for action in ["preview_statement", "import_transactions"] {
+        let e = t.k.run_action(am, "BankAccount", other, action, json!({"text": camt})).await.unwrap_err();
+        assert!(invalid(&e, "this statement is for account •••• 5432, not Elsewhere"), "{e:?}");
+    }
+    assert!(lines_of(other).await.is_empty());
+
+    // the_account_s_own_format_reads_its_csv: a Delimited format saved once, no columns sent.
+    let reading =
+        json!({"delimiter": ";", "decimal_comma": true, "columns": {"date": "Booked", "amount": "Amount", "description": "Text", "bank_reference": "Id"}});
+    let e = t.k.insert(au, "StatementFormat", obj(json!({"format_name": "West Bank CSV", "kind": "Delimited", "reading": reading}))).await.unwrap_err();
+    assert!(matches!(e, Error::Forbidden(_)), "an accounts user only reads formats: {e:?}");
+    let mut wrong = reading.clone();
+    wrong["colour"] = json!("red");
+    let e = t.k.insert(am, "StatementFormat", obj(json!({"format_name": "Wrong", "kind": "Delimited", "reading": wrong}))).await.unwrap_err();
+    assert!(invalid(&e, "colour"), "an unknown key is refused: {e:?}");
+    let fmt = uid(&t.insert(am, "StatementFormat", json!({"format_name": "West Bank CSV", "kind": "Delimited", "reading": reading})).await);
+    let csv = "Booked;Text;Amount;Id\n11.03.2026;Card refund;12,50;W-1\n12.03.2026;Card;-3,20;W-2\n";
+    let none = t.action(am, "BankAccount", other, "preview_statement", json!({"text": csv})).await;
+    assert_eq!(none, json!({"format": null}), "no format fits and the account has none");
+    let e = t.k.run_action(am, "BankAccount", other, "import_transactions", json!({"text": csv})).await.unwrap_err();
+    assert!(invalid(&e, "choose how this statement is read"), "{e:?}");
+    t.k.update(am, "BankAccount", other, obj(json!({"statement_format": fmt.to_string()})), None).await.expect("the account's format");
+    let read = t.action(am, "BankAccount", other, "preview_statement", json!({"text": csv})).await;
+    assert_eq!((read["format"]["name"].clone(), read["imported"].clone()), (json!("West Bank CSV"), json!(2)), "{read}");
+    assert_eq!(read["preview"][1]["withdrawal"].as_str().map(n), Some(n("3.20")));
+    let done = t.action(am, "BankAccount", other, "import_transactions", json!({"text": csv})).await;
+    assert_eq!(done["imported"], json!(2));
+    t.k.update(am, "StatementFormat", fmt, obj(json!({"disabled": true})), None).await.expect("disable the format");
+    let e = t.k.run_action(am, "BankAccount", other, "preview_statement", json!({"text": csv, "format": fmt.to_string()})).await.unwrap_err();
+    assert!(invalid(&e, "enabled statement format"), "a disabled format is refused: {e:?}");
+
+    // import_through_the_gate_repeats: the same key answers what was done; another imports nothing new.
+    let ofx = fixture("ofx1.ofx");
+    let ask = |key: &str| {
+        ferrum_kernel::capability::Invocation::new("finance.bank_account.import_transactions", json!({"id": ba.to_string(), "params": {"text": ofx}})).key(key)
+    };
+    let once = t.k.invoke(am, ask("ofx-march")).await.expect("import through the gate");
+    assert_eq!(
+        (once.repeated, once.result["imported"].clone(), once.result["format"]["name"].clone()),
+        (false, json!(3), json!("OFX and QFX")),
+        "{:?}",
+        once.result
+    );
+    let twice = t.k.invoke(am, ask("ofx-march")).await.expect("the same key");
+    assert_eq!((twice.repeated, twice.result["imported"].clone()), (true, json!(3)));
+    let other_key = t.k.invoke(am, ask("ofx-march-again")).await.expect("another key");
+    assert_eq!((other_key.repeated, other_key.result["imported"].clone(), other_key.result["duplicates"].clone()), (false, json!(0), json!(3)));
+    let peek =
+        t.k.invoke(
+            au,
+            ferrum_kernel::capability::Invocation::new("finance.bank_account.preview_statement", json!({"id": ba.to_string(), "params": {"text": ofx}})),
+        )
+        .await
+        .expect("a preview needs no key and only read");
+    assert_eq!(peek.result["duplicates"], json!(3));
+    assert_eq!(lines_of(ba).await.len(), 7, "three from camt.053, one from MT940, three from OFX");
 }
