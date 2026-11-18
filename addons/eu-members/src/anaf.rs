@@ -6,12 +6,17 @@
 //! ANAF asked after it (`GET {api}/stareMesaj?id_incarcare=…`) until it says ok, with the download
 //! ID of the signed invoice, or nok. With the connection Off, invoices wait for their answer to be
 //! recorded by hand.
+//!
+//! An upload may reach the connector again (the outbox delivers at least once): nothing is sent for an invoice whose
+//! answer is recorded, and an upload an earlier delivery began is not sent again, as ANAF takes no reference of ours
+//! to ask about it by: the invoice stays Pending, saying so, for a person to find it in ANAF's messages and record its
+//! upload index (Record ANAF's Answer).
 
 use crate::util::{get, id, s, sys};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::record;
+use ferrum_app_erp::submission::{failed_call, first_call, never_sent, record_while};
 use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, outbox};
@@ -235,28 +240,55 @@ impl EventSink for Anaf {
         let Some(cid) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
+        let doc = get(k, &ctx, &mut tx, "SalesInvoice", invoice).await?;
         tx.commit().await?;
+        // The status the request waits in: an answer is recorded only over it, and nothing is sent once it has moved on.
+        let waiting: &[&str] = if ev.topic == crate::ro::UPLOAD_TOPIC { &["Pending"] } else { &["Uploaded"] };
+        if !waiting.contains(&s(&doc, "ro_efactura_status").unwrap_or_default()) {
+            return Ok(());
+        }
+        let record = async |values: Value| record_while(k, &ctx, "SalesInvoice", invoice, ("ro_efactura_status", waiting), values).await;
         // Without a connection, the invoice waits for its answer to be recorded by hand.
         let Some((auth, api)) = hosts(s(&company, "ro_anaf_mode").unwrap_or("Off")) else { return Ok(()) };
-        let mut forced = false;
+        let (mut forced, mut claimed) = (false, false);
+        // An upload that certainly took nothing gives the claim back, for the ordinary retry to upload it: a failure before
+        // the request (its token after a 401, its client), a connection never made, ANAF's 429 (its limit on calls: the
+        // request is refused unread). Only once this delivery holds the claim (`claimed`: it asked, and was first).
+        let unsent = async |provable: bool, why: Error| failed_call(k, ev, "ro.anaf.upload", provable, why).await;
         loop {
             let token = match self.token(k, &ctx, &auth, &company, forced).await {
                 Ok(t) => t,
-                Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_error": m})).await,
-                Err(e) => return Err(e),
+                Err(Error::Invalid(m)) => return record(json!({"ro_efactura_error": m})).await,
+                Err(e) => return unsent(claimed, e).await,
             };
             let reached = |e: reqwest::Error| Error::internal(format!("ANAF could not be reached: {e}"));
+            if ev.topic == crate::ro::UPLOAD_TOPIC && !claimed {
+                claimed = true;
+                if !first_call(k, ev, "ro.anaf.upload").await? {
+                    return record(
+                        json!({"ro_efactura_error": "an upload of this invoice may have reached ANAF before the server sending it stopped: it is not \
+                                   uploaded again; find it in ANAF's e-Factura messages and record its upload index here"}),
+                    )
+                    .await;
+                }
+            }
             let (status, body) = if ev.topic == crate::ro::UPLOAD_TOPIC {
                 let cif = ev.payload["cif"].as_str().unwrap_or_default();
-                let (client, url) = ANAF.client(k, ev.tenant_id, &format!("{api}/upload?standard=UBL&cif={}", pct(cif)), WAIT).await?;
-                let reply = client
+                let (client, url) = match ANAF.client(k, ev.tenant_id, &format!("{api}/upload?standard=UBL&cif={}", pct(cif)), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(claimed, e).await,
+                };
+                let sent = client
                     .post(url)
                     .bearer_auth(&token)
                     .header("Content-Type", "text/plain")
                     .body(ev.payload["xml"].as_str().unwrap_or_default().to_string())
                     .send()
-                    .await
-                    .map_err(reached)?;
+                    .await;
+                let reply = match sent {
+                    Ok(r) => r,
+                    Err(e) => return unsent(claimed && never_sent(&e), reached(e)).await,
+                };
                 (reply.status().as_u16(), reply.text().await.unwrap_or_default())
             } else {
                 let index = ev.payload["index"].as_str().unwrap_or_default();
@@ -266,15 +298,14 @@ impl EventSink for Anaf {
             };
             match status {
                 401 if !forced => forced = true,
-                429 | 500.. => return Err(Error::internal(format!("ANAF is busy ({status}); trying again"))),
+                429 | 500.. => return unsent(claimed && status == 429, Error::internal(format!("ANAF is busy ({status}); trying again"))).await,
                 200 if ev.topic == crate::ro::UPLOAD_TOPIC => {
                     let index = attr(&body, "index_incarcare").filter(|_| attr(&body, "ExecutionStatus").as_deref() == Some("0"));
                     let Some(index) = index else {
                         let why = errors(&body).join("; ");
-                        return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_status": "Rejected", "ro_efactura_error": if why.is_empty() { "ANAF refused the upload".to_string() } else { why }})).await;
+                        return record(json!({"ro_efactura_status": "Rejected", "ro_efactura_error": if why.is_empty() { "ANAF refused the upload".to_string() } else { why }})).await;
                     };
-                    record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_status": "Uploaded", "ro_upload_index": index, "ro_efactura_error": null}))
-                        .await?;
+                    record(json!({"ro_efactura_status": "Uploaded", "ro_upload_index": index, "ro_efactura_error": null})).await?;
                     let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
                     outbox::enqueue(
                         &mut tx,
@@ -291,36 +322,16 @@ impl EventSink for Anaf {
                 200 => {
                     return match attr(&body, "stare").as_deref() {
                         Some("ok") => {
-                            record(
-                                k,
-                                &ctx,
-                                "SalesInvoice",
-                                invoice,
-                                json!({"ro_efactura_status": "Validated", "ro_download_id": attr(&body, "id_descarcare"), "ro_efactura_error": null}),
-                            )
-                            .await
+                            record(json!({"ro_efactura_status": "Validated", "ro_download_id": attr(&body, "id_descarcare"), "ro_efactura_error": null})).await
                         }
                         Some("nok") => {
                             let why = errors(&body).join("; ");
-                            record(
-                                k,
-                                &ctx,
-                                "SalesInvoice",
-                                invoice,
-                                json!({"ro_efactura_status": "Rejected", "ro_download_id": attr(&body, "id_descarcare"),
-                                       "ro_efactura_error": if why.is_empty() { "ANAF found errors: download its answer for them".to_string() } else { why }}),
-                            )
+                            record(json!({"ro_efactura_status": "Rejected", "ro_download_id": attr(&body, "id_descarcare"),
+                                       "ro_efactura_error": if why.is_empty() { "ANAF found errors: download its answer for them".to_string() } else { why }}))
                             .await
                         }
                         Some("XML cu erori nepreluat de sistem") => {
-                            record(
-                                k,
-                                &ctx,
-                                "SalesInvoice",
-                                invoice,
-                                json!({"ro_efactura_status": "Rejected", "ro_efactura_error": "ANAF did not take the XML (it has errors)"}),
-                            )
-                            .await
+                            record(json!({"ro_efactura_status": "Rejected", "ro_efactura_error": "ANAF did not take the XML (it has errors)"})).await
                         }
                         // in prelucrare: still being processed; asked again later.
                         _ => Err(Error::internal("ANAF is still processing the invoice; asking again")),
@@ -328,7 +339,7 @@ impl EventSink for Anaf {
                 }
                 _ => {
                     let why = errors(&body).join("; ");
-                    return record(k, &ctx, "SalesInvoice", invoice, json!({"ro_efactura_error": format!("ANAF answered {status}: {}", if why.is_empty() { body.chars().take(300).collect() } else { why })})).await;
+                    return record(json!({"ro_efactura_error": format!("ANAF answered {status}: {}", if why.is_empty() { body.chars().take(300).collect() } else { why })})).await;
                 }
             }
         }

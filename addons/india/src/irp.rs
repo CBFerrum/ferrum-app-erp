@@ -9,7 +9,13 @@
 //!
 //! A session (the IRP's token and session key, for six hours) is kept on the company, sealed
 //! (`in_irp_session`), so every replica uses the same one; two that need a new one at the same
-//! moment make one between them.
+//! moment make one between them: the first marks the company as signing in, for a minute, and signs in with no
+//! transaction open; the other is told to try again.
+//!
+//! A request may reach the connector again (the outbox delivers at least once): nothing is sent for an invoice whose
+//! answer is recorded; an invoice registered already is fetched by its IRN (the IRP refuses a second); a
+//! cancellation or an e-way bill that an earlier delivery began is first looked up at the IRP by the invoice's IRN, and
+//! asked for only if the IRP has not done it.
 //!
 //! The company's address (`in_irp_url`), to which its credentials go, is held to [`IRP`]'s hosts
 //! and those the operator adds, when it is saved and again before anything is sent.
@@ -20,6 +26,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use chrono::{DateTime, Duration as Span, NaiveDateTime, TimeZone, Utc};
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::{failed_call, first_call, never_sent};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, EventSink, Kernel, Result};
 use serde_json::{Map, Value, json};
@@ -31,6 +38,7 @@ const INVOICE: &str = "/eicore/v1.03/Invoice";
 const BY_IRN: &str = "/eicore/v1.03/Invoice/irn/";
 const CANCEL: &str = "/eicore/v1.03/Invoice/Cancel";
 const EWB: &str = "/eiewb/v1.03/ewaybill";
+const EWB_BY_IRN: &str = "/eiewb/v1.03/ewaybill/irn/";
 /// NIC's error codes for an IRN already generated, and for a token it no longer knows.
 const DUPLICATE: &str = "2150";
 const STALE_TOKEN: &[&str] = &["1005", "1004"];
@@ -219,7 +227,14 @@ impl Session {
 /// What the IRP answered: the decrypted data, or its refusal.
 enum Answer {
     Data(Value),
-    Refused { code: String, message: String, info: Value },
+    Refused {
+        code: String,
+        message: String,
+        info: Value,
+    },
+    /// Certainly not sent: it failed before the request was written (no session, no connection), or the IRP answered
+    /// 429, which takes nothing.
+    Unsent(Error),
 }
 
 /// The connector. It keeps nothing of its own: a company's session is on the company.
@@ -300,9 +315,14 @@ impl IrpConnector {
         }))
     }
 
-    async fn post(k: &Kernel, cfg: &Config, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> Result<Value> {
+    /// One request: its answer; inside, an error when it was certainly not sent (no client, no connection, a 429);
+    /// outside, one when it may have been.
+    async fn post(k: &Kernel, cfg: &Config, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> Result<Result<Value>> {
         let url = format!("{}{path}", cfg.base);
-        let (client, parsed) = k.vetted_client_for(cfg.tenant, &url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-IRP/1").await?;
+        let (client, parsed) = match k.vetted_client_for(cfg.tenant, &url, k.settings.webhooks_allow_private, Duration::from_secs(30), "Ferrum-IRP/1").await {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
         let mut req = if method == "GET" { client.get(parsed) } else { client.post(parsed) };
         // A GSP header replaces the IRP header of the same name rather than doubling it.
         let ours = headers.iter().copied().filter(|(n, _)| !cfg.extra.iter().any(|(g, _)| g.eq_ignore_ascii_case(n)));
@@ -312,14 +332,21 @@ impl IrpConnector {
         if let Some(b) = body {
             req = req.json(&b);
         }
-        let resp = req.send().await.map_err(|e| Error::Unavailable(format!("the IRP cannot be reached: {e}")))?;
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) if never_sent(&e) => return Ok(Err(Error::Unavailable(format!("the IRP cannot be reached: {e}")))),
+            Err(e) => return Err(Error::Unavailable(format!("the IRP cannot be reached: {e}"))),
+        };
         let status = resp.status();
         let text = resp.text().await.map_err(|e| Error::Unavailable(format!("reading the IRP's answer: {e}")))?;
-        if status.is_server_error() || status.as_u16() == 429 {
+        if status.as_u16() == 429 {
+            return Ok(Err(Error::Unavailable(format!("the IRP answered HTTP {status}"))));
+        }
+        if status.is_server_error() {
             return Err(Error::Unavailable(format!("the IRP answered HTTP {status}")));
         }
         let v = match serde_json::from_str::<Value>(&text) {
-            Ok(v) if v.get("Status").is_some() || !status.is_client_error() => return Ok(v),
+            Ok(v) if v.get("Status").is_some() || !status.is_client_error() => return Ok(Ok(v)),
             Ok(v) => Some(v),
             Err(_) if status.is_client_error() => None,
             Err(_) => return Err(Error::Unavailable(format!("the IRP answered HTTP {status} without JSON"))),
@@ -328,7 +355,7 @@ impl IrpConnector {
         // retrying would not help, so it is a refusal, with what the server said.
         let said = v.as_ref().and_then(|v| ["message", "Message", "error_description", "errorMessage", "error"].iter().find_map(|k| v[*k].as_str()));
         let message = said.map_or_else(|| format!("the IRP answered HTTP {status}"), |m| format!("the IRP answered HTTP {status}: {m}"));
-        Ok(json!({"Status": 0, "ErrorDetails": [{"ErrorCode": status.as_u16().to_string(), "ErrorMessage": message}]}))
+        Ok(Ok(json!({"Status": 0, "ErrorDetails": [{"ErrorCode": status.as_u16().to_string(), "ErrorMessage": message}]})))
     }
 
     async fn sign_in(k: &Kernel, cfg: &Config) -> Result<std::result::Result<Session, String>> {
@@ -339,7 +366,7 @@ impl IrpConnector {
             .encrypt(&mut rsa::rand_core::OsRng, rsa::Pkcs1v15Encrypt, B64.encode(inner.to_string()).as_bytes())
             .map_err(|e| Error::invalid(format!("encrypting the sign-in: {e}")))?;
         let headers = [("client_id", cfg.client_id.as_str()), ("client_secret", cfg.client_secret.as_str()), ("gstin", cfg.gstin.as_str())];
-        let v = Self::post(k, cfg, "POST", AUTH, &headers, Some(json!({"Data": B64.encode(sealed)}))).await?;
+        let v = Self::post(k, cfg, "POST", AUTH, &headers, Some(json!({"Data": B64.encode(sealed)}))).await??;
         if !status_ok(&v) {
             let (code, message, _) = refusal(&v);
             return Ok(Err(format!("the IRP refused the sign-in ({code}: {message})")));
@@ -353,27 +380,44 @@ impl IrpConnector {
 
     /// The company's session: the one it keeps while that lasts (at this address, for this user, and not `stale`, a
     /// token the IRP has forgotten), else a new one, kept sealed on the company. One sign-in at a time per company,
-    /// whichever replica asks: a second waits under the lock, then finds the first's session.
+    /// whichever replica asks: decided under a lock, in a short transaction, where the one to sign in marks the company
+    /// as signing in (for a minute) and the sign-in itself is made with no transaction open; another replica that
+    /// finds a sign-in under way is told to try again, and then finds the session.
     async fn session(k: &Kernel, ctx: &Ctx, cfg: &Config, stale: Option<&str>) -> Result<std::result::Result<Session, String>> {
+        let lock = format!("ferrum-india|irp-session|{}|{}", cfg.tenant, cfg.company);
+        let kept = async |tx: &mut ferrum_kernel::Tx| -> Result<Option<String>> {
+            sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(&lock).execute(&mut **tx).await?;
+            Ok(crate::keys::field(k, tx, cfg.tenant, "Company", cfg.company, SESSION).await?.map(|v| v.to_string()))
+        };
+        let save = async |tx: &mut ferrum_kernel::Tx, text: Value| {
+            let mut patch = Map::new();
+            patch.insert(SESSION.into(), text);
+            k.update_tx(&sys(ctx), tx, "Company", cfg.company, patch, None).await.map(drop)
+        };
         let mut tx = k.db.tenant_tx(cfg.tenant).await?;
-        sqlx::query("select pg_advisory_xact_lock(hashtext($1))")
-            .bind(format!("ferrum-india|irp-session|{}|{}", cfg.tenant, cfg.company))
-            .execute(&mut *tx)
-            .await?;
-        let kept =
-            crate::keys::field(k, &mut tx, cfg.tenant, "Company", cfg.company, SESSION).await?.map(|v| v.to_string()).as_deref().and_then(Session::from_text);
-        if let Some(s) = kept.filter(|s| s.until > Utc::now() && s.endpoint == cfg.endpoint() && Some(s.token.as_str()) != stale) {
+        let text = kept(&mut tx).await?;
+        if let Some(s) =
+            text.as_deref().and_then(Session::from_text).filter(|s| s.until > Utc::now() && s.endpoint == cfg.endpoint() && Some(s.token.as_str()) != stale)
+        {
             tx.commit().await?;
             return Ok(Ok(s));
         }
-        let fresh = Self::sign_in(k, cfg).await?;
-        if let Ok(s) = &fresh {
-            let mut patch = Map::new();
-            patch.insert(SESSION.into(), json!(s.to_text()));
-            k.update_tx(&sys(ctx), &mut tx, "Company", cfg.company, patch, None).await?;
+        let signing = |text: &str| serde_json::from_str::<Value>(text).ok()?["signing_in_until"].as_str().and_then(|t| DateTime::parse_from_rfc3339(t).ok());
+        if text.as_deref().and_then(signing).is_some_and(|until| until > Utc::now()) {
+            return Err(Error::Unavailable("another server is signing in to the IRP for this company; trying again".into()));
+        }
+        let claim = json!({"signing_in_until": (Utc::now() + Span::minutes(1)).to_rfc3339()}).to_string();
+        save(&mut tx, json!(claim)).await?;
+        tx.commit().await?;
+        let fresh = Self::sign_in(k, cfg).await;
+        // Kept only over this replica's own mark (a mark that lapsed may have passed to another); the mark is given up
+        // whatever happened.
+        let mut tx = k.db.tenant_tx(cfg.tenant).await?;
+        if kept(&mut tx).await?.as_deref() == Some(claim.as_str()) {
+            save(&mut tx, fresh.as_ref().ok().and_then(|f| f.as_ref().ok()).map_or(Value::Null, |s| json!(s.to_text()))).await?;
         }
         tx.commit().await?;
-        Ok(fresh)
+        fresh
     }
 
     /// One encrypted call (signing in when needed, and once more when the IRP has forgotten the
@@ -381,9 +425,11 @@ impl IrpConnector {
     async fn call(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, method: &str, path: &str, payload: Option<&Value>) -> Result<Answer> {
         let mut stale = None;
         for attempt in 0..2 {
-            let session = match Self::session(k, ctx, cfg, stale.as_deref()).await? {
-                Ok(s) => s,
-                Err(message) => return Ok(Answer::Refused { code: "auth".into(), message, info: Value::Null }),
+            // Nothing of the request has gone before the session is there.
+            let session = match Self::session(k, ctx, cfg, stale.as_deref()).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(message)) => return Ok(Answer::Refused { code: "auth".into(), message, info: Value::Null }),
+                Err(e) => return Ok(Answer::Unsent(e)),
             };
             let headers = [
                 ("client_id", cfg.client_id.as_str()),
@@ -393,7 +439,10 @@ impl IrpConnector {
                 ("authtoken", session.token.as_str()),
             ];
             let body = payload.map(|p| json!({"Data": B64.encode(ecb_encrypt(&session.sek, p.to_string().as_bytes()))}));
-            let v = Self::post(k, cfg, method, path, &headers, body).await?;
+            let v = match Self::post(k, cfg, method, path, &headers, body).await? {
+                Ok(v) => v,
+                Err(e) => return Ok(Answer::Unsent(e)),
+            };
             if status_ok(&v) {
                 let sealed = B64.decode(v["Data"].as_str().unwrap_or_default()).map_err(|_| Error::Unavailable("the IRP's answer has no data".into()))?;
                 let plain = ecb_decrypt(&session.sek, &sealed)?;
@@ -455,17 +504,35 @@ impl IrpConnector {
         match answer {
             Answer::Data(d) => Self::record(k, ctx, invoice, "record_e_invoice", json!({"response": d.to_string()}), "record_e_invoice_failure").await,
             Answer::Refused { code, message, .. } => Self::fail(k, ctx, invoice, "record_e_invoice_failure", &format!("{code}: {message}")).await,
+            // Tried again; the IRP's own key (2150) keeps a second from being made.
+            Answer::Unsent(e) => Err(e),
         }
     }
 
-    async fn cancel(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, invoice: Uuid, payload: &Value) -> Result<()> {
+    async fn cancel(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, ev: &Event, invoice: Uuid, payload: &Value) -> Result<()> {
+        // An earlier delivery asked for it: the IRP may have cancelled it before that replica heard back.
+        if !first_call(k, ev, "india.irp.cancel").await? {
+            let irn = payload["Irn"].as_str().unwrap_or_default();
+            match self.call(k, ctx, cfg, "GET", &format!("{BY_IRN}{irn}"), None).await? {
+                Answer::Data(d) if d["Status"] == "CNL" => {
+                    return Self::record(k, ctx, invoice, "record_e_invoice_cancellation", d, "record_e_invoice_cancellation_failure").await;
+                }
+                Answer::Data(_) => {}
+                Answer::Refused { code, message, .. } => {
+                    return Err(Error::Unavailable(format!("the IRP did not say whether it cancelled the e-invoice ({code}: {message})")));
+                }
+                Answer::Unsent(e) => return Err(e),
+            }
+        }
+        // From here this delivery acts: the claim is its own, or the IRP has said the e-invoice is still active.
         match self.call(k, ctx, cfg, "POST", CANCEL, Some(payload)).await? {
             Answer::Data(d) => Self::record(k, ctx, invoice, "record_e_invoice_cancellation", d, "record_e_invoice_cancellation_failure").await,
             Answer::Refused { code, message, .. } => Self::fail(k, ctx, invoice, "record_e_invoice_cancellation_failure", &format!("{code}: {message}")).await,
+            Answer::Unsent(e) => failed_call(k, ev, "india.irp.cancel", true, e).await,
         }
     }
 
-    async fn e_way_bill(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, invoice: Uuid, payload: &Value) -> Result<()> {
+    async fn e_way_bill(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, ev: &Event, invoice: Uuid, payload: &Value) -> Result<()> {
         if payload["by_irn"] != json!(true) {
             return Self::fail(
                 k,
@@ -476,9 +543,20 @@ impl IrpConnector {
             )
             .await;
         }
+        // An earlier delivery asked for it: the IRP may have made it before that replica heard back.
+        if !first_call(k, ev, "india.irp.e_way_bill").await? {
+            let irn = payload["bill"]["Irn"].as_str().unwrap_or_default();
+            match self.call(k, ctx, cfg, "GET", &format!("{EWB_BY_IRN}{irn}"), None).await? {
+                Answer::Data(d) => return Self::record(k, ctx, invoice, "record_e_way_bill", d, "record_e_way_bill_failure").await,
+                Answer::Refused { .. } => {}
+                Answer::Unsent(e) => return Err(e),
+            }
+        }
+        // From here this delivery acts: the claim is its own, or the IRP has no e-way bill for the IRN.
         match self.call(k, ctx, cfg, "POST", EWB, Some(&payload["bill"])).await? {
             Answer::Data(d) => Self::record(k, ctx, invoice, "record_e_way_bill", d, "record_e_way_bill_failure").await,
             Answer::Refused { code, message, .. } => Self::fail(k, ctx, invoice, "record_e_way_bill_failure", &format!("{code}: {message}")).await,
+            Answer::Unsent(e) => failed_call(k, ev, "india.irp.e_way_bill", true, e).await,
         }
     }
 }
@@ -497,7 +575,17 @@ impl EventSink for IrpConnector {
         let Some(company) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", company).await?;
+        let doc = get(k, &ctx, &mut tx, "SalesInvoice", invoice).await?;
         tx.commit().await?;
+        // The answer is recorded already (an earlier delivery's): nothing to send.
+        let (field, waiting) = match ev.topic.as_str() {
+            "india.e_invoice.requested" => ("in_e_invoice_status", "Pending"),
+            "india.e_invoice.cancel_requested" => ("in_e_invoice_status", "Cancelling"),
+            _ => ("in_e_way_bill_status", "Pending"),
+        };
+        if s(&doc, field) != Some(waiting) {
+            return Ok(());
+        }
         let cfg = match Self::config(k, ev.tenant_id, &company).await {
             Ok(Some(c)) => c,
             // Not connected: a GSP plugin, or someone at the portal, answers instead.
@@ -508,8 +596,8 @@ impl EventSink for IrpConnector {
         let payload = &ev.payload["payload"];
         match ev.topic.as_str() {
             "india.e_invoice.requested" => self.generate(k, &ctx, &cfg, invoice, payload).await,
-            "india.e_invoice.cancel_requested" => self.cancel(k, &ctx, &cfg, invoice, payload).await,
-            _ => self.e_way_bill(k, &ctx, &cfg, invoice, payload).await,
+            "india.e_invoice.cancel_requested" => self.cancel(k, &ctx, &cfg, ev, invoice, payload).await,
+            _ => self.e_way_bill(k, &ctx, &cfg, ev, invoice, payload).await,
         }
     }
 }

@@ -348,7 +348,11 @@ fn mail_body(rfq: &Doc, supplier: &str, url: &str) -> String {
 }
 
 /// Sends the supplier emails queued by `send`, after their transaction committed. A retried
-/// event never mails twice once sent, and a newer `send` supersedes an older queued one.
+/// event never mails twice once sent, and a newer `send` supersedes an older queued one. A delivery
+/// after one that began sending it (the outbox delivers at least once: its replica may have died
+/// after the mail was handed over, before it was marked) does not mail again, as mail cannot be
+/// asked whether it went: the invitation is marked Failed, saying it may have gone, for the buyer
+/// to send again.
 pub struct RfqMailer;
 
 async fn mark(k: &Kernel, ctx: &Ctx, row: Uuid, send_id: &str, status: &str, error: Option<String>) -> Result<()> {
@@ -407,6 +411,14 @@ impl EventSink for RfqMailer {
         let (Some(mailer), Some(to), Some(key), Some(base), Some(expires)) = (k.mailer.clone(), s(&invite, "email"), key, base, expires) else {
             return mark(k, &ctx, row, &send_id, "Failed", Some("no mailer, email address, public URL or link key to send it with".into())).await;
         };
+        // Asked, and recorded at once, just before the mail is handed over.
+        let mut tx = k.db.system_tenant_tx(ctx.tenant).await?;
+        let first = outbox::first_time(&mut tx, ctx.tenant, "procurement.rfq_mail.send", ev.id).await?;
+        tx.commit().await?;
+        if !first {
+            let why = "this email may have been sent before the server sending it stopped: it is not sent again on its own; send the request again if the supplier did not get it";
+            return mark(k, &ctx, row, &send_id, "Failed", Some(why.into())).await;
+        }
         let url = link(&base, &slug, &sign_link(&key, ctx.tenant, rfq, row, expires));
         let subject = format!("Request for Quotation {} from {}", s(&doc, "number").unwrap_or_default(), title(&doc, "company"));
         let body = mail_body(&doc, s(&invite, "supplier_name").unwrap_or("Supplier"), &url);

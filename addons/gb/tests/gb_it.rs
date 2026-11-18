@@ -6,10 +6,10 @@
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Site, SiteRequest};
+use ferrum_kernel::{Db, DbConfig, Doc, Error, EventSink, HookRegistry, Kernel, KernelSettings, ListQuery, Site, SiteRequest};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -42,10 +42,17 @@ fn uid(doc: &Doc) -> Uuid {
 struct Hmrc {
     grants: Vec<String>,
     filed: Vec<(String, Value, HashMap<String, String>)>,
+    /// The period key of every return posted, taken or not.
+    posts: Vec<String>,
+    /// Takes the next return, then never answers: the replica filing it dies before it hears back.
+    hang: Option<Arc<tokio::sync::Notify>>,
+    /// Posts to refuse with 429 (MESSAGE_THROTTLED_OUT) before taking any, and how often a return was looked up.
+    throttle: usize,
+    views: usize,
 }
 
 /// HMRC's token endpoint (code CODE-1, refresh tokens R-n) and the returns API (period DUPL is a
-/// duplicate).
+/// duplicate, as is a period it has a return for; a filed return can be viewed by its period key).
 async fn fake_hmrc(books: Arc<Mutex<Hmrc>>) -> String {
     async fn token(State(b): State<Arc<Mutex<Hmrc>>>, Form(f): Form<HashMap<String, String>>) -> (StatusCode, Json<Value>) {
         let grant = f.get("grant_type").cloned().unwrap_or_default();
@@ -73,16 +80,30 @@ async fn fake_hmrc(books: Arc<Mutex<Hmrc>>) -> String {
         if !auth.starts_with("Bearer A-") || headers.get("accept").and_then(|v| v.to_str().ok()) != Some("application/vnd.hmrc.1.0+json") {
             return (StatusCode::UNAUTHORIZED, out, Json(json!({"code": "INVALID_CREDENTIALS", "message": "Invalid Authentication information provided"})));
         }
-        if body["periodKey"] == json!("DUPL") {
-            return (
-                StatusCode::FORBIDDEN,
-                out,
-                Json(json!({"code": "DUPLICATE_SUBMISSION", "message": "The VAT return was already submitted for the given period"})),
-            );
-        }
+        let period = body["periodKey"].as_str().unwrap_or_default().to_string();
         let hs: HashMap<String, String> =
             headers.iter().filter(|(k, _)| k.as_str().starts_with("gov-")).map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string())).collect();
-        b.lock().unwrap().filed.push((vrn, body, hs));
+        let died = {
+            let mut books = b.lock().unwrap();
+            books.posts.push(period.clone());
+            if books.throttle > 0 {
+                books.throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, out, Json(json!({"code": "MESSAGE_THROTTLED_OUT", "message": "The request for the API is throttled"})));
+            }
+            if period == "DUPL" || books.filed.iter().any(|(_, f, _)| f["periodKey"] == json!(period)) {
+                return (
+                    StatusCode::FORBIDDEN,
+                    out,
+                    Json(json!({"code": "DUPLICATE_SUBMISSION", "message": "The VAT return was already submitted for the given period"})),
+                );
+            }
+            books.filed.push((vrn, body, hs));
+            books.hang.take()
+        };
+        if let Some(died) = died {
+            died.notify_one();
+            std::future::pending::<()>().await;
+        }
         out.insert("Receipt-ID", "2d1c8d76-8d2b-4b3e-9a4b-6a7a0d0b1c2d".parse().unwrap());
         (
             StatusCode::CREATED,
@@ -92,7 +113,19 @@ async fn fake_hmrc(books: Arc<Mutex<Hmrc>>) -> String {
             ),
         )
     }
-    let app = Router::new().route("/oauth/token", post(token)).route("/organisations/vat/{vrn}/returns", post(file)).with_state(books);
+    async fn view(State(b): State<Arc<Mutex<Hmrc>>>, Path((_, period)): Path<(String, String)>) -> (StatusCode, Json<Value>) {
+        let mut books = b.lock().unwrap();
+        books.views += 1;
+        match books.filed.iter().find(|(_, f, _)| f["periodKey"] == json!(period)) {
+            Some((_, f, _)) => (StatusCode::OK, Json(f.clone())),
+            None => (StatusCode::NOT_FOUND, Json(json!({"code": "NOT_FOUND", "message": "The remote endpoint has indicated that no data can be found"}))),
+        }
+    }
+    let app = Router::new()
+        .route("/oauth/token", post(token))
+        .route("/organisations/vat/{vrn}/returns", post(file))
+        .route("/organisations/vat/{vrn}/returns/{period}", get(view))
+        .with_state(books);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -350,4 +383,73 @@ async fn scenario() {
     let dup = k.get(&ctx, "GbVatReturn", uid(&dup), false).await.unwrap();
     assert_eq!(dup["hmrc_status"], json!("Failed"));
     assert!(dup["hmrc_error"].as_str().unwrap().contains("DUPLICATE_SUBMISSION"), "{dup:?}");
+
+    // ───────────── a filing delivered again: HMRC is asked to file it once ─────────────
+    // The event of a return, as the outbox holds it; `take` marks it handled, as a replica's dispatcher takes it.
+    let event = |rid: Uuid, take: bool| {
+        let k = k.clone();
+        async move {
+            let mut tx = k.db.system_tx().await.unwrap();
+            let sql = if take {
+                "update outbox set processed_at = now() where topic = 'gb.mtd.submit_requested' and record_id = $1 returning id, tenant_id, payload"
+            } else {
+                "select id, tenant_id, payload from outbox where topic = 'gb.mtd.submit_requested' and record_id = $1"
+            };
+            let (id, tenant_id, payload): (i64, Uuid, Value) = sqlx::query_as(sql).bind(rid).fetch_one(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+            ferrum_kernel::outbox::Event { id, tenant_id, topic: "gb.mtd.submit_requested".into(), record_id: Some(rid), payload, ..Default::default() }
+        }
+    };
+    let posts = |period: &str| books.lock().unwrap().posts.iter().filter(|p| *p == period).count();
+    let declared =
+        |key: &'static str| json!({"company": cid.to_string(), "period_key": key, "from_date": "2001-01-01", "to_date": "2001-03-31", "finalised": true});
+    // Filed, then the same event again (a replica that died after the sink finished, before the event was marked).
+    let twice = uid(&insert("GbVatReturn", declared("26A2")).await);
+    k.submit(&ctx, "GbVatReturn", twice, None).await.expect("submitted");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    ferrum_gb::mtd::Mtd.on_event(&k, &event(twice, false).await).await.expect("delivered again");
+    let doc = k.get(&ctx, "GbVatReturn", twice, false).await.unwrap();
+    assert_eq!((posts("26A2"), &doc["hmrc_status"], &doc["form_bundle_number"]), (1, &json!("Filed"), &json!("256660290587")), "{:?}", doc["hmrc_error"]);
+    // HMRC takes the return, and the replica filing it dies before it hears back: the next asks HMRC, files nothing.
+    let died = uid(&insert("GbVatReturn", declared("26A3")).await);
+    k.submit(&ctx, "GbVatReturn", died, None).await.expect("submitted");
+    let ev = event(died, true).await;
+    let gone = Arc::new(tokio::sync::Notify::new());
+    books.lock().unwrap().hang = Some(gone.clone());
+    tokio::select! {
+        r = ferrum_gb::mtd::Mtd.on_event(&k, &ev) => panic!("HMRC never answers this one: {r:?}"),
+        () = gone.notified() => {}
+    }
+    ferrum_gb::mtd::Mtd.on_event(&k, &ev).await.expect("the next replica");
+    let doc = k.get(&ctx, "GbVatReturn", died, false).await.unwrap();
+    assert_eq!((posts("26A3"), &doc["hmrc_status"]), (1, &json!("Filed")), "{:?}", doc["hmrc_error"]);
+
+    // ───────────── a failure that certainly filed nothing is retried by itself ─────────────
+    // HMRC throttles the first post (429), and the ordinary retry files it, without asking HMRC first; then a connection
+    // never made (nothing listens at the address), and the retry files it.
+    let filed = |period: &str| books.lock().unwrap().filed.iter().filter(|(_, f, _)| f["periodKey"] == json!(period)).count();
+    let views = || books.lock().unwrap().views;
+    for (period, refuse) in [("26A4", "throttled"), ("26A5", "refused")] {
+        let rid = uid(&insert("GbVatReturn", declared(period)).await);
+        k.submit(&ctx, "GbVatReturn", rid, None).await.expect("submitted");
+        let ev = event(rid, true).await;
+        let looked = views();
+        if refuse == "throttled" {
+            books.lock().unwrap().throttle = 1;
+        } else {
+            let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+            // SAFETY: this test's own process; set back below.
+            unsafe { std::env::set_var("FERRUM_GB_HMRC_URL", format!("http://{closed}")) };
+        }
+        let first = ferrum_gb::mtd::Mtd.on_event(&k, &ev).await;
+        unsafe { std::env::set_var("FERRUM_GB_HMRC_URL", &hmrc) };
+        assert!(first.is_err(), "{refuse}: tried again later");
+        ferrum_gb::mtd::Mtd.on_event(&k, &ev).await.expect("the retry");
+        let doc = k.get(&ctx, "GbVatReturn", rid, false).await.unwrap();
+        assert_eq!(
+            (filed(period), views() - looked, &doc["hmrc_status"], &doc["hmrc_error"]),
+            (1, 0, &json!("Filed"), &Value::Null),
+            "{refuse}: filed once, by the retry, HMRC not asked"
+        );
+    }
 }

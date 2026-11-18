@@ -39,5 +39,10 @@ overlays:
       - {op: add_action, action: {name: ro_efactura, group: e-Invoice, label: Download e-Factura (CIUS-RO), docstatus: [1], permission: read, read_only: true}}
       - {op: add_action, action: {name: ro_upload_efactura, group: e-Invoice, label: Upload to e-Factura, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status != 'Validated'"}}
       - {op: add_action, action: {name: ro_record_anaf, group: e-Invoice, label: Record ANAF's Answer, docstatus: [1], permission: submit,
+          condition: "doc.ro_efactura_status == 'Pending' || doc.ro_efactura_status == 'Uploaded'",
           params: [{name: upload_index, label: Upload Index (index_incarcare), type: data}, {name: state, label: State, type: select, options: [ok, nok, in prelucrare]},
                    {name: download_id, label: Download ID (id_descarcare), type: data}, {name: message, label: ANAF's Message, type: text}]}}
+      # An upload that may have reached ANAF (its answer lost) waits Pending for a person: its index from ANAF's messages
+      # (Record ANAF's Answer), or, when ANAF does not have it, a new upload.
+      - {op: add_action, action: {name: ro_upload_again, group: e-Invoice, label: Upload to e-Factura Again, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status == 'Pending'",
+          confirm: "Only when ANAF's messages do not have this invoice: upload it again?"}}

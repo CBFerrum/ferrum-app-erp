@@ -11,13 +11,20 @@
 //! after its validation cancels it at LHDN (`PUT /api/v1.0/documents/state/{uuid}/state`); after
 //! that, a credit note corrects it. Consumers buy under the general public's TIN (EI00000000010),
 //! buyers abroad under EI00000000020.
+//!
+//! A request may reach the connector again (the outbox delivers at least once): nothing is sent for an invoice whose
+//! answer is recorded; a cancellation an earlier delivery began is first looked up at LHDN
+//! (`GET /api/v1.0/documents/{uuid}/details`); a submission an earlier delivery began is not sent again, as LHDN
+//! cannot be asked about a submission whose answer was lost: the invoice stays Pending, saying so, for a person to
+//! look up in the MyInvois portal and then either record what it shows (Record MyInvois's Answer) or, when the
+//! invoice is not there, submit it again (Submit to MyInvois Again, a new request of its own).
 
 use crate::util::{b, d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{Channel, enqueue, record};
+use ferrum_app_erp::submission::{Channel, enqueue, failed_call, first_call, never_sent, record_while, record_while_tx};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -322,6 +329,12 @@ pub fn submission(document: &Value, code: &str) -> Value {
     json!({"documents": [{"format": "JSON", "document": base64::engine::general_purpose::STANDARD.encode(&bytes), "documentHash": hash, "codeNumber": code}]})
 }
 
+/// Queues an invoice's submission: marked Pending, the document built now.
+async fn queue(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
+    let body = submission(&document(hc, doc, Utc::now()).await?, s(doc, "number").unwrap_or_default());
+    CHANNEL.queue(hc, doc, json!({}), json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "body": body})).await
+}
+
 /// Submitted invoices queued for MyInvois, cancelled ones cancelled there within LHDN's window.
 pub struct MyInvoisHook;
 
@@ -337,8 +350,49 @@ impl DocHook for MyInvoisHook {
         if hc.entity.def.name != "SalesInvoice" || hc.entity.field("my_einvoice_status").is_none() || uses_myinvois(hc, doc).await?.is_none() {
             return Ok(());
         }
-        let body = submission(&document(hc, doc, Utc::now()).await?, s(doc, "number").unwrap_or_default());
-        CHANNEL.queue(hc, doc, json!({}), json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "body": body})).await.map(|_| ())
+        queue(hc, doc).await.map(|_| ())
+    }
+
+    /// A person's answers for an invoice left Pending (a submission that may have reached MyInvois): what LHDN's portal
+    /// shows for it, or that it is not there and goes again. Run under the invoice's lock, its status asked again.
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        if hc.entity.def.name != "SalesInvoice" || hc.entity.field("my_einvoice_status").is_none() || !name.starts_with("my_") {
+            return Ok(None);
+        }
+        let rid = id(doc, "id").ok_or_else(|| Error::internal("an invoice without its id"))?;
+        let pending = ("my_einvoice_status", &["Pending"][..]);
+        let text = |key: &str| params.get(key).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+        match name {
+            "my_record_myinvois" => {
+                let uuid = text("uuid").ok_or_else(|| Error::field("uuid", "is required: the document's UUID in the MyInvois portal"))?;
+                let values = match text("status").as_deref() {
+                    Some("Valid") => {
+                        let long = text("long_id").ok_or_else(|| Error::field("long_id", "is required for a valid document: its long ID in the portal"))?;
+                        let company = get(hc.kernel, &sys(hc.ctx), hc.tx, "Company", id(doc, "company").unwrap_or_default()).await?;
+                        let (_, portal) = hosts(s(&company, "my_myinvois_mode").unwrap_or("Off"))
+                            .ok_or_else(|| Error::invalid("the company sends no e-invoices to MyInvois: choose its mode first"))?;
+                        json!({"my_einvoice_status": "Valid", "my_uuid": uuid, "my_long_id": long, "my_validation_url": format!("{portal}/{uuid}/share/{long}"),
+                               "my_validated_at": text("validated_at").unwrap_or_else(|| Utc::now().to_rfc3339()), "my_einvoice_error": null})
+                    }
+                    Some("Invalid") => json!({"my_einvoice_status": "Invalid", "my_uuid": uuid,
+                                              "my_einvoice_error": text("message").unwrap_or_else(|| "LHDN found the e-invoice invalid".into())}),
+                    _ => return Err(Error::field("status", "Valid or Invalid, as the portal shows it")),
+                };
+                let status = values["my_einvoice_status"].clone();
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, pending, values).await? {
+                    return Err(Error::invalid("the invoice no longer waits for MyInvois's answer"));
+                }
+                Ok(Some(json!({"status": status})))
+            }
+            "my_submit_again" => {
+                // A new request, under a claim of its own: the earlier one's stays, and its repeats still send nothing.
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, pending, json!({"my_einvoice_error": null})).await? {
+                    return Err(Error::invalid("the invoice no longer waits for MyInvois's answer"));
+                }
+                queue(hc, doc).await.map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
@@ -417,52 +471,62 @@ impl MyInvois {
 #[async_trait]
 impl EventSink for MyInvois {
     async fn on_event(&self, k: &Kernel, ev: &Event) -> Result<()> {
-        if ![SUBMIT_TOPIC, STATUS_TOPIC, CANCEL_TOPIC].contains(&ev.topic.as_str()) {
-            return Ok(());
-        }
+        // The status each request waits in: an answer is recorded only over it, and nothing is sent once it has moved on.
+        let waiting: &[&str] = match ev.topic.as_str() {
+            SUBMIT_TOPIC => &["Pending"],
+            STATUS_TOPIC => &["Submitted"],
+            CANCEL_TOPIC => &["Valid"],
+            _ => return Ok(()),
+        };
         let Some(invoice) = ev.record_id else { return Ok(()) };
         let ctx = Ctx::system(ev.tenant_id, k.registry.schema(ev.tenant_id).await?);
         let Some(cid) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
+        let doc = get(k, &ctx, &mut tx, "SalesInvoice", invoice).await?;
         tx.commit().await?;
+        if !waiting.contains(&s(&doc, "my_einvoice_status").unwrap_or_default()) {
+            return Ok(());
+        }
+        let record = async |values: Value| record_while(k, &ctx, "SalesInvoice", invoice, ("my_einvoice_status", waiting), values).await;
         let Some((api, portal)) = hosts(s(&company, "my_myinvois_mode").unwrap_or("Off")) else {
-            return record(
-                k,
-                &ctx,
-                "SalesInvoice",
-                invoice,
-                json!({"my_einvoice_status": "Failed", "my_einvoice_error": "the company no longer sends e-invoices to MyInvois"}),
-            )
-            .await;
+            return record(json!({"my_einvoice_status": "Failed", "my_einvoice_error": "the company no longer sends e-invoices to MyInvois"})).await;
         };
         let token = match self.token(k, &ctx, &api, &company).await {
             Ok(t) => t,
-            Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Failed", "my_einvoice_error": m})).await,
+            Err(Error::Invalid(m)) => return record(json!({"my_einvoice_status": "Failed", "my_einvoice_error": m})).await,
             Err(e) => return Err(e),
         };
         let reached = |e: reqwest::Error| Error::internal(format!("MyInvois could not be reached: {e}"));
         match ev.topic.as_str() {
             SUBMIT_TOPIC => {
-                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/"), WAIT).await?;
-                let reply = client.post(url).bearer_auth(&token).json(&ev.payload["body"]).send().await.map_err(reached)?;
+                if !first_call(k, ev, "my.myinvois.submit").await? {
+                    return record(json!({"my_einvoice_error": "a submission of this invoice may have reached MyInvois before the server sending it stopped: \
+                                   it is not sent again; look the invoice up in the MyInvois portal"}))
+                    .await;
+                }
+                // A failure that certainly took nothing gives the claim back, for the ordinary retry to submit it: before the
+                // request (its client), a connection never made, 429 (LHDN's rate limit: the request is not processed) and
+                // 401 (the token refused: no document is taken). Not a 422: it also says a duplicate within ten minutes.
+                let unsent = async |provable: bool, why: Error| failed_call(k, ev, "my.myinvois.submit", provable, why).await;
+                let (client, url) = match MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/"), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(true, e).await,
+                };
+                let reply = match client.post(url).bearer_auth(&token).json(&ev.payload["body"]).send().await {
+                    Ok(r) => r,
+                    Err(e) => return unsent(never_sent(&e), reached(e)).await,
+                };
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
                     202 => {
                         if let Some(rejected) = v["rejectedDocuments"].as_array().and_then(|r| r.first()) {
-                            return record(
-                                k,
-                                &ctx,
-                                "SalesInvoice",
-                                invoice,
-                                json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(rejected)}),
-                            )
-                            .await;
+                            return record(json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(rejected)})).await;
                         }
                         let uid = v["submissionUid"].as_str().or(v["submissionUID"].as_str()).unwrap_or_default().to_string();
                         let uuid = v["acceptedDocuments"][0]["uuid"].as_str().map(str::to_string);
-                        record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Submitted", "my_submission_uid": uid, "my_uuid": uuid})).await?;
+                        record(json!({"my_einvoice_status": "Submitted", "my_submission_uid": uid, "my_uuid": uuid})).await?;
                         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
                         outbox::enqueue(
                             &mut tx,
@@ -476,9 +540,9 @@ impl EventSink for MyInvois {
                         tx.commit().await?;
                         Ok(())
                     }
-                    401 => Err(Error::internal("MyInvois refused the token; trying again with a new one")),
-                    422 | 429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
-                    _ => record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(&v)})).await,
+                    401 => unsent(true, Error::internal("MyInvois refused the token; trying again with a new one")).await,
+                    422 | 429 | 500.. => unsent(status == 429, Error::internal(format!("MyInvois is busy ({status}); trying again"))).await,
+                    _ => record(json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(&v)})).await,
                 }
             }
             STATUS_TOPIC => {
@@ -494,19 +558,13 @@ impl EventSink for MyInvois {
                 match summary["status"].as_str().unwrap_or_default() {
                     "Valid" => {
                         let (uuid, long) = (summary["uuid"].as_str().unwrap_or_default(), summary["longId"].as_str().unwrap_or_default());
-                        record(
-                            k,
-                            &ctx,
-                            "SalesInvoice",
-                            invoice,
-                            json!({"my_einvoice_status": "Valid", "my_uuid": uuid, "my_long_id": long, "my_validation_url": format!("{portal}/{uuid}/share/{long}"),
-                                   "my_validated_at": summary["dateTimeValidated"].as_str().map(str::to_string).unwrap_or_else(|| Utc::now().to_rfc3339()), "my_einvoice_error": null}),
-                        )
+                        record(json!({"my_einvoice_status": "Valid", "my_uuid": uuid, "my_long_id": long, "my_validation_url": format!("{portal}/{uuid}/share/{long}"),
+                                      "my_validated_at": summary["dateTimeValidated"].as_str().map(str::to_string).unwrap_or_else(|| Utc::now().to_rfc3339()), "my_einvoice_error": null}))
                         .await
                     }
                     "Invalid" => {
                         let why = summary["documentStatusReason"].as_str().unwrap_or("LHDN found the e-invoice invalid").to_string();
-                        record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Invalid", "my_einvoice_error": why})).await
+                        record(json!({"my_einvoice_status": "Invalid", "my_einvoice_error": why})).await
                     }
                     // Submitted, in progress: asked again later.
                     _ => Err(Error::internal("MyInvois is still validating the e-invoice; asking again")),
@@ -514,24 +572,35 @@ impl EventSink for MyInvois {
             }
             _ => {
                 let uuid = ev.payload["uuid"].as_str().unwrap_or_default();
-                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/state/{uuid}/state"), WAIT).await?;
-                let reply =
-                    client.put(url).bearer_auth(&token).json(&json!({"status": "cancelled", "reason": ev.payload["reason"]})).send().await.map_err(reached)?;
+                // An earlier delivery asked for it: LHDN may have cancelled it before that replica heard back.
+                if !first_call(k, ev, "my.myinvois.cancel").await? {
+                    let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/{uuid}/details"), WAIT).await?;
+                    let reply = client.get(url).bearer_auth(&token).send().await.map_err(reached)?;
+                    let status = reply.status().as_u16();
+                    let v: Value = reply.json().await.unwrap_or(Value::Null);
+                    match (status, v["status"].as_str()) {
+                        (200, Some("Cancelled")) => return record(json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
+                        (200, _) => {}
+                        _ => return Err(Error::internal(format!("MyInvois did not say whether it cancelled the e-invoice ({status}); asking again"))),
+                    }
+                }
+                // From here this delivery acts (its claim, or LHDN has said the document is not cancelled): a failure that
+                // certainly cancelled nothing (before the request, no connection, 429) gives the claim back.
+                let unsent = async |provable: bool, why: Error| failed_call(k, ev, "my.myinvois.cancel", provable, why).await;
+                let (client, url) = match MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/state/{uuid}/state"), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(true, e).await,
+                };
+                let reply = match client.put(url).bearer_auth(&token).json(&json!({"status": "cancelled", "reason": ev.payload["reason"]})).send().await {
+                    Ok(r) => r,
+                    Err(e) => return unsent(never_sent(&e), reached(e)).await,
+                };
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
-                    200 => record(k, &ctx, "SalesInvoice", invoice, json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
-                    429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
-                    _ => {
-                        record(
-                            k,
-                            &ctx,
-                            "SalesInvoice",
-                            invoice,
-                            json!({"my_einvoice_error": format!("MyInvois did not cancel it: {}; issue a credit note", Self::errors(&v))}),
-                        )
-                        .await
-                    }
+                    200 => record(json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
+                    429 | 500.. => unsent(status == 429, Error::internal(format!("MyInvois is busy ({status}); trying again"))).await,
+                    _ => record(json!({"my_einvoice_error": format!("MyInvois did not cancel it: {}; issue a credit note", Self::errors(&v))})).await,
                 }
             }
         }

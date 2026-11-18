@@ -49,6 +49,13 @@ overlays:
       - {op: add_field, after: my_long_id, field: {name: my_validation_url, type: data, label: Validation Link (QR Code), max_length: 300, read_only: true, no_copy: true}}
       - {op: add_field, after: my_validation_url, field: {name: my_validated_at, type: data, label: Validated At, read_only: true, no_copy: true}}
       - {op: add_field, after: my_validated_at, field: {name: my_einvoice_error, type: text, label: MyInvois Errors, read_only: true, no_copy: true}}
+      # A submission that may have reached MyInvois (its answer lost) waits Pending for a person: what the portal shows,
+      # or, when the invoice is not there, a new submission.
+      - {op: add_action, action: {name: my_record_myinvois, group: e-Invoice, label: Record MyInvois's Answer, docstatus: [1], permission: submit, condition: "doc.my_einvoice_status == 'Pending'",
+          params: [{name: uuid, label: Document UUID, type: data, required: true}, {name: status, label: Status, type: select, options: [Valid, Invalid], required: true},
+                   {name: long_id, label: Long ID (for a valid document), type: data}, {name: validated_at, label: Validated At, type: data}, {name: message, label: LHDN's Reasons (for an invalid document), type: text}]}}
+      - {op: add_action, action: {name: my_submit_again, group: e-Invoice, label: Submit to MyInvois Again, docstatus: [1], permission: submit, condition: "doc.my_einvoice_status == 'Pending'",
+          confirm: "Only when the MyInvois portal does not have this invoice: submit it again?"}}
   # The return's boxes sum the tax ledger by this country's own categories too.
   - entity: TaxReturnBoxDefinition
     ops:

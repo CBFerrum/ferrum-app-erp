@@ -6,10 +6,10 @@
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
+use ferrum_kernel::{Db, DbConfig, Doc, EventSink, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -67,6 +67,21 @@ async fn fresh_kernel() -> Arc<Kernel> {
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
+/// Set: the fake AvaTax records or voids the next transaction, then never answers (the replica asking dies first).
+static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+/// Voids the fake AvaTax refuses with 429 before taking any, and how often a transaction was looked up.
+static THROTTLE: Mutex<usize> = Mutex::new(0);
+static LOOKUPS: Mutex<usize> = Mutex::new(0);
+
+async fn answered<T>(answer: T) -> T {
+    let died = HANG.lock().unwrap().take();
+    if let Some(died) = died {
+        died.notify_one();
+        std::future::pending::<()>().await;
+    }
+    answer
+}
+
 /// AvaTax as far as Ferrum uses it: transactions recorded (its own tax one dollar more for the
 /// gadget) and voided, behind the company's credentials.
 async fn fake_avatax(calls: Calls) -> String {
@@ -79,15 +94,35 @@ async fn fake_avatax(calls: Calls) -> String {
         let ours = m["taxOverride"]["taxAmount"].as_f64().unwrap_or_default();
         let gadget = m["lines"].as_array().unwrap().iter().any(|l| l["itemCode"] == json!("GADGET"));
         let theirs = if gadget { ours + 1.0 } else { ours };
-        (StatusCode::CREATED, Json(json!({"id": 1, "code": m["code"], "status": "Committed", "totalTax": ours, "totalTaxCalculated": theirs})))
+        answered((StatusCode::CREATED, Json(json!({"id": 1, "code": m["code"], "status": "Committed", "totalTax": ours, "totalTaxCalculated": theirs})))).await
     }
     async fn void(State(calls): State<Calls>, Path((company, code)): Path<(String, String)>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
+        {
+            let mut throttle = THROTTLE.lock().unwrap();
+            if *throttle > 0 {
+                *throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": {"code": "TooManyRequests", "message": "rate limit"}})));
+            }
+        }
         calls.lock().unwrap().push(("void".into(), json!({"company": company, "code": code, "body": body})));
-        (StatusCode::OK, Json(json!({"code": code, "status": "Cancelled"})))
+        answered((StatusCode::OK, Json(json!({"code": code, "status": "Cancelled"})))).await
+    }
+    /// A transaction by its code: Cancelled once voided.
+    async fn by_code(State(calls): State<Calls>, Path((_, code)): Path<(String, String)>) -> (StatusCode, Json<Value>) {
+        *LOOKUPS.lock().unwrap() += 1;
+        let calls = calls.lock().unwrap();
+        let voided = calls.iter().any(|(k, v)| k == "void" && v["code"] == json!(code));
+        let recorded = calls.iter().any(|(k, v)| k == "record" && v["createTransactionModel"]["code"] == json!(code));
+        match (recorded, voided) {
+            (_, true) => (StatusCode::OK, Json(json!({"code": code, "status": "Cancelled"}))),
+            (true, false) => (StatusCode::OK, Json(json!({"code": code, "status": "Committed"}))),
+            _ => (StatusCode::NOT_FOUND, Json(json!({"error": {"code": "EntityNotFoundError"}}))),
+        }
     }
     let app = Router::new()
         .route("/api/v2/transactions/createoradjust", post(record))
         .route("/api/v2/companies/{company}/transactions/{code}/void", post(void))
+        .route("/api/v2/companies/{company}/transactions/{code}", get(by_code))
         .with_state(calls);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -293,6 +328,77 @@ async fn scenario() {
         (voided["company"].clone(), voided["code"].clone(), voided["body"]["code"].clone()),
         (json!("LSS"), la_invoice["number"].clone(), json!("DocVoided"))
     );
+
+    // ───────────── a request delivered again: AvaTax is asked once ─────────────
+    // An event as the outbox holds it; `take` marks it handled, as a replica's dispatcher takes it.
+    let event = async |topic: &str, invoice: Uuid, take: bool| {
+        let mut tx = k.db.system_tx().await.unwrap();
+        let sql = if take {
+            "update outbox set processed_at = now() where topic = $1 and record_id = $2 and processed_at is null returning id, tenant_id, payload"
+        } else {
+            "select id, tenant_id, payload from outbox where topic = $1 and record_id = $2"
+        };
+        let (id, tenant_id, payload): (i64, Uuid, Value) = sqlx::query_as(sql).bind(topic).bind(invoice).fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        ferrum_kernel::outbox::Event { id, tenant_id, topic: topic.into(), record_id: Some(invoice), payload, ..Default::default() }
+    };
+    let dies = async |ev: ferrum_kernel::outbox::Event| {
+        let gone = Arc::new(tokio::sync::Notify::new());
+        *HANG.lock().unwrap() = Some(gone.clone());
+        tokio::select! {
+            r = ferrum_us::avatax::AvaTax.on_event(&k, &ev) => panic!("AvaTax never answers this one: {r:?}"),
+            () = gone.notified() => {}
+        }
+        ferrum_us::avatax::AvaTax.on_event(&k, &ev).await.expect("the next replica");
+    };
+    let count = |kind: &str| calls.lock().unwrap().iter().filter(|(k, _)| k == kind).count();
+    let status = async |inv: Uuid| k.get(&ctx, "SalesInvoice", inv, false).await.unwrap()["us_avatax_status"].clone();
+    let (commit, void) = (ferrum_us::avatax::COMMIT_TOPIC, ferrum_us::avatax::VOID_TOPIC);
+    // Committed, then its commit again; voided, then its void again.
+    let twice = uid(&k.submit(&ctx, "SalesInvoice", uid(&sale(la, widget, "1").await), None).await.expect("submit"));
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let recorded = count("record");
+    ferrum_us::avatax::AvaTax.on_event(&k, &event(commit, twice, false).await).await.expect("again");
+    assert_eq!((count("record") - recorded, status(twice).await), (0, json!("Committed")));
+    k.cancel(&ctx, "SalesInvoice", twice, None).await.expect("cancel");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let voids = count("void");
+    ferrum_us::avatax::AvaTax.on_event(&k, &event(void, twice, false).await).await.expect("again");
+    assert_eq!((count("void") - voids, status(twice).await), (0, json!("Voided")));
+    // AvaTax records one and the replica asking dies first: the next records it again under the same code, which
+    // AvaTax adjusts (one transaction); then it voids it, the replica dies again, and the next asks AvaTax.
+    let died = k.submit(&ctx, "SalesInvoice", uid(&sale(la, widget, "1").await), None).await.expect("submit");
+    let code = died["number"].clone();
+    let died = uid(&died);
+    dies(event(commit, died, true).await).await;
+    let of_code = calls.lock().unwrap().iter().filter(|(k, b)| k == "record" && b["createTransactionModel"]["code"] == code).count();
+    assert_eq!((of_code, status(died).await), (2, json!("Committed")), "recorded again under its code: adjusted, not duplicated");
+    k.cancel(&ctx, "SalesInvoice", died, None).await.expect("cancel");
+    let voids = count("void");
+    dies(event(void, died, true).await).await;
+    assert_eq!((count("void") - voids, status(died).await), (1, json!("Voided")));
+    // A void that certainly did nothing is retried by itself, AvaTax not asked about it: its 429, then a connection
+    // never made.
+    for refuse in ["throttled", "refused"] {
+        let inv = uid(&k.submit(&ctx, "SalesInvoice", uid(&sale(la, widget, "1").await), None).await.expect("submit"));
+        while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+        k.cancel(&ctx, "SalesInvoice", inv, None).await.expect("cancel");
+        let ev = event(void, inv, true).await;
+        let (voids, lookups) = (count("void"), *LOOKUPS.lock().unwrap());
+        if refuse == "throttled" {
+            *THROTTLE.lock().unwrap() = 1;
+        } else {
+            let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+            // SAFETY: this test's own process; set back below.
+            unsafe { std::env::set_var("FERRUM_US_AVATAX_URL", format!("http://{closed}")) };
+        }
+        let first = ferrum_us::avatax::AvaTax.on_event(&k, &ev).await;
+        unsafe { std::env::set_var("FERRUM_US_AVATAX_URL", &avatax) };
+        assert!(first.is_err(), "{refuse}: tried again later");
+        ferrum_us::avatax::AvaTax.on_event(&k, &ev).await.expect("the retry");
+        let looked = *LOOKUPS.lock().unwrap() - lookups;
+        assert_eq!((count("void") - voids, looked, status(inv).await), (1, 0, json!("Voided")), "{refuse}");
+    }
 
     // Use tax on equipment bought from Ohio without sales tax: at Austin's rate, owed by the company.
     let supplier = uid(&insert("Supplier", json!({"supplier_name": "Buckeye Tools"})).await);

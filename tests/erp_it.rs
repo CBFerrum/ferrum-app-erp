@@ -112,6 +112,15 @@ mod fake_irp {
         /// As a GSP: the headers it requires, and the paths that came with them.
         pub gsp: Vec<(String, String)>,
         pub through_gsp: Vec<String>,
+        /// Every cancellation and e-way bill asked for (by IRN), done or refused, and the e-way bills made, by IRN.
+        pub cancels: Vec<String>,
+        pub ewb_requests: Vec<String>,
+        pub ewbs: HashMap<String, Value>,
+        /// Does the next cancellation or e-way bill, then never answers: the replica asking dies before it hears back.
+        pub hang: Option<Arc<tokio::sync::Notify>>,
+        /// Cancellations and e-way bills to refuse with 429 before taking any, and how often an IRN was looked up.
+        pub throttle: usize,
+        pub lookups: usize,
     }
 
     pub struct Irp {
@@ -153,6 +162,13 @@ mod fake_irp {
     /// As a GSP: its headers on every call, each once; refused without them as Azure API
     /// Management (in front of several GSPs) refuses.
     async fn gsp_gate(State(s): State<S>, req: Request, next: Next) -> Response {
+        if req.method() == axum::http::Method::POST && ["/eicore/v1.03/Invoice/Cancel", "/eiewb/v1.03/ewaybill"].contains(&req.uri().path()) {
+            let mut b = s.books.lock().unwrap();
+            if b.throttle > 0 {
+                b.throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"message": "Rate limit is exceeded"}))).into_response();
+            }
+        }
         let required = s.books.lock().unwrap().gsp.clone();
         if !required.is_empty() {
             let once = |name: &str, value: &str| {
@@ -227,23 +243,62 @@ mod fake_irp {
 
     async fn by_irn(State(s): State<S>, h: HeaderMap, Path(irn): Path<String>) -> Json<Value> {
         let Some(sek) = session(&s, &h) else { return refused("1005", "Invalid Token", Value::Null) };
+        s.books.lock().unwrap().lookups += 1;
         match s.books.lock().unwrap().by_irn.get(&irn) {
             Some(a) => sealed(&sek, a),
             None => refused("2283", "IRN details are not found", Value::Null),
         }
     }
 
+    /// Takes what was asked; for a replica that dies before it hears back, never answers.
+    async fn answer_or_hang(s: &S, sek: &[u8; 32], v: Value) -> Json<Value> {
+        let died = s.books.lock().unwrap().hang.take();
+        if let Some(died) = died {
+            died.notify_one();
+            std::future::pending::<()>().await;
+        }
+        sealed(sek, &v)
+    }
+
     async fn cancel(State(s): State<S>, h: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         let Some(sek) = session(&s, &h) else { return refused("1005", "Invalid Token", Value::Null) };
         let c = open(&sek, &body);
-        sealed(&sek, &json!({"Irn": c["Irn"], "CancelDate": now_ist()}))
+        let irn = c["Irn"].as_str().unwrap_or_default().to_string();
+        {
+            let mut b = s.books.lock().unwrap();
+            b.cancels.push(irn.clone());
+            match b.by_irn.get_mut(&irn) {
+                Some(a) if a["Status"] == "ACT" => a["Status"] = json!("CNL"),
+                _ => return refused("9999", "Invoice is not active", Value::Null),
+            }
+        }
+        answer_or_hang(&s, &sek, json!({"Irn": irn, "CancelDate": now_ist()})).await
     }
 
     async fn ewb(State(s): State<S>, h: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         let Some(sek) = session(&s, &h) else { return refused("1005", "Invalid Token", Value::Null) };
         let e = open(&sek, &body);
         assert!(e["Irn"].as_str().is_some_and(|i| i.len() == 64) && e["Distance"].is_number(), "{e}");
-        sealed(&sek, &json!({"EwbNo": 331_009_876_543_u64, "EwbDt": now_ist(), "EwbValidTill": "2026-12-31 23:59:00"}))
+        let irn = e["Irn"].as_str().unwrap_or_default().to_string();
+        let bill = json!({"EwbNo": 331_009_876_543_u64, "EwbDt": now_ist(), "EwbValidTill": "2026-12-31 23:59:00"});
+        {
+            let mut b = s.books.lock().unwrap();
+            b.ewb_requests.push(irn.clone());
+            if b.ewbs.contains_key(&irn) {
+                return refused("4002", "EwayBill is already generated for this IRN", Value::Null);
+            }
+            b.ewbs.insert(irn, bill.clone());
+        }
+        answer_or_hang(&s, &sek, bill).await
+    }
+
+    async fn ewb_by_irn(State(s): State<S>, h: HeaderMap, Path(irn): Path<String>) -> Json<Value> {
+        let Some(sek) = session(&s, &h) else { return refused("1005", "Invalid Token", Value::Null) };
+        s.books.lock().unwrap().lookups += 1;
+        match s.books.lock().unwrap().ewbs.get(&irn) {
+            Some(bill) => sealed(&sek, bill),
+            None => refused("4019", "E-way bill is not generated for this IRN", Value::Null),
+        }
     }
 
     pub async fn start() -> Irp {
@@ -268,6 +323,7 @@ mod fake_irp {
             .route("/eicore/v1.03/Invoice/irn/{irn}", get(by_irn))
             .route("/eicore/v1.03/Invoice/Cancel", post(cancel))
             .route("/eiewb/v1.03/ewaybill", post(ewb))
+            .route("/eiewb/v1.03/ewaybill/irn/{irn}", get(ewb_by_irn))
             .layer(middleware::from_fn_with_state(state.clone(), gsp_gate))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -991,8 +1047,13 @@ async fn scenario() {
     let events = taken(vec![one, two]).await;
     let (a, b) = (ferrum_india::irp::IrpConnector, ferrum_india::irp::IrpConnector);
     let (x, y) = tokio::join!(a.on_event(&t.k, &events[0]), b.on_event(&t.k, &events[1]));
-    x.expect("replica one");
-    y.expect("replica two");
+    // No transaction is open while one signs in: the other, finding that sign-in under way, is told to try again.
+    let (x, y) = match (x, y) {
+        (Ok(()), Err(Error::Unavailable(m))) if m.contains("signing in") => ((), b.on_event(&t.k, &events[1]).await.expect("replica two, again")),
+        (Err(Error::Unavailable(m)), Ok(())) if m.contains("signing in") => (a.on_event(&t.k, &events[0]).await.expect("replica one, again"), ()),
+        (x, y) => (x.expect("replica one"), y.expect("replica two")),
+    };
+    let _ = (x, y);
     let (three, _) = invoice_for_irp().await;
     t.action("SalesInvoice", three, "request_e_invoice", json!({})).await;
     ferrum_india::irp::IrpConnector.on_event(&t.k, &taken(vec![three]).await[0]).await.expect("a replica started later");
@@ -1011,6 +1072,110 @@ async fn scenario() {
         t.k.cancel(&t.ctx, "SalesInvoice", inv, None).await.expect("cancelled");
     }
     assert_eq!(shared.books.lock().unwrap().sign_ins, 1, "the cancellations used it too");
+
+    // ───────────── a request delivered again: the IRP is asked to do it once ─────────────
+    // An event as the outbox holds it; `take` marks it handled, as a replica's dispatcher takes it.
+    let event = |topic: &'static str, invoice: Uuid, take: bool| {
+        let k = t.k.clone();
+        async move {
+            let mut tx = k.db.system_tx().await.unwrap();
+            let sql = if take {
+                "update outbox set processed_at = now() where topic = $1 and record_id = $2 and processed_at is null returning id, tenant_id, payload"
+            } else {
+                "select id, tenant_id, payload from outbox where topic = $1 and record_id = $2 order by id desc limit 1"
+            };
+            let (id, tenant_id, payload): (i64, Uuid, Value) = sqlx::query_as(sql).bind(topic).bind(invoice).fetch_one(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+            ferrum_kernel::outbox::Event { id, tenant_id, topic: topic.into(), record_id: Some(invoice), payload, ..Default::default() }
+        }
+    };
+    let asked = |irn: &str| {
+        let b = shared.books.lock().unwrap();
+        (b.cancels.iter().filter(|i| *i == irn).count(), b.ewb_requests.iter().filter(|i| *i == irn).count())
+    };
+    let irp_said = async |inv: Uuid| {
+        let d = t.get("SalesInvoice", inv).await;
+        (
+            d["in_irn"].as_str().unwrap_or_default().to_string(),
+            d["in_e_invoice_status"].clone(),
+            d["in_e_way_bill_status"].clone(),
+            d["in_e_invoice_error"].clone(),
+        )
+    };
+    const CANCEL: &str = "india.e_invoice.cancel_requested";
+    const EWB: &str = "india.e_way_bill.requested";
+    let (twice, _) = invoice_for_irp().await;
+    let (died, _) = invoice_for_irp().await;
+    let (cancelled, _) = invoice_for_irp().await;
+    for inv in [twice, died, cancelled] {
+        t.action("SalesInvoice", inv, "request_e_invoice", json!({})).await;
+        drain().await;
+        t.action("SalesInvoice", inv, "set_transport", json!({"in_transport_mode": "Road", "in_distance_km": 120, "in_vehicle_no": "KA01AB1234"})).await;
+    }
+    // Done, then the same event again (a replica that died after the connector finished, before the event was marked).
+    t.action("SalesInvoice", twice, "request_e_way_bill", json!({})).await;
+    drain().await;
+    ferrum_india::irp::IrpConnector.on_event(&t.k, &event(EWB, twice, false).await).await.expect("the e-way bill again");
+    t.action("SalesInvoice", twice, "cancel_e_way_bill", json!({"reason": "Order cancelled", "remark": "Withdrawn"})).await;
+    t.action("SalesInvoice", twice, "record_e_way_bill_cancellation", json!({})).await;
+    t.action("SalesInvoice", twice, "cancel_e_invoice", json!({"reason": "Data entry mistake", "remark": "Test"})).await;
+    drain().await;
+    ferrum_india::irp::IrpConnector.on_event(&t.k, &event(CANCEL, twice, false).await).await.expect("the cancellation again");
+    let (irn, status, _, error) = irp_said(twice).await;
+    assert_eq!((asked(&irn), status), ((1, 1), json!("Cancelled")), "{error}");
+    // The IRP does it, and the replica asking dies before it hears back: the next asks the IRP, and does nothing twice.
+    let (irn, ..) = irp_said(died).await;
+    let dies = async |ev: ferrum_kernel::outbox::Event| {
+        let gone = Arc::new(tokio::sync::Notify::new());
+        shared.books.lock().unwrap().hang = Some(gone.clone());
+        tokio::select! {
+            r = ferrum_india::irp::IrpConnector.on_event(&t.k, &ev) => panic!("the IRP never answers this one: {r:?}"),
+            () = gone.notified() => {}
+        }
+        ferrum_india::irp::IrpConnector.on_event(&t.k, &ev).await.expect("the next replica");
+    };
+    t.action("SalesInvoice", died, "request_e_way_bill", json!({})).await;
+    dies(event(EWB, died, true).await).await;
+    let (_, _, ewb, error) = irp_said(died).await;
+    assert_eq!((asked(&irn).1, ewb), (1, json!("Generated")), "{error}");
+    let (irn, ..) = irp_said(cancelled).await;
+    t.action("SalesInvoice", cancelled, "cancel_e_invoice", json!({"reason": "Data entry mistake", "remark": "Test"})).await;
+    dies(event(CANCEL, cancelled, true).await).await;
+    let (_, status, _, error) = irp_said(cancelled).await;
+    assert_eq!((asked(&irn).0, status), (1, json!("Cancelled")), "{error}");
+    // A failure that certainly did nothing is retried by itself, the IRP not asked about it: its 429 on an e-way bill,
+    // then a connection never made for a cancellation (the IRP's address closed while the session is made).
+    let (busy, _) = invoice_for_irp().await;
+    t.action("SalesInvoice", busy, "request_e_invoice", json!({})).await;
+    drain().await;
+    t.action("SalesInvoice", busy, "set_transport", json!({"in_transport_mode": "Road", "in_distance_km": 120, "in_vehicle_no": "KA01AB1234"})).await;
+    let (irn, ..) = irp_said(busy).await;
+    let lookups = shared.books.lock().unwrap().lookups;
+    t.action("SalesInvoice", busy, "request_e_way_bill", json!({})).await;
+    shared.books.lock().unwrap().throttle = 1;
+    let ev = event(EWB, busy, true).await;
+    assert!(ferrum_india::irp::IrpConnector.on_event(&t.k, &ev).await.is_err(), "429: tried again later");
+    ferrum_india::irp::IrpConnector.on_event(&t.k, &ev).await.expect("the retry");
+    let (_, _, ewb, error) = irp_said(busy).await;
+    assert_eq!((asked(&irn).1, shared.books.lock().unwrap().lookups - lookups, ewb), (1, 0, json!("Generated")), "{error}");
+    t.action("SalesInvoice", busy, "cancel_e_way_bill", json!({"reason": "Order cancelled", "remark": "Withdrawn"})).await;
+    t.action("SalesInvoice", busy, "record_e_way_bill_cancellation", json!({})).await;
+    t.action("SalesInvoice", busy, "cancel_e_invoice", json!({"reason": "Data entry mistake", "remark": "Test"})).await;
+    let ev = event(CANCEL, busy, true).await;
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+    t.k.update(&t.ctx, "Company", cid, obj(json!({"in_irp_url": format!("http://{closed}")})), None).await.expect("an address nobody listens at");
+    assert!(ferrum_india::irp::IrpConnector.on_event(&t.k, &ev).await.is_err(), "unreachable: tried again later");
+    t.k.update(&t.ctx, "Company", cid, obj(json!({"in_irp_url": shared.url})), None).await.expect("the IRP again");
+    ferrum_india::irp::IrpConnector.on_event(&t.k, &ev).await.expect("the retry");
+    let (_, status, _, error) = irp_said(busy).await;
+    assert_eq!((asked(&irn).0, shared.books.lock().unwrap().lookups - lookups, status), (1, 0, json!("Cancelled")), "{error}");
+    t.action("SalesInvoice", died, "cancel_e_way_bill", json!({"reason": "Order cancelled", "remark": "Withdrawn"})).await;
+    t.action("SalesInvoice", died, "record_e_way_bill_cancellation", json!({})).await;
+    t.action("SalesInvoice", died, "cancel_e_invoice", json!({"reason": "Data entry mistake", "remark": "Test"})).await;
+    drain().await;
+    for inv in [twice, died, cancelled, busy] {
+        t.k.cancel(&t.ctx, "SalesInvoice", inv, None).await.expect("cancelled");
+    }
 
     // ───────────── the same through a GSP in front of the IRP ─────────────
     // The GSP's own credentials (the company's GSP headers) go on every call, each once, also one

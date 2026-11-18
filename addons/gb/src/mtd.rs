@@ -14,7 +14,7 @@ use crate::vat::{INPUT_TAX, OUTPUT_TAX, account};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{Channel, enqueue, record};
+use ferrum_app_erp::submission::{Channel, enqueue, failed_call, first_call, never_sent, record_while};
 use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
@@ -427,6 +427,9 @@ impl Mtd {
     }
 }
 
+/// The return's status while it waits for HMRC's answer: the only one an answer is recorded over.
+const WAITING: (&str, &[&str]) = ("hmrc_status", &["Pending"]);
+
 #[async_trait]
 impl EventSink for Mtd {
     async fn on_event(&self, k: &Kernel, ev: &Event) -> Result<()> {
@@ -438,54 +441,87 @@ impl EventSink for Mtd {
         let Some(cid) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", cid).await?;
+        let ret = get(k, &ctx, &mut tx, "GbVatReturn", rid).await?;
         tx.commit().await?;
+        // HMRC's answer is recorded already (an earlier delivery's): nothing to file.
+        if s(&ret, "hmrc_status") != Some("Pending") {
+            return Ok(());
+        }
         let Some((api, _)) = hosts(s(&company, "gb_hmrc_mode").unwrap_or("Off")) else {
-            return record(
+            return record_while(
                 k,
                 &ctx,
                 "GbVatReturn",
                 rid,
+                WAITING,
                 json!({"hmrc_status": "Failed", "hmrc_error": "the company files no returns with HMRC (its mode is Off)"}),
             )
             .await;
         };
         let vrn = ev.payload["vrn"].as_str().unwrap_or_default();
+        let period = ev.payload["body"]["periodKey"].as_str().unwrap_or_default();
         let vendor = vendor_ip(ferrum_kernel::env::var("FERRUM_PUBLIC_IP"), k.settings.public_url.as_deref()).await;
         let headers = fraud_headers(&ev.payload["client"], ev.tenant_id, vendor);
+        // Not the first delivery to file it: HMRC may have the return already, so it is asked first, by its period key.
+        let mut ask = !first_call(k, ev, "gb.mtd.file").await?;
+        // A failure that certainly filed nothing gives the claim back, for the ordinary retry to file it: one before the
+        // return was posted (its token, its client), a connection never made, HMRC's 429 (MESSAGE_THROTTLED_OUT, the
+        // request not processed). Only while this delivery holds the claim, or HMRC has said it has no return.
+        let unsent = async |mine: bool, why: Error| failed_call(k, ev, "gb.mtd.file", mine, why).await;
         let mut forced = false;
         loop {
             let token = match self.token(k, &ctx, &api, &company, forced).await {
                 Ok(t) => t,
-                Err(Error::Invalid(m)) => return record(k, &ctx, "GbVatReturn", rid, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
-                Err(e) => return Err(e),
+                Err(Error::Invalid(m)) => return record_while(k, &ctx, "GbVatReturn", rid, WAITING, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
+                Err(e) => return unsent(!ask, e).await,
             };
-            let (client, url) = HMRC.client(k, ev.tenant_id, &format!("{api}/organisations/vat/{vrn}/returns"), WAIT).await?;
-            let mut call = client.post(url).header("Accept", ACCEPT).bearer_auth(&token).json(&ev.payload["body"]);
+            let returns = format!("{api}/organisations/vat/{vrn}/returns");
+            let (client, url) = match HMRC.client(k, ev.tenant_id, &if ask { format!("{returns}/{}", pct(period)) } else { returns }, WAIT).await {
+                Ok(c) => c,
+                Err(e) => return unsent(!ask, e).await,
+            };
+            let mut call = if ask { client.get(url) } else { client.post(url).json(&ev.payload["body"]) };
+            call = call.header("Accept", ACCEPT).bearer_auth(&token);
             for (name, value) in &headers {
                 call = call.header(name.as_str(), value.as_str());
             }
-            let reply = call.send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
+            let reply = match call.send().await {
+                Ok(r) => r,
+                Err(e) => return unsent(!ask && never_sent(&e), Error::internal(format!("HMRC could not be reached: {e}"))).await,
+            };
             let status = reply.status().as_u16();
             let receipt = reply.headers().get("Receipt-ID").and_then(|v| v.to_str().ok()).map(str::to_string);
             let v: Value = reply.json().await.unwrap_or(Value::Null);
-            match status {
-                201 => {
-                    return record(
+            match (ask, status) {
+                // HMRC has it: filed by the delivery that did not hear back (its receipt went with it).
+                (true, 200) => return record_while(k, &ctx, "GbVatReturn", rid, WAITING, json!({"hmrc_status": "Filed", "hmrc_error": null})).await,
+                (true, 404) => ask = false,
+                (false, 201) => {
+                    return record_while(
                         k,
                         &ctx,
                         "GbVatReturn",
                         rid,
+                        WAITING,
                         json!({"hmrc_status": "Filed", "processing_date": v["processingDate"], "form_bundle_number": v["formBundleNumber"],
                                "charge_ref_number": v["chargeRefNumber"], "payment_indicator": v["paymentIndicator"], "receipt_id": receipt, "hmrc_error": null}),
                     )
                     .await;
                 }
-                401 if !forced => forced = true,
-                429 | 500.. => return Err(Error::internal(format!("HMRC is busy ({status}); trying again"))),
-                _ => {
+                (_, 401) if !forced => forced = true,
+                (_, 429 | 500..) => return unsent(!ask && status == 429, Error::internal(format!("HMRC is busy ({status}); trying again"))).await,
+                (true, _) => return Err(Error::internal(format!("HMRC did not say whether it has the return ({status}); asking again"))),
+                (false, _) => {
                     let why = format!("{} {}", v["code"].as_str().unwrap_or(&status.to_string()), v["message"].as_str().unwrap_or("")).trim().to_string();
-                    return record(k, &ctx, "GbVatReturn", rid, json!({"hmrc_status": "Failed", "hmrc_error": format!("HMRC refused the return: {why}")}))
-                        .await;
+                    return record_while(
+                        k,
+                        &ctx,
+                        "GbVatReturn",
+                        rid,
+                        WAITING,
+                        json!({"hmrc_status": "Failed", "hmrc_error": format!("HMRC refused the return: {why}")}),
+                    )
+                    .await;
                 }
             }
         }
