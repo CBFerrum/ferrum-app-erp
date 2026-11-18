@@ -3,8 +3,17 @@
 //! receiver's answer is recorded on it; while the receiver has it, or it is on its way, it is neither sent again nor
 //! cancelled; one never sent, or failed, or refused, is sent (again). A channel names its fields, its topic and its
 //! statuses, and builds what it sends; nothing here names a country.
+//!
+//! The request reaches its connector at least once (the platform's docs/events.md): again when an attempt fails, and
+//! again, even after the connector finished, when the replica handling it dies. So a connector, for a call that must
+//! happen once: does nothing for a document no longer waiting (its answer is recorded); asks [`first_call`] just
+//! before the call, and when this is not the first delivery to make it, asks the receiver what became of the request
+//! (by the reference the receiver keeps it under) instead of sending again, or, where the receiver cannot be asked,
+//! leaves the document to a person, saying why; and records the answer with [`record_while`], which writes nothing over
+//! a document that has moved on.
 
 use crate::util::{id, s, sys};
+use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, HookCtx, Kernel, Result, outbox};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -102,4 +111,30 @@ pub async fn record(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, values: Value
     k.set_values_tx(&sys(ctx), &mut tx, entity, id, v).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// [`record`] while the record's status field is one of `from` (`(field, from)`, read with the record locked). A record
+/// that has moved on, its answer recorded by an earlier delivery, is left as it is: a success is never written over by
+/// what a repeat heard.
+pub async fn record_while(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, (field, from): (&str, &[&str]), values: Value) -> Result<()> {
+    let Value::Object(v) = values else { return Ok(()) };
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let doc = k.get_tx(&sys(ctx), &mut tx, entity, id, true).await?;
+    if !from.contains(&s(&doc, field).unwrap_or_default()) {
+        return Ok(());
+    }
+    k.set_values_tx(&sys(ctx), &mut tx, entity, id, v).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Whether this delivery of `ev` is the first to make `consumer`'s outside call for it: asked just before the call and
+/// recorded at once, in a transaction of its own (none is open across the call). No: an earlier delivery began the
+/// call, and the receiver may have acted on it before that delivery's replica died or its attempt failed; the
+/// connector asks the receiver what became of it, or leaves it to a person, and does not send it blind again.
+pub async fn first_call(k: &Kernel, ev: &Event, consumer: &str) -> Result<bool> {
+    let mut tx = k.db.system_tenant_tx(ev.tenant_id).await?;
+    let first = outbox::first_time(&mut tx, ev.tenant_id, consumer, ev.id).await?;
+    tx.commit().await?;
+    Ok(first)
 }
