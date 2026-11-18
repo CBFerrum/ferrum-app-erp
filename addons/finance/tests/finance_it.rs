@@ -237,7 +237,6 @@ async fn scenario() {
     let outbox = Arc::new(Outbox(Mutex::new(vec![])));
     let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), Some(outbox.clone() as Arc<dyn Mailer>)).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
     let tenant = k
         .create_tenant(NewTenant {
             slug: "fin".into(),
@@ -1087,7 +1086,7 @@ async fn scenario() {
             json!({"company": cid, "customer": tyrell.to_string(), "start_date": "2026-06-01", "plans": [{"plan": pro.to_string(), "qty": "2"}]}),
         )
         .await);
-    ferrum_finance::maintenance(&k).await.expect("upkeep");
+    ferrum_finance::maintenance(&k, tenant).await.expect("upkeep");
     let mut expected = 0;
     let mut m = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
     while m <= today {
@@ -1099,7 +1098,7 @@ async fn scenario() {
     let totals =
         t.amount("select coalesce(sum(grand_total), 0) from e_sales_invoice where tenant_id = $1 and (ext->>'fin_subscription') = $2::text", Some(s3)).await;
     assert_eq!(totals, Decimal::from(expected) * n("620"));
-    ferrum_finance::maintenance(&k).await.expect("upkeep again");
+    ferrum_finance::maintenance(&k, tenant).await.expect("upkeep again");
     assert_eq!(t.count(billed, Some(s3)).await, expected, "upkeep never bills a period twice");
     let drafts = t.list("Dunning", json!({"customer": initech.to_string()})).await;
     assert_eq!(drafts.len(), 1, "the upkeep drafted a dunning for Initech's overdue installments");
@@ -1117,7 +1116,7 @@ async fn scenario() {
     let mut tx = k.db.tenant_tx(tenant).await.unwrap();
     sqlx::query("delete from fin_daily_run where tenant_id = $1").bind(tenant).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
-    ferrum_finance::maintenance(&k).await.expect("daily upkeep again");
+    ferrum_finance::maintenance(&k, tenant).await.expect("daily upkeep again");
     assert_eq!(t.list("Dunning", json!({"customer": initech.to_string()})).await.len(), 1, "idempotent drafting");
     let hooli_dn = t.get("Dunning", uid(&dn)).await;
     assert_eq!((hooli_dn["status"].clone(), dec(&hooli_dn["outstanding_amount"])), (json!("Resolved"), Decimal::ZERO));

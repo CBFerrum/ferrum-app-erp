@@ -60,9 +60,9 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::MfgOpsReports)]
 }
 
-/// Periodic upkeep: every minute, on one replica at a time (advisory lock); must be idempotent and cheap.
-/// Everything here is event-driven, so there is nothing to do.
-pub async fn maintenance(_k: &Kernel) -> Result<()> {
+/// One workspace's upkeep (docs/app-contract.md, Upkeep in the platform): everything here is event-driven, so there is
+/// nothing to do.
+pub async fn maintenance(_k: &Kernel, _tenant: uuid::Uuid) -> Result<()> {
     Ok(())
 }
 

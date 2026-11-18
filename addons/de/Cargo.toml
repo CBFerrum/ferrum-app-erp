@@ -17,12 +17,12 @@ ferrum-eu-members = { path = "../eu-members" }
 async-trait = { workspace = true }
 rust_decimal = { workspace = true }
 serde_json = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 ferrum-plugins = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
-uuid = { workspace = true }
 
 [lints]
 workspace = true

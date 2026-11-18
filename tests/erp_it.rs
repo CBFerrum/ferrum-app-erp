@@ -71,7 +71,6 @@ async fn fresh_kernel() -> (Arc<Kernel>, Arc<ferrum_plugins::PluginHost>) {
     let settings = KernelSettings { webhooks_allow_private: true, ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("maintenance");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
     (k, plugins)
 }
 
@@ -414,6 +413,17 @@ async fn scenario() {
     let ctx = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx");
     // Engine contexts number documents in the same fiscal-year series as users do.
     assert_eq!(Ctx::system(tenant, k.registry.schema(tenant).await.unwrap()).fy_start_month, ctx.fy_start_month);
+    // The ledger's yearly partitions are the installation's: a workspace's upkeep (the first today in this process) makes
+    // one that is missing again, whichever workspace it is.
+    let next: String = sqlx::query_scalar("select format('journal_line_y%s', extract(year from now())::int + 1)").fetch_one(&k.db.pool).await.unwrap();
+    let there = |name: String| {
+        let pool = k.db.pool.clone();
+        async move { sqlx::query_scalar::<_, bool>("select to_regclass($1) is not null").bind(name).fetch_one(&pool).await.unwrap() }
+    };
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("drop table {next}"))).execute(&k.db.pool).await.unwrap();
+    assert!(!there(next.clone()).await);
+    ferrum_app_erp::maintenance(&k, tenant).await.expect("upkeep");
+    assert!(there(next).await, "a workspace's upkeep made next year's partition again");
     assert_eq!(ctx.fy_start_month, 4);
     // A custom line field on orders, deliveries and invoices: it travels with the lines.
     for line in ["SalesOrderItem", "DeliveryNoteItem", "SalesInvoiceItem"] {
@@ -1840,8 +1850,8 @@ async fn scenario() {
         sqlx::query("update e_journal_entry set reversal_date = '2026-05-01' where id = $1").bind(later).execute(&mut *tx).await.unwrap();
         tx.commit().await.unwrap();
     }
-    ferrum_app_erp::maintenance(&t.k).await.expect("upkeep");
-    ferrum_app_erp::maintenance(&t.k).await.expect("upkeep again");
+    ferrum_app_erp::maintenance(&t.k, t.ctx.tenant).await.expect("upkeep");
+    ferrum_app_erp::maintenance(&t.k, t.ctx.tenant).await.expect("upkeep again");
     assert_eq!(t.get("JournalEntry", later).await["reversed_on"], json!(year(5, 1)));
     assert_eq!(entries_of(later).await, vec![year(4, 30), year(5, 1)], "reversed once");
     assert_eq!(t.gl("Accrued Expenses").await, Decimal::ZERO);

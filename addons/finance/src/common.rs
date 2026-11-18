@@ -158,22 +158,3 @@ pub async fn claim_daily(tx: &mut Tx, tenant: Uuid, task: &str, today: NaiveDate
     .await?;
     Ok(claimed.unwrap_or(false))
 }
-
-/// Active tenants that installed this package, with a system context each.
-pub async fn tenants(k: &ferrum_kernel::Kernel) -> Result<Vec<Ctx>> {
-    let mut sys = k.db.system_tx().await?;
-    let ids: Vec<Uuid> =
-        sqlx::query_scalar("select t.id from tenant t join installed_package p on p.tenant_id = t.id and p.name = $1 where t.status = 'active' order by t.id")
-            .bind(PACKAGE)
-            .fetch_all(&mut *sys)
-            .await?;
-    sys.commit().await?;
-    let mut out = Vec::new();
-    for t in ids {
-        let schema = k.registry.schema(t).await?;
-        if schema.packages.iter().any(|p| p == PACKAGE) {
-            out.push(Ctx::system(t, schema));
-        }
-    }
-    Ok(out)
-}

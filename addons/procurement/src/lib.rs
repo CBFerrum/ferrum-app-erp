@@ -69,41 +69,21 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::ProcurementReports)]
 }
 
-/// Periodic upkeep (every minute, one replica at a time): auto-reorder, quotation expiry and
-/// scorecard periods, per tenant that installed the package. Every step is idempotent; a failing
-/// tenant or step does not stop the others, and the first failure is returned at the end.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    let mut sys = k.db.system_tx().await?;
-    let tenants: Vec<Uuid> =
-        sqlx::query_scalar("select t.id from tenant t join installed_package p on p.tenant_id = t.id and p.name = $1 where t.status = 'active' order by t.id")
-            .bind(PACKAGE)
-            .fetch_all(&mut *sys)
-            .await?;
-    sys.commit().await?;
+/// One workspace's upkeep, which the platform runs about once a minute where Procurement is installed, on any replica,
+/// and may run again (docs/app-contract.md, Upkeep in the platform): auto-reorder, quotation expiry and scorecard
+/// periods. Every step is idempotent; a failing step does not stop the others, and the first failure is returned.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
     let mut first_error = None;
-    for tenant in tenants {
-        let schema = match k.registry.schema(tenant).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(%tenant, "procurement upkeep: {e}");
-                first_error.get_or_insert(e);
-                continue;
-            }
-        };
-        if !schema.packages.iter().any(|p| p == PACKAGE) {
-            continue;
-        }
-        let ctx = Ctx::system(tenant, schema);
-        let steps = [
-            ("auto-reorder", reorder::auto_reorder(k, &ctx).await),
-            ("quotation expiry", quotation::expire(k, &ctx).await),
-            ("scorecards", scorecard::score_due(k, &ctx).await),
-        ];
-        for (step, outcome) in steps {
-            if let Err(e) = outcome {
-                tracing::warn!(%tenant, step, "procurement upkeep failed: {e}");
-                first_error.get_or_insert(e);
-            }
+    let steps = [
+        ("auto-reorder", reorder::auto_reorder(k, &ctx).await),
+        ("quotation expiry", quotation::expire(k, &ctx).await),
+        ("scorecards", scorecard::score_due(k, &ctx).await),
+    ];
+    for (step, outcome) in steps {
+        if let Err(e) = outcome {
+            tracing::warn!(%tenant, step, "procurement upkeep failed: {e}");
+            first_error.get_or_insert(e);
         }
     }
     first_error.map_or(Ok(()), Err)

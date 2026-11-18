@@ -140,7 +140,7 @@ impl T {
         self.k.load_ctx(self.tenant, id, None, "it".into()).await.expect("ctx")
     }
     async fn upkeep(&self) {
-        ferrum_procurement::maintenance(&self.k).await.expect("procurement upkeep");
+        ferrum_procurement::maintenance(&self.k, self.tenant).await.expect("procurement upkeep");
     }
     async fn site(&self, method: &str, token: &str, query: &[(&str, &str)], content_type: &str, body: &str) -> SiteResponse {
         let site = self.k.hooks.site("procurement").expect("procurement site").clone();
@@ -254,7 +254,6 @@ async fn scenario() {
     let settings = KernelSettings::default();
     let k = Kernel::boot(db, catalog, hooks, settings, Some(mails.clone() as Arc<dyn Mailer>)).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
     let tenant = k
         .create_tenant(NewTenant {
             slug: "acme".into(),

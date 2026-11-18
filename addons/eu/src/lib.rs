@@ -51,7 +51,7 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
 }
 
 /// Periodic upkeep: none (VIES and TEDB requests go through the outbox).
-pub async fn maintenance(_k: &Kernel) -> Result<()> {
+pub async fn maintenance(_k: &Kernel, _tenant: uuid::Uuid) -> Result<()> {
     Ok(())
 }
 

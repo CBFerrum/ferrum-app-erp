@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.32.3-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.33.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.32.3`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.33.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -398,7 +398,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.7.2)
+### 💼 Finance add-on (0.8.0)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
   a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
@@ -423,7 +423,7 @@ add-on brings it.
 - **Reports:** Finance Overview (Accounts today), Budget Variance, Bank Reconciliation Statement, Cash Flow
   Forecast, Receivables by Installment Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
 
-### 📋 Procurement add-on (0.1.6)
+### 📋 Procurement add-on (0.2.0)
 
 - **Material requests** to buy, transfer, issue, manufacture or receive from a customer, each line tracking
   what was ordered and received; purchase requests become purchase orders grouped by preferred supplier.
@@ -435,7 +435,7 @@ add-on brings it.
 - **Reports:** Material Request Status, Procurement Tracker, Supplier Quotation Comparison, Supplier Scorecard
   Ranking, Purchase Analytics.
 
-### 🗃️ Stock Operations add-on (0.2.2)
+### 🗃️ Stock Operations add-on (0.3.0)
 
 - **Stock reconciliation** of counted quantities (and rates), cancelled exactly.
 - **Landed cost vouchers** that add freight, duty and other charges to received stock still on hand.
@@ -448,7 +448,7 @@ add-on brings it.
 - **Reports:** Stock Reconciliation Variance, Landed Cost Allocation, Pick List Status, Quality Inspection
   Summary, Variant Stock Matrix, Stock Ageing.
 
-### ⚙️ Manufacturing Operations add-on (0.2.2)
+### ⚙️ Manufacturing Operations add-on (0.3.0)
 
 - **Workstations** with an hour rate, working hours, holidays and parallel capacity; **operations** and
   **routings** that cost a BOM's operating time into finished goods.
@@ -461,7 +461,7 @@ add-on brings it.
 - **Reports:** Job Card Summary, Capacity Planning, Work Order Operations, Production Plan Status,
   Subcontracting Status.
 
-### 🏬 Warehouse Management add-on (WMS, 0.3.4)
+### 🏬 Warehouse Management add-on (WMS, 0.4.0)
 
 Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, count, see a bin and work a task.
 
@@ -479,7 +479,7 @@ Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, cou
 - **People and robots on one task list**, robots through the platform's Operations app; a robot arriving moves
   nothing until the destination is scanned. Tried on a simulated fleet only.
 
-### 🛠️ Manufacturing Execution add-on (Shop Floor, 0.2.6)
+### 🛠️ Manufacturing Execution add-on (Shop Floor, 0.3.0)
 
 Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
 
@@ -495,7 +495,7 @@ Its own app, **Shop Floor**, at `/mes/`, with the floor, OEE and lot tracing.
 - Discrete manufacturing only, and tried on a simulated press only. It sends machines an approved job number,
   never controller logic.
 
-### ✅ Quality add-on (0.2.0)
+### ✅ Quality add-on (0.3.0)
 
 - **Quality holds** by item and lot that stop ERP from shipping or consuming that stock, the warehouse from
   allocating it and the floor from using it; receipts still pass. Whoever placed a hold does not release it.
@@ -573,32 +573,32 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.8.1 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
-| 🇪🇺 | European Union | `ferrum-eu` 0.4.1 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
-| 🇩🇪 | Germany | `ferrum-de` 0.1.1 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
-| 🇧🇪 | Belgium | `ferrum-eu-members` 0.1.1 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
-| 🇫🇷 | France | `ferrum-eu-members` 0.1.1 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
-| 🇮🇹 | Italy | `ferrum-eu-members` 0.1.1 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
-| 🇵🇱 | Poland | `ferrum-eu-members` 0.1.1 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
-| 🇵🇹 | Portugal | `ferrum-eu-members` 0.3.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
-| 🇷🇴 | Romania | `ferrum-eu-members` 0.2.2 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
-| 🇪🇸 | Spain | `ferrum-eu-members` 0.1.1 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
-| 🇬🇧 | United Kingdom | `ferrum-gb` 0.3.2 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
-| 🇺🇸 | United States | `ferrum-us` 0.2.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
-| 🇨🇦 | Canada | `ferrum-ca` 0.1.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
-| 🇸🇬 | Singapore | `ferrum-countries` 0.3.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.4.0 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
-| 🇮🇩 | Indonesia | `ferrum-countries` 0.3.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
-| 🇹🇭 | Thailand | `ferrum-countries` 0.3.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
-| 🇵🇭 | Philippines | `ferrum-countries` 0.3.0 | VAT 12% | 2550Q as a return definition | — |
-| 🇻🇳 | Vietnam | `ferrum-countries` 0.3.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
-| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.3.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
-| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.2.1 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
-| 🇦🇺 | Australia | `ferrum-countries` 0.2.1 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
-| 🇳🇿 | New Zealand | `ferrum-countries` 0.3.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
-| 🇯🇵 | Japan | `ferrum-countries` 0.3.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
-| 🇲🇽 | Mexico | `ferrum-countries` 0.2.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
-| 🇨🇳 | China | `ferrum-countries` 0.3.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
+| 🇮🇳 | India | `ferrum-india` 0.9.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇪🇺 | European Union | `ferrum-eu` 0.5.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
+| 🇩🇪 | Germany | `ferrum-de` 0.2.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
+| 🇧🇪 | Belgium | `ferrum-eu-members` 0.2.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
+| 🇫🇷 | France | `ferrum-eu-members` 0.2.0 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
+| 🇮🇹 | Italy | `ferrum-eu-members` 0.2.0 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
+| 🇵🇱 | Poland | `ferrum-eu-members` 0.2.0 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
+| 🇵🇹 | Portugal | `ferrum-eu-members` 0.4.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
+| 🇷🇴 | Romania | `ferrum-eu-members` 0.3.0 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
+| 🇪🇸 | Spain | `ferrum-eu-members` 0.2.0 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
+| 🇬🇧 | United Kingdom | `ferrum-gb` 0.4.0 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
+| 🇺🇸 | United States | `ferrum-us` 0.3.0 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
+| 🇨🇦 | Canada | `ferrum-ca` 0.2.0 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
+| 🇸🇬 | Singapore | `ferrum-countries` 0.4.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.5.0 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
+| 🇮🇩 | Indonesia | `ferrum-countries` 0.4.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
+| 🇹🇭 | Thailand | `ferrum-countries` 0.4.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
+| 🇵🇭 | Philippines | `ferrum-countries` 0.4.0 | VAT 12% | 2550Q as a return definition | — |
+| 🇻🇳 | Vietnam | `ferrum-countries` 0.4.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
+| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.4.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
+| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.3.0 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
+| 🇦🇺 | Australia | `ferrum-countries` 0.3.0 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
+| 🇳🇿 | New Zealand | `ferrum-countries` 0.4.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
+| 🇯🇵 | Japan | `ferrum-countries` 0.4.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
+| 🇲🇽 | Mexico | `ferrum-countries` 0.3.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
+| 🇨🇳 | China | `ferrum-countries` 0.4.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
 
 Rates, item categories, withholding categories and, for India, Ireland's VAT3 and the ten countries marked "as a
 return definition", the return forms are records the add-on seeds and an accountant can edit. What stays in each
@@ -907,6 +907,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.33.0** Upkeep runs one workspace at a time, on whichever replica is free; the journal's partitions once a day per replica.
 - [x] **0.32.3** A dump of the database holds the journal's lines: its yearly partitions carry the journal's policy.
 - [x] **0.32.2** The interface is rebuilt on Ferrum-Frontend 5e2661f: the Customize page no longer offers the change-set export and import.
 - [x] **0.32.1** The United Kingdom's and Romania's sign-in callback pages show the query's text as text.

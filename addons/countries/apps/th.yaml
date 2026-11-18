@@ -1,7 +1,7 @@
 # ERP's add-on for Thailand: vAT at 7%, exports at 0%, exempt supplies and the PP.30 return for ERP in Thailand. Ferrum localization.md.
 id: th
 name: "Thailand"
-version: 0.3.0
+version: 0.4.0
 publisher: cbferrum
 summary: "VAT at 7%, exports at 0%, exempt supplies and the PP.30 return for ERP in Thailand"
 categories: [finance]

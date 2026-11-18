@@ -50,7 +50,7 @@ macro_rules! app {
             reports_list()
         }
 
-        pub async fn maintenance(_k: &ferrum_kernel::Kernel) -> ferrum_kernel::Result<()> {
+        pub async fn maintenance(_k: &ferrum_kernel::Kernel, _tenant: uuid::Uuid) -> ferrum_kernel::Result<()> {
             Ok(())
         }
     };

@@ -133,23 +133,24 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::FinanceReports)]
 }
 
-/// Periodic upkeep: every minute, on one replica at a time (advisory lock); must be idempotent and cheap.
-/// Subscriptions bill what is due (each period exactly once); once a day per workspace,
-/// subscription statuses are refreshed and dunnings resolved and drafted; revaluations whose
-/// reversal day has come are reversed. One workspace's failure does not stop the others.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    for ctx in common::tenants(k).await? {
-        if let Err(e) = subscription::upkeep(k, &ctx).await {
-            tracing::warn!(tenant = %ctx.tenant, "subscription upkeep failed: {e}");
-        }
-        if let Err(e) = dunning::upkeep(k, &ctx).await {
-            tracing::warn!(tenant = %ctx.tenant, "dunning upkeep failed: {e}");
-        }
-        if let Err(e) = revaluation::upkeep(k, &ctx).await {
-            tracing::warn!(tenant = %ctx.tenant, "revaluation upkeep failed: {e}");
+/// One workspace's upkeep, which the platform runs about once a minute where Finance is installed, on any replica, and
+/// may run again (docs/app-contract.md, Upkeep in the platform): subscriptions bill what is due (each period exactly
+/// once); once a day, subscription statuses are refreshed and dunnings resolved and drafted; revaluations whose reversal
+/// day has come are reversed. A failing step stops no other; the first failure is returned.
+pub async fn maintenance(k: &Kernel, tenant: uuid::Uuid) -> Result<()> {
+    let ctx = ferrum_kernel::Ctx::system(tenant, k.registry.schema(tenant).await?);
+    let mut first = None;
+    for (step, outcome) in [
+        ("subscription", subscription::upkeep(k, &ctx).await),
+        ("dunning", dunning::upkeep(k, &ctx).await),
+        ("revaluation", revaluation::upkeep(k, &ctx).await),
+    ] {
+        if let Err(e) = outcome {
+            tracing::warn!(%tenant, "{step} upkeep failed: {e}");
+            first.get_or_insert(e);
         }
     }
-    Ok(())
+    first.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]

@@ -82,7 +82,7 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
 
 /// Periodic upkeep: nothing here needs it (every state change happens inside its document's
 /// transaction), so this stays a cheap no-op.
-pub async fn maintenance(_k: &Kernel) -> Result<()> {
+pub async fn maintenance(_k: &Kernel, _tenant: uuid::Uuid) -> Result<()> {
     Ok(())
 }
 
