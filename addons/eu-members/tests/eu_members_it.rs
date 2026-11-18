@@ -690,6 +690,39 @@ async fn romania(k: &Arc<Kernel>, uploads: &Uploads) {
     assert_eq!((count() - before, doc["ro_efactura_status"].clone()), (1, json!("Pending")), "{error}");
     assert!(error.contains("may have reached ANAF"), "{error}");
 
+    // ───────────── a person resolves an upload that may have reached ANAF ─────────────
+    let act = async |inv: Uuid, action: &str, params: Value| t.k.run_action(&t.ctx, "SalesInvoice", inv, action, params).await;
+    // Neither is open to an invoice ANAF has given its verdict on.
+    for (action, params) in
+        [("ro_record_anaf", json!({"upload_index": "5009999"})), ("ro_record_anaf", json!({"state": "nok"})), ("ro_upload_again", Value::Null)]
+    {
+        let refused = act(twice, action, params).await;
+        assert!(refused.as_ref().is_err_and(|e| e.to_string().contains("not available")), "{action}: {refused:?}");
+    }
+    assert_eq!(t.get("SalesInvoice", twice).await["ro_efactura_status"], json!("Validated"));
+    // ANAF's messages have it: its index, then its verdict, recorded; nothing is uploaded.
+    let before = count();
+    act(died, "ro_record_anaf", json!({"upload_index": "5004321"})).await.expect("its index");
+    act(died, "ro_record_anaf", json!({"state": "ok", "download_id": "3001234"})).await.expect("its verdict");
+    while t.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let doc = t.get("SalesInvoice", died).await;
+    assert_eq!((count() - before, doc["ro_efactura_status"].clone(), doc["ro_efactura_error"].clone()), (0, json!("Validated"), Value::Null));
+    assert!(act(died, "ro_record_anaf", json!({"state": "nok"})).await.is_err(), "a verdict is not written over");
+    // ANAF's messages do not have it: uploaded again, once, as a new request, and validated.
+    let lost = uid(&t.submit("SalesInvoice", uid(&t.invoice(lid, buyer, goods).await)).await);
+    let ev = event(lost, true).await;
+    let gone = Arc::new(tokio::sync::Notify::new());
+    *HANG.lock().unwrap() = Some(gone.clone());
+    tokio::select! {
+        r = ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev) => panic!("ANAF never answers this one: {r:?}"),
+        () = gone.notified() => {}
+    }
+    ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev).await.expect("the next replica");
+    let before = count();
+    act(lost, "ro_upload_again", Value::Null).await.expect("uploaded again");
+    while t.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    assert_eq!((count() - before, t.get("SalesInvoice", lost).await["ro_efactura_status"].clone()), (1, json!("Validated")));
+
     // ───────────── a failure that certainly took nothing is retried by itself ─────────────
     // ANAF's 429, then a connection never made: each upload is retried and validated, once, with no person.
     let anaf = std::env::var("FERRUM_RO_ANAF_URL").expect("the stand-in's address");

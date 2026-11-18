@@ -11,7 +11,7 @@
 use crate::member::{Member, Rules};
 use crate::util::{get, id, s, set, sys};
 use async_trait::async_trait;
-use ferrum_app_erp::submission::Channel;
+use ferrum_app_erp::submission::{Channel, record_while_tx};
 use ferrum_eu::ubl::{Invoice, invoice, to_xml};
 use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use serde_json::{Value, json};
@@ -193,6 +193,11 @@ const EFACTURA: Channel = Channel {
 
 async fn upload(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
     EFACTURA.sendable(doc)?;
+    queue_upload(hc, doc).await
+}
+
+/// Queues the invoice's upload, a request of its own: marked Pending, the XML built now.
+async fn queue_upload(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
     let inv = efactura(hc, doc).await?;
     let cif = inv.seller.vat.as_deref().and_then(cif).unwrap_or_default();
     let event = json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "number": inv.number, "cif": cif, "standard": "UBL", "xml": to_xml(&inv)});
@@ -257,9 +262,26 @@ impl DocHook for EfacturaHook {
                     _ => return Err(Error::field("upload_index", "is required (ANAF's index_incarcare), or the state")),
                 };
                 let download = params.get("download_id").and_then(Value::as_str).map(str::to_string);
-                let ids = json!({"ro_upload_index": index.map(str::to_string).or(s(doc, "ro_upload_index").map(str::to_string)),
-                                 "ro_download_id": download.or(s(doc, "ro_download_id").map(str::to_string))});
-                EFACTURA.record(hc, doc, status, error, ids).await.map(Some)
+                let values = json!({"ro_upload_index": index.map(str::to_string).or(s(doc, "ro_upload_index").map(str::to_string)),
+                                    "ro_download_id": download.or(s(doc, "ro_download_id").map(str::to_string)),
+                                    "ro_efactura_status": status, "ro_efactura_error": error});
+                // Only while ANAF's answer is awaited: never over a verdict recorded since.
+                let rid = id(doc, "id").ok_or_else(|| Error::internal("an invoice without its id"))?;
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, ("ro_efactura_status", &["Pending", "Uploaded"]), values).await? {
+                    return Err(Error::invalid("the invoice no longer waits for ANAF's answer"));
+                }
+                Ok(Some(json!({"status": status})))
+            }
+            // An upload that may have reached ANAF (its answer lost) and is not in ANAF's messages: a new request, under a
+            // claim of its own; the earlier one's repeats still send nothing.
+            "ro_upload_again" => {
+                let rid = id(doc, "id").ok_or_else(|| Error::internal("an invoice without its id"))?;
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, ("ro_efactura_status", &["Pending"]), json!({"ro_efactura_error": null}))
+                    .await?
+                {
+                    return Err(Error::invalid("the invoice no longer waits for ANAF's answer"));
+                }
+                queue_upload(hc, doc).await.map(Some)
             }
             _ => Ok(None),
         }

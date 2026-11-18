@@ -22,7 +22,9 @@ calls changes: ERP's own add-ons were the only callers of `submission::record`, 
   e-invoice still relies on the IRP's own key (2150) and an AvaTax commit on createoradjust by the invoice's code.
 - **Where the receiver cannot be asked, a person decides.** A MyInvois submission or an e-Factura upload whose answer
   was lost is not sent again: the invoice stays Pending, saying it may have reached the receiver. For Romania, Record
-  ANAF's Answer takes its upload index from ANAF's messages (or nok, after which it can be uploaded again). For Malaysia,
+  ANAF's Answer takes its upload index from ANAF's messages, and Upload to e-Factura Again, when ANAF does not have it,
+  queues one new upload as a request of its own. Record ANAF's Answer now writes only while ANAF's answer is awaited
+  (Pending or Uploaded, `record_while_tx`): it used to write over any status, Validated too. For Malaysia,
   two new actions on a Pending invoice: Record MyInvois's Answer takes what the portal shows (the document's UUID and
   Valid with its long ID, which makes the validation link, or Invalid with LHDN's reasons) and records the invoice as
   LHDN left it; Submit to MyInvois Again, when the portal does not have it, queues one new submission as a request of
