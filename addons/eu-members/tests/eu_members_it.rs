@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::vault::{New, Rule, Scope, Vault, Zeroizing};
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery};
+use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, EventSink, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -192,6 +192,9 @@ fn member_states_end_to_end() {
 
 type Uploads = Arc<Mutex<Vec<(HashMap<String, String>, String)>>>;
 
+/// Set: the fake ANAF takes the next upload, then never answers (the replica uploading dies first).
+static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+
 /// ANAF as far as Ferrum uses it: the token for the sign-in's code, uploads with the right token,
 /// and the verdict on them.
 async fn fake_anaf(uploads: Uploads) -> String {
@@ -211,6 +214,11 @@ async fn fake_anaf(uploads: Uploads) -> String {
             return (StatusCode::UNAUTHORIZED, String::new());
         }
         uploads.lock().unwrap().push((q, body));
+        let died = HANG.lock().unwrap().take();
+        if let Some(died) = died {
+            died.notify_one();
+            std::future::pending::<()>().await;
+        }
         (StatusCode::OK, r#"<?xml version="1.0" encoding="UTF-8"?><header xmlns="mfp:anaf:dgti:spv:respUploadFisier:v1" dateResponse="202611011200" ExecutionStatus="0" index_incarcare="5004321"/>"#.into())
     }
     async fn status(Query(q): Query<HashMap<String, String>>) -> (StatusCode, String) {
@@ -628,6 +636,50 @@ async fn romania(k: &Arc<Kernel>, uploads: &Uploads) {
     let (query, xml) = uploads.lock().unwrap().first().cloned().expect("uploaded");
     assert_eq!((query.get("standard").cloned(), query.get("cif").cloned()), (Some("UBL".into()), Some("16341004".into())));
     assert!(xml.contains("CIUS-RO:1.0.1") && xml.contains("<cbc:CountrySubentity>RO-BV</cbc:CountrySubentity>"), "{xml}");
+
+    // ───────────── an upload delivered again: ANAF gets the invoice once ─────────────
+    // The upload's event as the outbox holds it; `take` marks it handled, as a replica's dispatcher takes it.
+    let event = async |invoice: Uuid, take: bool| {
+        let mut tx = t.k.db.system_tx().await.unwrap();
+        let sql = if take {
+            "update outbox set processed_at = now() where topic = $1 and record_id = $2 and processed_at is null returning id, tenant_id, payload"
+        } else {
+            "select id, tenant_id, payload from outbox where topic = $1 and record_id = $2"
+        };
+        let (id, tenant_id, payload): (i64, Uuid, Value) =
+            sqlx::query_as(sql).bind(ferrum_eu_members::ro::UPLOAD_TOPIC).bind(invoice).fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        ferrum_kernel::outbox::Event {
+            id,
+            tenant_id,
+            topic: ferrum_eu_members::ro::UPLOAD_TOPIC.into(),
+            record_id: Some(invoice),
+            payload,
+            ..Default::default()
+        }
+    };
+    let count = || uploads.lock().unwrap().len();
+    // Validated, then its upload again.
+    let twice = uid(&t.submit("SalesInvoice", uid(&t.invoice(lid, buyer, goods).await)).await);
+    while t.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let before = count();
+    ferrum_eu_members::anaf::Anaf.on_event(&t.k, &event(twice, false).await).await.expect("again");
+    assert_eq!((count() - before, t.get("SalesInvoice", twice).await["ro_efactura_status"].clone()), (0, json!("Validated")));
+    // ANAF takes the upload and the replica uploading dies before it hears back: not uploaded again, left to a person.
+    let died = uid(&t.submit("SalesInvoice", uid(&t.invoice(lid, buyer, goods).await)).await);
+    let ev = event(died, true).await;
+    let before = count();
+    let gone = Arc::new(tokio::sync::Notify::new());
+    *HANG.lock().unwrap() = Some(gone.clone());
+    tokio::select! {
+        r = ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev) => panic!("ANAF never answers this one: {r:?}"),
+        () = gone.notified() => {}
+    }
+    ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev).await.expect("the next replica");
+    let doc = t.get("SalesInvoice", died).await;
+    let error = doc["ro_efactura_error"].as_str().unwrap_or_default();
+    assert_eq!((count() - before, doc["ro_efactura_status"].clone()), (1, json!("Pending")), "{error}");
+    assert!(error.contains("may have reached ANAF"), "{error}");
 }
 
 async fn belgium(k: &Arc<Kernel>) {
