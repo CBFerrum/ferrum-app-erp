@@ -10,7 +10,7 @@ use axum::routing::{get, post, put};
 use axum::{Form, Json, Router};
 use base64::Engine;
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
+use ferrum_kernel::{Ctx, Db, DbConfig, Doc, EventSink, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -561,6 +561,18 @@ async fn scenario() {
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
+/// Set: the fake LHDN does the next submission or cancellation, then never answers (the replica asking dies first).
+static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+
+async fn answered<T>(answer: T) -> T {
+    let died = HANG.lock().unwrap().take();
+    if let Some(died) = died {
+        died.notify_one();
+        std::future::pending::<()>().await;
+    }
+    answer
+}
+
 /// LHDN's MyInvois as far as Ferrum uses it: tokens for the right client, submissions accepted
 /// and validated, cancellations.
 async fn fake_myinvois(calls: Calls) -> String {
@@ -577,16 +589,19 @@ async fn fake_myinvois(calls: Calls) -> String {
         if !authorised(&headers) {
             return (StatusCode::UNAUTHORIZED, Json(json!({})));
         }
-        let mut c = calls.lock().unwrap();
-        c.push(("submit".into(), body.clone()));
-        let n = c.iter().filter(|(k, _)| k == "submit").count();
+        let n = {
+            let mut c = calls.lock().unwrap();
+            c.push(("submit".into(), body.clone()));
+            c.iter().filter(|(k, _)| k == "submit").count()
+        };
         let code = body["documents"][0]["codeNumber"].clone();
-        (
+        answered((
             StatusCode::ACCEPTED,
             Json(
                 json!({"submissionUid": format!("SUB-{n}"), "acceptedDocuments": [{"uuid": format!("UUID-{n}"), "invoiceCodeNumber": code}], "rejectedDocuments": []}),
             ),
-        )
+        ))
+        .await
     }
     async fn status(headers: HeaderMap, Path(uid): Path<String>) -> (StatusCode, Json<Value>) {
         if !authorised(&headers) {
@@ -604,13 +619,21 @@ async fn fake_myinvois(calls: Calls) -> String {
             return (StatusCode::UNAUTHORIZED, Json(json!({})));
         }
         calls.lock().unwrap().push(("cancel".into(), json!({"uuid": uuid, "body": body})));
-        (StatusCode::OK, Json(json!({"uuid": uuid, "status": "Cancelled"})))
+        answered((StatusCode::OK, Json(json!({"uuid": uuid, "status": "Cancelled"})))).await
+    }
+    async fn details(State(calls): State<Calls>, headers: HeaderMap, Path(uuid): Path<String>) -> (StatusCode, Json<Value>) {
+        if !authorised(&headers) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({})));
+        }
+        let cancelled = calls.lock().unwrap().iter().any(|(k, v)| k == "cancel" && v["uuid"] == json!(uuid));
+        (StatusCode::OK, Json(json!({"uuid": uuid, "status": if cancelled { "Cancelled" } else { "Valid" }})))
     }
     let app = Router::new()
         .route("/connect/token", post(token))
         .route("/api/v1.0/documentsubmissions/", post(submit))
         .route("/api/v1.0/documentsubmissions/{uid}", get(status))
         .route("/api/v1.0/documents/state/{uuid}/state", put(cancel))
+        .route("/api/v1.0/documents/{uuid}/details", get(details))
         .with_state(calls);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -719,6 +742,64 @@ async fn myinvois(k: &Arc<Kernel>, calls: &Calls, lhdn: &str) {
     let bytes = base64::engine::general_purpose::STANDARD.decode(sent["documents"][0]["document"].as_str().unwrap()).unwrap();
     let document: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(document["Invoice"][0]["AccountingCustomerParty"][0]["Party"][0]["PartyIdentification"][0]["ID"][0]["_"], json!("EI00000000010"));
+
+    // ───────────── a request delivered again: LHDN is asked once ─────────────
+    // An event as the outbox holds it; `take` marks it handled, as a replica's dispatcher takes it.
+    let event = async |topic: &str, invoice: Uuid, take: bool| {
+        let mut tx = k.db.system_tx().await.unwrap();
+        let sql = if take {
+            "update outbox set processed_at = now() where topic = $1 and record_id = $2 and processed_at is null returning id, tenant_id, payload"
+        } else {
+            "select id, tenant_id, payload from outbox where topic = $1 and record_id = $2"
+        };
+        let (id, tenant_id, payload): (i64, Uuid, Value) = sqlx::query_as(sql).bind(topic).bind(invoice).fetch_one(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        ferrum_kernel::outbox::Event { id, tenant_id, topic: topic.into(), record_id: Some(invoice), payload, ..Default::default() }
+    };
+    let dies = async |ev: ferrum_kernel::outbox::Event| {
+        let gone = Arc::new(tokio::sync::Notify::new());
+        *HANG.lock().unwrap() = Some(gone.clone());
+        tokio::select! {
+            r = ferrum_countries::myinvois::MyInvois.on_event(k, &ev) => panic!("LHDN never answers this one: {r:?}"),
+            () = gone.notified() => {}
+        }
+        ferrum_countries::myinvois::MyInvois.on_event(k, &ev).await.expect("the next replica");
+    };
+    let count = |what: &str| calls.lock().unwrap().iter().filter(|(k, _)| k == what).count();
+    let new_invoice = async || {
+        let si = insert("SalesInvoice", json!({"company": cid.to_string(), "customer": buyer.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]}))
+            .await;
+        uid(&k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("submit"))
+    };
+    let state = async |inv: Uuid| {
+        let d = k.get(&ctx, "SalesInvoice", inv, false).await.unwrap();
+        (d["my_einvoice_status"].clone(), d["my_einvoice_error"].as_str().unwrap_or_default().to_string())
+    };
+    // Validated, then its submission again; cancelled, then its cancellation again.
+    let twice = new_invoice().await;
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let (submits, cancels) = (count("submit"), count("cancel"));
+    ferrum_countries::myinvois::MyInvois.on_event(k, &event(ferrum_countries::myinvois::SUBMIT_TOPIC, twice, false).await).await.expect("again");
+    assert_eq!((count("submit") - submits, state(twice).await.0), (0, json!("Valid")));
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    k.cancel(&ctx, "SalesInvoice", twice, None).await.expect("cancel");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    ferrum_countries::myinvois::MyInvois.on_event(k, &event(ferrum_countries::myinvois::CANCEL_TOPIC, twice, false).await).await.expect("again");
+    assert_eq!((count("cancel") - cancels, state(twice).await.0), (1, json!("Cancelled")));
+    // LHDN takes the submission and the replica sending it dies before it hears back: not sent again, left to a person.
+    let died = new_invoice().await;
+    let submits = count("submit");
+    dies(event(ferrum_countries::myinvois::SUBMIT_TOPIC, died, true).await).await;
+    let (status, error) = state(died).await;
+    assert_eq!((count("submit") - submits, status), (1, json!("Pending")), "{error}");
+    assert!(error.contains("may have reached MyInvois"), "{error}");
+    // LHDN cancels one and the replica asking dies first: the next asks LHDN, and records it.
+    let validated = new_invoice().await;
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    k.cancel(&ctx, "SalesInvoice", validated, None).await.expect("cancel");
+    let cancels = count("cancel");
+    dies(event(ferrum_countries::myinvois::CANCEL_TOPIC, validated, true).await).await;
+    assert_eq!((count("cancel") - cancels, state(validated).await.0), (1, json!("Cancelled")));
 }
 
 async fn run(k: &Arc<Kernel>, case: &Case) {
