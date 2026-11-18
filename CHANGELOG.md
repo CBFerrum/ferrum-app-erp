@@ -1,6 +1,6 @@
 # Changelog
 
-## ERP 0.33.1: a request delivered twice is not sent twice
+## ERP 0.33.1, United Kingdom 0.4.1, India 0.9.1, Malaysia 0.5.1, Romania 0.3.1, Procurement 0.2.1, United States 0.3.1: a request delivered twice is not sent twice
 
 The outbox delivers each request at least once: again when an attempt fails, and again, even after the connector
 finished, when the server handling it stops mid-event. Six connectors sent again on such a repeat. Nothing another app
