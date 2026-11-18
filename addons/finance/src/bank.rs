@@ -1132,7 +1132,8 @@ async fn apply_rule(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<V
     let mut v = Doc::new();
     v.insert("rule".into(), json!(rule.id.to_string()));
     hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "BankTransaction", line_id, v).await?;
-    Ok(json!({"rule": rule.id, "entity": made["entity"], "id": made["id"], "number": made["number"]}))
+    // The entry is `entry`: a receipt reads `id` as the line the operation is on.
+    Ok(json!({"rule": rule.id, "entity": made["entity"], "entry": made["id"], "number": made["number"]}))
 }
 
 /// The number of a statement line, for saying which one a refusal is about.

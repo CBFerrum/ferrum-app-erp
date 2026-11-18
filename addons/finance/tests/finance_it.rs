@@ -1463,7 +1463,8 @@ async fn bank_rules(t: &T, am: &Ctx, au: &Ctx, acc: Accounts) {
     let once = t.k.invoke(am, ask("sep-interest")).await.expect("book by rule through the gate");
     let twice = t.k.invoke(am, ask("sep-interest")).await.expect("the same key");
     assert_eq!((once.repeated, twice.repeated), (false, true), "{:?}", twice.result);
-    assert!(once.result["number"].is_string(), "{:?}", once.result);
+    assert!(once.result["number"].is_string() && once.result["entry"].is_string(), "{:?}", once.result);
+    assert_eq!(twice.result["entry"], once.result["entry"], "the repeat names the same entry");
     assert_eq!(entries_for(sep).await, 1);
     let e = t.k.invoke(am, ask("sep-interest-again")).await.unwrap_err();
     assert!(invalid(&e, "nothing reconciled yet") || matches!(e, Error::Invalid(_) | Error::Validation(_) | Error::Forbidden(_)), "{e:?}");

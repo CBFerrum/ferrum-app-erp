@@ -163,7 +163,7 @@
         - {name: rule, label: Bank Rule, type: link, to: BankRule, description: "Empty: the first rule that fits the line"}
       contract:
         effect: transactional_action
-        returns: {type: object, properties: {rule: {type: string, format: uuid}, entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}
+        returns: {type: object, properties: {rule: {type: string, format: uuid}, entity: {type: string}, entry: {type: string, format: uuid}, number: {type: [string, "null"]}}}
         completion: "The line is booked by the rule as a submitted entry and reconciled with it"
   list: {columns: [date, bank_account, reference_number, deposit, withdrawal, unallocated_amount, status], sort: date desc}
 
