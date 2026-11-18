@@ -1,5 +1,17 @@
 # Changelog
 
+## ERP 0.32.3: a dump of the database holds the journal's lines
+
+The accounting package's SQL changes (`001_ledger.sql`): a database an earlier build made is made again from empty. It
+needs the platform's `ferrum_create_partition`. Nothing another app calls changes.
+
+- **A dump no longer leaves out the general ledger.** The journal's yearly partitions (`journal_line_y2026` and its
+  neighbours) were made with row-level security forced and no policy of their own. Read through `journal_line` the
+  lines were there, but a partition read by its own name showed nothing, even to the system, and that is how a dump
+  reads it: `deploy/dump.sh` of a database with a posted invoice restored with `journal_line` empty. The years are now
+  made with the kernel's `ferrum_create_partition`, which gives each the journal's policy, and the first ones are made
+  after the journal has it. `tests/dump_it.rs` dumps and restores the books and counts every partition's rows.
+
 ## ERP 0.32.2, India 0.8.1: its interface rebuilt on today's kit, India asks for the platform that reads its setting
 
 Patches: nothing another app calls changes.
