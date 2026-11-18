@@ -105,6 +105,7 @@ pub fn register(h: &mut HookRegistry) {
         .register("BankTransaction", Arc::new(bank::BankTransactionHook))
         .register("StatementFormat", Arc::new(statement::StatementFormatHook))
         .register("BankRule", Arc::new(bank::BankRuleHook))
+        .register("BankFeedLine", Arc::new(bank::BankFeedLineHook))
         .register("PaymentEntry", Arc::new(bank::VoucherGuard))
         .register("JournalEntry", Arc::new(bank::VoucherGuard))
         .register("PeriodClosingVoucher", Arc::new(closing::ClosingHook))

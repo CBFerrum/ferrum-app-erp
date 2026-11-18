@@ -68,6 +68,26 @@ impl DocHook for BankAccountHook {
         {
             errors.push(FieldError::new("iban", "is not a valid IBAN (check the digits)"));
         }
+        // A feed names one bank account: its connection and the provider's id of the account, both or neither.
+        match (s(doc, "feed_connection"), s(doc, "feed_account_ref")) {
+            (Some(_), None) => errors.push(FieldError::new("feed_account_ref", "give the provider's id of this account too")),
+            (None, Some(_)) => errors.push(FieldError::new("feed_connection", "give the feed's connection too")),
+            (Some(c), Some(r)) => {
+                let taken: Option<String> = sqlx::query_scalar(
+                    "select account_name from e_bank_account where tenant_id = $1 and feed_connection = $2 and feed_account_ref = $3 and id <> $4 limit 1",
+                )
+                .bind(hc.ctx.tenant)
+                .bind(c)
+                .bind(r)
+                .bind(id(doc, "id").unwrap_or_default())
+                .fetch_optional(&mut **hc.tx)
+                .await?;
+                if let Some(other) = taken {
+                    errors.push(FieldError::new("feed_account_ref", format!("{other} already takes this feed's account")));
+                }
+            }
+            (None, None) => {}
+        }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 
@@ -91,6 +111,7 @@ impl DocHook for BankAccountHook {
             "workbench" => workbench(hc, doc, params).await.map(Some),
             "accept_matches" => accept_matches(hc, params).await.map(Some),
             "apply_rules" => apply_rules(hc, params).await.map(Some),
+            "take_feed_lines" => take_feed_lines(hc, doc).await.map(Some),
             _ => Ok(None),
         }
     }
@@ -215,23 +236,9 @@ async fn statement(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, write: bool)
     // Hashes are engine-set (read-only), so the lines are created with engine rights after the
     // permission checks above; the audit trail still names the user. A line another import stored
     // meanwhile fails on the unique key [bank_account, transaction_hash], and the whole import with it.
-    let engine = elevated(hc.ctx);
-    let text_or_null = |v: &str| if v.is_empty() { Value::Null } else { json!(v) };
     let mut stored = Vec::new();
     for (l, hash) in &fresh {
-        let mut t = Doc::new();
-        t.insert("bank_account".into(), json!(bank.to_string()));
-        t.insert("date".into(), json!(l.date.to_string()));
-        t.insert("deposit".into(), money(l.deposit));
-        t.insert("withdrawal".into(), money(l.withdrawal));
-        t.insert("description".into(), json!(l.description));
-        t.insert("reference_number".into(), text_or_null(&l.reference));
-        t.insert("bank_reference".into(), text_or_null(&l.bank_reference));
-        t.insert("transaction_hash".into(), json!(hash));
-        let created = hc.kernel.insert_tx(&engine, hc.tx, "BankTransaction", t).await?;
-        let tid = id(&created, "id").unwrap_or_default();
-        hc.kernel.submit_tx(&engine, hc.tx, "BankTransaction", tid, None).await?;
-        stored.push((tid, *l));
+        stored.push((store_line(hc, bank, l, hash).await?, *l));
     }
     let (ruled, rule_failures) = apply_automatic(hc, company, bank, &stored).await?;
     Ok(json!({"format": format, "imported": fresh.len(), "duplicates": duplicates, "skipped": read.skipped, "other_accounts": other_accounts,
@@ -1203,6 +1210,139 @@ async fn apply_automatic(hc: &mut HookCtx<'_>, company: Uuid, bank_account: Uuid
         }
     }
     Ok((ruled, failures))
+}
+
+// ───────────────────────────── bank feeds ─────────────────────────────
+
+/// Stores one statement line as a submitted bank transaction of `bank` with engine rights (its hash is engine-set);
+/// the caller's rights were checked by the caller. A line whose hash another transaction took meanwhile fails on the
+/// unique key `[bank_account, transaction_hash]`.
+async fn store_line(hc: &mut HookCtx<'_>, bank: Uuid, l: &Line, hash: &str) -> Result<Uuid> {
+    let engine = elevated(hc.ctx);
+    let text_or_null = |v: &str| if v.is_empty() { Value::Null } else { json!(v) };
+    let mut t = Doc::new();
+    t.insert("bank_account".into(), json!(bank.to_string()));
+    t.insert("date".into(), json!(l.date.to_string()));
+    t.insert("deposit".into(), money(l.deposit));
+    t.insert("withdrawal".into(), money(l.withdrawal));
+    t.insert("description".into(), json!(l.description));
+    t.insert("reference_number".into(), text_or_null(&l.reference));
+    t.insert("bank_reference".into(), text_or_null(&l.bank_reference));
+    t.insert("transaction_hash".into(), json!(hash));
+    let created = hc.kernel.insert_tx(&engine, hc.tx, "BankTransaction", t).await?;
+    let tid = id(&created, "id").unwrap_or_default();
+    hc.kernel.submit_tx(&engine, hc.tx, "BankTransaction", tid, None).await?;
+    Ok(tid)
+}
+
+/// The bank account a feed's account reference names: `(id, company)`, not disabled.
+async fn fed_account(hc: &mut HookCtx<'_>, connection: &str, account_ref: &str) -> Result<Option<(Uuid, Uuid)>> {
+    Ok(sqlx::query_as(
+        "select id, company from e_bank_account where tenant_id = $1 and feed_connection = $2 and feed_account_ref = $3 and not coalesce(disabled, false)",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(connection)
+    .bind(account_ref)
+    .fetch_optional(&mut **hc.tx)
+    .await?)
+}
+
+/// Takes one feed line onto `bank`: a duplicate of a transaction already there, or a new submitted transaction with
+/// the provider's id as its bank reference, the automatic rule that fits applied. `true` when it made one.
+async fn take(hc: &mut HookCtx<'_>, bank: Uuid, company: Uuid, line: &Doc) -> Result<bool> {
+    let fid = id(line, "id").ok_or_else(|| Error::internal("no id"))?;
+    let external = s(line, "external_id").unwrap_or_default().to_string();
+    let hash = rules::reference_hash(bank, &external);
+    let there: bool = sqlx::query_scalar(
+        "select exists (select 1 from e_bank_transaction where tenant_id = $1 and bank_account = $2 and transaction_hash = $3 and docstatus < 2)",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(bank)
+    .bind(&hash)
+    .fetch_one(&mut **hc.tx)
+    .await?;
+    let mut v = Doc::new();
+    let made = if there {
+        v.insert("state".into(), json!("Duplicate"));
+        false
+    } else {
+        let date = opt_date(line, "date").ok_or_else(|| Error::field("date", "is required"))?;
+        let l = Line::new(date, d(line, "amount"), s(line, "description").unwrap_or_default(), s(line, "reference").map(str::to_string), Some(external));
+        let tid = store_line(hc, bank, &l, &hash).await?;
+        apply_automatic(hc, company, bank, &[(tid, &l)]).await?;
+        v.insert("state".into(), json!("Imported"));
+        v.insert("bank_transaction".into(), json!(tid.to_string()));
+        true
+    };
+    hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "BankFeedLine", fid, v).await?;
+    Ok(made)
+}
+
+/// `take_feed_lines` on a linked bank account: its waiting feed lines, oldest first, 500 at most, each in a
+/// savepoint (one that fails stays Waiting and is counted in `left`).
+async fn take_feed_lines(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
+    hc.ctx.require("BankTransaction", Action::Create)?;
+    hc.ctx.require("BankTransaction", Action::Submit)?;
+    if b(doc, "disabled") {
+        return Err(Error::invalid("this bank account is disabled"));
+    }
+    let bank = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let company = id(doc, "company").ok_or_else(|| Error::internal("no company"))?;
+    let (Some(connection), Some(account_ref)) = (s(doc, "feed_connection"), s(doc, "feed_account_ref")) else {
+        return Err(Error::invalid("link this account to a feed first"));
+    };
+    let waiting: Vec<Uuid> = sqlx::query_scalar(
+        "select id from e_bank_feed_line where tenant_id = $1 and connection = $2 and account_ref = $3 and state = 'Waiting' \
+         order by date, created_at, id limit 501",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(connection)
+    .bind(account_ref)
+    .fetch_all(&mut **hc.tx)
+    .await?;
+    let (mut imported, mut duplicates, mut left) = (0usize, 0usize, waiting.len().saturating_sub(500));
+    for fid in waiting.into_iter().take(500) {
+        let line = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "BankFeedLine", fid, true).await?;
+        if s(&line, "state") != Some("Waiting") {
+            continue;
+        }
+        sqlx::query("savepoint feed_line").execute(&mut **hc.tx).await?;
+        match take(hc, bank, company, &line).await {
+            Ok(made) => {
+                sqlx::query("release savepoint feed_line").execute(&mut **hc.tx).await?;
+                if made { imported += 1 } else { duplicates += 1 }
+            }
+            Err(e) => {
+                sqlx::query("rollback to savepoint feed_line").execute(&mut **hc.tx).await?;
+                tracing::warn!(line = %fid, "a feed line could not be taken: {e}");
+                left += 1;
+            }
+        }
+    }
+    Ok(json!({"imported": imported, "duplicates": duplicates, "left": left}))
+}
+
+/// A feed line, as a connection's pull writes it: it has an amount, and on arrival becomes a bank transaction of the
+/// bank account linked to its connection and account reference (or waits for one to be linked).
+pub struct BankFeedLineHook;
+
+#[async_trait]
+impl DocHook for BankFeedLineHook {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        if d(doc, "amount").is_zero() {
+            return Err(Error::field("amount", "a feed line has an amount"));
+        }
+        Ok(())
+    }
+
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
+        if old.is_some() || s(doc, "state").is_some_and(|st| st != "Waiting") {
+            return Ok(());
+        }
+        let (connection, account_ref) = (s(doc, "connection").unwrap_or_default().to_string(), s(doc, "account_ref").unwrap_or_default().to_string());
+        let Some((bank, company)) = fed_account(hc, &connection, &account_ref).await? else { return Ok(()) };
+        take(hc, bank, company, doc).await.map(|_| ())
+    }
 }
 
 /// A Bank Rule's own checks: its pattern compiles (at most 300 characters), and a journal rule does not book

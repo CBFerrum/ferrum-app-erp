@@ -1,5 +1,21 @@
 # Changelog
 
+## Finance 0.11.0: bank feeds through a connection's pull
+
+An administrator describes a bank's or an aggregator's API once as a connection (docs/bank-feeds.md has a worked
+description with a placeholder host); its pull writes each transaction as a **Bank Feed Line** (a new entity, as the
+system: people only read and delete them), and Finance turns it into a submitted bank transaction of the bank account
+whose new Feed Connection and Feed Account Reference name it, in the same transaction. No provider is named in code.
+
+- **Once.** A feed line is unique by connection and provider's id; the transaction's hash is the provider's id as the
+  bank's reference, so a line a statement file already brought (camt's `AcctSvcrRef`, OFX's `FITID`) is marked
+  Duplicate and nothing is added.
+- **Automatic bank rules** apply to fed lines as to imported ones.
+- **Waiting lines.** A line for an account not linked yet waits; `finance.bank_account.take_feed_lines` (the bank
+  account's Take Feed Lines button) takes up to 500, each in a savepoint, and says how many are left.
+- A bank account's feed fields are both given or neither, and no two accounts share them. README: the bank row's
+  footnote says what is there; the roadmap line is reworded, not ticked.
+
 ## Finance 0.10.0: bank rules book a line no entry in the books explains
 
 A **Bank Rule** (Finance menu, a new entity) says what to book for a statement line with no voucher: lines of one bank

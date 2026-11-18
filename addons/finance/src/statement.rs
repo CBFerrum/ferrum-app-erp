@@ -44,7 +44,7 @@ pub struct Line {
 }
 
 impl Line {
-    fn new(date: NaiveDate, amount: Decimal, description: &str, reference: Option<String>, bank_reference: Option<String>) -> Line {
+    pub(crate) fn new(date: NaiveDate, amount: Decimal, description: &str, reference: Option<String>, bank_reference: Option<String>) -> Line {
         let cut = |s: &str, n: usize| s.trim().chars().take(n).collect::<String>().trim().to_string();
         Line {
             date,

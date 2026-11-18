@@ -59,7 +59,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 | 📦 **Version** | `0.33.1`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
-| ➕ **Add-ons** | 7 for operations and finance (59 more entities, 23 more reports) and 26 country add-ons, all in this repository |
+| ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
 | 🔗 **Depends on** | Ferrum platform `>=0.4.0, <0.5` (its shared core, parties, products and project records) |
 | 🤝 **Works with** | Point of Sale, Commerce, CRM, HR, Assets, Field Service and Bookings, which post through its engine; Operations, which carries the warehouse's and shop floor's devices |
 | 🗣️ **Languages** | English, Arabic and Hindi; pages mirror right to left |
@@ -398,7 +398,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.10.0)
+### 💼 Finance add-on (0.11.0)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CAMT.053, CAMT.052,
   MT940, OFX and QFX files, or a CSV whose columns are guessed or saved once as the bank's **statement format**
@@ -408,7 +408,9 @@ add-on brings it.
   keyboard shortcuts, many-to-one matches, a payment or journal entry made from a line, the difference always in
   view. **Bank rules** book a line no entry explains (its text, a pattern, direction and amount range) as a
   journal to an account or a payment from or to a party, by hand, for every offered line at once, or as lines are
-  imported; an exact match in the books always wins over a rule.
+  imported; an exact match in the books always wins over a rule. A **bank feed** is a connection you describe (no
+  bank is built in): its pull brings each account's transactions, which arrive as submitted bank transactions past
+  the same duplicate check (docs/bank-feeds.md).
 - **Payment allocation**: a party's payments, credit notes and journal credits applied to open invoices in one
   document, oldest first, with each pairing's exchange gain or loss.
 - **Payment runs**: bills due by a day and those whose early-payment discount is open, leaving out bills on hold;
@@ -738,7 +740,7 @@ outside service and a retry never sends twice.
 
 | Add-on | Entities |
 |---|---|
-| 💼 Finance | Bank Account, Bank Transaction, Statement Format, Bank Rule, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
+| 💼 Finance | Bank Account, Bank Transaction, Bank Feed Line, Statement Format, Bank Rule, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
 | 📋 Procurement | Material Request, Request for Quotation, Supplier Quotation, Supplier Scorecard, Scorecard Period, Procurement Settings |
 | 🗃️ Stock Operations | Stock Reconciliation, Landed Cost Voucher, Pick List, Packing Slip, Batch, Quality Inspection, Quality Inspection Template, Item Attribute, Product Bundle |
 | ⚙️ Manufacturing Operations | Workstation, Workstation Type, Operation, Routing, Job Card, Production Plan, Subcontracting BOM, Subcontracting Order, Subcontracting Receipt |
@@ -880,7 +882,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Open source | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 | No per-user licence fee | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 
-<sub>¹ CSV, CAMT.053, CAMT.052, MT940 and OFX files; no feed yet. ² 26 countries, each an add-on; the leaders
+<sub>¹ Files in five formats, and a feed you describe as a connection; no bank is built in. ² 26 countries, each an add-on; the leaders
 cover many more. ³ Revenue is deferred and recognised by the day, without allocation across performance
 obligations. ⁴ Done in the Ferrum Assets app, which posts to this ledger. ⁵ Done in the Ferrum CRM app, which
 makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You describe each carrier's calls; none
@@ -913,6 +915,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **Finance 0.11.0** Bank feeds: a connection's pull brings a bank account's transactions, taken once, past the same duplicate check as a file.
 - [x] **Finance 0.10.0** Bank rules book a statement line no entry explains, by hand, in bulk or on import, never over money the books already hold.
 - [x] **Finance 0.9.0** Statements from CAMT.053, CAMT.052, MT940 and OFX files, and a bank's CSV whose columns are saved once, all as statement formats that are records.
 - [x] **0.33.0** Upkeep runs one workspace at a time, on whichever replica is free; the journal's partitions once a day per replica.
@@ -930,7 +933,7 @@ app.</sub>
 ### 🔜 Next up
 
 **Banking**
-- [ ] Bank feeds, so transactions arrive without a file.
+- [ ] Bank feeds: files in five formats, and a feed you describe as a connection; no bank is built in yet.
 - [x] Reconciliation rules that book a line by its description.
 
 **Tax and compliance**

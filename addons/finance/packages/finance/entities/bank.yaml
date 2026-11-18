@@ -20,6 +20,8 @@
     - {name: opening_balance, type: currency, currency: currency, label: Statement Opening Balance, description: The bank's balance on the opening date; the reconciliation statement adds imported transactions to it}
     - {name: opening_date, type: date, label: Statement Opening Date}
     - {name: statement_format, type: link, to: StatementFormat, label: Statement Format, description: "Read this account's statements with it when an import names none"}
+    - {name: feed_connection, type: data, label: Feed Connection, description: "The name of the connection whose pull brings this account's transactions"}
+    - {name: feed_account_ref, type: data, label: Feed Account Reference, description: "The provider's id of this account, as the feed's lines carry it"}
     - {name: is_default, type: check, in_list: true}
     - {name: disabled, type: check, in_filter: true}
   unique: [[company, account_name]]
@@ -79,6 +81,16 @@
                   books: {type: array}, truncated: {type: boolean}, books_truncated: {type: boolean}}}
         completion: "Everything the reconciliation screen draws; nothing is saved"
     - {name: accept_matches, label: Accept Matches, permission: read, hidden: true}
+    # Feed lines that arrived before the account was linked (docs/bank-feeds.md).
+    - name: take_feed_lines
+      label: Take Feed Lines
+      permission: write
+      condition: "!isEmpty(doc.feed_connection) && !isEmpty(doc.feed_account_ref)"
+      params: []
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {imported: {type: integer}, duplicates: {type: integer}, left: {type: integer}}}
+        completion: "Up to 500 waiting feed lines of this account are bank transactions, or duplicates of ones already there"
     # Books each listed line by its rule through the line's own apply_rule, all or none.
     - name: apply_rules
       label: Apply Bank Rules
@@ -201,3 +213,22 @@
     - {name: some_condition, check: "!isEmpty(doc.text_contains) || !isEmpty(doc.text_pattern) || !isEmpty(doc.amount_min) || !isEmpty(doc.amount_max)", message: "Give the rule a text, a pattern or an amount range: one with none would book every line"}
     - {name: range_in_order, check: "isEmpty(doc.amount_min) || isEmpty(doc.amount_max) || doc.amount_max >= doc.amount_min", message: "The largest amount cannot be below the smallest"}
   list: {columns: [priority, rule_name, bank_account, direction, book_as, automatic], sort: priority asc}
+
+- name: BankFeedLine
+  label: Bank Feed Line
+  module: finance
+  kind: master
+  title_field: external_id
+  description: "One transaction as a bank feed delivered it. It becomes a bank transaction of the bank account its account reference names."
+  fields:
+    - {name: connection, type: data, required: true, read_only: true, in_list: true, in_filter: true, description: "The connection that pulled it"}
+    - {name: account_ref, type: data, required: true, read_only: true, in_list: true, in_filter: true, label: Account Reference, description: "The provider's id of the bank account"}
+    - {name: external_id, type: data, required: true, read_only: true, in_list: true, label: Provider's Id}
+    - {name: date, type: date, required: true, read_only: true, in_list: true}
+    - {name: amount, type: decimal, required: true, read_only: true, in_list: true, description: "Money in is positive"}
+    - {name: description, type: text, read_only: true}
+    - {name: reference, type: data, read_only: true}
+    - {name: state, type: select, options: [Waiting, Imported, Duplicate], default: Waiting, read_only: true, in_list: true, in_filter: true}
+    - {name: bank_transaction, type: link, to: BankTransaction, read_only: true}
+  unique: [[connection, external_id]]
+  list: {columns: [date, connection, account_ref, amount, state], sort: date desc}
