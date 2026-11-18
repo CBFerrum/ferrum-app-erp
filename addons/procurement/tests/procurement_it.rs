@@ -54,10 +54,18 @@ fn rows(doc: &Doc, table: &str) -> Vec<Doc> {
 #[derive(Default)]
 struct Mails(Mutex<Vec<(String, String, String)>>);
 
+/// Set: the next mail is taken, then the send never returns (the replica sending it dies first).
+static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+
 #[async_trait]
 impl Mailer for Mails {
     async fn send(&self, to: &str, subject: &str, html: &str) -> ferrum_kernel::Result<()> {
         self.0.lock().unwrap().push((to.to_string(), subject.to_string(), html.to_string()));
+        let died = HANG.lock().unwrap().take();
+        if let Some(died) = died {
+            died.notify_one();
+            std::future::pending::<()>().await;
+        }
         Ok(())
     }
 }
@@ -760,6 +768,45 @@ async fn scenario() {
         json!("Pending"),
         "a cancelled quotation reopens the invitation"
     );
+    // Sent again: one mail is handed over and the replica sending it dies before marking it; the next does not mail it
+    // again, and says it may have gone.
+    t.action(&buyer, "RequestForQuotation", rfq_id, "send", json!({"suppliers": [steel.to_string(), fast.to_string()]})).await;
+    let mailed = mails.0.lock().unwrap().len();
+    let events: Vec<ferrum_kernel::outbox::Event> = {
+        let mut tx = t.k.db.system_tx().await.unwrap();
+        let rows: Vec<(i64, Uuid, Value)> = sqlx::query_as(
+            "update outbox set processed_at = now() where topic = 'procurement.rfq_email' and processed_at is null returning id, tenant_id, payload",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        rows.into_iter()
+            .map(|(id, tenant_id, payload)| ferrum_kernel::outbox::Event {
+                id,
+                tenant_id,
+                topic: "procurement.rfq_email".into(),
+                payload,
+                ..Default::default()
+            })
+            .collect()
+    };
+    assert_eq!(events.len(), 2);
+    let gone = Arc::new(tokio::sync::Notify::new());
+    *HANG.lock().unwrap() = Some(gone.clone());
+    use ferrum_kernel::EventSink;
+    tokio::select! {
+        r = ferrum_procurement::rfq::RfqMailer.on_event(&t.k, &events[0]) => panic!("this send never returns: {r:?}"),
+        () = gone.notified() => {}
+    }
+    for ev in &events {
+        ferrum_procurement::rfq::RfqMailer.on_event(&t.k, ev).await.expect("the next replica");
+    }
+    assert_eq!(mails.0.lock().unwrap().len() - mailed, 2, "each supplier mailed once more, not twice");
+    let row = events[0].payload["row"].as_str().unwrap().to_string();
+    let invite = rows(&t.get("RequestForQuotation", rfq_id).await, "suppliers").into_iter().find(|r| r["id"] == json!(row)).unwrap();
+    let error = invite["email_error"].as_str().unwrap_or_default();
+    assert!(invite["email_status"] == json!("Failed") && error.contains("may have been sent"), "{invite:?}");
     t.cancel(&buyer, "RequestForQuotation", rfq_id).await;
     assert_eq!(t.site("GET", &fast_token, &[], "", "").await.status, 410);
 
