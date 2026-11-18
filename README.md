@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.33.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.33.1-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.33.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.33.1`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -423,7 +423,7 @@ add-on brings it.
 - **Reports:** Finance Overview (Accounts today), Budget Variance, Bank Reconciliation Statement, Cash Flow
   Forecast, Receivables by Installment Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
 
-### 📋 Procurement add-on (0.2.0)
+### 📋 Procurement add-on (0.2.1)
 
 - **Material requests** to buy, transfer, issue, manufacture or receive from a customer, each line tracking
   what was ordered and received; purchase requests become purchase orders grouped by preferred supplier.
@@ -573,7 +573,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.9.0 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇮🇳 | India | `ferrum-india` 0.9.1 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
 | 🇪🇺 | European Union | `ferrum-eu` 0.5.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.2.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.2.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
@@ -581,13 +581,13 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇮🇹 | Italy | `ferrum-eu-members` 0.2.0 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
 | 🇵🇱 | Poland | `ferrum-eu-members` 0.2.0 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
 | 🇵🇹 | Portugal | `ferrum-eu-members` 0.4.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
-| 🇷🇴 | Romania | `ferrum-eu-members` 0.3.0 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
+| 🇷🇴 | Romania | `ferrum-eu-members` 0.3.1 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
 | 🇪🇸 | Spain | `ferrum-eu-members` 0.2.0 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
-| 🇬🇧 | United Kingdom | `ferrum-gb` 0.4.0 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
-| 🇺🇸 | United States | `ferrum-us` 0.3.0 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
+| 🇬🇧 | United Kingdom | `ferrum-gb` 0.4.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
+| 🇺🇸 | United States | `ferrum-us` 0.3.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
 | 🇨🇦 | Canada | `ferrum-ca` 0.2.0 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
 | 🇸🇬 | Singapore | `ferrum-countries` 0.4.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.5.0 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.5.1 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
 | 🇮🇩 | Indonesia | `ferrum-countries` 0.4.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
 | 🇹🇭 | Thailand | `ferrum-countries` 0.4.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
 | 🇵🇭 | Philippines | `ferrum-countries` 0.4.0 | VAT 12% | 2550Q as a return definition | — |
@@ -908,6 +908,7 @@ app.</sub>
 ### ✅ Recently shipped
 
 - [x] **0.33.0** Upkeep runs one workspace at a time, on whichever replica is free; the journal's partitions once a day per replica.
+- [x] **0.33.1** A request to an authority, or a supplier's mail, delivered twice is not sent twice: a repeat asks the authority, or leaves it to a person.
 - [x] **0.32.3** A dump of the database holds the journal's lines: its yearly partitions carry the journal's policy.
 - [x] **0.32.2** The interface is rebuilt on Ferrum-Frontend 5e2661f: the Customize page no longer offers the change-set export and import.
 - [x] **0.32.1** The United Kingdom's and Romania's sign-in callback pages show the query's text as text.

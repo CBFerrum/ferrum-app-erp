@@ -1,5 +1,36 @@
 # Changelog
 
+## ERP 0.33.1: a request delivered twice is not sent twice
+
+The outbox delivers each request at least once: again when an attempt fails, and again, even after the connector
+finished, when the server handling it stops mid-event. Six connectors sent again on such a repeat. Nothing another app
+calls changes: ERP's own add-ons were the only callers of `submission::record`, now `record_while`. The add-ons' releases: United Kingdom 0.4.1, India 0.9.1, Malaysia 0.5.1, Romania 0.3.1, Procurement
+0.2.1, United States 0.3.1.
+
+- **What could happen.** A VAT return filed with HMRC and delivered again was posted again; HMRC refused the
+  duplicate, and the refusal was recorded over the receipt: the return showed Failed while HMRC had it. A cancelled
+  e-invoice or a made e-way bill asked of the IRP again was refused, and the invoice went back to Generated (or the
+  e-way bill to Failed) while the IRP had done it. MyInvois took a second document for a validated invoice, which went
+  back to Submitted; ANAF got an invoice twice, and Validated went back to Uploaded. A supplier got a request for
+  quotation's mail twice. A void was posted to AvaTax twice.
+- **What prevents it now.** Every connector sends nothing for a document whose answer is recorded, and records an
+  answer only while the document still waits for it (`submission::record_while`, the record locked), so a success is
+  never written over. Just before a call it asks whether an earlier delivery began it (`submission::first_call`, the
+  platform's `outbox::first_time` in a transaction of its own; none is open across a call). When one did, it asks the
+  receiver what became of it instead of sending again: HMRC for the return by its period key; the IRP for the e-invoice
+  and the e-way bill by the invoice's IRN; LHDN for a document's status; AvaTax for the transaction by its code. A new
+  e-invoice still relies on the IRP's own key (2150) and an AvaTax commit on createoradjust by the invoice's code.
+- **Where the receiver cannot be asked, a person decides.** A MyInvois submission or an e-Factura upload whose answer
+  was lost is not sent again: the invoice stays Pending, saying it may have reached the receiver (for Romania, record its
+  upload index from ANAF's messages; for Malaysia, look it up in the MyInvois portal: no action yet records LHDN's answer
+  by hand). A request for quotation's mail is not sent again: the invitation is Failed, saying it may have been sent,
+  for the buyer to send again. This also applies after a call that failed, as it may have reached the receiver.
+- **India's sign-in holds no transaction.** The company's IRP session used to be made while a transaction and an
+  advisory lock were held for as long as the IRP took. Now the replica that signs in marks the company as signing in
+  for a minute and commits; another that needs a session meanwhile is told to try again.
+
+No real portal was called: each case is tested against the suites' stand-ins.
+
 ## ERP 0.33.0 and every add-on's next minor release: upkeep is one workspace's
 
 Needs platform 0.4.0 (Ferrum's app API with upkeep of one workspace, its `docs/app-contract.md`, *Upkeep*): every
