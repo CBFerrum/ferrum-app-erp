@@ -105,7 +105,6 @@ impl T {
         let k: Arc<Kernel> = Kernel::boot(pool, Catalog::from_packages(packages).unwrap(), hooks, settings, None).await.expect("boot");
         k.set_file_store(Arc::new(MemFiles::default()));
         ferrum_domain::maintenance(&k).await.expect("maintenance");
-        ferrum_app_erp::maintenance(&k).await.expect("partitions");
         let tenant = k
             .create_tenant(NewTenant {
                 slug: "fin".into(),

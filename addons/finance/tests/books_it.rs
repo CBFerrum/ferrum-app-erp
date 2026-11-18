@@ -219,7 +219,6 @@ async fn scenario() {
     }
     let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
     let tenant = k
         .create_tenant(NewTenant {
             slug: "books".into(),
@@ -959,14 +958,14 @@ async fn revaluation(t: &mut T) {
     // Run again and let its day come: the daily upkeep takes the difference out, once, and records the day.
     let second = t.make(&am, "ExchangeRevaluation", draft.clone()).await;
     assert_eq!(t.gl("Exchange Gain or Loss").await, n("-600"));
-    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    ferrum_finance::maintenance(&t.k, t.tenant).await.expect("upkeep");
     assert_eq!(t.gl("Exchange Gain or Loss").await, n("-600"), "2999 has not come");
     {
         let mut tx = t.k.db.system_tx().await.unwrap();
         sqlx::query("update e_exchange_revaluation set reversal_date = '2026-05-01' where id = $1").bind(uid(&second)).execute(&mut *tx).await.unwrap();
         tx.commit().await.unwrap();
     }
-    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    ferrum_finance::maintenance(&t.k, t.tenant).await.expect("upkeep");
     assert_eq!((t.gl("Exchange Gain or Loss").await, t.gl("Debtors").await, t.gl("EUR Bank").await), (Decimal::ZERO, n("18000"), n("27000")));
     assert_eq!(t.get("ExchangeRevaluation", uid(&second)).await["reversed_on"], json!("2026-05-01"));
     let may_first: i64 = t
@@ -976,7 +975,7 @@ async fn revaluation(t: &mut T) {
         )
         .await;
     assert_eq!(may_first, 1, "the reversal is dated its own day");
-    ferrum_finance::maintenance(&t.k).await.expect("upkeep");
+    ferrum_finance::maintenance(&t.k, t.tenant).await.expect("upkeep");
     assert_eq!(
         t.count("select count(*) from journal_entry where tenant_id = $1 and source_id = $2", Some(uid(&second))).await,
         2,

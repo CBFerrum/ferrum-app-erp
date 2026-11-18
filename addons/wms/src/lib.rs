@@ -135,20 +135,20 @@ impl EventSink for CommandEvents {
     }
 }
 
-/// Periodic upkeep: replenishment that fell due, and a daily count of customers' bins for billing.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    let tenants: Vec<Uuid> = {
-        let mut tx = k.db.system_tx().await?;
-        let t = sqlx::query_scalar("select distinct tenant_id from e_managed_warehouse where status = 'Managed'").fetch_all(&mut *tx).await?;
-        tx.commit().await?;
-        t
-    };
-    for tenant in tenants {
-        let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
-        let mut tx = k.db.tenant_tx(tenant).await?;
+/// One workspace's upkeep, which the platform runs about once a minute where WMS is installed, on any replica, and may
+/// run again (docs/app-contract.md, Upkeep in the platform): where it manages a warehouse, replenishment that fell due,
+/// and a daily count of customers' bins for billing.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
+    let mut tx = k.db.tenant_tx(tenant).await?;
+    let managed: bool = sqlx::query_scalar("select exists (select 1 from e_managed_warehouse where tenant_id = $1 and status = 'Managed')")
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await?;
+    if managed {
         waves::replenish(k, &ctx, &mut tx).await?;
         billing::snapshot(&mut tx, tenant, ctx.today()).await?;
-        tx.commit().await?;
     }
+    tx.commit().await?;
     Ok(())
 }

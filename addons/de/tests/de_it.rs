@@ -49,9 +49,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let plugins = ferrum_plugins::PluginHost::new(false).expect("plugin host");
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
     let settings = KernelSettings { webhooks_allow_private: true, ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
-    k
+    Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot")
 }
 
 struct T {

@@ -62,9 +62,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
     // The fake services listen on a local address, which only a development server calls.
     let settings = KernelSettings { webhooks_allow_private: true, ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
-    k
+    Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot")
 }
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;

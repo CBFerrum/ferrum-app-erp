@@ -101,7 +101,7 @@ async fn scenario() {
         sqlx::query("update e_stored_value_account set expires_on = $2 where id = $1").bind(vid(&card["account"])).bind(last).execute(&mut *tx).await.unwrap();
     }
     tx.commit().await.unwrap();
-    ferrum_app_erp::maintenance(&t.k).await.expect("the daily upkeep");
+    ferrum_app_erp::maintenance(&t.k, tenant).await.expect("the daily upkeep");
     let state = |card: &Value| {
         let (t, id) = (&t, vid(&card["account"]));
         async move { t.get("StoredValueAccount", id).await["state"].as_str().unwrap().to_string() }

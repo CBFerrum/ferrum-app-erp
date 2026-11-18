@@ -2,12 +2,12 @@
 # GST returns. Its screens are ERP's; recorded as installed wherever its package is.
 id: india
 name: India
-version: 0.8.1
+version: 0.9.0
 publisher: cbferrum
 summary: GST, e-invoices and e-way bills for ERP
 categories: [finance]
 runtime: native
-platform: ">=0.3.9, <0.4"
+platform: ">=0.4.0, <0.5"
 # What the operator chooses for the whole installation (Ferrum docs/app-contract.md, Operator settings), kept as
 # india.<key> and read at each use; the variable, when set, still wins.
 operator_settings:

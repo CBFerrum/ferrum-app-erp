@@ -38,9 +38,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     hooks.app("india", &india_packages, ferrum_india::register);
     hooks.own("india", &india_packages);
     let settings = KernelSettings::default();
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
-    k
+    Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot")
 }
 
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.

@@ -54,6 +54,7 @@ use chrono::Datelike;
 use ferrum_kernel::{HookRegistry, Kernel, Result};
 use pricing::Side;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use uuid::Uuid;
 
 include!(concat!(env!("OUT_DIR"), "/ui.rs"));
@@ -138,14 +139,22 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
     vec![Arc::new(reports::ErpReports)]
 }
 
-/// Periodic upkeep, safe to run on every replica at once: yearly journal partitions (the year before to the year
-/// after UTC's, which holds every workspace's day), and, on each workspace's own day, each company's next fiscal year,
-/// deferred lines recognised, journal entries reversed on their reversal day, and stored value warned of and expired.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    let year = chrono::Utc::now().year();
+/// The day this replica last made sure of the journal's yearly partitions: they are the whole installation's, so once a
+/// day is enough, from whichever workspace's upkeep comes first.
+static PARTITIONED: AtomicI32 = AtomicI32::new(0);
+
+/// The journal's yearly partitions, the year before to the year after UTC's (which holds every workspace's day): once a
+/// day on this replica, one replica at a time (a transaction lock; a replica that does not get it tries again at the
+/// next workspace's turn).
+async fn partitions(k: &Kernel) -> Result<()> {
+    let now = chrono::Utc::now();
+    let day = now.date_naive().num_days_from_ce();
+    if PARTITIONED.load(Ordering::Relaxed) == day {
+        return Ok(());
+    }
+    let year = now.year();
     let mut tx = k.db.system_tx().await?;
     let installed: bool = sqlx::query_scalar("select to_regproc('ferrum_ensure_journal_partitions') is not null").fetch_one(&mut *tx).await?;
-    // One replica at a time; the others skip this round.
     let locked: bool = sqlx::query_scalar("select pg_try_advisory_xact_lock(hashtext('ferrum:journal_partitions'))").fetch_one(&mut *tx).await?;
     if installed && locked {
         let created: i32 = sqlx::query_scalar("select ferrum_ensure_journal_partitions($1, $2)").bind(year - 1).bind(year + 1).fetch_one(&mut *tx).await?;
@@ -154,51 +163,51 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
     }
     tx.commit().await?;
-    // What deferred lines earned or used through the end of last month, in every workspace with
-    // the books (a company's accountant may recognise later days themselves).
-    let mut tx = k.db.system_tx().await?;
-    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    for tenant in tenants {
-        let schema = k.registry.schema(tenant).await?;
-        if !schema.packages.iter().any(|p| p == "accounting") {
-            continue;
-        }
-        let ctx = ferrum_kernel::Ctx::system(tenant, schema);
-        // Every round of a workspace's upkeep is on its own day, not UTC's.
-        let today = ctx.today();
-        let month_end = today.with_day(1).and_then(|first| first.pred_opt()).unwrap_or(today);
-        // Each company's next fiscal year, before anything is posted in it.
-        if let Err(e) = setup::upkeep(k, &ctx, today).await {
-            tracing::warn!(%tenant, "next fiscal years: {e}");
-        }
-        let mut tx = k.db.tenant_tx(tenant).await?;
-        match deferred::recognise(k, &ctx, &mut tx, None, month_end).await {
-            Ok((_, left)) => {
-                tx.commit().await?;
-                for invoice in left {
-                    tracing::warn!(%tenant, "deferred recognition waits: {invoice}");
-                }
-            }
-            Err(e) => tracing::warn!(%tenant, "deferred recognition: {e}"),
-        }
-        if let Err(e) = journal_template::upkeep(k, &ctx, today).await {
-            tracing::warn!(%tenant, "recurring journals: {e}");
-        }
-        if let Err(e) = accounting::upkeep(k, &ctx).await {
-            tracing::warn!(%tenant, "journal entry reversals: {e}");
-        }
-        if let Err(e) = instruments::upkeep(k, &ctx, today).await {
-            tracing::warn!(%tenant, "instruments to deposit: {e}");
-        }
-        if let Err(e) = stored_value::upkeep(k, &ctx, today).await {
-            tracing::warn!(%tenant, "stored value expiry: {e}");
-        }
-        if let Err(e) = shipping::upkeep(k, &ctx, 100).await {
-            tracing::warn!(%tenant, "carrier tracking: {e}");
-        }
+    if locked {
+        PARTITIONED.store(day, Ordering::Relaxed);
     }
     Ok(())
+}
+
+/// One workspace's upkeep. The platform runs it for each workspace with one of ERP's packages, about once a minute, on
+/// whichever replica is free, and may run it again (docs/app-contract.md, Upkeep): every step is safe to repeat. First
+/// the journal's partitions ([`partitions`]); then, where the workspace keeps the books and on its own day: each
+/// company's next fiscal year, deferred lines recognised through the end of last month, recurring journals, journal
+/// entries reversed on their reversal day, instruments to deposit, stored value warned of and expired, and carriers'
+/// tracking. A failing step is logged and stops no other; the first failure is returned.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    partitions(k).await?;
+    let schema = k.registry.schema(tenant).await?;
+    if !schema.packages.iter().any(|p| p == "accounting") {
+        return Ok(());
+    }
+    let ctx = ferrum_kernel::Ctx::system(tenant, schema);
+    let today = ctx.today();
+    let month_end = today.with_day(1).and_then(|first| first.pred_opt()).unwrap_or(today);
+    let mut first: Option<ferrum_kernel::Error> = None;
+    let mut step = |name: &str, outcome: Result<()>| {
+        if let Err(e) = outcome {
+            tracing::warn!(%tenant, "{name}: {e}");
+            first.get_or_insert(e);
+        }
+    };
+    step("next fiscal years", setup::upkeep(k, &ctx, today).await);
+    let deferred = async {
+        let mut tx = k.db.tenant_tx(tenant).await?;
+        let (_, left) = deferred::recognise(k, &ctx, &mut tx, None, month_end).await?;
+        tx.commit().await?;
+        for invoice in left {
+            tracing::warn!(%tenant, "deferred recognition waits: {invoice}");
+        }
+        Ok(())
+    };
+    step("deferred recognition", deferred.await);
+    step("recurring journals", journal_template::upkeep(k, &ctx, today).await.map(|_| ()));
+    step("journal entry reversals", accounting::upkeep(k, &ctx).await);
+    step("instruments to deposit", instruments::upkeep(k, &ctx, today).await.map(|_| ()));
+    step("stored value expiry", stored_value::upkeep(k, &ctx, today).await.map(|_| ()));
+    step("carrier tracking", shipping::upkeep(k, &ctx, 100).await.map(|_| ()));
+    first.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]

@@ -204,7 +204,6 @@ async fn scenario() {
     ferrum_mes::register(&mut hooks);
     let k = Kernel::boot(db, Catalog::from_packages(packages).unwrap(), hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.unwrap();
-    ferrum_app_erp::maintenance(&k).await.unwrap();
     let tenant = k
         .create_tenant(NewTenant {
             slug: "line".into(),

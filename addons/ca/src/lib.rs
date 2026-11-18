@@ -31,7 +31,7 @@ pub fn reports() -> Vec<Arc<dyn ferrum_domain::reports::ReportSource>> {
     vec![Arc::new(tax::CaReports)]
 }
 
-pub async fn maintenance(_k: &Kernel) -> Result<()> {
+pub async fn maintenance(_k: &Kernel, _tenant: uuid::Uuid) -> Result<()> {
     Ok(())
 }
 

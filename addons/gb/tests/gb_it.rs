@@ -120,9 +120,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     hooks.register("*", Arc::new(ferrum_plugins::PluginHook(plugins)));
     // The server's public address (PUBLIC_URL) is what HMRC is told the server is at.
     let settings = KernelSettings { webhooks_allow_private: true, public_url: Some("https://203.0.113.9".into()), ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
-    k
+    Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot")
 }
 
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.

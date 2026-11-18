@@ -1,5 +1,32 @@
 # Changelog
 
+## ERP 0.33.0 and every add-on's next minor release: upkeep is one workspace's
+
+Needs platform 0.4.0 (Ferrum's app API with upkeep of one workspace, its `docs/app-contract.md`, *Upkeep*): every
+manifest here now says `platform: ">=0.4.0, <0.5"`. No interface change. The add-ons' releases: Canada 0.2.0, Germany 0.2.0, European Union 0.5.0, Finance 0.8.0, United Kingdom 0.4.0, India 0.9.0, Manufacturing Execution 0.3.0, Manufacturing Operations 0.3.0, Procurement 0.2.0, Quality 0.3.0, Stock Operations 0.3.0, United States 0.3.0, Warehouse Management 0.4.0, Belgium 0.2.0, Spain 0.2.0, France 0.2.0, Italy 0.2.0, Poland 0.2.0, Portugal 0.4.0, Romania 0.3.0, United Arab Emirates 0.3.0, Australia 0.3.0, China 0.4.0, Indonesia 0.4.0, Japan 0.4.0, Mexico 0.3.0, Malaysia 0.5.0, New Zealand 0.4.0, Philippines 0.4.0, Saudi Arabia 0.4.0, Singapore 0.4.0, Thailand 0.4.0, Vietnam 0.4.0.
+
+- **`maintenance(k, tenant)` does one workspace.** The platform now keeps a row for each workspace with one of an app's
+  packages and runs the app's upkeep for it about once a minute, on whichever replica has a slot free, in place of one
+  replica going through every workspace in turn under the app's lock. ERP's, Finance's, Procurement's and Warehouse
+  Management's upkeep no longer list workspaces (ERP every active one, Finance and Procurement by `installed_package`,
+  Warehouse Management by its managed warehouses): Warehouse Management asks whether the workspace manages one. ERP
+  still does its steps only where the workspace keeps the books. Every other add-on's upkeep was nothing and stays so.
+- **A failing step is returned.** ERP, Finance and Procurement log a failing step and run the others, as before, and
+  now return the first failure: the platform keeps it on the workspace's row for its administrators
+  (`GET /api/admin/upkeep`). ERP used to log and return nothing.
+- **Stored value's SQL is in the accounting package's one file.** `packages/accounting/sql/002_stored_value.sql` built
+  a unique index on `e_stored_value_account`, a table it does not make, in a file after the package's first, which
+  the platform's `scripts/window.py --app` refuses as holding writes on a table with rows. Its statements now end
+  `001_ledger.sql`, the file that runs against the tables the schema sync has just made, as every other package keeps
+  one file. The accounting package's SQL changes: a database an earlier build made is made again from empty.
+- **The journal's partitions, once a day on a replica.** They are the whole installation's: the first workspace's
+  upkeep each day on a replica makes sure of the year before to the year after (`ferrum_ensure_journal_partitions`, which
+  makes each year with the platform's `ferrum_create_partition`, as 0.32.3 does), under the same transaction lock as
+  before, and a replica that does not get the lock tries again at the next workspace's turn.
+
+For other apps and tests: a suite that called `ferrum_app_erp::maintenance(&k)` at boot "for the partitions" drops the
+call (the accounting package's SQL makes them when the schema syncs); a call for a workspace passes it,
+`maintenance(&k, tenant)`.
 ## ERP 0.32.3: a dump of the database holds the journal's lines
 
 The accounting package's SQL changes (`001_ledger.sql`): a database an earlier build made is made again from empty. It

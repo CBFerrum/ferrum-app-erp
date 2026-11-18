@@ -228,7 +228,6 @@ async fn scenario() {
     ferrum_wms::register(&mut hooks);
     let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
-    ferrum_app_erp::maintenance(&k).await.expect("partitions");
     let tenant = k
         .create_tenant(NewTenant {
             slug: "dock".into(),
@@ -741,10 +740,10 @@ async fn scenario() {
     restock_from_a2["active"] = json!(true);
     t.insert("ReplenishmentRule", restock_from_a2).await;
     assert!(t.qty_in("P-01", "MILK").await < n("5"));
-    ferrum_wms::maintenance(&k).await.expect("upkeep");
+    ferrum_wms::maintenance(&k, tenant).await.expect("upkeep");
     let before = t.tasks().await.iter().filter(|x| x["kind"] == json!("Replenish")).count();
     assert!(before >= 1, "below its minimum");
-    ferrum_wms::maintenance(&k).await.expect("upkeep");
+    ferrum_wms::maintenance(&k, tenant).await.expect("upkeep");
     assert_eq!(t.tasks().await.iter().filter(|x| x["kind"] == json!("Replenish")).count(), before, "not again while one is on its way");
 
     // ───── a second parcel carries only what the first did not ─────

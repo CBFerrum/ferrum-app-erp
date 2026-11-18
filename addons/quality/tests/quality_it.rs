@@ -73,7 +73,6 @@ async fn scenario() {
     assert_eq!(catalog.links_out_of_reach("quality"), Vec::<String>::new(), "whoever fills in a link can look up what it points at");
     let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.unwrap();
-    ferrum_app_erp::maintenance(&k).await.unwrap();
     let tenant = k
         .create_tenant(NewTenant {
             slug: "qa".into(),
