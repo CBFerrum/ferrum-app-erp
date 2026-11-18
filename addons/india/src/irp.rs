@@ -9,7 +9,13 @@
 //!
 //! A session (the IRP's token and session key, for six hours) is kept on the company, sealed
 //! (`in_irp_session`), so every replica uses the same one; two that need a new one at the same
-//! moment make one between them.
+//! moment make one between them: the first marks the company as signing in, for a minute, and signs in with no
+//! transaction open; the other is told to try again.
+//!
+//! A request may reach the connector again (the outbox delivers at least once): nothing is sent for an invoice whose
+//! answer is recorded; an invoice registered already is fetched by its IRN (the IRP refuses a second); a
+//! cancellation or an e-way bill that an earlier delivery began is first looked up at the IRP by the invoice's IRN, and
+//! asked for only if the IRP has not done it.
 //!
 //! The company's address (`in_irp_url`), to which its credentials go, is held to [`IRP`]'s hosts
 //! and those the operator adds, when it is saved and again before anything is sent.
@@ -20,6 +26,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use chrono::{DateTime, Duration as Span, NaiveDateTime, TimeZone, Utc};
 use ferrum_app_erp::providers::Provider;
+use ferrum_app_erp::submission::first_call;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, Error, EventSink, Kernel, Result};
 use serde_json::{Map, Value, json};
@@ -31,6 +38,7 @@ const INVOICE: &str = "/eicore/v1.03/Invoice";
 const BY_IRN: &str = "/eicore/v1.03/Invoice/irn/";
 const CANCEL: &str = "/eicore/v1.03/Invoice/Cancel";
 const EWB: &str = "/eiewb/v1.03/ewaybill";
+const EWB_BY_IRN: &str = "/eiewb/v1.03/ewaybill/irn/";
 /// NIC's error codes for an IRN already generated, and for a token it no longer knows.
 const DUPLICATE: &str = "2150";
 const STALE_TOKEN: &[&str] = &["1005", "1004"];
@@ -353,27 +361,44 @@ impl IrpConnector {
 
     /// The company's session: the one it keeps while that lasts (at this address, for this user, and not `stale`, a
     /// token the IRP has forgotten), else a new one, kept sealed on the company. One sign-in at a time per company,
-    /// whichever replica asks: a second waits under the lock, then finds the first's session.
+    /// whichever replica asks: decided under a lock, in a short transaction, where the one to sign in marks the company
+    /// as signing in (for a minute) and the sign-in itself is made with no transaction open; another replica that
+    /// finds a sign-in under way is told to try again, and then finds the session.
     async fn session(k: &Kernel, ctx: &Ctx, cfg: &Config, stale: Option<&str>) -> Result<std::result::Result<Session, String>> {
+        let lock = format!("ferrum-india|irp-session|{}|{}", cfg.tenant, cfg.company);
+        let kept = async |tx: &mut ferrum_kernel::Tx| -> Result<Option<String>> {
+            sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(&lock).execute(&mut **tx).await?;
+            Ok(crate::keys::field(k, tx, cfg.tenant, "Company", cfg.company, SESSION).await?.map(|v| v.to_string()))
+        };
+        let save = async |tx: &mut ferrum_kernel::Tx, text: Value| {
+            let mut patch = Map::new();
+            patch.insert(SESSION.into(), text);
+            k.update_tx(&sys(ctx), tx, "Company", cfg.company, patch, None).await.map(drop)
+        };
         let mut tx = k.db.tenant_tx(cfg.tenant).await?;
-        sqlx::query("select pg_advisory_xact_lock(hashtext($1))")
-            .bind(format!("ferrum-india|irp-session|{}|{}", cfg.tenant, cfg.company))
-            .execute(&mut *tx)
-            .await?;
-        let kept =
-            crate::keys::field(k, &mut tx, cfg.tenant, "Company", cfg.company, SESSION).await?.map(|v| v.to_string()).as_deref().and_then(Session::from_text);
-        if let Some(s) = kept.filter(|s| s.until > Utc::now() && s.endpoint == cfg.endpoint() && Some(s.token.as_str()) != stale) {
+        let text = kept(&mut tx).await?;
+        if let Some(s) =
+            text.as_deref().and_then(Session::from_text).filter(|s| s.until > Utc::now() && s.endpoint == cfg.endpoint() && Some(s.token.as_str()) != stale)
+        {
             tx.commit().await?;
             return Ok(Ok(s));
         }
-        let fresh = Self::sign_in(k, cfg).await?;
-        if let Ok(s) = &fresh {
-            let mut patch = Map::new();
-            patch.insert(SESSION.into(), json!(s.to_text()));
-            k.update_tx(&sys(ctx), &mut tx, "Company", cfg.company, patch, None).await?;
+        let signing = |text: &str| serde_json::from_str::<Value>(text).ok()?["signing_in_until"].as_str().and_then(|t| DateTime::parse_from_rfc3339(t).ok());
+        if text.as_deref().and_then(signing).is_some_and(|until| until > Utc::now()) {
+            return Err(Error::Unavailable("another server is signing in to the IRP for this company; trying again".into()));
+        }
+        let claim = json!({"signing_in_until": (Utc::now() + Span::minutes(1)).to_rfc3339()}).to_string();
+        save(&mut tx, json!(claim)).await?;
+        tx.commit().await?;
+        let fresh = Self::sign_in(k, cfg).await;
+        // Kept only over this replica's own mark (a mark that lapsed may have passed to another); the mark is given up
+        // whatever happened.
+        let mut tx = k.db.tenant_tx(cfg.tenant).await?;
+        if kept(&mut tx).await?.as_deref() == Some(claim.as_str()) {
+            save(&mut tx, fresh.as_ref().ok().and_then(|f| f.as_ref().ok()).map_or(Value::Null, |s| json!(s.to_text()))).await?;
         }
         tx.commit().await?;
-        Ok(fresh)
+        fresh
     }
 
     /// One encrypted call (signing in when needed, and once more when the IRP has forgotten the
@@ -458,14 +483,27 @@ impl IrpConnector {
         }
     }
 
-    async fn cancel(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, invoice: Uuid, payload: &Value) -> Result<()> {
+    async fn cancel(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, ev: &Event, invoice: Uuid, payload: &Value) -> Result<()> {
+        // An earlier delivery asked for it: the IRP may have cancelled it before that replica heard back.
+        if !first_call(k, ev, "india.irp.cancel").await? {
+            let irn = payload["Irn"].as_str().unwrap_or_default();
+            match self.call(k, ctx, cfg, "GET", &format!("{BY_IRN}{irn}"), None).await? {
+                Answer::Data(d) if d["Status"] == "CNL" => {
+                    return Self::record(k, ctx, invoice, "record_e_invoice_cancellation", d, "record_e_invoice_cancellation_failure").await;
+                }
+                Answer::Data(_) => {}
+                Answer::Refused { code, message, .. } => {
+                    return Err(Error::Unavailable(format!("the IRP did not say whether it cancelled the e-invoice ({code}: {message})")));
+                }
+            }
+        }
         match self.call(k, ctx, cfg, "POST", CANCEL, Some(payload)).await? {
             Answer::Data(d) => Self::record(k, ctx, invoice, "record_e_invoice_cancellation", d, "record_e_invoice_cancellation_failure").await,
             Answer::Refused { code, message, .. } => Self::fail(k, ctx, invoice, "record_e_invoice_cancellation_failure", &format!("{code}: {message}")).await,
         }
     }
 
-    async fn e_way_bill(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, invoice: Uuid, payload: &Value) -> Result<()> {
+    async fn e_way_bill(&self, k: &Kernel, ctx: &Ctx, cfg: &Config, ev: &Event, invoice: Uuid, payload: &Value) -> Result<()> {
         if payload["by_irn"] != json!(true) {
             return Self::fail(
                 k,
@@ -475,6 +513,13 @@ impl IrpConnector {
                 "the IRP makes e-way bills for e-invoices only: make the e-invoice first, or upload the e-way bill JSON on the e-way bill portal",
             )
             .await;
+        }
+        // An earlier delivery asked for it: the IRP may have made it before that replica heard back.
+        if !first_call(k, ev, "india.irp.e_way_bill").await? {
+            let irn = payload["bill"]["Irn"].as_str().unwrap_or_default();
+            if let Answer::Data(d) = self.call(k, ctx, cfg, "GET", &format!("{EWB_BY_IRN}{irn}"), None).await? {
+                return Self::record(k, ctx, invoice, "record_e_way_bill", d, "record_e_way_bill_failure").await;
+            }
         }
         match self.call(k, ctx, cfg, "POST", EWB, Some(&payload["bill"])).await? {
             Answer::Data(d) => Self::record(k, ctx, invoice, "record_e_way_bill", d, "record_e_way_bill_failure").await,
@@ -497,7 +542,17 @@ impl EventSink for IrpConnector {
         let Some(company) = ev.payload["company"].as_str().and_then(|c| c.parse::<Uuid>().ok()) else { return Ok(()) };
         let mut tx = k.db.tenant_tx(ev.tenant_id).await?;
         let company = get(k, &ctx, &mut tx, "Company", company).await?;
+        let doc = get(k, &ctx, &mut tx, "SalesInvoice", invoice).await?;
         tx.commit().await?;
+        // The answer is recorded already (an earlier delivery's): nothing to send.
+        let (field, waiting) = match ev.topic.as_str() {
+            "india.e_invoice.requested" => ("in_e_invoice_status", "Pending"),
+            "india.e_invoice.cancel_requested" => ("in_e_invoice_status", "Cancelling"),
+            _ => ("in_e_way_bill_status", "Pending"),
+        };
+        if s(&doc, field) != Some(waiting) {
+            return Ok(());
+        }
         let cfg = match Self::config(k, ev.tenant_id, &company).await {
             Ok(Some(c)) => c,
             // Not connected: a GSP plugin, or someone at the portal, answers instead.
@@ -508,8 +563,8 @@ impl EventSink for IrpConnector {
         let payload = &ev.payload["payload"];
         match ev.topic.as_str() {
             "india.e_invoice.requested" => self.generate(k, &ctx, &cfg, invoice, payload).await,
-            "india.e_invoice.cancel_requested" => self.cancel(k, &ctx, &cfg, invoice, payload).await,
-            _ => self.e_way_bill(k, &ctx, &cfg, invoice, payload).await,
+            "india.e_invoice.cancel_requested" => self.cancel(k, &ctx, &cfg, ev, invoice, payload).await,
+            _ => self.e_way_bill(k, &ctx, &cfg, ev, invoice, payload).await,
         }
     }
 }
