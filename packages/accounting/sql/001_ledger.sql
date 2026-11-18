@@ -96,16 +96,16 @@ begin
     if to_regclass(name) is null and not exists (
       select 1 from journal_line_default where posting_date >= make_date(y, 1, 1) and posting_date < make_date(y + 1, 1, 1)
     ) then
-      execute format('create table %I partition of journal_line for values from (%L) to (%L)', name, make_date(y, 1, 1), make_date(y + 1, 1, 1));
-      execute format('alter table %I enable row level security', name);
-      execute format('alter table %I force row level security', name);
-      created := created + 1;
+      -- The kernel's way, which gives the year the journal's policies: without them it reads as empty to the system,
+      -- and a dump of the database would hold none of its lines.
+      if ferrum_create_partition('journal_line', name, make_date(y, 1, 1)::text, make_date(y + 1, 1, 1)::text) then
+        created := created + 1;
+      end if;
     end if;
   end loop;
   return created;
 end $$;
 
-select ferrum_ensure_journal_partitions(extract(year from now())::int - 2, extract(year from now())::int + 2);
 
 -- A posting needs an open period of its company on its day: a day in no fiscal year (2062 typed for 2026) is
 -- refused, as is a closed month. It takes its period's row shared as it checks it. Closing the period (an update of
@@ -275,3 +275,6 @@ begin
       'with check (tenant_id = (select ferrum_tenant()) or (select ferrum_is_system()))', t);
   end loop;
 end $$;
+
+-- The years around this one, made once the journal has its policy, which each is given.
+select ferrum_ensure_journal_partitions(extract(year from now())::int - 2, extract(year from now())::int + 2);
