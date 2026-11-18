@@ -103,17 +103,8 @@ pub async fn enqueue(hc: &mut HookCtx<'_>, doc: &Doc, topic: &str, event: Value)
     outbox::enqueue(hc.tx, hc.ctx.tenant, topic, Some(&entity), Some(rid), event).await
 }
 
-/// Sets `values` on `entity`'s record `id` as the system, in a transaction of its own: what a connector records of the
-/// receiver's answer.
-pub async fn record(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, values: Value) -> Result<()> {
-    let Value::Object(v) = values else { return Ok(()) };
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    k.set_values_tx(&sys(ctx), &mut tx, entity, id, v).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-/// [`record`] while the record's status field is one of `from` (`(field, from)`, read with the record locked). A record
+/// Sets `values` on `entity`'s record `id` as the system, in a transaction of its own, while its status field is one of
+/// `from` (`(field, from)`, read with the record locked): what a connector records of the receiver's answer. A record
 /// that has moved on, its answer recorded by an earlier delivery, is left as it is: a success is never written over by
 /// what a repeat heard.
 pub async fn record_while(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, (field, from): (&str, &[&str]), values: Value) -> Result<()> {

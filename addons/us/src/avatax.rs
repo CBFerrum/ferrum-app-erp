@@ -4,12 +4,17 @@
 //! the tax the invoice charged as a tax-amount override, for AvaTax's returns. AvaTax's own
 //! figure comes back with it: an invoice whose tax differs is marked for review. Cancelling the
 //! invoice voids the transaction (`.../transactions/{code}/void`, `DocVoided`).
+//!
+//! A request may reach the connector again (the outbox delivers at least once): an invoice whose commit is recorded
+//! is not sent again (one that was not is, and AvaTax adjusts the transaction of its code rather than adding one); a
+//! void an earlier delivery began is first looked up (`GET .../transactions/{code}`), and recorded when AvaTax has
+//! it cancelled.
 
 use crate::tax::{SALES_TAX, account, tax_code, zip5};
 use crate::util::{d, get, id, rows, s, set, sys};
 use async_trait::async_trait;
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::record;
+use ferrum_app_erp::submission::{first_call, record_while};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, outbox};
 use rust_decimal::Decimal;
@@ -204,12 +209,16 @@ impl EventSink for AvaTax {
         tx.commit().await?;
         let commit = ev.topic == COMMIT_TOPIC;
         let status = s(&current, "us_avatax_status");
-        if status == Some("Voided") {
+        // Its answer is recorded already (an earlier delivery's): nothing to send. An answer is recorded only over the
+        // status the request waits in.
+        let waiting: &[&str] = if commit { &["Pending"] } else { &["Pending", "Committed", "Differs", "Failed"] };
+        if !waiting.contains(&status.unwrap_or_default()) {
             return Ok(());
         }
+        let record = async |values: Value| record_while(k, &ctx, "SalesInvoice", invoice, ("us_avatax_status", waiting), values).await;
         // Cancelled before it was recorded: never recorded (its void finds it voided).
         if commit && current.get("docstatus").and_then(Value::as_i64) == Some(2) {
-            return record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await;
+            return record(json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await;
         }
         let failed = |why: &str| {
             if commit {
@@ -219,25 +228,38 @@ impl EventSink for AvaTax {
             }
         };
         let Some(base) = host(s(&company, "us_avatax_mode").unwrap_or("Off")) else {
-            return record(k, &ctx, "SalesInvoice", invoice, failed("the company no longer reports to AvaTax")).await;
+            return record(failed("the company no longer reports to AvaTax")).await;
         };
         let (Some(account_id), Some(key)) = (s(&company, "us_avatax_account_id"), key) else {
-            return record(k, &ctx, "SalesInvoice", invoice, failed("set the company's AvaTax account ID and license key")).await;
+            return record(failed("set the company's AvaTax account ID and license key")).await;
         };
         let client_id = format!("Ferrum; {}; Rust; 2; ferrum-us", env!("CARGO_PKG_VERSION"));
-        let url = if commit {
-            format!("{base}/api/v2/transactions/createoradjust")
-        } else {
-            let (number, company_code) = (ev.payload["code"].as_str().unwrap_or_default(), ev.payload["company_code"].as_str().unwrap_or_default());
-            let kind = ev.payload["document_type"].as_str().unwrap_or("SalesInvoice");
-            format!("{base}/api/v2/companies/{}/transactions/{}/void?documentType={kind}", segment(company_code), segment(number))
-        };
+        let (number, company_code) = (ev.payload["code"].as_str().unwrap_or_default(), ev.payload["company_code"].as_str().unwrap_or_default());
+        let kind = ev.payload["document_type"].as_str().unwrap_or("SalesInvoice");
+        let transaction = format!("{base}/api/v2/companies/{}/transactions/{}", segment(company_code), segment(number));
+        // A void an earlier delivery began: AvaTax may have voided it before that replica heard back.
+        if !commit && !first_call(k, ev, "us.avatax.void").await? {
+            let call = match AVATAX.client(k, ev.tenant_id, &format!("{transaction}?documentType={kind}"), WAIT).await {
+                Ok((client, url)) => client.get(url).basic_auth(account_id, Some(&key)).header("Accept", "application/json"),
+                Err(Error::Invalid(m)) => return record(failed(&m)).await,
+                Err(e) => return Err(e),
+            };
+            let reply = call.send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
+            let code = reply.status().as_u16();
+            let v: Value = reply.json().await.unwrap_or(Value::Null);
+            match (code, v["status"].as_str()) {
+                (200, Some("Cancelled")) => return record(json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await,
+                (200 | 404, _) => {}
+                _ => return Err(Error::internal(format!("AvaTax did not say whether it voided the transaction ({code}); asking again"))),
+            }
+        }
+        let url = if commit { format!("{base}/api/v2/transactions/createoradjust") } else { format!("{transaction}/void?documentType={kind}") };
         let call = match AVATAX.client(k, ev.tenant_id, &url, WAIT).await {
             Ok((client, url)) => {
                 client.post(url).basic_auth(account_id, Some(&key)).header("X-Avalara-Client", client_id.as_str()).header("Accept", "application/json")
             }
             // An address that is not to be called: said on the invoice, and not tried again.
-            Err(Error::Invalid(m)) => return record(k, &ctx, "SalesInvoice", invoice, failed(&m)).await,
+            Err(Error::Invalid(m)) => return record(failed(&m)).await,
             Err(e) => return Err(e),
         };
         if commit {
@@ -251,29 +273,25 @@ impl EventSink for AvaTax {
                     let differs = (theirs - ours).abs() > 0.005;
                     let note = differs.then(|| format!("AvaTax works out {theirs:.2} of tax; the invoice charged {ours:.2}"));
                     record(
-                        k,
-                        &ctx,
-                        "SalesInvoice",
-                        invoice,
                         json!({"us_avatax_status": if differs { "Differs" } else { "Committed" }, "us_avatax_tax": format!("{theirs:.2}"), "us_avatax_error": note}),
                     )
                     .await
                 }
-                401 | 403 => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax refused the credentials: {}", Self::why(&v, code)))).await,
+                401 | 403 => record(failed(&format!("AvaTax refused the credentials: {}", Self::why(&v, code)))).await,
                 429 | 500.. => Err(Error::internal(format!("AvaTax is busy ({code}); trying again"))),
-                _ => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
+                _ => record(failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
             };
         }
         let reply = call.json(&json!({"code": "DocVoided"})).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
         let code = reply.status().as_u16();
         let v: Value = reply.json().await.unwrap_or(Value::Null);
         match code {
-            200 | 201 => record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await,
+            200 | 201 => record(json!({"us_avatax_status": "Voided", "us_avatax_error": null})).await,
             // Never recorded there (it failed): nothing to void. Not yet recorded (its commit is
             // still being retried): later.
-            404 if status == Some("Failed") => record(k, &ctx, "SalesInvoice", invoice, json!({"us_avatax_status": "Voided"})).await,
+            404 if status == Some("Failed") => record(json!({"us_avatax_status": "Voided"})).await,
             404 | 429 | 500.. => Err(Error::internal(format!("AvaTax could not void yet ({code}); trying again"))),
-            _ => record(k, &ctx, "SalesInvoice", invoice, failed(&format!("AvaTax did not void it: {}", Self::why(&v, code)))).await,
+            _ => record(failed(&format!("AvaTax did not void it: {}", Self::why(&v, code)))).await,
         }
     }
 }
