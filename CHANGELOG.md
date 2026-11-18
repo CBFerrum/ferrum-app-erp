@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.34.0 (accounting 0.4.0, selling 0.2.0): operations other apps call instead of ERP's code
+
+Assets, HR, Point of Sale and Commerce post to the ledger, Bookings and Helpdesk find a person's customer, and CRM
+prices quotations by compiling against ERP's crate. Five operations now do the same through the gate, each an action
+on the company with a contract (docs/contracts.md, "Operations through the gate"); an app declares them under `uses:`
+and calls them with `Kernel::call_tx` in its own transaction. Nothing existing changes: the engine modules stay for
+the apps that still use them.
+
+- `accounting.company.post_entry` `{posting_date, source_entity, source_id, source_number?, memo?, lines}` appends one
+  balanced entry for a record of the caller's: every account a ledger account of the company, amounts in the
+  company currency with no more decimals than it has, debits equal to credits, or nothing is written. Only an app's
+  call (which runs as the system) posts: a person or an agent is refused. The app's key makes it once: a repeat is
+  answered, the key with other lines is refused, racing calls make one entry. `compensate_with: reverse_entries`.
+- `accounting.company.reverse_entries` `{source_entity, source_id, on?}` reverses what is not reversed yet, once.
+- `selling.company.customer_for` `{name, email?, phone?}` → `{customer, created}`; `selling.company.customers_of`
+  `{email}` → `{customers}`; `selling.company.price_document` `{document, side?}` → the document priced as an order
+  of the company would be, nothing saved.
+- The accounting package is 0.4.0 and selling 0.2.0, the versions a caller's `uses` names (`^0.4`, `^0.2`).
+
 ## Finance 0.11.0: bank feeds through a connection's pull
 
 An administrator describes a bank's or an aggregator's API once as a connection (docs/bank-feeds.md has a worked

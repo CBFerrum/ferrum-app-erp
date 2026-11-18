@@ -27,6 +27,7 @@ mod keys;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
+pub mod offered;
 pub mod opening;
 pub mod periods;
 pub mod planning;
@@ -96,7 +97,8 @@ pub fn register(h: &mut HookRegistry) {
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook))
-            .register("TaxTemplate", Arc::new(pricing::ConditionHook));
+            .register("TaxTemplate", Arc::new(pricing::ConditionHook))
+            .register("Company", Arc::new(offered::LedgerOps));
         for numbered in ["JournalEntry", "PaymentEntry"] {
             h.register(numbered, Arc::new(series::SeriesHook));
         }
@@ -117,7 +119,8 @@ pub fn register(h: &mut HookRegistry) {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))
             .register("PricingRule", Arc::new(pricing::ConditionHook))
             .register("Company", Arc::new(promotion::PriceLinesHook))
-            .register("Company", Arc::new(reservation::AvailabilityHook));
+            .register("Company", Arc::new(reservation::AvailabilityHook))
+            .register("Company", Arc::new(offered::PartyOps));
     });
     for (side, package, order, shipment, invoice) in [
         (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),

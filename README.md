@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.33.1-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.34.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.33.1`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.34.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -569,6 +569,9 @@ history. Desks show only where their package is installed and only to people who
 - **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow`, `portal` and
   `localization`; [docs/contracts.md](docs/contracts.md) says how each operation behaves (in the caller's
   transaction, appending, what it refuses, whether calling twice does it twice).
+- **Operations for apps that do not compile against ERP**: `accounting.company.post_entry` and `reverse_entries` (an
+  app's own records in the ledger, balanced to the cent, once per key), `selling.company.customer_for`,
+  `customers_of` and `price_document`; their inputs are in [docs/contracts.md](docs/contracts.md).
 - **Contracted capabilities**: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`, and
   stored value's `prove`, `balance`, `issue`, `redeem`, `refund`, `transfer`, `hold`, `release` and `reverse`.
 - **Events** `accounting.instrument_bounced` and `accounting.stored_value_expiring`, for automations.
@@ -915,6 +918,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.34.0** Other apps post to the ledger, find a person's customer and price a document through operations, without compiling against ERP.
 - [x] **Finance 0.11.0** Bank feeds: a connection's pull brings a bank account's transactions, taken once, past the same duplicate check as a file.
 - [x] **Finance 0.10.0** Bank rules book a statement line no entry explains, by hand, in bulk or on import, never over money the books already hold.
 - [x] **Finance 0.9.0** Statements from CAMT.053, CAMT.052, MT940 and OFX files, and a bank's CSV whose columns are saved once, all as statement formats that are records.
