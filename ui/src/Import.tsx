@@ -19,6 +19,9 @@ export interface Trial {
   duplicates: number;
   skipped: number;
   other_accounts?: number;
+  /** After an import: lines automatic rules booked, and those a rule could not book (left to reconcile). */
+  ruled?: number;
+  rule_failures?: { number?: string | null; rule: string; why: string }[];
   errors: string[];
   from_date?: string | null;
   to_date?: string | null;
@@ -54,6 +57,7 @@ export default function ImportDialog({ account, onClose, onDone, initial }: { ac
   const [comma, setComma] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failures, setFailures] = useState<NonNullable<Trial["rule_failures"]>>([]);
 
   const formats = useQuery({
     queryKey: ["erp", "statement-formats"],
@@ -114,8 +118,12 @@ export default function ImportDialog({ account, onClose, onDone, initial }: { ac
     try {
       const body = byColumns ? { text, inline } : { text, format: t?.format?.id };
       const done = await api.post<Trial>(action(account, "import_transactions"), body);
-      toast(done.imported === 1 ? tr("Imported {imported} line", { imported: done.imported }) : tr("Imported {imported} lines", { imported: done.imported }));
-      onDone();
+      const said = done.imported === 1 ? tr("Imported {imported} line", { imported: done.imported }) : tr("Imported {imported} lines", { imported: done.imported });
+      toast((done.ruled ?? 0) > 0 ? `${said}. ${tr("{ruled} booked by rules", { ruled: done.ruled ?? 0 })}` : said);
+      if (done.rule_failures?.length) {
+        setFailures(done.rule_failures);
+        setBusy(false);
+      } else onDone();
     } catch (e) {
       setProblem(errorMessage(e));
       setBusy(false);
@@ -129,16 +137,32 @@ export default function ImportDialog({ account, onClose, onDone, initial }: { ac
       onClose={onClose}
       title={tr("Import a bank statement")}
       footer={
+        failures.length > 0 ? (
+          <Button variant="primary" onClick={onDone}>
+            {tr("Close")}
+          </Button>
+        ) : (
         <>
           <Button onClick={onClose}>{tr("Cancel")}</Button>
           <Button variant="primary" loading={busy} disabled={!t || t.imported === 0 || t.errors.length > 0} onClick={() => void run()}>
             {t && t.imported > 0 ? (t.imported === 1 ? tr("Import {imported} line", { imported: t.imported }) : tr("Import {imported} lines", { imported: t.imported })) : tr("Import")}
           </Button>
         </>
+        )
       }
     >
       <div className="stack erp-tight">
         {problem && <Alert tone="error">{isolate(problem)}</Alert>}
+        {failures.length > 0 && (
+          <Alert tone="warning">
+            <strong>{tr("The statement is imported. These lines were left to reconcile by hand: their rule could not book them.")}</strong>
+            <ul className="erp-problems">
+              {failures.map((f, i) => (
+                <li key={i}>{isolate(`${f.number ?? ""} · ${f.rule}: ${f.why}`)}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
         {!text ? (
           <>
             <label className="erp-drop" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>

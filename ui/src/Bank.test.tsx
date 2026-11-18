@@ -108,6 +108,18 @@ describe("the bank reconciliation workbench", () => {
     expect(t).toContain("Nothing left to reconcile");
   });
 
+  it("offers the rule that books a line no entry matches, and every such line at once", () => {
+    const rule = { id: "rule-1", name: "Bank fees", book_as: "Journal Entry" as const, target: "Bank Charges" };
+    const ruled = { ...workbench, lines: [workbench.lines[0], { ...workbench.lines[1], rule }, line("l-3", { amount: "-9", withdrawal: "9", unallocated: "9", description: "Paid elsewhere", match, rule })] };
+    const t = text(screen("?account=ba-1&as_of=2026-03-31&line=l-2", ruled));
+    expect(t).toContain("Rule: Bank fees");
+    expect(t).toContain("The rule Bank fees books this line as: Journal entry to Bank Charges");
+    expect(t).toContain("Book by this rule");
+    expect(t).toContain("Edit the rule");
+    expect(t).toContain("Apply rules (1)");
+    expect(screen("?account=ba-1&as_of=2026-03-31&line=l-2", ruled)).toContain('href="/e/BankRule/rule-1"');
+  });
+
   it("waits for the workbench while it loads", () => {
     expect(text(screen("?account=ba-1&as_of=2026-03-31", null))).toContain("Loading the statement");
   });

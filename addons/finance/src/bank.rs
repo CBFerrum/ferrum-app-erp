@@ -18,6 +18,7 @@ use chrono::NaiveDate;
 use ferrum_domain::reports::Params;
 use ferrum_domain::util::{Company, b, company, currency, d, elevated, get, id, money, rows, s, set, sys};
 use ferrum_kernel::{Action, Doc, DocHook, Error, FieldError, HookCtx, Result};
+use regex::Regex;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Signed;
 use serde_json::{Map, Value, json};
@@ -89,6 +90,7 @@ impl DocHook for BankAccountHook {
             "import_transactions" => statement(hc, doc, params, true).await.map(Some),
             "workbench" => workbench(hc, doc, params).await.map(Some),
             "accept_matches" => accept_matches(hc, params).await.map(Some),
+            "apply_rules" => apply_rules(hc, params).await.map(Some),
             _ => Ok(None),
         }
     }
@@ -155,8 +157,8 @@ async fn statement(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, write: bool)
     let format = format.map(|(fid, name)| json!({"id": fid, "name": name}));
     let read = reading.read(text).map_err(|m| Error::field("text", m))?;
     // Statements of another account are left out, when both the file and the account name one.
-    let (account_name, iban, number): (String, Option<String>, Option<String>) =
-        sqlx::query_as("select account_name, iban, account_number from e_bank_account where tenant_id = $1 and id = $2")
+    let (account_name, iban, number, company): (String, Option<String>, Option<String>, Uuid) =
+        sqlx::query_as("select account_name, iban, account_number, company from e_bank_account where tenant_id = $1 and id = $2")
             .bind(hc.ctx.tenant)
             .bind(bank)
             .fetch_one(&mut **hc.tx)
@@ -215,6 +217,7 @@ async fn statement(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, write: bool)
     // meanwhile fails on the unique key [bank_account, transaction_hash], and the whole import with it.
     let engine = elevated(hc.ctx);
     let text_or_null = |v: &str| if v.is_empty() { Value::Null } else { json!(v) };
+    let mut stored = Vec::new();
     for (l, hash) in &fresh {
         let mut t = Doc::new();
         t.insert("bank_account".into(), json!(bank.to_string()));
@@ -226,10 +229,13 @@ async fn statement(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value, write: bool)
         t.insert("bank_reference".into(), text_or_null(&l.bank_reference));
         t.insert("transaction_hash".into(), json!(hash));
         let created = hc.kernel.insert_tx(&engine, hc.tx, "BankTransaction", t).await?;
-        hc.kernel.submit_tx(&engine, hc.tx, "BankTransaction", id(&created, "id").unwrap_or_default(), None).await?;
+        let tid = id(&created, "id").unwrap_or_default();
+        hc.kernel.submit_tx(&engine, hc.tx, "BankTransaction", tid, None).await?;
+        stored.push((tid, *l));
     }
+    let (ruled, rule_failures) = apply_automatic(hc, company, bank, &stored).await?;
     Ok(json!({"format": format, "imported": fresh.len(), "duplicates": duplicates, "skipped": read.skipped, "other_accounts": other_accounts,
-              "from_date": from_date, "to_date": to_date}))
+              "from_date": from_date, "to_date": to_date, "ruled": ruled, "rule_failures": rule_failures}))
 }
 
 // ───────────────────────────── transactions ─────────────────────────────
@@ -431,6 +437,7 @@ impl DocHook for BankTransactionHook {
             }
             "make_payment_entry" => make_payment(hc, doc, params).await?,
             "make_journal_entry" => make_journal(hc, doc, params).await?,
+            "apply_rule" => apply_rule(hc, doc, params).await?,
             _ => return Ok(None),
         };
         Ok(Some(out))
@@ -638,6 +645,18 @@ async fn workbench(hc: &mut HookCtx<'_>, account: &Doc, params: &Value) -> Resul
     let ranked: Vec<Vec<Candidate>> = wanted.iter().map(|w| rank(w, &everything, &done, window)).collect();
     let chosen = assign(&ranked);
     let matched: HashMap<Uuid, &Candidate> = chosen.iter().map(|(l, c)| (wanted[*l].id, &ranked[*l][*c])).collect();
+    // The rule that would book a line no entry in the books matches exactly.
+    let rules = rules_of(hc, bank.company.id, false).await?;
+    let ruled: HashMap<Uuid, Value> = wanted
+        .iter()
+        .zip(&ranked)
+        .zip(&open)
+        .filter(|((_, cands), _)| !cands.iter().any(|c| c.exact))
+        .filter_map(|((w, _), l)| {
+            let fits = RuleLine { bank_account: ba, deposit: l.5, withdrawal: l.6, unreconciled: l.9.as_deref() == Some("Unreconciled"), text: &w.text };
+            rule_for(&fits, &rules).map(|r| (w.id, r.hint()))
+        })
+        .collect();
 
     let rows: Vec<Value> = lines
         .iter()
@@ -650,7 +669,7 @@ async fn workbench(hc: &mut HookCtx<'_>, account: &Doc, params: &Value) -> Resul
                 .collect();
             json!({"id": l.0, "number": l.1, "date": l.2, "description": l.3, "reference_number": l.4, "deposit": money(l.5), "withdrawal": money(l.6),
                    "amount": money(l.5 - l.6), "allocated": money(l.7), "unallocated": money(l.8), "status": l.9, "version": l.10, "balance": balance.map(money),
-                   "allocations": mine, "match": matched.get(&l.0).map(|c| c.json())})
+                   "allocations": mine, "match": matched.get(&l.0).map(|c| c.json()), "rule": ruled.get(&l.0)})
         })
         .collect();
 
@@ -932,6 +951,281 @@ async fn make_journal(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result
     Ok(json!({"entity": "JournalEntry", "id": jid, "number": submitted.get("number")}))
 }
 
+// ───────────────────────────── bank rules ─────────────────────────────
+
+/// A Bank Rule as matching sees it.
+#[derive(Debug)]
+struct Rule {
+    id: Uuid,
+    name: String,
+    bank_account: Option<Uuid>,
+    priority: i64,
+    money_in: bool,
+    contains: Option<String>,
+    pattern: Option<Regex>,
+    min: Option<Decimal>,
+    max: Option<Decimal>,
+    journal: bool,
+    account: Option<Uuid>,
+    cost_center: Option<Uuid>,
+    project: Option<Uuid>,
+    party: Option<Uuid>,
+    allocate_invoices: bool,
+    /// What it books against, as people read it: the account's or the party's name.
+    target: Option<String>,
+}
+
+impl Rule {
+    fn hint(&self) -> Value {
+        json!({"id": self.id, "name": self.name, "book_as": if self.journal { "Journal Entry" } else { "Payment Entry" }, "target": self.target})
+    }
+}
+
+/// A statement line as a rule sees it.
+struct RuleLine<'a> {
+    bank_account: Uuid,
+    deposit: Decimal,
+    withdrawal: Decimal,
+    unreconciled: bool,
+    /// Description and reference, lower case (`Wanted.text`).
+    text: &'a str,
+}
+
+/// A rule's pattern, compiled as statement formats' are: any case, linear-time, size-limited.
+fn rule_pattern(p: &str) -> std::result::Result<Regex, String> {
+    if p.chars().count() > 300 {
+        return Err("is longer than 300 characters".into());
+    }
+    regex::RegexBuilder::new(p).case_insensitive(true).size_limit(1 << 20).build().map_err(|e| format!("does not compile: {e}"))
+}
+
+/// The rule that fits a wholly unreconciled line: its account (or any), direction, amount range,
+/// text and pattern, each where the rule gives one; the lowest priority, then the name.
+fn rule_for<'r>(line: &RuleLine, rules: &'r [Rule]) -> Option<&'r Rule> {
+    if !line.unreconciled {
+        return None;
+    }
+    let amount = line.deposit + line.withdrawal;
+    let money_in = line.deposit > Decimal::ZERO;
+    rules
+        .iter()
+        .filter(|r| r.bank_account.is_none_or(|b| b == line.bank_account) && r.money_in == money_in)
+        .filter(|r| r.min.is_none_or(|m| amount >= m) && r.max.is_none_or(|m| amount <= m))
+        .filter(|r| r.contains.as_deref().is_none_or(|c| line.text.contains(&c.to_lowercase())))
+        .filter(|r| r.pattern.as_ref().is_none_or(|p| p.is_match(line.text)))
+        .min_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.name.cmp(&b.name)))
+}
+
+#[derive(sqlx::FromRow)]
+struct RuleRow {
+    id: Uuid,
+    rule_name: String,
+    bank_account: Option<Uuid>,
+    priority: Option<i64>,
+    direction: String,
+    text_contains: Option<String>,
+    text_pattern: Option<String>,
+    amount_min: Option<Decimal>,
+    amount_max: Option<Decimal>,
+    book_as: String,
+    account: Option<Uuid>,
+    cost_center: Option<Uuid>,
+    project: Option<Uuid>,
+    customer: Option<Uuid>,
+    supplier: Option<Uuid>,
+    allocate_invoices: Option<bool>,
+    target: Option<String>,
+}
+
+/// The enabled rules of `company` (only the automatic ones when `automatic`), with what each books against named.
+async fn rules_of(hc: &mut HookCtx<'_>, company: Uuid, automatic: bool) -> Result<Vec<Rule>> {
+    let rows: Vec<RuleRow> = sqlx::query_as(
+        "select r.id, r.rule_name, r.bank_account, r.priority::int8 as priority, r.direction, r.text_contains, r.text_pattern, r.amount_min, r.amount_max, \
+         r.book_as, r.account, r.cost_center, r.project, r.customer, r.supplier, r.allocate_invoices, \
+         case when r.book_as = 'Journal Entry' then a.account_name when r.direction = 'Money In' then c.customer_name else p.supplier_name end as target \
+         from e_bank_rule r left join e_account a on a.tenant_id = r.tenant_id and a.id = r.account \
+         left join e_customer c on c.tenant_id = r.tenant_id and c.id = r.customer left join e_supplier p on p.tenant_id = r.tenant_id and p.id = r.supplier \
+         where r.tenant_id = $1 and r.company = $2 and not coalesce(r.disabled, false) and (not $3 or coalesce(r.automatic, false))",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(company)
+    .bind(automatic)
+    .fetch_all(&mut **hc.tx)
+    .await?;
+    Ok(rows
+        .into_iter()
+        // A pattern that no longer compiles fits nothing (the hook refuses saving one).
+        .filter_map(|r| {
+            let pattern = match r.text_pattern.as_deref().filter(|p| !p.trim().is_empty()) {
+                Some(p) => Some(rule_pattern(p).ok()?),
+                None => None,
+            };
+            let money_in = r.direction == "Money In";
+            Some(Rule {
+                id: r.id,
+                name: r.rule_name,
+                bank_account: r.bank_account,
+                priority: r.priority.unwrap_or(10),
+                money_in,
+                contains: r.text_contains.filter(|c| !c.trim().is_empty()),
+                pattern,
+                min: r.amount_min,
+                max: r.amount_max,
+                journal: r.book_as == "Journal Entry",
+                account: r.account,
+                cost_center: r.cost_center,
+                project: r.project,
+                party: if money_in { r.customer } else { r.supplier },
+                allocate_invoices: r.allocate_invoices.unwrap_or(false),
+                target: r.target,
+            })
+        })
+        .collect())
+}
+
+/// `apply_rule {rule?}` on a submitted, wholly unreconciled line: books it as the rule says (the rule given,
+/// or the first that fits) through `make_journal` or `make_payment`, as the caller, and marks the line with
+/// the rule. Refused while an entry in the books matches the line exactly: the rule would count that money
+/// twice.
+async fn apply_rule(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
+    let line_id = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    // The line's row is locked for the transaction: a second caller waits, then finds it reconciled.
+    let line = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "BankTransaction", line_id, true).await?;
+    if d(&line, "docstatus") != Decimal::ONE || s(&line, "status") != Some("Unreconciled") {
+        return Err(Error::invalid("only a submitted line with nothing reconciled yet is booked by a rule"));
+    }
+    let bank_account = id(&line, "bank_account").unwrap_or_default();
+    let bank = bank(hc, bank_account).await?;
+    let rules = rules_of(hc, bank.company.id, false).await?;
+    let wanted = Wanted::of(&line)?;
+    let fits = RuleLine { bank_account, deposit: d(&line, "deposit"), withdrawal: d(&line, "withdrawal"), unreconciled: true, text: &wanted.text };
+    let rule = match params.get("rule").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+        Some(asked) => {
+            let r = rules.iter().find(|r| r.id.to_string() == asked).ok_or_else(|| Error::field("rule", "choose an enabled rule of this company"))?;
+            if rule_for(&fits, std::slice::from_ref(r)).is_none() {
+                return Err(Error::field("rule", format!("{} does not fit this line", r.name)));
+            }
+            r
+        }
+        None => rule_for(&fits, &rules).ok_or_else(|| Error::invalid("no rule fits this line"))?,
+    };
+    let window = 30;
+    let near = vouchers(hc, &bank, wanted.on - chrono::Duration::days(window), wanted.on + chrono::Duration::days(window), None).await?;
+    let done = cleared(hc, &bank, &near.iter().map(|v| v.id).collect::<Vec<_>>()).await?;
+    if let Some(c) = rank(&wanted, &near, &done, window).into_iter().find(|c| c.exact) {
+        return Err(Error::invalid(format!("this line matches {} in the books: reconcile it instead", c.voucher.number.unwrap_or_default())));
+    }
+    let made = if rule.journal {
+        let remark = format!("{} {} (rule {})", s(&line, "reference_number").unwrap_or_default(), s(&line, "description").unwrap_or_default(), rule.name);
+        let params = json!({"account": rule.account, "cost_center": rule.cost_center, "project": rule.project, "remark": remark.trim()});
+        make_journal(hc, &line, &params).await?
+    } else {
+        make_payment(hc, &line, &json!({"party": rule.party, "allocate_invoices": rule.allocate_invoices})).await?
+    };
+    let mut v = Doc::new();
+    v.insert("rule".into(), json!(rule.id.to_string()));
+    hc.kernel.set_values_tx(&sys(hc.ctx), hc.tx, "BankTransaction", line_id, v).await?;
+    Ok(json!({"rule": rule.id, "entity": made["entity"], "id": made["id"], "number": made["number"]}))
+}
+
+/// The number of a statement line, for saying which one a refusal is about.
+async fn line_number(hc: &mut HookCtx<'_>, line: Uuid) -> Result<String> {
+    let number: Option<String> = sqlx::query_scalar("select number from e_bank_transaction where tenant_id = $1 and id = $2")
+        .bind(hc.ctx.tenant)
+        .bind(line)
+        .fetch_optional(&mut **hc.tx)
+        .await?
+        .flatten();
+    Ok(number.unwrap_or_else(|| "a statement line".into()))
+}
+
+/// A refusal's words, for naming the line it is about.
+fn said(e: &Error) -> String {
+    match e {
+        Error::Validation(fs) => fs.iter().map(|f| f.message.clone()).collect::<Vec<_>>().join("; "),
+        other => other.to_string(),
+    }
+}
+
+/// `apply_rules {lines: "[{transaction, rule}]"}`: each line through its own `apply_rule` (the caller's
+/// rights on the lines count), all in the action's one transaction; the first refusal refuses the lot,
+/// naming the line.
+async fn apply_rules(hc: &mut HookCtx<'_>, params: &Value) -> Result<Value> {
+    let list: Vec<Value> = match params.get("lines") {
+        Some(Value::String(t)) => serde_json::from_str(t).map_err(|e| Error::field("lines", format!("is not a JSON list: {e}")))?,
+        Some(Value::Array(a)) => a.clone(),
+        _ => return Err(Error::field("lines", "list the lines and their rules")),
+    };
+    if list.is_empty() || list.len() > 500 {
+        return Err(Error::field("lines", "1 to 500 lines at a time"));
+    }
+    let mut done = Vec::new();
+    for (i, item) in list.iter().enumerate() {
+        let uuid = |k: &str| item.get(k).and_then(Value::as_str).and_then(|x| x.parse::<Uuid>().ok());
+        let line =
+            uuid("transaction").ok_or_else(|| Error::Validation(vec![FieldError::new("transaction", "not a bank transaction id").in_row("lines", i)]))?;
+        let rule = uuid("rule").ok_or_else(|| Error::Validation(vec![FieldError::new("rule", "not a bank rule id").in_row("lines", i)]))?;
+        let out = match hc.kernel.run_action_tx(hc.ctx, hc.tx, "BankTransaction", line, "apply_rule", &json!({"rule": rule.to_string()})).await {
+            Ok(out) => out,
+            Err(e @ (Error::Invalid(_) | Error::Validation(_))) => return Err(Error::Invalid(format!("{}: {}", line_number(hc, line).await?, said(&e)))),
+            Err(e) => return Err(e),
+        };
+        done.push(json!({"id": line, "rule": rule, "entity": out["entity"], "number": out["number"]}));
+    }
+    Ok(json!({"applied": done.len(), "lines": done}))
+}
+
+/// The automatic rules on lines just imported, each in a savepoint and as the importing person: a line a
+/// rule cannot book is left to reconcile and listed, and the import goes on.
+async fn apply_automatic(hc: &mut HookCtx<'_>, company: Uuid, bank_account: Uuid, lines: &[(Uuid, &Line)]) -> Result<(usize, Vec<Value>)> {
+    let rules = rules_of(hc, company, true).await?;
+    let (mut ruled, mut failures) = (0usize, Vec::new());
+    if rules.is_empty() {
+        return Ok((ruled, failures));
+    }
+    for (tid, l) in lines {
+        let text = words(&format!("{} {}", l.description, l.reference));
+        let fits = RuleLine { bank_account, deposit: l.deposit, withdrawal: l.withdrawal, unreconciled: true, text: &text };
+        let Some(rule) = rule_for(&fits, &rules) else { continue };
+        sqlx::query("savepoint bank_rule").execute(&mut **hc.tx).await?;
+        match hc.kernel.run_action_tx(hc.ctx, hc.tx, "BankTransaction", *tid, "apply_rule", &json!({"rule": rule.id.to_string()})).await {
+            Ok(_) => {
+                sqlx::query("release savepoint bank_rule").execute(&mut **hc.tx).await?;
+                ruled += 1;
+            }
+            Err(e) => {
+                sqlx::query("rollback to savepoint bank_rule").execute(&mut **hc.tx).await?;
+                if failures.len() < 50 {
+                    let number = line_number(hc, *tid).await?;
+                    failures.push(json!({"number": number, "rule": rule.name, "why": said(&e)}));
+                }
+            }
+        }
+    }
+    Ok((ruled, failures))
+}
+
+/// A Bank Rule's own checks: its pattern compiles (at most 300 characters), and a journal rule does not book
+/// to its bank account's own GL account.
+pub struct BankRuleHook;
+
+#[async_trait]
+impl DocHook for BankRuleHook {
+    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        if let Some(p) = s(doc, "text_pattern")
+            && let Err(m) = rule_pattern(p)
+        {
+            return Err(Error::field("text_pattern", format!("the pattern {m}")));
+        }
+        if let (Some(ba), Some(account)) = (id(doc, "bank_account"), id(doc, "account"))
+            && id(&get(hc.kernel, hc.ctx, hc.tx, "BankAccount", ba).await?, "account") == Some(account)
+        {
+            return Err(Error::field("account", "choose an account other than the bank's own"));
+        }
+        Ok(())
+    }
+}
+
 /// Payment and journal entries reconciled with a bank statement cannot be cancelled until the
 /// reconciliation is undone: the bank still shows the money moving.
 pub struct VoucherGuard;
@@ -958,5 +1252,79 @@ impl DocHook for VoucherGuard {
             )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn n(s: &str) -> Decimal {
+        Decimal::from_str(s).unwrap()
+    }
+    fn rule(name: &str, priority: i64, money_in: bool) -> Rule {
+        Rule {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            bank_account: None,
+            priority,
+            money_in,
+            contains: None,
+            pattern: None,
+            min: None,
+            max: None,
+            journal: true,
+            account: None,
+            cost_center: None,
+            project: None,
+            party: None,
+            allocate_invoices: false,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn the_first_rule_that_fits_wins() {
+        let (ours, other) = (Uuid::now_v7(), Uuid::now_v7());
+        let fee = |text: &'static str, out: &str| RuleLine { bank_account: ours, deposit: Decimal::ZERO, withdrawal: n(out), unreconciled: true, text };
+        let mut fees = rule("Bank fees", 10, false);
+        fees.contains = Some("BANK FEE".into());
+        fees.max = Some(n("50"));
+        let mut any_fee = rule("Any fee", 20, false);
+        any_fee.contains = Some("fee".into());
+        let mut b_first = rule("B first", 5, false);
+        b_first.contains = Some("bank fee".into());
+        b_first.bank_account = Some(other);
+        let mut stripe = rule("Stripe", 10, true);
+        stripe.pattern = Some(rule_pattern("^stripe payout").unwrap());
+        let rules = [fees, any_fee, b_first, stripe];
+        let name = |l: &RuleLine| rule_for(l, &rules).map(|r| r.name.as_str());
+        assert_eq!(name(&fee("bank fee march", "12.50")), Some("Bank fees"), "the lowest priority of those that fit; another account's rule does not");
+        assert_eq!(name(&fee("bank fee march", "50.01")), Some("Any fee"), "above the range");
+        assert_eq!(name(&fee("card fee", "5")), Some("Any fee"));
+        assert_eq!(name(&fee("lunch", "5")), None);
+        let mut deposit = fee("stripe payout 2026-03", "0");
+        deposit.deposit = n("900");
+        assert_eq!(name(&deposit), Some("Stripe"), "money in, by pattern in any case");
+        deposit.text = "payout stripe";
+        assert_eq!(name(&deposit), None, "the pattern is anchored");
+        let mut partly = fee("bank fee", "5");
+        partly.unreconciled = false;
+        assert_eq!(name(&partly), None, "only a wholly unreconciled line");
+        // Two of one priority: by name.
+        let mut z = rule("Zeta", 1, false);
+        z.min = Some(n("1"));
+        let mut a = rule("Alpha", 1, false);
+        a.min = Some(n("1"));
+        assert_eq!(rule_for(&fee("x", "5"), &[z, a]).map(|r| r.name.as_str()), Some("Alpha"));
+    }
+
+    #[test]
+    fn a_rule_needs_a_condition_and_a_pattern_that_compiles() {
+        assert!(rule_pattern("^STRIPE (PAYOUT|TRANSFER)").unwrap().is_match("stripe payout"), "any case");
+        assert!(rule_pattern("(unclosed").unwrap_err().contains("does not compile"));
+        assert!(rule_pattern(&"a".repeat(301)).unwrap_err().contains("300"));
+        assert!(rule_pattern("(\\w{1000}){1000}").unwrap_err().contains("does not compile"), "too big once compiled");
     }
 }

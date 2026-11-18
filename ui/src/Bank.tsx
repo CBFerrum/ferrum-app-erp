@@ -13,7 +13,7 @@ import { api, docPath, errorMessage, formatDate, formatDecimal, todayIso, t as t
 import { Badge, Button, Dialog, Field, Icon, Spinner, TabPanel, Tabs as ModeTabs, toast, useLiveEntity, useShellTitle, placed, StatePanel } from "@ferrum/kit";
 import { Loading, LoadFailed } from "./states";
 import { can, LinkInput, useMetaIndex } from "@ferrum/records";
-import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
+import { type Book, canReconcile, clearsLine, enterTarget, exactMatches, isDeposit, leftToReconcile, type Line, type Match, others, problems, reconcileBody, ruledLines, step, tick, type Ticks, untick, why, type Workbench } from "./reconcile";
 import { cmp, isZero } from "./decimal";
 import ImportDialog from "./Import";
 import { useNarrow } from "./narrow";
@@ -95,7 +95,33 @@ function Figures({ wb }: { wb: Workbench }) {
 function statusBadge(line: Line) {
   if (line.status === "Reconciled") return <Badge tone="green">{tr("Matched")}</Badge>;
   if (line.status === "Partially Reconciled") return <Badge tone="amber">{tr("Partly matched")}</Badge>;
-  return line.match ? <Badge tone="blue">{tr("Match found")}</Badge> : null;
+  if (line.match) return <Badge tone="blue">{tr("Match found")}</Badge>;
+  return line.rule ? <Badge tone="neutral">{placed(tr("Rule: {p1}"), { p1: isolate(line.rule.name) })}</Badge> : null;
+}
+
+/** What a rule will book for a line, in words. */
+function ruleBooks(line: Line): string {
+  const r = line.rule!;
+  const target = r.target ?? "";
+  if (r.book_as === "Journal Entry") return tr("Journal entry to {target}", { target });
+  return isDeposit(line) ? tr("Receipt from {target}", { target }) : tr("Payment to {target}", { target });
+}
+
+function RuleTab({ line, busy, onApply }: { line: Line; busy: boolean; onApply: () => void }) {
+  const r = line.rule!;
+  return (
+    <div className="stack erp-tight">
+      <p>
+        {placed(tr("The rule {p1} books this line as: {p2}."), { p1: <strong>{isolate(r.name)}</strong>, p2: isolate(ruleBooks(line)) })}
+      </p>
+      <div className="row">
+        <Button variant="primary" loading={busy} onClick={onApply}>
+          {tr("Book by this rule")}
+        </Button>
+        <Link to={`/e/BankRule/${encodeURIComponent(r.id)}`}>{tr("Edit the rule")}</Link>
+      </div>
+    </div>
+  );
 }
 
 function LineList({ wb, selected, onSelect, onAcceptKey, onAcceptAll }: { wb: Workbench; selected: string | null; onSelect: (id: string) => void; onAcceptKey: (line: Line) => void; onAcceptAll: () => void }) {
@@ -399,7 +425,8 @@ function ClearedTab({ wb, line, busy, onUndo }: { wb: Workbench; line: Line; bus
 }
 
 function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: Line; onBack: () => void; narrow: boolean; busy: boolean; act: Actions }) {
-  const [mode, setMode] = useState("match");
+  const ruled = !!line.rule && !line.match && line.status === "Unreconciled";
+  const [mode, setMode] = useState(ruled ? "rule" : "match");
   const open = !isZero(line.unallocated);
   return (
     <section className="erp-panel" aria-label={tr("The selected line")}>
@@ -427,13 +454,16 @@ function Panel({ wb, line, onBack, narrow, busy, act }: { wb: Workbench; line: L
             value={mode}
             onChange={setMode}
             tabs={[
+              ...(ruled ? [{ id: "rule", label: tr("Rule") }] : []),
               { id: "match", label: tr("Match") },
               { id: "payment", label: tr("Create payment") },
               { id: "journal", label: tr("Create journal") },
             ]}
           />
           <TabPanel id="bk-mode" tab={mode}>
-            {mode === "match" ? (
+            {mode === "rule" && ruled ? (
+              <RuleTab line={line} busy={busy} onApply={() => void act.make(line, "apply_rule", { rule: line.rule!.id }, "rule")} />
+            ) : mode === "match" ? (
               <MatchTab wb={wb} line={line} books={wb.books} busy={busy} onReconcile={(body) => void act.reconcile(line, body)} />
             ) : mode === "payment" ? (
               <PaymentTab line={line} precision={wb.precision} busy={busy} onMake={(body) => void act.make(line, "make_payment_entry", body, "payment")} />
@@ -505,11 +535,41 @@ function AcceptAll({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: (
   );
 }
 
+// ───────────────────────────── apply rules ─────────────────────────────
+
+function ApplyRules({ wb, onClose, onConfirm, busy }: { wb: Workbench; onClose: () => void; onConfirm: () => void; busy: boolean }) {
+  const ruled = ruledLines(wb.lines);
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={ruled.lines.length === 1 ? tr("Book {length} line by its rule", { length: ruled.lines.length }) : tr("Book {length} lines by their rules", { length: ruled.lines.length })}
+      footer={
+        <>
+          <Button onClick={onClose}>{tr("Not yet")}</Button>
+          <Button variant="primary" loading={busy} onClick={onConfirm} data-autofocus>
+            {tr("Apply rules ({length})", { length: ruled.lines.length })}
+          </Button>
+        </>
+      }
+    >
+      <p className="muted">{tr("Each line becomes a submitted entry, matched with the line. All of them are booked, or none is.")}</p>
+      <ul>
+        {ruled.per_rule.map((r) => (
+          <li key={r.name}>
+            {placed(tr("{p1}: {p2}"), { p1: <strong>{isolate(r.name)}</strong>, p2: r.count })}
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}
+
 // ───────────────────────────── the screen ─────────────────────────────
 
 type Actions = {
   reconcile: (line: Line, body: ReturnType<typeof reconcileBody>) => Promise<void>;
-  make: (line: Line, action: "make_payment_entry" | "make_journal_entry", body: object, what: string) => Promise<void>;
+  make: (line: Line, action: "make_payment_entry" | "make_journal_entry" | "apply_rule", body: object, what: string) => Promise<void>;
   undo: (line: Line, entry: string | null) => Promise<void>;
 };
 
@@ -525,6 +585,7 @@ export function Bank() {
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [done, setDone] = useState<{ line: string; text: string } | null>(null);
 
   const accounts = useQuery({
@@ -617,7 +678,7 @@ export function Bank() {
         line,
         async () => {
           const made = await api.post<{ number?: string }>(docPath("BankTransaction", line.id, "actions", action), body);
-          toast((what === "payment" ? tr("Made payment {number}", { number: made.number ?? "" }) : tr("Made journal entry {number}", { number: made.number ?? "" })).trim());
+          toast((what === "payment" ? tr("Made payment {number}", { number: made.number ?? "" }) : what === "rule" ? tr("Booked {number} by the rule", { number: made.number ?? "" }) : tr("Made journal entry {number}", { number: made.number ?? "" })).trim());
         },
         true,
         line.description ? tr("Matched {description}", { description: line.description }) : tr("Matched the line"),
@@ -664,7 +725,26 @@ export function Bank() {
     }
   };
 
+  const applyRules = async () => {
+    if (!wb) return;
+    setBusy(true);
+    try {
+      const picked = ruledLines(wb.lines).lines;
+      const done = await api.post<{ applied: number }>(docPath("BankAccount", wb.bank_account, "actions", "apply_rules"), {
+        lines: JSON.stringify(picked.map((l) => ({ transaction: l.id, rule: l.rule!.id }))),
+      });
+      toast(done.applied === 1 ? tr("Booked {applied} line by its rule", { applied: done.applied }) : tr("Booked {applied} lines by their rules", { applied: done.applied }));
+      setApplying(false);
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
   const exact = wb ? exactMatches(wb.lines).lines.length : 0;
+  const ruled = wb ? ruledLines(wb.lines).lines.length : 0;
   const showPanel = !narrow || !!selected;
   const showList = !narrow || !selected;
 
@@ -705,6 +785,7 @@ export function Bank() {
             <input type="checkbox" checked={all} onChange={(e) => put({ all: e.target.checked ? "1" : null, line: null })} />
             <span>{tr("Show matched lines")}</span>
           </label>
+          {ruled > 0 && <Button onClick={() => setApplying(true)}>{tr("Apply rules ({length})", { length: ruled })}</Button>}
           <Button variant={exact ? "primary" : "default"} disabled={!exact} onClick={() => setAccepting(true)}>
             {exact ? (exact === 1 ? tr("Accept {exact} exact match", { exact }) : tr("Accept {exact} exact matches", { exact })) : tr("Accept exact matches")}
           </Button>
@@ -752,6 +833,7 @@ export function Bank() {
           </div>
         )}
         {accepting && <AcceptAll wb={wb} busy={busy} onClose={() => setAccepting(false)} onConfirm={() => void acceptAll()} />}
+        {applying && <ApplyRules wb={wb} busy={busy} onClose={() => setApplying(false)} onConfirm={() => void applyRules()} />}
       </>
     );
   }

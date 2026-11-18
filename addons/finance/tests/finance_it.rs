@@ -1212,6 +1212,8 @@ async fn scenario() {
         .await;
     assert_eq!(r["status"], json!("Reconciled"));
     statement_files(&t, &am, &au, bank_gl).await;
+    let stripe_co = uid(&t.insert(&a, "Customer", customer("Stripe Payouts Ltd", json!({}))).await);
+    bank_rules(&t, &am, &au, Accounts { bank_gl, bank_charges, other_income, unit, customer: stripe_co }).await;
     t.books_balance().await;
 }
 
@@ -1323,4 +1325,180 @@ async fn statement_files(t: &T, am: &Ctx, au: &Ctx, bank_gl: Uuid) {
         .expect("a preview needs no key and only read");
     assert_eq!(peek.result["duplicates"], json!(3));
     assert_eq!(lines_of(ba).await.len(), 7, "three from camt.053, one from MT940, three from OFX");
+}
+
+/// What `bank_rules` books against.
+struct Accounts {
+    bank_gl: Uuid,
+    bank_charges: Uuid,
+    other_income: Uuid,
+    unit: Uuid,
+    customer: Uuid,
+}
+
+/// Bank rules: what to book for a line no voucher explains, applied by hand, in bulk, through the gate, on import,
+/// and never twice or over money the books already hold.
+async fn bank_rules(t: &T, am: &Ctx, au: &Ctx, acc: Accounts) {
+    let cid = t.company.to_string();
+    let ba = uid(&t.insert(am, "BankAccount", json!({"account_name": "Rules Current", "company": cid, "account": acc.bank_gl.to_string()})).await);
+    let csv = |rows: &str| {
+        json!({"text": format!("Date,Description,Reference,Amount\n{rows}"),
+               "inline": json!({"columns": {"date": "Date", "description": "Description", "reference": "Reference", "amount": "Amount"}}).to_string()})
+    };
+    let line =
+        |description: &'static str| async move { t.find_one("BankTransaction", json!({"bank_account": ba.to_string(), "description": description})).await };
+    let entries_for =
+        |line: Uuid| async move { t.count("select count(*) from e_bank_transaction__allocations where tenant_id = $1 and parent_id = $2", Some(line)).await };
+
+    // a_rule_needs_a_condition_and_a_pattern_that_compiles, and only an Accounts Manager makes one.
+    let fees = json!({"rule_name": "Bank fees", "company": cid, "bank_account": ba.to_string(), "direction": "Money Out", "text_contains": "BANK FEE",
+                      "amount_max": "50", "book_as": "Journal Entry", "account": acc.bank_charges.to_string(), "automatic": true});
+    let e = t.k.insert(au, "BankRule", obj(fees.clone())).await.unwrap_err();
+    assert!(matches!(e, Error::Forbidden(_)), "{e:?}");
+    let refused = |v: Value| async move { t.k.insert(am, "BankRule", obj(v)).await.unwrap_err() };
+    let e = refused(
+        json!({"rule_name": "Everything", "company": cid, "direction": "Money Out", "book_as": "Journal Entry", "account": acc.bank_charges.to_string()}),
+    )
+    .await;
+    assert!(invalid(&e, "would book every line"), "{e:?}");
+    let e = refused(json!({"rule_name": "Bad", "company": cid, "direction": "Money Out", "text_pattern": "(unclosed", "book_as": "Journal Entry",
+                           "account": acc.bank_charges.to_string()}))
+    .await;
+    assert!(invalid(&e, "does not compile"), "{e:?}");
+    let e = refused(json!({"rule_name": "Self", "company": cid, "bank_account": ba.to_string(), "direction": "Money Out", "text_contains": "x",
+                           "book_as": "Journal Entry", "account": acc.bank_gl.to_string()}))
+    .await;
+    assert!(invalid(&e, "bank's own"), "{e:?}");
+    let fee_rule = uid(&t.insert(am, "BankRule", fees).await);
+    let stripe = uid(&t
+        .insert(
+            am,
+            "BankRule",
+            json!({"rule_name": "Stripe payouts", "company": cid, "direction": "Money In", "text_pattern": "^stripe payout",
+                                      "book_as": "Payment Entry", "customer": acc.customer.to_string(), "allocate_invoices": true}),
+        )
+        .await);
+    let interest = uid(&t
+        .insert(
+            am,
+            "BankRule",
+            json!({"rule_name": "Interest", "company": cid, "direction": "Money In", "text_contains": "INTEREST",
+                                      "book_as": "Journal Entry", "account": acc.other_income.to_string()}),
+        )
+        .await);
+    // The money the books already hold: 41.23 out of the bank, booked before its line arrives.
+    t.make(am, "JournalEntry", t.journal("2027-08-10", json!([dr(acc.bank_charges, "41.23", None, None), cr(acc.bank_gl, "41.23")]))).await;
+    let invoice = uid(&t
+        .make(
+            am,
+            "SalesInvoice",
+            json!({"company": cid, "customer": acc.customer.to_string(), "posting_date": "2027-07-20",
+                                         "items": [{"item": acc.unit.to_string(), "qty": "640"}]}),
+        )
+        .await);
+
+    // automatic_rules_run_on_import_and_never_fail_it: one fee booked; one in the closed 2025 left and listed; one the
+    // books already hold left and listed; the others wait for a person.
+    let imported = t
+        .action(
+            am,
+            "BankAccount",
+            ba,
+            "import_transactions",
+            csv("03/08/2027,BANK FEE August,,-12.34\n15/12/2025,BANK FEE December,,-7.77\n\
+            10/08/2027,BANK FEE adjustment,,-41.23\n05/08/2027,STRIPE PAYOUT 0805,SP-1,640.00\n06/08/2027,INTEREST AUG,,1.11\n\
+            07/08/2027,INTEREST SEP,,2.22\n08/08/2027,INTEREST OCT,,3.33\n"),
+        )
+        .await;
+    assert_eq!((imported["imported"].clone(), imported["ruled"].clone()), (json!(7), json!(1)), "{imported}");
+    let failures = imported["rule_failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 2, "{imported}");
+    assert!(failures.iter().all(|f| f["rule"] == json!("Bank fees")));
+    assert!(failures.iter().any(|f| f["why"].as_str().unwrap().contains("matches")), "the books already hold it: {imported}");
+    // a_rule_books_a_bank_charge
+    let august = line("BANK FEE August").await;
+    assert_eq!((august["status"].clone(), august["rule"].clone()), (json!("Reconciled"), json!(fee_rule.to_string())));
+    let je = uid(&t.find_one("JournalEntry", json!({"remark": "BANK FEE August (rule Bank fees)"})).await);
+    assert_eq!(t.get("JournalEntry", je).await["docstatus"], json!(1));
+    for left in ["BANK FEE December", "BANK FEE adjustment"] {
+        let l = line(left).await;
+        assert_eq!((l["status"].clone(), l["rule"].clone()), (json!("Unreconciled"), Value::Null), "{left} is left to reconcile");
+    }
+    // a_rule_gives_way_to_an_exact_voucher: refused by hand, and the workbench shows the match, not the rule.
+    let adj = uid(&line("BANK FEE adjustment").await);
+    let e = t.k.run_action(am, "BankTransaction", adj, "apply_rule", json!({})).await.unwrap_err();
+    assert!(invalid(&e, "in the books: reconcile it instead"), "{e:?}");
+    let w = t.action(au, "BankAccount", ba, "workbench", json!({"as_of": "2027-12-31"})).await;
+    let row = |d: &str| w["lines"].as_array().unwrap().iter().find(|l| l["description"] == json!(d)).cloned().unwrap();
+    assert!(row("BANK FEE adjustment")["match"].is_object() && row("BANK FEE adjustment")["rule"].is_null(), "{}", row("BANK FEE adjustment"));
+    assert_eq!(row("STRIPE PAYOUT 0805")["rule"]["name"], json!("Stripe payouts"));
+    assert_eq!(row("STRIPE PAYOUT 0805")["rule"]["target"], json!("Stripe Payouts Ltd"));
+    assert_eq!(row("INTEREST AUG")["rule"]["book_as"], json!("Journal Entry"));
+    assert!(row("BANK FEE December")["rule"]["name"] == json!("Bank fees"), "offered again: a person may book it once the period is open");
+
+    // an_accounts_user_cannot_book_a_journal_by_rule
+    let aug = uid(&line("INTEREST AUG").await);
+    let e = t.k.run_action(au, "BankTransaction", aug, "apply_rule", json!({})).await.unwrap_err();
+    assert!(matches!(e, Error::Forbidden(_)), "{e:?}");
+    assert_eq!(entries_for(aug).await, 0);
+
+    // apply_rules_is_all_or_nothing: a rule given that does not fit its line refuses the lot, naming the line.
+    let payout = uid(&line("STRIPE PAYOUT 0805").await);
+    let both = |second_rule: Uuid| json!({"lines": json!([{"transaction": aug, "rule": interest}, {"transaction": payout, "rule": second_rule}]).to_string()});
+    let e = t.k.run_action(am, "BankAccount", ba, "apply_rules", both(interest)).await.unwrap_err();
+    assert!(invalid(&e, "Interest does not fit this line"), "{e:?}");
+    assert_eq!((entries_for(aug).await, entries_for(payout).await), (0, 0), "nothing was booked");
+    let done = t.action(am, "BankAccount", ba, "apply_rules", both(stripe)).await;
+    assert_eq!(done["applied"], json!(2), "{done}");
+    // a_rule_books_a_receipt_and_settles_invoices
+    assert_eq!(t.get("BankTransaction", payout).await["status"], json!("Reconciled"));
+    let si = t.get("SalesInvoice", invoice).await;
+    assert_eq!((dec(&si["outstanding_amount"]), si["status"].clone()), (n("0"), json!("Paid")), "{si:?}");
+
+    // apply_rule_through_the_gate_repeats
+    let sep = uid(&line("INTEREST SEP").await);
+    let ask =
+        |key: &str| ferrum_kernel::capability::Invocation::new("finance.bank_transaction.apply_rule", json!({"id": sep.to_string(), "params": {}})).key(key);
+    let once = t.k.invoke(am, ask("sep-interest")).await.expect("book by rule through the gate");
+    let twice = t.k.invoke(am, ask("sep-interest")).await.expect("the same key");
+    assert_eq!((once.repeated, twice.repeated), (false, true), "{:?}", twice.result);
+    assert!(once.result["number"].is_string(), "{:?}", once.result);
+    assert_eq!(entries_for(sep).await, 1);
+    let e = t.k.invoke(am, ask("sep-interest-again")).await.unwrap_err();
+    assert!(invalid(&e, "nothing reconciled yet") || matches!(e, Error::Invalid(_) | Error::Validation(_) | Error::Forbidden(_)), "{e:?}");
+    assert_eq!(entries_for(sep).await, 1, "another key books nothing more");
+
+    // a_line_is_booked_by_a_rule_once: while one booking holds the line, a second waits for it, then is refused.
+    let oct = uid(&line("INTEREST OCT").await);
+    let mut first = t.k.db.tenant_tx(t.tenant).await.unwrap();
+    t.k.run_action_tx(am, &mut first, "BankTransaction", oct, "apply_rule", &json!({})).await.expect("the first booking");
+    let second = {
+        let (k, am) = (t.k.clone(), am.clone());
+        tokio::spawn(async move { k.run_action(&am, "BankTransaction", oct, "apply_rule", json!({})).await })
+    };
+    assert!(holds_up(&t.k, &mut first, &second).await, "the second waits for the line");
+    first.commit().await.unwrap();
+    let e = second.await.unwrap().unwrap_err();
+    assert!(matches!(e, Error::Invalid(_) | Error::Validation(_)), "{e:?}");
+    assert_eq!(entries_for(oct).await, 1, "one entry, not two");
+    let remarks =
+        t.count("select count(*) from e_journal_entry where tenant_id = $1 and remark = 'INTEREST OCT (rule Interest)' and $2::uuid is null", None).await;
+    assert_eq!(remarks, 1);
+}
+
+/// Whether `first`'s transaction holds `other` up before `other` is done (tests/contract_it.rs).
+async fn holds_up<R>(k: &Kernel, first: &mut ferrum_kernel::Tx, other: &tokio::task::JoinHandle<R>) -> bool {
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut **first).await.unwrap();
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || other.is_finished() {
+            return waits;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
 }

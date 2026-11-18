@@ -55,12 +55,42 @@
         effect: transactional_action
         returns: {type: object, properties: {format: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}}},
                   imported: {type: integer}, duplicates: {type: integer}, skipped: {type: integer}, other_accounts: {type: integer},
-                  from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]}}}
-        completion: "Every new line is a submitted bank transaction, or nothing is saved"
+                  from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]}, ruled: {type: integer},
+                  rule_failures: {type: array, items: {type: object, properties: {number: {type: [string, "null"]}, rule: {type: string}, why: {type: string}}}}}}
+        completion: "Every new line is a submitted bank transaction, or nothing is saved; automatic rules have booked the lines they fit, and a line a rule could not book is left to reconcile"
     # The reconciliation screen's two calls. The first only reads; the second reconciles lines through
     # their own Reconcile action, so the caller needs the rights on the lines, not on the account.
-    - {name: workbench, label: Reconciliation Workbench, permission: read, read_only: true, hidden: true}
+    - name: workbench
+      label: Reconciliation Workbench
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: as_of, label: As Of, type: date, description: "The statement's balance on this day; today when empty"}
+        - {name: from, label: From, type: date, description: "Only lines from this day"}
+        - {name: window_days, label: Window (Days), type: int, description: "How many days apart a voucher may be from a line (30)"}
+        - {name: reconciled, label: Matched Lines Too, type: check}
+      contract:
+        effect: query
+        returns: {type: object, properties: {bank_account: {type: string, format: uuid}, name: {type: [string, "null"]}, as_of: {type: string},
+                  figures: {type: object}, counts: {type: object, properties: {unreconciled: {type: integer}, matched: {type: integer}}},
+                  lines: {type: array, items: {type: object, properties: {id: {type: string, format: uuid}, match: {type: [object, "null"]},
+                          rule: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}, book_as: {type: string}, target: {type: [string, "null"]}}}}}},
+                  books: {type: array}, truncated: {type: boolean}, books_truncated: {type: boolean}}}
+        completion: "Everything the reconciliation screen draws; nothing is saved"
     - {name: accept_matches, label: Accept Matches, permission: read, hidden: true}
+    # Books each listed line by its rule through the line's own apply_rule, all or none.
+    - name: apply_rules
+      label: Apply Bank Rules
+      permission: read
+      hidden: true
+      params:
+        - {name: lines, label: Lines, type: text, required: true, description: "JSON: [{transaction, rule}], 1 to 500"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {applied: {type: integer}, lines: {type: array, items: {type: object, properties: {id: {type: string, format: uuid},
+                  rule: {type: string, format: uuid}, entity: {type: string}, number: {type: [string, "null"]}}}}}}
+        completion: "Every listed line is booked by its rule, or none is"
   list: {columns: [account_name, bank, masked_number, account, is_default], sort: account_name asc}
 
 - name: BankTransactionPayment
@@ -96,6 +126,7 @@
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
     - {name: status, type: select, options: [Unreconciled, Partially Reconciled, Reconciled, Cancelled], default: Unreconciled, read_only: true, no_copy: true,
        in_list: true, in_filter: true}
+    - {name: rule, type: link, to: BankRule, read_only: true, no_copy: true, label: Booked by Rule}
     - {name: transaction_hash, type: data, read_only: true, no_copy: true, hidden: true}
     - {name: allocations, type: table, of: BankTransactionPayment, read_only: true, label: Reconciled Vouchers}
   unique: [[bank_account, transaction_hash]]
@@ -111,6 +142,17 @@
     - {name: make_journal_entry, label: Create Journal Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
        params: [{name: account, label: Account, type: link, to: Account, required: true, description: "The account to book against, not the bank's own"},
                 {name: remark, label: Remark, type: text}]}
+    - name: apply_rule
+      label: Book by Rule
+      docstatus: [1]
+      permission: write
+      condition: "doc.status == 'Unreconciled'"
+      params:
+        - {name: rule, label: Bank Rule, type: link, to: BankRule, description: "Empty: the first rule that fits the line"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {rule: {type: string, format: uuid}, entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}
+        completion: "The line is booked by the rule as a submitted entry and reconciled with it"
   list: {columns: [date, bank_account, reference_number, deposit, withdrawal, unallocated_amount, status], sort: date desc}
 
 - name: StatementFormat
@@ -127,3 +169,35 @@
     - {name: notes, type: text}
     - {name: disabled, type: check, in_filter: true}
   list: {columns: [format_name, kind, disabled], sort: format_name asc}
+
+- name: BankRule
+  label: Bank Rule
+  module: finance
+  kind: master
+  company_scoped: true
+  title_field: rule_name
+  description: "What to book for a statement line no voucher explains: a pattern over its text, direction and amount, and the entry to make."
+  fields:
+    - {name: rule_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_list: true, in_filter: true}
+    - {name: bank_account, type: link, to: BankAccount, link_filters: {company: {from: company}}, in_list: true, description: "Only this account's lines; empty: every bank account of the company"}
+    - {name: priority, type: int, default: 10, min: 1, in_list: true, description: "The lowest number is tried first"}
+    - {name: direction, type: select, options: [Money In, Money Out], required: true, in_list: true}
+    - {name: text_contains, type: data, max_length: 140, description: "The line's description or reference contains this, in any case"}
+    - {name: text_pattern, type: data, max_length: 300, description: "A regular expression over the description and reference, in any case"}
+    - {name: amount_min, type: currency, min: "0"}
+    - {name: amount_max, type: currency, min: "0"}
+    - {name: book_as, type: select, options: [Journal Entry, Payment Entry], required: true, in_list: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, visible_if: "doc.book_as == 'Journal Entry'", required_if: "doc.book_as == 'Journal Entry'"}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}, visible_if: "doc.book_as == 'Journal Entry'"}
+    - {name: project, type: link, to: Project, visible_if: "doc.book_as == 'Journal Entry'"}
+    - {name: customer, type: link, to: Customer, visible_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money In'", required_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money In'"}
+    - {name: supplier, type: link, to: Supplier, visible_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money Out'", required_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money Out'"}
+    - {name: allocate_invoices, type: check, visible_if: "doc.book_as == 'Payment Entry'", description: "Settle the party's oldest open invoices; otherwise the payment stays an advance"}
+    - {name: automatic, type: check, in_list: true, description: "Applied when lines are imported, without a person; otherwise offered in the workbench"}
+    - {name: disabled, type: check, in_filter: true}
+  unique: [[company, rule_name]]
+  rules:
+    - {name: some_condition, check: "!isEmpty(doc.text_contains) || !isEmpty(doc.text_pattern) || !isEmpty(doc.amount_min) || !isEmpty(doc.amount_max)", message: "Give the rule a text, a pattern or an amount range: one with none would book every line"}
+    - {name: range_in_order, check: "isEmpty(doc.amount_min) || isEmpty(doc.amount_max) || doc.amount_max >= doc.amount_min", message: "The largest amount cannot be below the smallest"}
+  list: {columns: [priority, rule_name, bank_account, direction, book_as, automatic], sort: priority asc}

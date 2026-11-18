@@ -1,5 +1,26 @@
 # Changelog
 
+## Finance 0.10.0: bank rules book a line no entry in the books explains
+
+A **Bank Rule** (Finance menu, a new entity) says what to book for a statement line with no voucher: lines of one bank
+account or all of a company's, money in or out, a text the line contains, a pattern (a regular expression, any case,
+at most 300 characters), an amount range; and a journal to an account (with cost centre and project) or a payment
+from a customer or to a supplier (settling their oldest invoices or kept as an advance). The lowest priority that
+fits wins, then the name.
+
+- **Three ways to apply one.** `finance.bank_transaction.apply_rule` (write on the line; the entry is made and
+  submitted as the caller, so their rights on journals and payments count) books one line; `finance.bank_account.
+  apply_rules` books a list of lines, all or none; a rule marked automatic is applied as lines are imported, each in
+  a savepoint: one it cannot book (a closed period, a missing right) is left to reconcile and listed in the import's
+  new `rule_failures`, and the import goes on (`ruled` counts the others).
+- **An exact match always wins.** A rule is offered, and applied, only for a line no entry in the books matches
+  exactly within 30 days: booking it would count that money twice.
+- **Once.** The line is locked while it is booked; a second booking waits, then finds it reconciled.
+- **The workbench** gains a contract, and each line the rule that would book it (`rule`): a "Rule: …" badge, a Rule
+  tab with "Book by this rule", and "Apply rules (n)" beside the exact matches. An import's toast says how many rules
+  booked; lines a rule could not book are listed in the dialog. `ui/dist` rebuilt.
+- Bank Transaction gains Booked by Rule.
+
 ## Finance 0.9.0: bank statements from CAMT.053, CAMT.052, MT940 and OFX files, read by formats that are records
 
 A statement used to come in only as a CSV whose columns were mapped on every import. Now a **Statement Format**
