@@ -6,7 +6,7 @@ publisher: cbferrum
 summary: "FatturaPA through SDI, Natura codes, the virtual stamp duty, the regime forfettario and the domestic reverse charge for ERP in Italy"
 categories: [finance]
 runtime: native
-platform: ">=0.3.1, <0.4"
+platform: ">=0.4.0, <0.5"
 requires: {erp: ">=0.4", eu: ">=0.1"}
 parent: erp
 packages: [it]

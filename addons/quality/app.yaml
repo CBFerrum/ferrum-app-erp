@@ -7,7 +7,7 @@ description: README.md
 categories: [manufacturing, inventory]
 license: AGPL-3.0-only
 runtime: native
-platform: ">=0.3.2, <0.4"
+platform: ">=0.4.0, <0.5"
 requires: {erp: ">=0.1", stock-ops: ">=0.1"}
 parent: erp
 packages: [quality]

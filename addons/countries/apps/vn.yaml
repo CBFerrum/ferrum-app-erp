@@ -6,7 +6,7 @@ publisher: cbferrum
 summary: "VAT at 10%, 8% and 5%, exports at 0%, and the 01/GTGT declaration for ERP in Vietnam"
 categories: [finance]
 runtime: native
-platform: ">=0.3.1, <0.4"
+platform: ">=0.4.0, <0.5"
 requires: {erp: ">=0.22"}
 parent: erp
 packages: [vn]

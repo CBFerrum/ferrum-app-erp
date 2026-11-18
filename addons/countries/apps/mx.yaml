@@ -6,7 +6,7 @@ publisher: cbferrum
 summary: "IVA at 16%, 8% and 0%, exempt acts, and the cash-basis IVA return for ERP in Mexico"
 categories: [finance]
 runtime: native
-platform: ">=0.3.1, <0.4"
+platform: ">=0.4.0, <0.5"
 requires: {erp: ">=0.21"}
 parent: erp
 packages: [mx]
