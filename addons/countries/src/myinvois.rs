@@ -16,14 +16,15 @@
 //! answer is recorded; a cancellation an earlier delivery began is first looked up at LHDN
 //! (`GET /api/v1.0/documents/{uuid}/details`); a submission an earlier delivery began is not sent again, as LHDN
 //! cannot be asked about a submission whose answer was lost: the invoice stays Pending, saying so, for a person to
-//! look up in the MyInvois portal.
+//! look up in the MyInvois portal and then either record what it shows (Record MyInvois's Answer) or, when the
+//! invoice is not there, submit it again (Submit to MyInvois Again, a new request of its own).
 
 use crate::util::{b, d, get, id, rows, s, sys};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{Channel, enqueue, first_call, record_while};
+use ferrum_app_erp::submission::{Channel, enqueue, first_call, record_while, record_while_tx};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -328,6 +329,12 @@ pub fn submission(document: &Value, code: &str) -> Value {
     json!({"documents": [{"format": "JSON", "document": base64::engine::general_purpose::STANDARD.encode(&bytes), "documentHash": hash, "codeNumber": code}]})
 }
 
+/// Queues an invoice's submission: marked Pending, the document built now.
+async fn queue(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Value> {
+    let body = submission(&document(hc, doc, Utc::now()).await?, s(doc, "number").unwrap_or_default());
+    CHANNEL.queue(hc, doc, json!({}), json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "body": body})).await
+}
+
 /// Submitted invoices queued for MyInvois, cancelled ones cancelled there within LHDN's window.
 pub struct MyInvoisHook;
 
@@ -343,8 +350,49 @@ impl DocHook for MyInvoisHook {
         if hc.entity.def.name != "SalesInvoice" || hc.entity.field("my_einvoice_status").is_none() || uses_myinvois(hc, doc).await?.is_none() {
             return Ok(());
         }
-        let body = submission(&document(hc, doc, Utc::now()).await?, s(doc, "number").unwrap_or_default());
-        CHANNEL.queue(hc, doc, json!({}), json!({"invoice": id(doc, "id"), "company": s(doc, "company"), "body": body})).await.map(|_| ())
+        queue(hc, doc).await.map(|_| ())
+    }
+
+    /// A person's answers for an invoice left Pending (a submission that may have reached MyInvois): what LHDN's portal
+    /// shows for it, or that it is not there and goes again. Run under the invoice's lock, its status asked again.
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        if hc.entity.def.name != "SalesInvoice" || hc.entity.field("my_einvoice_status").is_none() || !name.starts_with("my_") {
+            return Ok(None);
+        }
+        let rid = id(doc, "id").ok_or_else(|| Error::internal("an invoice without its id"))?;
+        let pending = ("my_einvoice_status", &["Pending"][..]);
+        let text = |key: &str| params.get(key).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+        match name {
+            "my_record_myinvois" => {
+                let uuid = text("uuid").ok_or_else(|| Error::field("uuid", "is required: the document's UUID in the MyInvois portal"))?;
+                let values = match text("status").as_deref() {
+                    Some("Valid") => {
+                        let long = text("long_id").ok_or_else(|| Error::field("long_id", "is required for a valid document: its long ID in the portal"))?;
+                        let company = get(hc.kernel, &sys(hc.ctx), hc.tx, "Company", id(doc, "company").unwrap_or_default()).await?;
+                        let (_, portal) = hosts(s(&company, "my_myinvois_mode").unwrap_or("Off"))
+                            .ok_or_else(|| Error::invalid("the company sends no e-invoices to MyInvois: choose its mode first"))?;
+                        json!({"my_einvoice_status": "Valid", "my_uuid": uuid, "my_long_id": long, "my_validation_url": format!("{portal}/{uuid}/share/{long}"),
+                               "my_validated_at": text("validated_at").unwrap_or_else(|| Utc::now().to_rfc3339()), "my_einvoice_error": null})
+                    }
+                    Some("Invalid") => json!({"my_einvoice_status": "Invalid", "my_uuid": uuid,
+                                              "my_einvoice_error": text("message").unwrap_or_else(|| "LHDN found the e-invoice invalid".into())}),
+                    _ => return Err(Error::field("status", "Valid or Invalid, as the portal shows it")),
+                };
+                let status = values["my_einvoice_status"].clone();
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, pending, values).await? {
+                    return Err(Error::invalid("the invoice no longer waits for MyInvois's answer"));
+                }
+                Ok(Some(json!({"status": status})))
+            }
+            "my_submit_again" => {
+                // A new request, under a claim of its own: the earlier one's stays, and its repeats still send nothing.
+                if !record_while_tx(hc.kernel, hc.ctx, hc.tx, "SalesInvoice", rid, pending, json!({"my_einvoice_error": null})).await? {
+                    return Err(Error::invalid("the invoice no longer waits for MyInvois's answer"));
+                }
+                queue(hc, doc).await.map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn before_cancel(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {

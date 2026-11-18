@@ -800,6 +800,34 @@ async fn myinvois(k: &Arc<Kernel>, calls: &Calls, lhdn: &str) {
     let cancels = count("cancel");
     dies(event(ferrum_countries::myinvois::CANCEL_TOPIC, validated, true).await).await;
     assert_eq!((count("cancel") - cancels, state(validated).await.0), (1, json!("Cancelled")));
+
+    // ───────────── a person resolves a submission that may have reached MyInvois ─────────────
+    let act = async |inv: Uuid, action: &str, params: Value| k.run_action(&ctx, "SalesInvoice", inv, action, params).await;
+    let answer = json!({"uuid": "UUID-HAND", "status": "Valid", "long_id": "LONG-HAND"});
+    // Neither is open to an invoice not waiting for MyInvois's answer.
+    for (inv, action) in [(validated, "my_record_myinvois"), (validated, "my_submit_again"), (twice, "my_record_myinvois")] {
+        let refused = act(inv, action, answer.clone()).await;
+        assert!(refused.as_ref().is_err_and(|e| e.to_string().contains("not available")), "{action}: {refused:?}");
+    }
+    // The portal has it: recorded as LHDN validated it, and nothing is submitted.
+    let submits = count("submit");
+    assert_eq!(act(died, "my_record_myinvois", answer.clone()).await.expect("recorded")["status"], json!("Valid"));
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    let d = k.get(&ctx, "SalesInvoice", died, false).await.unwrap();
+    assert_eq!(
+        (count("submit") - submits, d["my_einvoice_status"].clone(), d["my_validation_url"].clone(), d["my_einvoice_error"].clone()),
+        (0, json!("Valid"), json!(format!("{lhdn}/UUID-HAND/share/LONG-HAND")), Value::Null)
+    );
+    assert!(act(died, "my_record_myinvois", answer.clone()).await.is_err(), "recorded once");
+    // The portal does not have it: submitted again, once, as a new request, and validated.
+    let lost = new_invoice().await;
+    dies(event(ferrum_countries::myinvois::SUBMIT_TOPIC, lost, true).await).await;
+    assert_eq!(state(lost).await.0, json!("Pending"));
+    let submits = count("submit");
+    act(lost, "my_submit_again", Value::Null).await.expect("submitted again");
+    while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+    assert_eq!((count("submit") - submits, state(lost).await), (1, (json!("Valid"), String::new())));
+    assert!(act(lost, "my_submit_again", Value::Null).await.is_err(), "once it is valid, not again");
 }
 
 async fn run(k: &Arc<Kernel>, case: &Case) {

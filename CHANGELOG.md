@@ -21,10 +21,15 @@ calls changes: ERP's own add-ons were the only callers of `submission::record`, 
   and the e-way bill by the invoice's IRN; LHDN for a document's status; AvaTax for the transaction by its code. A new
   e-invoice still relies on the IRP's own key (2150) and an AvaTax commit on createoradjust by the invoice's code.
 - **Where the receiver cannot be asked, a person decides.** A MyInvois submission or an e-Factura upload whose answer
-  was lost is not sent again: the invoice stays Pending, saying it may have reached the receiver (for Romania, record its
-  upload index from ANAF's messages; for Malaysia, look it up in the MyInvois portal: no action yet records LHDN's answer
-  by hand). A request for quotation's mail is not sent again: the invitation is Failed, saying it may have been sent,
-  for the buyer to send again. This also applies after a call that failed, as it may have reached the receiver.
+  was lost is not sent again: the invoice stays Pending, saying it may have reached the receiver. For Romania, Record
+  ANAF's Answer takes its upload index from ANAF's messages (or nok, after which it can be uploaded again). For Malaysia,
+  two new actions on a Pending invoice: Record MyInvois's Answer takes what the portal shows (the document's UUID and
+  Valid with its long ID, which makes the validation link, or Invalid with LHDN's reasons) and records the invoice as
+  LHDN left it; Submit to MyInvois Again, when the portal does not have it, queues one new submission as a request of
+  its own (the earlier one's repeats still send nothing). Both record only over Pending (`record_while_tx`, in the
+  action's transaction) and are refused on an invoice in any other status. A request for quotation's mail is not sent
+  again: the invitation is Failed, saying it may have been sent, and the buyer sends it again (Send, for that
+  supplier). This also applies after a call that failed, as it may have reached the receiver.
 - **India's sign-in holds no transaction.** The company's IRP session used to be made while a transaction and an
   advisory lock were held for as long as the IRP took. Now the replica that signs in marks the company as signing in
   for a minute and commits; another that needs a session meanwhile is told to try again.

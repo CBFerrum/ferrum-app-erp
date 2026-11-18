@@ -14,7 +14,7 @@
 
 use crate::util::{id, s, sys};
 use ferrum_kernel::outbox::Event;
-use ferrum_kernel::{Ctx, Doc, Error, HookCtx, Kernel, Result, outbox};
+use ferrum_kernel::{Ctx, Doc, Error, HookCtx, Kernel, Result, Tx, outbox};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -107,16 +107,24 @@ pub async fn enqueue(hc: &mut HookCtx<'_>, doc: &Doc, topic: &str, event: Value)
 /// `from` (`(field, from)`, read with the record locked): what a connector records of the receiver's answer. A record
 /// that has moved on, its answer recorded by an earlier delivery, is left as it is: a success is never written over by
 /// what a repeat heard.
-pub async fn record_while(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, (field, from): (&str, &[&str]), values: Value) -> Result<()> {
-    let Value::Object(v) = values else { return Ok(()) };
+pub async fn record_while(k: &Kernel, ctx: &Ctx, entity: &str, id: Uuid, status: (&str, &[&str]), values: Value) -> Result<()> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let doc = k.get_tx(&sys(ctx), &mut tx, entity, id, true).await?;
-    if !from.contains(&s(&doc, field).unwrap_or_default()) {
-        return Ok(());
+    if record_while_tx(k, ctx, &mut tx, entity, id, status, values).await? {
+        tx.commit().await?;
     }
-    k.set_values_tx(&sys(ctx), &mut tx, entity, id, v).await?;
-    tx.commit().await?;
     Ok(())
+}
+
+/// [`record_while`] in a transaction the caller holds (an action recording a receiver's answer by hand). Answers whether
+/// it was recorded.
+pub async fn record_while_tx(k: &Kernel, ctx: &Ctx, tx: &mut Tx, entity: &str, id: Uuid, (field, from): (&str, &[&str]), values: Value) -> Result<bool> {
+    let Value::Object(v) = values else { return Ok(false) };
+    let doc = k.get_tx(&sys(ctx), tx, entity, id, true).await?;
+    if !from.contains(&s(&doc, field).unwrap_or_default()) {
+        return Ok(false);
+    }
+    k.set_values_tx(&sys(ctx), tx, entity, id, v).await?;
+    Ok(true)
 }
 
 /// Whether this delivery of `ev` is the first to make `consumer`'s outside call for it: asked just before the call and

@@ -807,6 +807,12 @@ async fn scenario() {
     let invite = rows(&t.get("RequestForQuotation", rfq_id).await, "suppliers").into_iter().find(|r| r["id"] == json!(row)).unwrap();
     let error = invite["email_error"].as_str().unwrap_or_default();
     assert!(invite["email_status"] == json!("Failed") && error.contains("may have been sent"), "{invite:?}");
+    // The buyer's exit: send it again to that supplier, which mails it once and marks it Sent.
+    let supplier = invite["supplier"].as_str().unwrap().to_string();
+    t.action(&buyer, "RequestForQuotation", rfq_id, "send", json!({"suppliers": [supplier]})).await;
+    t.deliver_mail().await;
+    let invite = rows(&t.get("RequestForQuotation", rfq_id).await, "suppliers").into_iter().find(|r| r["id"] == json!(row)).unwrap();
+    assert_eq!((mails.0.lock().unwrap().len() - mailed, invite["email_status"].clone(), invite["email_error"].clone()), (3, json!("Sent"), Value::Null));
     t.cancel(&buyer, "RequestForQuotation", rfq_id).await;
     assert_eq!(t.site("GET", &fast_token, &[], "", "").await.status, 410);
 
