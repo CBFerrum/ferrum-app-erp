@@ -29,7 +29,15 @@ calls changes: ERP's own add-ons were the only callers of `submission::record`, 
   its own (the earlier one's repeats still send nothing). Both record only over Pending (`record_while_tx`, in the
   action's transaction) and are refused on an invoice in any other status. A request for quotation's mail is not sent
   again: the invitation is Failed, saying it may have been sent, and the buyer sends it again (Send, for that
-  supplier). This also applies after a call that failed, as it may have reached the receiver.
+  supplier). This also applies after a call that failed and may have reached the receiver.
+- **A failure that certainly did nothing is retried by itself.** When a call could not connect at all, failed before
+  its request was made (its token, its client), or was answered "not accepted" (429 from every provider; MyInvois's 401
+  for a refused token; AvaTax's 404 for a void with no transaction), the connector gives its claim back
+  (`submission::failed_call`, the platform's `outbox::give_back`) and the ordinary retry sends it again, with no
+  person and without asking first. A timeout, a 5xx, MyInvois's 422 (also "duplicate within ten minutes") or anything
+  after the request may have gone keeps the claim. `submission::never_sent` is the one test of a connection error:
+  a connection never made, not a timeout once connected. A request for quotation's mail stays as it is: the platform's
+  mailer reports every delivery failure alike, so none is certain.
 - **India's sign-in holds no transaction.** The company's IRP session used to be made while a transaction and an
   advisory lock were held for as long as the IRP took. Now the replica that signs in marks the company as signing in
   for a minute and commits; another that needs a session meanwhile is told to try again.

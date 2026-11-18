@@ -563,6 +563,8 @@ type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
 /// Set: the fake LHDN does the next submission or cancellation, then never answers (the replica asking dies first).
 static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+/// Submissions the fake LHDN refuses with 429 before taking any.
+static THROTTLE: Mutex<usize> = Mutex::new(0);
 
 async fn answered<T>(answer: T) -> T {
     let died = HANG.lock().unwrap().take();
@@ -588,6 +590,13 @@ async fn fake_myinvois(calls: Calls) -> String {
     async fn submit(State(calls): State<Calls>, headers: HeaderMap, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
         if !authorised(&headers) {
             return (StatusCode::UNAUTHORIZED, Json(json!({})));
+        }
+        {
+            let mut throttle = THROTTLE.lock().unwrap();
+            if *throttle > 0 {
+                *throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": {"code": "TooManyRequests", "message": "Too many requests"}})));
+            }
         }
         let n = {
             let mut c = calls.lock().unwrap();
@@ -828,6 +837,27 @@ async fn myinvois(k: &Arc<Kernel>, calls: &Calls, lhdn: &str) {
     while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
     assert_eq!((count("submit") - submits, state(lost).await), (1, (json!("Valid"), String::new())));
     assert!(act(lost, "my_submit_again", Value::Null).await.is_err(), "once it is valid, not again");
+
+    // ───────────── a failure that certainly took nothing is retried by itself ─────────────
+    // LHDN's 429, then a connection never made: each submission is retried and validated, once, with no person.
+    for refuse in ["throttled", "refused"] {
+        let inv = new_invoice().await;
+        let ev = event(ferrum_countries::myinvois::SUBMIT_TOPIC, inv, true).await;
+        let submits = count("submit");
+        if refuse == "throttled" {
+            *THROTTLE.lock().unwrap() = 1;
+        } else {
+            let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+            // SAFETY: this test's own process; set back below.
+            unsafe { std::env::set_var("FERRUM_MY_MYINVOIS_URL", format!("http://{closed}")) };
+        }
+        let first = ferrum_countries::myinvois::MyInvois.on_event(k, &ev).await;
+        unsafe { std::env::set_var("FERRUM_MY_MYINVOIS_URL", lhdn) };
+        assert!(first.is_err(), "{refuse}: tried again later");
+        ferrum_countries::myinvois::MyInvois.on_event(k, &ev).await.expect("the retry");
+        while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+        assert_eq!((count("submit") - submits, state(inv).await), (1, (json!("Valid"), String::new())), "{refuse}");
+    }
 }
 
 async fn run(k: &Arc<Kernel>, case: &Case) {

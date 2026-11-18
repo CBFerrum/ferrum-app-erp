@@ -14,7 +14,7 @@ use crate::tax::{SALES_TAX, account, tax_code, zip5};
 use crate::util::{d, get, id, rows, s, set, sys};
 use async_trait::async_trait;
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{first_call, record_while};
+use ferrum_app_erp::submission::{failed_call, first_call, never_sent, record_while};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, outbox};
 use rust_decimal::Decimal;
@@ -260,7 +260,8 @@ impl EventSink for AvaTax {
             }
             // An address that is not to be called: said on the invoice, and not tried again.
             Err(Error::Invalid(m)) => return record(failed(&m)).await,
-            Err(e) => return Err(e),
+            // Nothing sent: a void gives its claim back (from here this delivery acts: its claim, or AvaTax has not voided).
+            Err(e) => return failed_call(k, ev, "us.avatax.void", !commit, e).await,
         };
         if commit {
             let reply = call.json(&ev.payload["body"]).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
@@ -282,7 +283,13 @@ impl EventSink for AvaTax {
                 _ => record(failed(&format!("AvaTax refused the invoice: {}", Self::why(&v, code)))).await,
             };
         }
-        let reply = call.json(&json!({"code": "DocVoided"})).send().await.map_err(|e| Error::internal(format!("AvaTax could not be reached: {e}")))?;
+        // A void that certainly voided nothing gives the claim back, for the ordinary retry: a connection never made, 429
+        // (AvaTax's rate limit: the request is refused unprocessed), 404 (no transaction of that code: nothing to void).
+        let unsent = async |provable: bool, why: Error| failed_call(k, ev, "us.avatax.void", provable, why).await;
+        let reply = match call.json(&json!({"code": "DocVoided"})).send().await {
+            Ok(r) => r,
+            Err(e) => return unsent(never_sent(&e), Error::internal(format!("AvaTax could not be reached: {e}"))).await,
+        };
         let code = reply.status().as_u16();
         let v: Value = reply.json().await.unwrap_or(Value::Null);
         match code {
@@ -290,7 +297,7 @@ impl EventSink for AvaTax {
             // Never recorded there (it failed): nothing to void. Not yet recorded (its commit is
             // still being retried): later.
             404 if status == Some("Failed") => record(json!({"us_avatax_status": "Voided"})).await,
-            404 | 429 | 500.. => Err(Error::internal(format!("AvaTax could not void yet ({code}); trying again"))),
+            404 | 429 | 500.. => unsent(code < 500, Error::internal(format!("AvaTax could not void yet ({code}); trying again"))).await,
             _ => record(failed(&format!("AvaTax did not void it: {}", Self::why(&v, code)))).await,
         }
     }

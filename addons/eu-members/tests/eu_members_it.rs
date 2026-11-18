@@ -194,6 +194,8 @@ type Uploads = Arc<Mutex<Vec<(HashMap<String, String>, String)>>>;
 
 /// Set: the fake ANAF takes the next upload, then never answers (the replica uploading dies first).
 static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+/// Uploads the fake ANAF refuses with 429 before taking any.
+static THROTTLE: Mutex<usize> = Mutex::new(0);
 
 /// ANAF as far as Ferrum uses it: the token for the sign-in's code, uploads with the right token,
 /// and the verdict on them.
@@ -212,6 +214,13 @@ async fn fake_anaf(uploads: Uploads) -> String {
     async fn upload(State(uploads): State<Uploads>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>, body: String) -> (StatusCode, String) {
         if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer ro-token") {
             return (StatusCode::UNAUTHORIZED, String::new());
+        }
+        {
+            let mut throttle = THROTTLE.lock().unwrap();
+            if *throttle > 0 {
+                *throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, String::new());
+            }
         }
         uploads.lock().unwrap().push((q, body));
         let died = HANG.lock().unwrap().take();
@@ -680,6 +689,29 @@ async fn romania(k: &Arc<Kernel>, uploads: &Uploads) {
     let error = doc["ro_efactura_error"].as_str().unwrap_or_default();
     assert_eq!((count() - before, doc["ro_efactura_status"].clone()), (1, json!("Pending")), "{error}");
     assert!(error.contains("may have reached ANAF"), "{error}");
+
+    // ───────────── a failure that certainly took nothing is retried by itself ─────────────
+    // ANAF's 429, then a connection never made: each upload is retried and validated, once, with no person.
+    let anaf = std::env::var("FERRUM_RO_ANAF_URL").expect("the stand-in's address");
+    for refuse in ["throttled", "refused"] {
+        let inv = uid(&t.submit("SalesInvoice", uid(&t.invoice(lid, buyer, goods).await)).await);
+        let ev = event(inv, true).await;
+        let before = count();
+        if refuse == "throttled" {
+            *THROTTLE.lock().unwrap() = 1;
+        } else {
+            let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+            // SAFETY: this test's own process; set back below.
+            unsafe { std::env::set_var("FERRUM_RO_ANAF_URL", format!("http://{closed}")) };
+        }
+        let first = ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev).await;
+        unsafe { std::env::set_var("FERRUM_RO_ANAF_URL", &anaf) };
+        assert!(first.is_err(), "{refuse}: tried again later");
+        ferrum_eu_members::anaf::Anaf.on_event(&t.k, &ev).await.expect("the retry");
+        while t.k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+        let doc = t.get("SalesInvoice", inv).await;
+        assert_eq!((count() - before, doc["ro_efactura_status"].clone(), doc["ro_efactura_error"].clone()), (1, json!("Validated"), Value::Null), "{refuse}");
+    }
 }
 
 async fn belgium(k: &Arc<Kernel>) {

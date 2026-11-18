@@ -14,7 +14,7 @@ use crate::vat::{INPUT_TAX, OUTPUT_TAX, account};
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{Channel, enqueue, first_call, record_while};
+use ferrum_app_erp::submission::{Channel, enqueue, failed_call, first_call, never_sent, record_while};
 use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, Tx};
@@ -464,21 +464,31 @@ impl EventSink for Mtd {
         let headers = fraud_headers(&ev.payload["client"], ev.tenant_id, vendor);
         // Not the first delivery to file it: HMRC may have the return already, so it is asked first, by its period key.
         let mut ask = !first_call(k, ev, "gb.mtd.file").await?;
+        // A failure that certainly filed nothing gives the claim back, for the ordinary retry to file it: one before the
+        // return was posted (its token, its client), a connection never made, HMRC's 429 (MESSAGE_THROTTLED_OUT, the
+        // request not processed). Only while this delivery holds the claim, or HMRC has said it has no return.
+        let unsent = async |mine: bool, why: Error| failed_call(k, ev, "gb.mtd.file", mine, why).await;
         let mut forced = false;
         loop {
             let token = match self.token(k, &ctx, &api, &company, forced).await {
                 Ok(t) => t,
                 Err(Error::Invalid(m)) => return record_while(k, &ctx, "GbVatReturn", rid, WAITING, json!({"hmrc_status": "Failed", "hmrc_error": m})).await,
-                Err(e) => return Err(e),
+                Err(e) => return unsent(!ask, e).await,
             };
             let returns = format!("{api}/organisations/vat/{vrn}/returns");
-            let (client, url) = HMRC.client(k, ev.tenant_id, &if ask { format!("{returns}/{}", pct(period)) } else { returns }, WAIT).await?;
+            let (client, url) = match HMRC.client(k, ev.tenant_id, &if ask { format!("{returns}/{}", pct(period)) } else { returns }, WAIT).await {
+                Ok(c) => c,
+                Err(e) => return unsent(!ask, e).await,
+            };
             let mut call = if ask { client.get(url) } else { client.post(url).json(&ev.payload["body"]) };
             call = call.header("Accept", ACCEPT).bearer_auth(&token);
             for (name, value) in &headers {
                 call = call.header(name.as_str(), value.as_str());
             }
-            let reply = call.send().await.map_err(|e| Error::internal(format!("HMRC could not be reached: {e}")))?;
+            let reply = match call.send().await {
+                Ok(r) => r,
+                Err(e) => return unsent(!ask && never_sent(&e), Error::internal(format!("HMRC could not be reached: {e}"))).await,
+            };
             let status = reply.status().as_u16();
             let receipt = reply.headers().get("Receipt-ID").and_then(|v| v.to_str().ok()).map(str::to_string);
             let v: Value = reply.json().await.unwrap_or(Value::Null);
@@ -499,7 +509,7 @@ impl EventSink for Mtd {
                     .await;
                 }
                 (_, 401) if !forced => forced = true,
-                (_, 429 | 500..) => return Err(Error::internal(format!("HMRC is busy ({status}); trying again"))),
+                (_, 429 | 500..) => return unsent(!ask && status == 429, Error::internal(format!("HMRC is busy ({status}); trying again"))).await,
                 (true, _) => return Err(Error::internal(format!("HMRC did not say whether it has the return ({status}); asking again"))),
                 (false, _) => {
                     let why = format!("{} {}", v["code"].as_str().unwrap_or(&status.to_string()), v["message"].as_str().unwrap_or("")).trim().to_string();

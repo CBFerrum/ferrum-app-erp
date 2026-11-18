@@ -69,6 +69,9 @@ type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
 /// Set: the fake AvaTax records or voids the next transaction, then never answers (the replica asking dies first).
 static HANG: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+/// Voids the fake AvaTax refuses with 429 before taking any, and how often a transaction was looked up.
+static THROTTLE: Mutex<usize> = Mutex::new(0);
+static LOOKUPS: Mutex<usize> = Mutex::new(0);
 
 async fn answered<T>(answer: T) -> T {
     let died = HANG.lock().unwrap().take();
@@ -94,11 +97,19 @@ async fn fake_avatax(calls: Calls) -> String {
         answered((StatusCode::CREATED, Json(json!({"id": 1, "code": m["code"], "status": "Committed", "totalTax": ours, "totalTaxCalculated": theirs})))).await
     }
     async fn void(State(calls): State<Calls>, Path((company, code)): Path<(String, String)>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
+        {
+            let mut throttle = THROTTLE.lock().unwrap();
+            if *throttle > 0 {
+                *throttle -= 1;
+                return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": {"code": "TooManyRequests", "message": "rate limit"}})));
+            }
+        }
         calls.lock().unwrap().push(("void".into(), json!({"company": company, "code": code, "body": body})));
         answered((StatusCode::OK, Json(json!({"code": code, "status": "Cancelled"})))).await
     }
     /// A transaction by its code: Cancelled once voided.
     async fn by_code(State(calls): State<Calls>, Path((_, code)): Path<(String, String)>) -> (StatusCode, Json<Value>) {
+        *LOOKUPS.lock().unwrap() += 1;
         let calls = calls.lock().unwrap();
         let voided = calls.iter().any(|(k, v)| k == "void" && v["code"] == json!(code));
         let recorded = calls.iter().any(|(k, v)| k == "record" && v["createTransactionModel"]["code"] == json!(code));
@@ -366,6 +377,28 @@ async fn scenario() {
     let voids = count("void");
     dies(event(void, died, true).await).await;
     assert_eq!((count("void") - voids, status(died).await), (1, json!("Voided")));
+    // A void that certainly did nothing is retried by itself, AvaTax not asked about it: its 429, then a connection
+    // never made.
+    for refuse in ["throttled", "refused"] {
+        let inv = uid(&k.submit(&ctx, "SalesInvoice", uid(&sale(la, widget, "1").await), None).await.expect("submit"));
+        while k.dispatch_outbox_once().await.expect("outbox") > 0 {}
+        k.cancel(&ctx, "SalesInvoice", inv, None).await.expect("cancel");
+        let ev = event(void, inv, true).await;
+        let (voids, lookups) = (count("void"), *LOOKUPS.lock().unwrap());
+        if refuse == "throttled" {
+            *THROTTLE.lock().unwrap() = 1;
+        } else {
+            let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+            // SAFETY: this test's own process; set back below.
+            unsafe { std::env::set_var("FERRUM_US_AVATAX_URL", format!("http://{closed}")) };
+        }
+        let first = ferrum_us::avatax::AvaTax.on_event(&k, &ev).await;
+        unsafe { std::env::set_var("FERRUM_US_AVATAX_URL", &avatax) };
+        assert!(first.is_err(), "{refuse}: tried again later");
+        ferrum_us::avatax::AvaTax.on_event(&k, &ev).await.expect("the retry");
+        let looked = *LOOKUPS.lock().unwrap() - lookups;
+        assert_eq!((count("void") - voids, looked, status(inv).await), (1, 0, json!("Voided")), "{refuse}");
+    }
 
     // Use tax on equipment bought from Ohio without sales tax: at Austin's rate, owed by the company.
     let supplier = uid(&insert("Supplier", json!({"supplier_name": "Buckeye Tools"})).await);

@@ -16,7 +16,7 @@ use crate::util::{get, id, s, sys};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{first_call, record_while};
+use ferrum_app_erp::submission::{failed_call, first_call, never_sent, record_while};
 use ferrum_kernel::layout::esc;
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, HookCtx, Kernel, Result, Site, SiteRequest, SiteResponse, outbox};
@@ -251,11 +251,15 @@ impl EventSink for Anaf {
         // Without a connection, the invoice waits for its answer to be recorded by hand.
         let Some((auth, api)) = hosts(s(&company, "ro_anaf_mode").unwrap_or("Off")) else { return Ok(()) };
         let (mut forced, mut claimed) = (false, false);
+        // An upload that certainly took nothing gives the claim back, for the ordinary retry to upload it: a failure before
+        // the request (its token after a 401, its client), a connection never made, ANAF's 429 (its limit on calls: the
+        // request is refused unread). Only once this delivery holds the claim (`claimed`: it asked, and was first).
+        let unsent = async |provable: bool, why: Error| failed_call(k, ev, "ro.anaf.upload", provable, why).await;
         loop {
             let token = match self.token(k, &ctx, &auth, &company, forced).await {
                 Ok(t) => t,
                 Err(Error::Invalid(m)) => return record(json!({"ro_efactura_error": m})).await,
-                Err(e) => return Err(e),
+                Err(e) => return unsent(claimed, e).await,
             };
             let reached = |e: reqwest::Error| Error::internal(format!("ANAF could not be reached: {e}"));
             if ev.topic == crate::ro::UPLOAD_TOPIC && !claimed {
@@ -270,15 +274,21 @@ impl EventSink for Anaf {
             }
             let (status, body) = if ev.topic == crate::ro::UPLOAD_TOPIC {
                 let cif = ev.payload["cif"].as_str().unwrap_or_default();
-                let (client, url) = ANAF.client(k, ev.tenant_id, &format!("{api}/upload?standard=UBL&cif={}", pct(cif)), WAIT).await?;
-                let reply = client
+                let (client, url) = match ANAF.client(k, ev.tenant_id, &format!("{api}/upload?standard=UBL&cif={}", pct(cif)), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(claimed, e).await,
+                };
+                let sent = client
                     .post(url)
                     .bearer_auth(&token)
                     .header("Content-Type", "text/plain")
                     .body(ev.payload["xml"].as_str().unwrap_or_default().to_string())
                     .send()
-                    .await
-                    .map_err(reached)?;
+                    .await;
+                let reply = match sent {
+                    Ok(r) => r,
+                    Err(e) => return unsent(claimed && never_sent(&e), reached(e)).await,
+                };
                 (reply.status().as_u16(), reply.text().await.unwrap_or_default())
             } else {
                 let index = ev.payload["index"].as_str().unwrap_or_default();
@@ -288,7 +298,7 @@ impl EventSink for Anaf {
             };
             match status {
                 401 if !forced => forced = true,
-                429 | 500.. => return Err(Error::internal(format!("ANAF is busy ({status}); trying again"))),
+                429 | 500.. => return unsent(claimed && status == 429, Error::internal(format!("ANAF is busy ({status}); trying again"))).await,
                 200 if ev.topic == crate::ro::UPLOAD_TOPIC => {
                     let index = attr(&body, "index_incarcare").filter(|_| attr(&body, "ExecutionStatus").as_deref() == Some("0"));
                     let Some(index) = index else {

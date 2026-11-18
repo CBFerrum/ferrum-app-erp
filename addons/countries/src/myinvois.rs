@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use ferrum_app_erp::providers::Provider;
-use ferrum_app_erp::submission::{Channel, enqueue, first_call, record_while, record_while_tx};
+use ferrum_app_erp::submission::{Channel, enqueue, failed_call, first_call, never_sent, record_while, record_while_tx};
 use ferrum_kernel::outbox::Event;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, EventSink, Filter, HookCtx, Kernel, Result, outbox};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -505,8 +505,18 @@ impl EventSink for MyInvois {
                                    it is not sent again; look the invoice up in the MyInvois portal"}))
                     .await;
                 }
-                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/"), WAIT).await?;
-                let reply = client.post(url).bearer_auth(&token).json(&ev.payload["body"]).send().await.map_err(reached)?;
+                // A failure that certainly took nothing gives the claim back, for the ordinary retry to submit it: before the
+                // request (its client), a connection never made, 429 (LHDN's rate limit: the request is not processed) and
+                // 401 (the token refused: no document is taken). Not a 422: it also says a duplicate within ten minutes.
+                let unsent = async |provable: bool, why: Error| failed_call(k, ev, "my.myinvois.submit", provable, why).await;
+                let (client, url) = match MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documentsubmissions/"), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(true, e).await,
+                };
+                let reply = match client.post(url).bearer_auth(&token).json(&ev.payload["body"]).send().await {
+                    Ok(r) => r,
+                    Err(e) => return unsent(never_sent(&e), reached(e)).await,
+                };
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
@@ -530,8 +540,8 @@ impl EventSink for MyInvois {
                         tx.commit().await?;
                         Ok(())
                     }
-                    401 => Err(Error::internal("MyInvois refused the token; trying again with a new one")),
-                    422 | 429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
+                    401 => unsent(true, Error::internal("MyInvois refused the token; trying again with a new one")).await,
+                    422 | 429 | 500.. => unsent(status == 429, Error::internal(format!("MyInvois is busy ({status}); trying again"))).await,
                     _ => record(json!({"my_einvoice_status": "Invalid", "my_einvoice_error": Self::errors(&v)})).await,
                 }
             }
@@ -574,14 +584,22 @@ impl EventSink for MyInvois {
                         _ => return Err(Error::internal(format!("MyInvois did not say whether it cancelled the e-invoice ({status}); asking again"))),
                     }
                 }
-                let (client, url) = MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/state/{uuid}/state"), WAIT).await?;
-                let reply =
-                    client.put(url).bearer_auth(&token).json(&json!({"status": "cancelled", "reason": ev.payload["reason"]})).send().await.map_err(reached)?;
+                // From here this delivery acts (its claim, or LHDN has said the document is not cancelled): a failure that
+                // certainly cancelled nothing (before the request, no connection, 429) gives the claim back.
+                let unsent = async |provable: bool, why: Error| failed_call(k, ev, "my.myinvois.cancel", provable, why).await;
+                let (client, url) = match MYINVOIS.client(k, ev.tenant_id, &format!("{api}/api/v1.0/documents/state/{uuid}/state"), WAIT).await {
+                    Ok(c) => c,
+                    Err(e) => return unsent(true, e).await,
+                };
+                let reply = match client.put(url).bearer_auth(&token).json(&json!({"status": "cancelled", "reason": ev.payload["reason"]})).send().await {
+                    Ok(r) => r,
+                    Err(e) => return unsent(never_sent(&e), reached(e)).await,
+                };
                 let status = reply.status().as_u16();
                 let v: Value = reply.json().await.unwrap_or(Value::Null);
                 match status {
                     200 => record(json!({"my_einvoice_status": "Cancelled", "my_einvoice_error": null})).await,
-                    429 | 500.. => Err(Error::internal(format!("MyInvois is busy ({status}); trying again"))),
+                    429 | 500.. => unsent(status == 429, Error::internal(format!("MyInvois is busy ({status}); trying again"))).await,
                     _ => record(json!({"my_einvoice_error": format!("MyInvois did not cancel it: {}; issue a credit note", Self::errors(&v))})).await,
                 }
             }
