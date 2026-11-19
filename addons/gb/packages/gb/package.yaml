@@ -23,7 +23,8 @@ overlays:
           description: "HMRC's authorisation lasts 18 months from here"}}
       - {op: add_section, after: tax_id, section: {label: UK VAT, collapsible: true, fields: [gb_vrn, gb_hmrc_mode, gb_hmrc_client_id, gb_hmrc_client_secret, gb_hmrc_redirect_uri,
           gb_hmrc_token_expires, gb_hmrc_connected_at]}}
-      - {op: add_action, action: {name: gb_connect_hmrc, label: Connect to HMRC, permission: write, condition: "doc.gb_hmrc_mode != 'Off'"}}
+      - {op: add_action, action: {name: gb_connect_hmrc, label: Connect to HMRC, permission: write, condition: "doc.gb_hmrc_mode != 'Off'",
+           contract: {effect: transactional_action, returns: {type: object, properties: {url: {type: string}, message: {type: string}}}, completion: "A one-time state is kept on the company and the address at which a person signs in to HMRC and grants access is answered; the connection exists only once HMRC sends the person back, committed with this receipt"}}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: gb_vrn, type: data, label: VAT Registration Number (UK), max_length: 16}}

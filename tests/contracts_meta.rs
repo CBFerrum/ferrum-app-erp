@@ -242,3 +242,8 @@ fn es() {
 fn ro() {
     check("ro");
 }
+
+#[test]
+fn gb() {
+    check("gb");
+}
