@@ -90,6 +90,21 @@ const LEFT: &[(&str, &str, &str)] = &[
         "Item.make_variants",
         "Takes the attributes to combine as a free object (attributes), which cannot be declared yet (addons/stock-ops/src/variants.rs:324)",
     ),
+    (
+        "india",
+        "SalesInvoice.record_e_invoice",
+        "The IRP's answer is read from free-form keys (Irn, AckNo, SignedQRCode ... at the top, under data or result, or as JSON text in response), which cannot be declared (addons/india/src/einvoice.rs:652-665, 792)",
+    ),
+    (
+        "india",
+        "SalesInvoice.record_e_invoice_cancellation",
+        "The IRP's answer is read from free-form keys (Irn, CancelDate ...) that cannot be declared (addons/india/src/einvoice.rs:652-665, 868)",
+    ),
+    (
+        "india",
+        "SalesInvoice.record_e_way_bill",
+        "The portal's answer is read from free-form keys (EwbNo, ewayBillNo, EwbDt, validUpto ... or response) of which only some are declared (addons/india/src/einvoice.rs:652-665, 951-970)",
+    ),
     // LEFT-ROWS
 ];
 
@@ -251,4 +266,9 @@ fn gb() {
 #[test]
 fn de() {
     check("de");
+}
+
+#[test]
+fn india() {
+    check("india");
 }
