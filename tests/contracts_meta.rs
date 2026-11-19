@@ -38,17 +38,17 @@ const LEFT: &[(&str, &str, &str)] = &[
     (
         "selling",
         "SalesOrder.update_items",
-        "Also takes a list of line changes (items), which cannot be declared yet: the platform has no array type for action parameters (src/change.rs:74-80)",
+        "Also takes a list of line changes (items), which cannot be declared yet: the platform has no array type for action parameters (src/change.rs:89)",
     ),
     (
         "buying",
         "PurchaseOrder.update_items",
-        "Also takes a list of line changes (items), which cannot be declared yet: the platform has no array type for action parameters (src/change.rs:74-80)",
+        "Also takes a list of line changes (items), which cannot be declared yet: the platform has no array type for action parameters (src/change.rs:89)",
     ),
     (
         "inventory",
         "CarrierShipment.track",
-        "Declared permission read but it writes the shipment's tracking under the system's rights and calls the carrier (src/shipping.rs:693-704)",
+        "Declared permission read but it writes the shipment's tracking under the system's rights and calls the carrier (src/shipping.rs:685-704)",
     ),
     (
         "finance",
@@ -93,17 +93,17 @@ const LEFT: &[(&str, &str, &str)] = &[
     (
         "india",
         "SalesInvoice.record_e_invoice",
-        "The IRP's answer is read from free-form keys (Irn, AckNo, SignedQRCode ... at the top, under data or result, or as JSON text in response), which cannot be declared (addons/india/src/einvoice.rs:652-665, 792)",
+        "The IRP's answer is read from free-form keys (Irn, AckNo, SignedQRCode ... at the top, under data or result, or as JSON text in response), which cannot be declared (addons/india/src/einvoice.rs:652-665, 791)",
     ),
     (
         "india",
         "SalesInvoice.record_e_invoice_cancellation",
-        "The IRP's answer is read from free-form keys (Irn, CancelDate ...) that cannot be declared (addons/india/src/einvoice.rs:652-665, 868)",
+        "The IRP's answer is read from free-form keys (Irn, CancelDate ...) that cannot be declared (addons/india/src/einvoice.rs:652-665, 887)",
     ),
     (
         "india",
         "SalesInvoice.record_e_way_bill",
-        "The portal's answer is read from free-form keys (EwbNo, ewayBillNo, EwbDt, validUpto ... or response) of which only some are declared (addons/india/src/einvoice.rs:652-665, 951-970)",
+        "The portal's answer is read from free-form keys (EwbNo, ewayBillNo, EwbDt, validUpto ... or response) of which only some are declared (addons/india/src/einvoice.rs:652-665, 953-975)",
     ),
     // LEFT-ROWS
 ];
