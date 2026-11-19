@@ -22,7 +22,8 @@ overlays:
       - {op: add_field, after: ro_anaf_refresh_token, field: {name: ro_anaf_state, type: secret, label: ANAF Sign-in State}}
       - {op: add_field, after: ro_anaf_state, field: {name: ro_anaf_token_expires, type: datetime, label: ANAF Access Until, read_only: true}}
       - {op: add_field, after: ro_anaf_token_expires, field: {name: ro_anaf_connected_at, type: datetime, label: Connected to ANAF, read_only: true}}
-      - {op: add_action, action: {name: ro_connect_anaf, label: Connect to ANAF, permission: write, condition: "doc.ro_anaf_mode != 'Off'"}}
+      - {op: add_action, action: {name: ro_connect_anaf, label: Connect to ANAF, permission: write, condition: "doc.ro_anaf_mode != 'Off'",
+           contract: {effect: transactional_action, returns: {type: object, properties: {url: {type: string}, message: {type: string}}}, completion: "A one-time state is kept on the company and the address at which a person signs in to ANAF and allows access is answered; the connection exists only once ANAF sends the person back, committed with this receipt"}}}
       - {op: add_field, after: ro_anaf_connected_at, field: {name: ro_small_business, type: check, label: Small Business Exemption (article 310), visible_if: "doc.country_code == 'RO'",
           description: "Regim special de scutire: no VAT on its sales, and its invoices say why"}}
   - entity: Item
@@ -36,13 +37,17 @@ overlays:
       - {op: add_field, after: ro_efactura_status, field: {name: ro_upload_index, type: data, label: ANAF Upload Index, read_only: true, no_copy: true}}
       - {op: add_field, after: ro_upload_index, field: {name: ro_download_id, type: data, label: ANAF Download ID, read_only: true, no_copy: true}}
       - {op: add_field, after: ro_download_id, field: {name: ro_efactura_error, type: text, label: ANAF Message, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: ro_efactura, group: e-Invoice, label: Download e-Factura (CIUS-RO), docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: ro_upload_efactura, group: e-Invoice, label: Upload to e-Factura, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status != 'Validated'"}}
+      - {op: add_action, action: {name: ro_efactura, group: e-Invoice, label: Download e-Factura (CIUS-RO), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The e-Factura (CIUS-RO) invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: ro_upload_efactura, group: e-Invoice, label: Upload to e-Factura, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status != 'Validated'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to ANAF's e-Factura is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: ro_record_anaf, group: e-Invoice, label: Record ANAF's Answer, docstatus: [1], permission: submit,
           condition: "doc.ro_efactura_status == 'Pending' || doc.ro_efactura_status == 'Uploaded'",
           params: [{name: upload_index, label: Upload Index (index_incarcare), type: data}, {name: state, label: State, type: select, options: [ok, nok, in prelucrare]},
-                   {name: download_id, label: Download ID (id_descarcare), type: data}, {name: message, label: ANAF's Message, type: text}]}}
+                   {name: download_id, label: Download ID (id_descarcare), type: data}, {name: message, label: ANAF's Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "ANAF's answer for the upload that waits for it is recorded on the invoice (its upload index, state, download id and message), committed with this receipt"}}}
       # An upload that may have reached ANAF (its answer lost) waits Pending for a person: its index from ANAF's messages
       # (Record ANAF's Answer), or, when ANAF does not have it, a new upload.
       - {op: add_action, action: {name: ro_upload_again, group: e-Invoice, label: Upload to e-Factura Again, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status == 'Pending'",
-          confirm: "Only when ANAF's messages do not have this invoice: upload it again?"}}
+          confirm: "Only when ANAF's messages do not have this invoice: upload it again?",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is uploaded to e-Factura again: a new request is queued with this receipt for the company's connector, after the person has checked in ANAF's messages that it does not have it; the answer is recorded on the invoice"}}}

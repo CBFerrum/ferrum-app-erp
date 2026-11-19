@@ -237,3 +237,8 @@ fn pl() {
 fn es() {
     check("es");
 }
+
+#[test]
+fn ro() {
+    check("ro");
+}
