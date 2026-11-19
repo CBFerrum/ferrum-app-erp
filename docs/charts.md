@@ -54,3 +54,23 @@ it plays. A template is saved only whole (`setup::template_problems`):
   again, it adds nothing.
 
 No national chart ships yet: those come as add-ons' seed templates.
+
+## Charts that ship
+
+A country's add-on seeds its chart as a template, once per workspace (a later release does not rewrite a workspace's
+copy). Each template's notes name the text it was built from, the day it was read, what was added to it, and that no
+accountant has reviewed it. A chart lists the groups and the accounts down to three digits, plus the longer accounts the
+roles need; a person copies the template and adds the rest.
+
+| Template | Add-on | Built from |
+|---|---|---|
+| Spain: Plan General de Contabilidad | `es` | Real Decreto 1514/2007, Cuarta parte, in the Boletín Oficial del Estado |
+| France: Plan comptable général | `fr` | ANC regulation 2014-03, article 1121-1, as consolidated on 1 January 2026 |
+| Portugal: SNC | `pt` | Portaria 218/2015, Anexo 2, Base column, in the Diário da República, with Declaração de Retificação 41-A/2015 |
+| Romania: Planul de conturi general | `ro` | OMFP 1802/2014, point 594, as the ANAF publishes it |
+
+Countries that have no prescribed chart (the United Kingdom, the United States, India, Italy, Poland and the rest) use
+the standard chart. Belgium, Germany (SKR 03 and SKR 04), Mexico and China ship none yet: see the erp-5 report.
+A class that mixes assets and liabilities is not a row (a parent and its child share a root type): its subgroups are the
+roots. Groupings and accounts the text does not have, which a role needed, are numbered `Z01`, `Z02` ... or named in
+the notes.

@@ -74,4 +74,35 @@ mod tests {
         }
         assert!(super::it::MANIFEST.contains("id: it") && super::pl::MANIFEST.contains("eu:"));
     }
+
+    /// The charts of accounts the members ship (erp-5): each maps every role ERP and its add-ons book to (what a chart
+    /// template is saved with), is deep enough to work with, and says where it was read and that no accountant has
+    /// reviewed it.
+    #[test]
+    fn each_members_chart_maps_every_role() {
+        let mut found = Vec::new();
+        for code in ["be", "es", "fr", "it", "pl", "pt", "ro"] {
+            for p in super::packages_of(code).unwrap_or_else(|e| panic!("{code}: {e}")) {
+                for s in p.manifest.seed.iter().filter(|s| s.entity == "ChartTemplate") {
+                    for r in &s.records {
+                        let rows: Vec<ferrum_kernel::Doc> =
+                            r["accounts"].as_array().expect("accounts").iter().map(|a| a.as_object().cloned().expect("a row")).collect();
+                        let name = r["template_name"].as_str().unwrap_or_default().to_string();
+                        let problems = ferrum_app_erp::setup::template_problems(&rows);
+                        assert!(problems.is_empty(), "{name}: {problems:?}");
+                        assert!((100..=600).contains(&rows.len()), "{name}: {} rows", rows.len());
+                        let notes = r["notes"].as_str().unwrap_or_default();
+                        assert!(
+                            notes.contains("read on 2026-") && notes.contains("Not yet reviewed by an accountant"),
+                            "{name}: its notes name no source and day"
+                        );
+                        assert_eq!(r["country"].as_str().map(str::to_lowercase).as_deref(), Some(code), "{name}");
+                        found.push(name);
+                    }
+                }
+            }
+        }
+        found.sort();
+        assert_eq!(found, ["France: Plan comptable général", "Portugal: SNC", "Romania: Planul de conturi general", "Spain: Plan General de Contabilidad"]);
+    }
 }

@@ -51,3 +51,311 @@ overlays:
       - {op: add_action, action: {name: ro_upload_again, group: e-Invoice, label: Upload to e-Factura Again, docstatus: [1], permission: submit, condition: "doc.ro_efactura_status == 'Pending'",
           confirm: "Only when ANAF's messages do not have this invoice: upload it again?",
            contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is uploaded to e-Factura again: a new request is queued with this receipt for the company's connector, after the person has checked in ANAF's messages that it does not have it; the answer is recorded on the invoice"}}}
+
+seed:
+  - entity: ChartTemplate
+    key: [template_name]
+    records:
+      - template_name: "Romania: Planul de conturi general"
+        country: RO
+        notes: "Not yet reviewed by an accountant. Source, read on 2026-11-19: the Agenția Națională de Administrare Fiscală's copy of OMFP 1802/2014, point 594 (Planul de conturi general), as published in 2014 without later amendments (such as OMFP 6670/2024): https://static.anaf.ro/static/10/Anaf/legislatie/OMFP_1802_2014.pdf. Rows: classes 1 to 7 as the plan titles them, their two-digit and three-digit accounts, the four-digit accounts the roles below need, and 89, 891 and 892 of class 8; class 9 (management accounts) and the off-balance accounts of 80 are left out. Classes 1 and 4 are not rows (they mix balances): their two-digit accounts are the roots. The plan marks each account A (asset), P (liability) or A/P; that mark and the class decided its root type, contra accounts (28, 29, 39, 49, 59) counting with the assets. Added, not in the plan: Z01 and Z02 (groupings of the TVA accounts of 442, which the plan lists with assets and liabilities together, for the roles 1150 and 2130) and Z04 (absorbed overheads, 5130). Roles: 1111 4111, 2111 401, 2121 408, 1121 5121, 1131 5311, 1141 371, 1142 331, 1151 4426, 1152 4482, 2131 4427, 2132 444, 1170 471, 2150 472, 3200 1171, 3300 891, 4110 707, 5110 607, 5120 6814, 5210 628, 5260 665, 5270 6588: which account plays which role is a reading of their names, not the plan's. A name the text gives to more than one account carries the account's number in brackets, because a company's account names are unique."
+        accounts:
+          - {account_number: "10", account_name: "Capital şi rezerve", is_group: true, root_type: Equity}
+          - {account_number: "101", account_name: "Capital", parent_number: "10", root_type: Equity}
+          - {account_number: "103", account_name: "Alte elemente de capitaluri proprii", parent_number: "10", root_type: Equity}
+          - {account_number: "104", account_name: "Prime de capital", parent_number: "10", root_type: Equity}
+          - {account_number: "105", account_name: "Rezerve din reevaluare", parent_number: "10", root_type: Equity}
+          - {account_number: "106", account_name: "Rezerve", parent_number: "10", root_type: Equity}
+          - {account_number: "107", account_name: "Diferențe de curs valutar din conversie", parent_number: "10", root_type: Equity}
+          - {account_number: "108", account_name: "Interese care nu controlează", parent_number: "10", root_type: Equity}
+          - {account_number: "109", account_name: "Acțiuni proprii", parent_number: "10", root_type: Equity}
+          - {account_number: "11", account_name: "Rezultatul reportat (11)", is_group: true, root_type: Equity}
+          - {account_number: "117", account_name: "Rezultatul reportat (117)", parent_number: "11", is_group: true, root_type: Equity}
+          - {account_number: "1171", account_name: "Rezultatul reportat reprezentând profitul nerepartizat sau pierderea neacoperită", parent_number: "117", root_type: Equity, account_type: Equity, standard_number: "3200"}
+          - {account_number: "12", account_name: "Rezultatul exercițiului financiar", is_group: true, root_type: Equity}
+          - {account_number: "121", account_name: "Profit sau pierdere", parent_number: "12", root_type: Equity}
+          - {account_number: "129", account_name: "Repartizarea profitului", parent_number: "12", root_type: Equity}
+          - {account_number: "14", account_name: "Câştiguri sau pierderi legate de emiterea, răscumpărarea, vânzarea, cedarea cu titlu gratuit sau anularea instrumentelor de capitaluri proprii", is_group: true, root_type: Equity}
+          - {account_number: "141", account_name: "Câştiguri legate de vânzarea sau anularea instrumentelor de capitaluri proprii", parent_number: "14", root_type: Equity}
+          - {account_number: "149", account_name: "Pierderi legate de emiterea, răscumpărarea, vânzarea, cedarea cu titlu gratuit sau anularea instrumentelor de capitaluri proprii", parent_number: "14", root_type: Equity}
+          - {account_number: "15", account_name: "Provizioane (15)", is_group: true, root_type: Liability}
+          - {account_number: "151", account_name: "Provizioane (151)", parent_number: "15", root_type: Liability}
+          - {account_number: "16", account_name: "Împrumuturi şi datorii asimilate", is_group: true, root_type: Liability}
+          - {account_number: "161", account_name: "Împrumuturi din emisiuni de obligațiuni", parent_number: "16", root_type: Liability}
+          - {account_number: "162", account_name: "Credite bancare pe termen lung", parent_number: "16", root_type: Liability}
+          - {account_number: "166", account_name: "Datorii care privesc imobilizările financiare", parent_number: "16", root_type: Liability}
+          - {account_number: "167", account_name: "Alte împrumuturi şi datorii asimilate", parent_number: "16", root_type: Liability}
+          - {account_number: "168", account_name: "Dobânzi aferente împrumuturilor şi datoriilor asimilate", parent_number: "16", root_type: Liability}
+          - {account_number: "169", account_name: "Prime privind rambursarea obligațiunilor şi a altor datorii", parent_number: "16", root_type: Liability}
+          - {account_number: "2", account_name: "Conturi de imobilizări", is_group: true, root_type: Asset}
+          - {account_number: "20", account_name: "IMOBILIZĂRI NECORPORALE", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "201", account_name: "Cheltuieli de constituire", parent_number: "20", root_type: Asset}
+          - {account_number: "203", account_name: "Cheltuieli de dezvoltare", parent_number: "20", root_type: Asset}
+          - {account_number: "205", account_name: "Concesiuni, brevete, licențe, mărci comerciale, drepturi şi active similare", parent_number: "20", root_type: Asset}
+          - {account_number: "206", account_name: "Active necorporale de explorare şi evaluare a resurselor minerale", parent_number: "20", root_type: Asset}
+          - {account_number: "207", account_name: "Fond comercial", parent_number: "20", root_type: Asset}
+          - {account_number: "208", account_name: "Alte imobilizări necorporale", parent_number: "20", root_type: Asset}
+          - {account_number: "21", account_name: "Imobilizări corporale", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "211", account_name: "Terenuri şi amenajări de terenuri", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "212", account_name: "Construcții", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "213", account_name: "Instalații tehnice şi mijloace de transport", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "214", account_name: "Mobilier, aparatură birotică, echipamente de protecție a valorilor umane şi materiale şi alte active corporale", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "215", account_name: "Investiții imobiliare", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "216", account_name: "Active corporale de explorare şi evaluare a resurselor minerale", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "217", account_name: "Active biologice productive", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "22", account_name: "Imobilizări corporale în curs de aprovizionare", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "223", account_name: "Instalații tehnice şi mijloace de transport în curs de aprovizionare", parent_number: "22", root_type: Asset}
+          - {account_number: "224", account_name: "Mobilier, aparatură birotică, echipamente de protecție a valorilor umane şi materiale şi alte active corporale în curs de aprovizionare", parent_number: "22", root_type: Asset}
+          - {account_number: "227", account_name: "Active biologice productive în curs de aprovizionare", parent_number: "22", root_type: Asset}
+          - {account_number: "23", account_name: "Imobilizări în curs", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "231", account_name: "Imobilizări corporale în curs de execuție", parent_number: "23", root_type: Asset}
+          - {account_number: "235", account_name: "Investiții imobiliare în curs de execuție", parent_number: "23", root_type: Asset}
+          - {account_number: "26", account_name: "Imobilizări financiare", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "261", account_name: "Acțiuni deținute la entitățile afiliate (261)", parent_number: "26", root_type: Asset}
+          - {account_number: "262", account_name: "Acțiuni deținute la entități asociate", parent_number: "26", root_type: Asset}
+          - {account_number: "263", account_name: "Acțiuni deținute la entități controlate în comun", parent_number: "26", root_type: Asset}
+          - {account_number: "264", account_name: "Titluri puse în echivalență", parent_number: "26", root_type: Asset}
+          - {account_number: "265", account_name: "Alte titluri imobilizate", parent_number: "26", root_type: Asset}
+          - {account_number: "266", account_name: "Certificate verzi amânate", parent_number: "26", root_type: Asset}
+          - {account_number: "267", account_name: "Creanțe imobilizate", parent_number: "26", root_type: Asset}
+          - {account_number: "269", account_name: "Vărsăminte de efectuat pentru imobilizări financiare", parent_number: "26", root_type: Asset}
+          - {account_number: "28", account_name: "Amortizări privind imobilizările", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "280", account_name: "Amortizări privind imobilizările necorporale", parent_number: "28", root_type: Asset}
+          - {account_number: "281", account_name: "Amortizări privind imobilizările corporale", parent_number: "28", root_type: Asset}
+          - {account_number: "29", account_name: "Ajustări pentru deprecierea sau pierderea de valoare a imobilizărilor", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "290", account_name: "Ajustări pentru deprecierea imobilizărilor necorporale", parent_number: "29", root_type: Asset}
+          - {account_number: "291", account_name: "Ajustări pentru deprecierea imobilizărilor corporale", parent_number: "29", root_type: Asset}
+          - {account_number: "293", account_name: "Ajustări pentru deprecierea imobilizărilor în curs de execuție", parent_number: "29", root_type: Asset}
+          - {account_number: "296", account_name: "Ajustări pentru pierderea de valoare a imobilizărilor financiare", parent_number: "29", root_type: Asset}
+          - {account_number: "3", account_name: "Conturi de stocuri şi producție în curs de execuție", is_group: true, root_type: Asset}
+          - {account_number: "30", account_name: "Stocuri de materii prime şi materiale", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "301", account_name: "Materii prime", parent_number: "30", root_type: Asset}
+          - {account_number: "302", account_name: "Materiale consumabile", parent_number: "30", root_type: Asset}
+          - {account_number: "303", account_name: "Materiale de natura obiectelor de inventar", parent_number: "30", root_type: Asset}
+          - {account_number: "308", account_name: "Diferențe de preț la materii prime şi materiale", parent_number: "30", root_type: Asset}
+          - {account_number: "32", account_name: "Stocuri în curs de aprovizionare", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "321", account_name: "Materii prime în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "322", account_name: "Materiale consumabile în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "323", account_name: "Materiale de natura obiectelor de inventar în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "326", account_name: "Active biologice de natura stocurilor în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "327", account_name: "Mărfuri în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "328", account_name: "Ambalaje în curs de aprovizionare", parent_number: "32", root_type: Asset}
+          - {account_number: "33", account_name: "Producție în curs de execuție", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "331", account_name: "Produse în curs de execuție", parent_number: "33", root_type: Asset, account_type: Stock, standard_number: "1142"}
+          - {account_number: "332", account_name: "Servicii în curs de execuție", parent_number: "33", root_type: Asset}
+          - {account_number: "34", account_name: "PRODUSE", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "341", account_name: "Semifabricate", parent_number: "34", root_type: Asset}
+          - {account_number: "345", account_name: "Produse finite", parent_number: "34", root_type: Asset}
+          - {account_number: "346", account_name: "Produse reziduale", parent_number: "34", root_type: Asset}
+          - {account_number: "347", account_name: "Produse agricole", parent_number: "34", root_type: Asset}
+          - {account_number: "348", account_name: "Diferențe de preț la produse", parent_number: "34", root_type: Asset}
+          - {account_number: "35", account_name: "STOCURI AFLATE LA TERȚI", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "351", account_name: "Materii şi materiale aflate la terți", parent_number: "35", root_type: Asset}
+          - {account_number: "354", account_name: "Produse aflate la terți", parent_number: "35", root_type: Asset}
+          - {account_number: "356", account_name: "Active biologice de natura stocurilor aflate la terți", parent_number: "35", root_type: Asset}
+          - {account_number: "357", account_name: "Mărfuri aflate la terți", parent_number: "35", root_type: Asset}
+          - {account_number: "358", account_name: "Ambalaje aflate la terți", parent_number: "35", root_type: Asset}
+          - {account_number: "36", account_name: "Active biologice de natura stocurilor (36)", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "361", account_name: "Active biologice de natura stocurilor (361)", parent_number: "36", root_type: Asset}
+          - {account_number: "368", account_name: "Diferențe de preț la active biologice de natura stocurilor", parent_number: "36", root_type: Asset}
+          - {account_number: "37", account_name: "MĂRFURI", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "371", account_name: "Mărfuri", parent_number: "37", root_type: Asset, account_type: Stock, standard_number: "1141"}
+          - {account_number: "378", account_name: "Diferențe de preț la mărfuri", parent_number: "37", root_type: Asset}
+          - {account_number: "38", account_name: "Ambalaje (38)", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "381", account_name: "Ambalaje (381)", parent_number: "38", root_type: Asset}
+          - {account_number: "388", account_name: "Diferențe de preț la ambalaje", parent_number: "38", root_type: Asset}
+          - {account_number: "39", account_name: "Ajustări pentru deprecierea stocurilor şi producției în curs de execuție", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "391", account_name: "Ajustări pentru deprecierea materiilor prime", parent_number: "39", root_type: Asset}
+          - {account_number: "392", account_name: "Ajustări pentru deprecierea materialelor", parent_number: "39", root_type: Asset}
+          - {account_number: "393", account_name: "Ajustări pentru deprecierea producției în curs de execuție", parent_number: "39", root_type: Asset}
+          - {account_number: "394", account_name: "Ajustări pentru deprecierea produselor", parent_number: "39", root_type: Asset}
+          - {account_number: "395", account_name: "Ajustări pentru deprecierea stocurilor aflate la terți", parent_number: "39", root_type: Asset}
+          - {account_number: "396", account_name: "Ajustări pentru deprecierea activelor biologice de natura stocurilor", parent_number: "39", root_type: Asset}
+          - {account_number: "397", account_name: "Ajustări pentru deprecierea mărfurilor", parent_number: "39", root_type: Asset}
+          - {account_number: "398", account_name: "Ajustări pentru deprecierea ambalajelor", parent_number: "39", root_type: Asset}
+          - {account_number: "40", account_name: "Furnizori şi conturi asimilate", is_group: true, root_type: Liability}
+          - {account_number: "401", account_name: "Furnizori", parent_number: "40", root_type: Liability, account_type: Payable, standard_number: "2111"}
+          - {account_number: "403", account_name: "Efecte de plătit", parent_number: "40", root_type: Liability}
+          - {account_number: "404", account_name: "Furnizori de imobilizări", parent_number: "40", root_type: Liability}
+          - {account_number: "405", account_name: "Efecte de plătit pentru imobilizări", parent_number: "40", root_type: Liability}
+          - {account_number: "408", account_name: "Furnizori ‐ facturi nesosite", parent_number: "40", root_type: Liability, account_type: "Stock Received But Not Billed", standard_number: "2121"}
+          - {account_number: "409", account_name: "Furnizori ‐ debitori", parent_number: "40", root_type: Liability}
+          - {account_number: "41", account_name: "Clienți şi conturi asimilate", is_group: true, root_type: Asset}
+          - {account_number: "411", account_name: "Clienți (411)", parent_number: "41", is_group: true, root_type: Asset}
+          - {account_number: "4111", account_name: "Clienți (4111)", parent_number: "411", root_type: Asset, account_type: Receivable, standard_number: "1111"}
+          - {account_number: "413", account_name: "Efecte de primit de la clienți", parent_number: "41", root_type: Asset}
+          - {account_number: "418", account_name: "Clienți ‐ facturi de întocmit", parent_number: "41", root_type: Asset}
+          - {account_number: "419", account_name: "Clienți ‐ creditori", root_type: Liability}
+          - {account_number: "42", account_name: "Personal şi conturi asimilate", is_group: true, root_type: Liability}
+          - {account_number: "421", account_name: "Personal ‐ salarii datorate", parent_number: "42", root_type: Liability}
+          - {account_number: "423", account_name: "Personal ‐ ajutoare materiale datorate", parent_number: "42", root_type: Liability}
+          - {account_number: "424", account_name: "Prime reprezentând participarea personalului la profit", parent_number: "42", root_type: Liability}
+          - {account_number: "425", account_name: "Avansuri acordate personalului", root_type: Asset}
+          - {account_number: "426", account_name: "Drepturi de personal neridicate", parent_number: "42", root_type: Liability}
+          - {account_number: "427", account_name: "Rețineri din salarii datorate terților", parent_number: "42", root_type: Liability}
+          - {account_number: "428", account_name: "Alte datorii şi creanțe în legătură cu personalul", parent_number: "42", root_type: Liability}
+          - {account_number: "43", account_name: "Asigurări sociale, protecția socială şi conturi asimilate", is_group: true, root_type: Liability}
+          - {account_number: "431", account_name: "Asigurări sociale", parent_number: "43", root_type: Liability}
+          - {account_number: "437", account_name: "Ajutor de şomaj", parent_number: "43", root_type: Liability}
+          - {account_number: "438", account_name: "Alte datorii şi creanțe sociale", parent_number: "43", root_type: Liability}
+          - {account_number: "44", account_name: "Bugetul statului, fonduri speciale şi conturi asimilate", is_group: true, root_type: Liability}
+          - {account_number: "441", account_name: "Impozitul pe profit/venit", parent_number: "44", root_type: Liability}
+          - {account_number: "442", account_name: "Taxa pe valoarea adăugată", parent_number: "44", root_type: Liability}
+          - {account_number: "4423", account_name: "TVA de plată", parent_number: "Z02", root_type: Liability}
+          - {account_number: "4424", account_name: "TVA de recuperat", parent_number: "Z01", root_type: Asset}
+          - {account_number: "4426", account_name: "TVA deductibilă", parent_number: "Z01", root_type: Asset, account_type: Tax, standard_number: "1151"}
+          - {account_number: "4427", account_name: "TVA colectată", parent_number: "Z02", root_type: Liability, account_type: Tax, standard_number: "2131"}
+          - {account_number: "4428", account_name: "TVA neexigibilă", root_type: Asset}
+          - {account_number: "444", account_name: "Impozitul pe venituri de natura salariilor", parent_number: "44", root_type: Liability, account_type: Tax, standard_number: "2132"}
+          - {account_number: "445", account_name: "Subvenții", root_type: Asset}
+          - {account_number: "446", account_name: "Alte impozite, taxe şi vărsăminte asimilate", parent_number: "44", root_type: Liability}
+          - {account_number: "447", account_name: "Fonduri speciale ‐ taxe şi vărsăminte asimilate", parent_number: "44", root_type: Liability}
+          - {account_number: "448", account_name: "Alte datorii şi creanțe cu bugetul statului", parent_number: "44", root_type: Liability}
+          - {account_number: "4482", account_name: "Alte creanțe privind bugetul statului", root_type: Asset, account_type: Tax, standard_number: "1152"}
+          - {account_number: "45", account_name: "Grup şi acționari/asociați", is_group: true, root_type: Liability}
+          - {account_number: "451", account_name: "Decontări între entitățile afiliate", parent_number: "45", root_type: Liability}
+          - {account_number: "453", account_name: "Decontări cu entitățile asociate şi entitățile controlate în comun", parent_number: "45", root_type: Liability}
+          - {account_number: "455", account_name: "Sume datorate acționarilor/asociaților", parent_number: "45", root_type: Liability}
+          - {account_number: "456", account_name: "Decontări cu acționarii/asociații privind capitalul", parent_number: "45", root_type: Liability}
+          - {account_number: "457", account_name: "Dividende de plată", parent_number: "45", root_type: Liability}
+          - {account_number: "458", account_name: "Decontări din operațiuni în participație", parent_number: "45", root_type: Liability}
+          - {account_number: "46", account_name: "Debitori şi creditori diverşi", is_group: true, root_type: Asset}
+          - {account_number: "461", account_name: "Debitori diverşi", parent_number: "46", root_type: Asset}
+          - {account_number: "462", account_name: "Creditori diverşi", root_type: Liability}
+          - {account_number: "47", account_name: "Conturi de subvenții, regularizare şi asimilate", is_group: true, root_type: Liability}
+          - {account_number: "471", account_name: "Cheltuieli înregistrate în avans", root_type: Asset, standard_number: "1170"}
+          - {account_number: "472", account_name: "Venituri înregistrate în avans", parent_number: "47", root_type: Liability, standard_number: "2150"}
+          - {account_number: "473", account_name: "Decontări din operațiuni în curs de clarificare", parent_number: "47", root_type: Liability}
+          - {account_number: "475", account_name: "Subvenții pentru investiții", parent_number: "47", root_type: Liability}
+          - {account_number: "478", account_name: "Venituri în avans aferente activelor primite prin transfer de la clienți", parent_number: "47", root_type: Liability}
+          - {account_number: "48", account_name: "Decontări în cadrul unității", is_group: true, root_type: Liability}
+          - {account_number: "481", account_name: "Decontări între unitate şi subunități", parent_number: "48", root_type: Liability}
+          - {account_number: "482", account_name: "Decontări între subunități", parent_number: "48", root_type: Liability}
+          - {account_number: "49", account_name: "Ajustări pentru deprecierea creanțelor", is_group: true, root_type: Asset}
+          - {account_number: "491", account_name: "Ajustări pentru deprecierea creanțelor ‐ clienți", parent_number: "49", root_type: Asset}
+          - {account_number: "495", account_name: "Ajustări pentru deprecierea creanțelor ‐ decontări în cadrul grupului şi cu acționarii/asociații", parent_number: "49", root_type: Asset}
+          - {account_number: "496", account_name: "Ajustări pentru deprecierea creanțelor ‐ debitori diverşi", parent_number: "49", root_type: Asset}
+          - {account_number: "5", account_name: "Conturi de trezorerie", is_group: true, root_type: Asset}
+          - {account_number: "50", account_name: "Investiții pe termen scurt", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "501", account_name: "Acțiuni deținute la entitățile afiliate (501)", parent_number: "50", root_type: Asset}
+          - {account_number: "505", account_name: "Obligațiuni emise şi răscumpărate", parent_number: "50", root_type: Asset}
+          - {account_number: "506", account_name: "Obligațiuni", parent_number: "50", root_type: Asset}
+          - {account_number: "507", account_name: "Certificate verzi primite", parent_number: "50", root_type: Asset}
+          - {account_number: "508", account_name: "Alte investiții pe termen scurt şi creanțe asimilate", parent_number: "50", root_type: Asset}
+          - {account_number: "509", account_name: "Vărsăminte de efectuat pentru investițiile pe termen scurt", parent_number: "50", root_type: Asset}
+          - {account_number: "51", account_name: "Conturi la bănci", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "511", account_name: "Valori de încasat", parent_number: "51", root_type: Asset}
+          - {account_number: "512", account_name: "Conturi curente la bănci", parent_number: "51", is_group: true, root_type: Asset}
+          - {account_number: "5121", account_name: "Conturi la bănci în lei", parent_number: "512", root_type: Asset, account_type: Bank, standard_number: "1121"}
+          - {account_number: "518", account_name: "Dobânzi", parent_number: "51", root_type: Asset}
+          - {account_number: "519", account_name: "Credite bancare pe termen scurt", root_type: Liability}
+          - {account_number: "53", account_name: "Casa (53)", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "531", account_name: "Casa (531)", parent_number: "53", is_group: true, root_type: Asset}
+          - {account_number: "5311", account_name: "Casa în lei", parent_number: "531", root_type: Asset, account_type: Cash, standard_number: "1131"}
+          - {account_number: "532", account_name: "Alte valori", parent_number: "53", root_type: Asset}
+          - {account_number: "54", account_name: "Acreditive (54)", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "541", account_name: "Acreditive (541)", parent_number: "54", root_type: Asset}
+          - {account_number: "542", account_name: "Avansuri de trezorerie", parent_number: "54", root_type: Asset}
+          - {account_number: "58", account_name: "Viramente interne (58)", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "581", account_name: "Viramente interne (581)", parent_number: "58", root_type: Asset}
+          - {account_number: "59", account_name: "Ajustări pentru pierderea de valoare a conturilor de trezorerie", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "591", account_name: "Ajustări pentru pierderea de valoare a acțiunilor deținute la entitățile afiliate", parent_number: "59", root_type: Asset}
+          - {account_number: "595", account_name: "Ajustări pentru pierderea de valoare a obligațiunilor emise şi răscumpărate", parent_number: "59", root_type: Asset}
+          - {account_number: "596", account_name: "Ajustări pentru pierderea de valoare a obligațiunilor", parent_number: "59", root_type: Asset}
+          - {account_number: "598", account_name: "Ajustări pentru pierderea de valoare a altor investiții pe termen scurt şi creanțe asimilate", parent_number: "59", root_type: Asset}
+          - {account_number: "6", account_name: "Conturi de cheltuieli", is_group: true, root_type: Expense}
+          - {account_number: "60", account_name: "Cheltuieli privind stocurile", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "601", account_name: "Cheltuieli cu materiile prime", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "602", account_name: "Cheltuieli cu materialele consumabile", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "603", account_name: "Cheltuieli privind materialele de natura obiectelor de inventar", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "604", account_name: "Cheltuieli privind materialele nestocate", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "605", account_name: "Cheltuieli privind energia şi apa", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "606", account_name: "Cheltuieli privind activele biologice de natura stocurilor", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "607", account_name: "Cheltuieli privind mărfurile", parent_number: "60", root_type: Expense, account_type: "Cost of Goods Sold", standard_number: "5110"}
+          - {account_number: "608", account_name: "Cheltuieli privind ambalajele", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "609", account_name: "Reduceri comerciale primite", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "61", account_name: "Cheltuieli cu serviciile executate de terți", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "611", account_name: "Cheltuieli cu întreținerea şi reparațiile", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "612", account_name: "Cheltuieli cu redevențele, locațiile de gestiune şi chiriile", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "613", account_name: "Cheltuieli cu primele de asigurare", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "614", account_name: "Cheltuieli cu studiile şi cercetările", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "615", account_name: "Cheltuieli cu pregătirea personalului", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "62", account_name: "Cheltuieli cu alte servicii executate de terți", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "621", account_name: "Cheltuieli cu colaboratorii", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "622", account_name: "Cheltuieli privind comisioanele şi onorariile", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "623", account_name: "Cheltuieli de protocol, reclamă şi publicitate", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "624", account_name: "Cheltuieli cu transportul de bunuri şi personal", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "625", account_name: "Cheltuieli cu deplasări, detaşări şi transferări", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "626", account_name: "Cheltuieli poştale şi taxe de telecomunicații", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "627", account_name: "Cheltuieli cu serviciile bancare şi asimilate", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "628", account_name: "Alte cheltuieli cu serviciile executate de terți", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5210"}
+          - {account_number: "63", account_name: "Cheltuieli cu alte impozite, taxe şi vărsăminte asimilate (63)", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "635", account_name: "Cheltuieli cu alte impozite, taxe şi vărsăminte asimilate (635)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "64", account_name: "Cheltuieli cu personalul", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "641", account_name: "Cheltuieli cu salariile personalului", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "642", account_name: "Cheltuieli cu avantajele în natură şi tichetele acordate salariaților", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "643", account_name: "Cheltuieli cu remunerarea în instrumente de capitaluri proprii", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "644", account_name: "Cheltuieli cu primele reprezentând participarea personalului la profit", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "645", account_name: "Cheltuieli privind asigurările şi protecția socială", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "65", account_name: "Alte cheltuieli de exploatare (65)", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "652", account_name: "Cheltuieli cu protecția mediului înconjurător", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "654", account_name: "Pierderi din creanțe şi debitori diverşi", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "655", account_name: "Cheltuieli din reevaluarea imobilizărilor corporale", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "658", account_name: "Alte cheltuieli de exploatare (658)", parent_number: "65", is_group: true, root_type: Expense}
+          - {account_number: "6588", account_name: "Alte cheltuieli de exploatare (6588)", parent_number: "658", root_type: Expense, account_type: "Round Off", standard_number: "5270"}
+          - {account_number: "66", account_name: "Cheltuieli financiare", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "663", account_name: "Pierderi din creanțe legate de participații", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "664", account_name: "Cheltuieli privind investițiile financiare cedate", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "665", account_name: "Cheltuieli din diferențe de curs valutar", parent_number: "66", root_type: Expense, account_type: "Exchange Gain Loss", standard_number: "5260"}
+          - {account_number: "666", account_name: "Cheltuieli privind dobânzile", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "667", account_name: "Cheltuieli privind sconturile acordate", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "668", account_name: "Alte cheltuieli financiare", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "68", account_name: "Cheltuieli cu amortizările, provizioanele şi ajustările pentru depreciere sau pierdere de valoare", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "681", account_name: "Cheltuieli de exploatare privind amortizările, provizioanele şi ajustările pentru depreciere", parent_number: "68", is_group: true, root_type: Expense}
+          - {account_number: "6814", account_name: "Cheltuieli de exploatare privind ajustările pentru deprecierea activelor circulante", parent_number: "681", root_type: Expense, account_type: "Stock Adjustment", standard_number: "5120"}
+          - {account_number: "686", account_name: "Cheltuieli financiare privind amortizările, provizioanele şi ajustările pentru pierdere de valoare", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "69", account_name: "Cheltuieli cu impozitul pe profit şi alte impozite", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "691", account_name: "Cheltuieli cu impozitul pe profit", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "698", account_name: "Cheltuieli cu impozitul pe venit şi cu alte impozite care nu apar în elementele de mai sus", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "7", account_name: "Conturi de venituri", is_group: true, root_type: Income}
+          - {account_number: "70", account_name: "Cifra de afaceri netă", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "701", account_name: "Venituri din vânzarea produselor finite, produselor agricole şi a activelor biologice de natura stocurilor", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "702", account_name: "Venituri din vânzarea semifabricatelor", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "703", account_name: "Venituri din vânzarea produselor reziduale", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "704", account_name: "Venituri din servicii prestate", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "705", account_name: "Venituri din studii şi cercetări", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "706", account_name: "Venituri din redevențe, locații de gestiune şi chirii", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "707", account_name: "Venituri din vânzarea mărfurilor", parent_number: "70", root_type: Income, account_type: Income, standard_number: "4110"}
+          - {account_number: "708", account_name: "Venituri din activități diverse", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "709", account_name: "Reduceri comerciale acordate", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "71", account_name: "Venituri aferente costului producției în curs de execuție", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "711", account_name: "Venituri aferente costurilor stocurilor de produse", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "712", account_name: "Venituri aferente costurilor serviciilor în curs de execuție", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "72", account_name: "Venituri din producția de imobilizări", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "721", account_name: "Venituri din producția de imobilizări necorporale", parent_number: "72", root_type: Income, account_type: Income}
+          - {account_number: "722", account_name: "Venituri din producția de imobilizări corporale", parent_number: "72", root_type: Income, account_type: Income}
+          - {account_number: "725", account_name: "Venituri din producția de investiții imobiliare", parent_number: "72", root_type: Income, account_type: Income}
+          - {account_number: "74", account_name: "Venituri din subvenții de exploatare (74)", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "741", account_name: "Venituri din subvenții de exploatare (741)", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "75", account_name: "Alte venituri din exploatare (75)", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "754", account_name: "Venituri din creanțe reactivate şi debitori diverşi", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "755", account_name: "Venituri din reevaluarea imobilizărilor corporale", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "758", account_name: "Alte venituri din exploatare (758)", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "76", account_name: "Venituri financiare", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "761", account_name: "Venituri din imobilizări financiare", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "762", account_name: "Venituri din investiții financiare pe termen scurt", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "764", account_name: "Venituri din investiții financiare cedate", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "765", account_name: "Venituri din diferențe de curs valutar", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "766", account_name: "Venituri din dobânzi", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "767", account_name: "Venituri din sconturi obținute", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "768", account_name: "Alte venituri financiare", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "78", account_name: "Venituri din provizioane şi ajustări pentru depreciere sau pierdere de valoare", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "781", account_name: "Venituri din provizioane şi ajustări pentru depreciere privind activitatea de exploatare", parent_number: "78", root_type: Income, account_type: Income}
+          - {account_number: "786", account_name: "Venituri financiare din ajustări pentru pierdere de valoare", parent_number: "78", root_type: Income, account_type: Income}
+          - {account_number: "8", account_name: "conturi speciale", is_group: true, root_type: Equity}
+          - {account_number: "89", account_name: "Bilanț", parent_number: "8", is_group: true, root_type: Equity}
+          - {account_number: "891", account_name: "Bilanț de deschidere", parent_number: "89", root_type: Equity, account_type: Temporary, standard_number: "3300"}
+          - {account_number: "892", account_name: "Bilanț de închidere", parent_number: "89", root_type: Equity}
+          - {account_number: "Z01", account_name: "TVA — conturi de activ (grouping added: the plan lists TVA under 442 with assets and liabilities together)", is_group: true, root_type: Asset, standard_number: "1150"}
+          - {account_number: "Z02", account_name: "TVA — conturi de pasiv (grouping added: the plan lists TVA under 442 with assets and liabilities together)", is_group: true, root_type: Liability, standard_number: "2130"}
+          - {account_number: "Z04", account_name: "Cheltuieli indirecte de producție absorbite (account added: the plan has none)", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5130"}

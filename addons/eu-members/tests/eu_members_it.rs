@@ -407,6 +407,11 @@ async fn plain_anywhere(k: &Kernel, text: &str) -> Vec<String> {
     found
 }
 
+/// A company's account by its number.
+async fn account_of(t: &T, company: Uuid, number: &str) -> Doc {
+    t.first("Account", json!({"company": company.to_string(), "account_number": number})).await
+}
+
 async fn france(k: &Arc<Kernel>) {
     let t = T::workspace(k, "fr").await;
     let co = t
@@ -469,6 +474,37 @@ async fn france(k: &Arc<Kernel>) {
     let rows = report["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!((dec(&rows[0]["taxable"]), dec(&rows[0]["tax"])), (Decimal::from(100), Decimal::from(20)));
+
+    // a_french_company_is_made_from_the_plan_comptable_and_charges_tva_on_44571: its chart is the plan's, its defaults
+    // are the accounts standing for the roles, and an invoice's TVA is booked on 44571, not on an account of the standard chart.
+    let plan = uid(&t.first("ChartTemplate", json!({"template_name": "France: Plan comptable général"})).await);
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Société PCG SA", "abbr": "SP", "default_currency": t.eur, "country": "France", "eu_vat_number": "FR13542107651",
+                   "eu_street": "1 rue de Rivoli", "eu_city": "Paris", "eu_postal_code": "75001", "chart_template": plan.to_string()}),
+        )
+        .await;
+    let pcg = uid(&co);
+    let group = account_of(&t, pcg, "4456").await;
+    assert_eq!(group["is_group"], json!(true), "the plan's TVA déductible group");
+    assert_eq!(account_of(&t, pcg, "44566").await["parent_account"], group["id"], "its accounts under it");
+    let co = t.get("Company", pcg).await;
+    assert_eq!(co["default_receivable_account"], account_of(&t, pcg, "411").await["id"], "Clients");
+    assert_eq!(co["default_payable_account"], account_of(&t, pcg, "401").await["id"], "Fournisseurs");
+    let output = account_of(&t, pcg, "44571").await["id"].clone();
+    let client = t
+        .customer(
+            "Client PCG SARL",
+            json!({"eu_vat_number": "FR13542107651", "customer_type": "Company"}),
+            json!({"address_line1": "2 avenue Foch", "city": "Lyon", "postal_code": "69006", "country": "France"}),
+        )
+        .await;
+    let goods = t.item("TABLE", json!({"eu_kind": "Goods"})).await;
+    let si = t.invoice(pcg, client, goods).await;
+    assert_eq!(dec(&si["total_taxes"]), Decimal::from(20), "France's 20% on a company made from the plan");
+    let taxes = si["taxes"].as_array().expect("tax rows");
+    assert!(!taxes.is_empty() && taxes.iter().all(|r| r["account"] == output), "TVA collectée on 44571: {taxes:?}");
 }
 
 async fn spain(k: &Arc<Kernel>) {
