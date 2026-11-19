@@ -192,3 +192,8 @@ fn ae() {
 fn au() {
     check("au");
 }
+
+#[test]
+fn jp() {
+    check("jp");
+}
