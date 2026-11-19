@@ -15,6 +15,7 @@
 //! taken from the UTC clock.
 
 pub mod accounting;
+pub mod agreement;
 pub mod bad_debt;
 pub mod change;
 pub mod credit;
@@ -123,15 +124,16 @@ pub fn register(h: &mut HookRegistry) {
             .register("Company", Arc::new(reservation::AvailabilityHook))
             .register("Company", Arc::new(offered::PartyOps));
     });
-    for (side, package, order, shipment, invoice) in [
-        (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),
-        (Side::Buying, "buying", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
+    for (side, package, agreement, order, shipment, invoice) in [
+        (Side::Selling, "selling", "SalesAgreement", "SalesOrder", "DeliveryNote", "SalesInvoice"),
+        (Side::Buying, "buying", "PurchaseAgreement", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
     ] {
         h.scoped(&only(package), |h| {
             h.register(order, Arc::new(series::SeriesHook))
                 .register(shipment, Arc::new(series::SeriesHook))
                 .register(invoice, Arc::new(series::SeriesHook))
                 .register(order, Arc::new(trade::OrderHook(side)))
+                .register(agreement, Arc::new(agreement::AgreementHook(side)))
                 .register(shipment, Arc::new(trade::ShipmentHook(side)))
                 .register(invoice, Arc::new(trade::InvoiceHook(side)));
         });

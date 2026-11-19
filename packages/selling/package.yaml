@@ -1,5 +1,5 @@
 package: selling
-version: 0.2.0
+version: 0.3.0
 label: Selling
 description: Sales orders, deliveries and invoices with exact tax maths, receivables and pricing rules.
 depends: [accounting, inventory]
@@ -111,12 +111,13 @@ modules:
     label: Selling
     icon: shopping-cart
     order: 40
-    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, Promotion, PromotionCode, report:receivables, report:statement_of_account, report:sales_register, report:promotions]
+    items: [SalesAgreement, SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, Promotion, PromotionCode, report:receivables, report:statement_of_account, report:sales_register, report:promotions]
 
 roles:
   - name: Sales User
     description: Day-to-day selling.
     permissions:
+      - {entity: SalesAgreement, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true, read_groups: [credit]}
@@ -144,6 +145,7 @@ roles:
       - {entity: NumberSeries, read: true}
   - name: Sales Manager
     permissions:
+      - {entity: SalesAgreement, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
@@ -155,6 +157,7 @@ roles:
     permissions:
       # Releasing a document over a customer's credit limit (its Credit Release Reason) is theirs.
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit], write_groups: [credit]}
+      - {entity: SalesAgreement, read: true, write: true}
       - {entity: SalesOrder, read: true, write: true, read_groups: [credit], write_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, read_groups: [credit], write_groups: [credit]}
       - {entity: NumberSeries, read: true, write: true, create: true, delete: true}

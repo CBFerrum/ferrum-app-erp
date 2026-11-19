@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.35.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.36.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.35.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.36.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -865,7 +865,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Gift cards and store credit | ✅ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
 | Purchase approvals by amount | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Requests for quotation and supplier scorecards | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ |
-| Blanket orders and purchase agreements | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Blanket orders and purchase agreements | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Drop shipment | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁶ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Batches, serials and expiry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -909,7 +909,7 @@ app.</sub>
 - 🏦 Bank feeds.
 - 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
-- 🛒 Blanket orders, drop shipment, standard costing and demand forecasting.
+- 🛒 Drop shipment, standard costing and demand forecasting.
 - 🌍 The number of countries localised, and partner ecosystems around each product.
 
 > [!NOTE]
@@ -919,6 +919,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.36.0** Purchase and sales agreements: orders take the agreed price and never draw past the agreed quantity.
 - [x] **0.35.0** A company's chart can come from a template, and every add-on finds its accounts by the role they play.
 - [x] **0.34.0** Other apps post to the ledger, find a person's customer and price a document through operations, without compiling against ERP.
 - [x] **Finance 0.11.0** Bank feeds: a connection's pull brings a bank account's transactions, taken once, past the same duplicate check as a file.
@@ -952,7 +953,7 @@ app.</sub>
 **Selling and buying**
 - [ ] Amount in words on printed documents, and a discount as an amount.
 - [ ] An Overdue status and customer statements e-mailed in bulk.
-- [ ] Blanket orders, drop shipment and pricing rules when buying.
+- [ ] Drop shipment and pricing rules when buying.
 
 ### 🔭 Later
 

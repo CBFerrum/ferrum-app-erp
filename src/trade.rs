@@ -617,6 +617,7 @@ impl DocHook for OrderHook {
         let credit = if self.0 == Side::Selling { credit::before(hc, doc, true).await? } else { None };
         crate::promotion::count_uses(hc, doc, 1).await?;
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
+        crate::agreement::drawn(hc, self.0, doc, true).await?;
         if self.0 == Side::Selling {
             crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, id(doc, "id").unwrap_or_default(), false).await?;
         }
@@ -637,14 +638,19 @@ impl DocHook for OrderHook {
         if self.0 == Side::Selling {
             crate::stored_value::order_cancelled(hc, id(doc, "id").unwrap_or_default()).await?;
         }
-        refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await
+        refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
+        crate::agreement::drawn(hc, self.0, doc, false).await
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let n = names(self.0);
         let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         if name == "update_items" {
-            return crate::change::update_items(hc, self.0, doc, params).await.map(Some);
+            let out = crate::change::update_items(hc, self.0, doc, params).await?;
+            // What the order draws on its agreements, as changed (a line added may name one too).
+            let now = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, n.order, oid, false).await?;
+            crate::agreement::drawn(hc, self.0, &now, true).await?;
+            return Ok(Some(out));
         }
         if self.0 == Side::Selling && name == "reserve_stock" {
             return crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, oid, true).await.map(Some);
@@ -683,6 +689,8 @@ impl DocHook for OrderHook {
                 // A closed order no longer holds stock.
                 crate::reservation::refresh_for_order(hc.tx, hc.ctx.tenant, oid).await?;
             }
+            // Closed short gives its agreements back what was never received; a re-open takes it again, if it can.
+            crate::agreement::drawn(hc, self.0, doc, !closing).await?;
             return Ok(Some(json!({"status": if closing { "Closed" } else { "reopened" }})));
         }
         let header = header_fields(self.0);

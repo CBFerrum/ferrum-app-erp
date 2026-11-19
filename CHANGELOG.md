@@ -1,5 +1,19 @@
 # Changelog
 
+## ERP 0.36.0 (selling 0.3.0, buying 0.2.0): purchase and sales agreements
+
+A **Purchase Agreement** (Buying) or **Sales Agreement** (Selling) records items with an agreed quantity and price per
+stock unit, valid between two dates (docs/agreements.md). An order line that names one takes its price (times the
+line's unit factor; no price list or pricing rule applies) and counts against its quantity; what each line has
+ordered is recounted from the submitted orders under the agreement's row lock whenever an order is submitted,
+cancelled, changed, closed or re-opened, so two orders at once never draw past what was agreed. An order outside the
+dates, for another party or company, in another currency, or on a closed agreement is refused. Create Purchase Order /
+Create Sales Order makes a draft for what is left; Close and Re-open stop and resume drawing; an agreement that a
+submitted order draws on cannot be cancelled. Each new action has a contract.
+
+- The portal's reads by customer and supplier are declared in `reach_links` (SalesInvoice, PurchaseOrder,
+  PurchaseInvoice): a merge moving them is an administrator's (K0-2).
+
 ## European Union 0.5.2: OSS VAT no longer posts to Deferred Revenue
 
 The EU add-on made its OSS VAT account under the standard number 2150, which the standard chart already gives
