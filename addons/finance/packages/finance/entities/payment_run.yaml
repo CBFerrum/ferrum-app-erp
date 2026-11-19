@@ -58,7 +58,9 @@
        description: "Each press of Make Payments that pays something is a round, with a bank file of its own holding that round's payments only"}
     - {name: run_status, type: select, options: [Proposed, Approved, Paid, Partly Paid], default: Proposed, read_only: true, no_copy: true, in_list: true, in_filter: true}
   actions:
-    - {name: propose, label: Propose Bills, docstatus: [0], permission: write}
+    - {name: propose, label: Propose Bills, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentRun}, run_status: {type: [string, "null"]}}}, completion: "The run's lines list the supplier bills due by its date, in its currency and not on hold, with the discount that applies, each ticked to pay; what was there before is replaced, committed with this receipt"}}
     - {name: make_payments, label: Make Payments, docstatus: [1], permission: submit, condition: "doc.run_status != 'Paid'",
-       confirm: "Pay each supplier its bills now? What is paid already is not paid again."}
+       confirm: "Pay each supplier its bills now? What is paid already is not paid again.",
+       contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentRun}, run_status: {type: [string, "null"]}, paid_amount: {type: [string, "null"]}, failed_count: {type: [integer, "null"]}}}, completion: "A submitted Payment Entry exists for each supplier whose lines were ticked and not paid before, a line that failed says why and is tried again by the next press, and a remittance advice is queued to each supplier paid and the bank file of the round is stored on the run; delivery is not confirmed"}}
   list: {columns: [number, posting_date, total_amount, run_status], sort: posting_date desc}

@@ -77,12 +77,16 @@
     - {name: last_tracked_at, type: datetime, read_only: true, no_copy: true}
     - {name: delivered_at, type: datetime, read_only: true, no_copy: true}
   actions:
-    - {name: get_rates, label: Get Rates, permission: write, condition: "doc.tracking_number == null && doc.status != 'Cancelled'"}
+    - {name: get_rates, label: Get Rates, permission: write, condition: "doc.tracking_number == null && doc.status != 'Cancelled'",
+       contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {rates: {type: array, items: {type: object, properties: {service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}}}}, completion: "The carrier was asked for rates for the shipment's parcels and the rates it offered are on the shipment, which is Rated with no service chosen; an answer lost on the way is asked for again"}}
     - {name: choose_rate, label: Choose Rate, permission: write, condition: "doc.status == 'Rated'",
-       params: [{name: service, label: Service, required: true, description: "One of the rates offered, by its service"}]}
+       params: [{name: service, label: Service, required: true, description: "One of the rates offered, by its service"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}, completion: "The shipment holds the chosen service, rate and transit days; no label is bought, committed with this receipt"}}
     - {name: buy_label, label: Buy Label, permission: write, condition: "doc.status == 'Rated' && doc.service != null",
-       confirm: "Buy the label? The carrier charges for it."}
+       confirm: "Buy the label? The carrier charges for it.",
+       contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {tracking_number: {type: string}, tracking_url: {type: [string, "null"]}, file: {type: [string, "null"], format: uuid}, cost: {type: string}, already: {type: boolean}}}, completion: "The label is bought from the carrier under the shipment's key, stored and attached to the shipment with its tracking number, and its cost booked as freight where the connection says; a second press finds the label already bought", compensate_with: cancel_label}}
     - {name: track, label: Track, permission: read, condition: "doc.tracking_number != null && doc.status != 'Cancelled'"}
     - {name: cancel_label, label: Cancel Label, permission: write, condition: "doc.tracking_number != null && doc.status != 'Cancelled' && doc.status != 'Delivered'",
-       confirm: "Cancel the label with the carrier, and take back its cost?"}
+       confirm: "Cancel the label with the carrier, and take back its cost?",
+       contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {status: {type: string}, already: {type: boolean}}}, completion: "The label is cancelled with the carrier, the freight booked for it is reversed, and the shipment is Cancelled; a label already cancelled is left as it is"}}
   list: {columns: [number, carrier, reference, service, tracking_number, status], sort: created_at desc}

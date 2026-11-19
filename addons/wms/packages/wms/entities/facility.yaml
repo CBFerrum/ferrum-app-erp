@@ -18,7 +18,8 @@
     - {name: person_station, type: link, to: Device, label: Station for People, description: "When set, tasks for people go through the site runtime and keep working offline"}
     - {name: status, type: select, options: [Draft, Managed], default: Draft, read_only: true, no_copy: true, in_list: true}
   actions:
-    - {name: start_managing, label: Start Managing, permission: write, condition: "doc.status == 'Draft'"}
+    - {name: start_managing, label: Start Managing, permission: write, condition: "doc.status == 'Draft'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {placed: {type: integer}}}, completion: "The warehouse is managed by bins: what it holds is placed in its inbound bin position by position, and its status is Managed, committed with this receipt"}}
   list: {columns: [warehouse, site, allocation_rule, status], sort: name_of_warehouse asc}
 
 - name: StorageZone

@@ -7,6 +7,20 @@ Deferred Revenue: on a company with the standard chart the add-on found that acc
 its e-invoices (EN 16931, Italy's FatturaPA, Poland's FA(3)) counted deferred revenue as VAT. OSS VAT Payable now
 stands for 2153, a number neither the standard chart nor a member state's add-on uses (Spain's 2152 is the equivalence surcharge), and is made when a company is set up or its EU VAT
 accounts are. Found by the test that a company made from a national chart is still taxed (erp-4).
+## The Spanish, French, Portuguese and Romanian add-ons' patches: their statutory charts of accounts
+
+A workspace that installs one of these add-ons finds the country's chart in a Company's Chart of Accounts: Spain's
+Plan General de Contabilidad (Real Decreto 1514/2007), France's Plan comptable général (ANC regulation 2014-03),
+Portugal's SNC Código de Contas (Portaria 218/2015) and Romania's Planul de conturi general (OMFP 1802/2014). Each is
+a Chart of Accounts Template seeded with the add-on, built from the text the country's own authority publishes, read
+on 19 November 2026 (the address and the day are in the template's notes), and not yet reviewed by an accountant. A
+template maps every role ERP and its add-ons book to (erp-4), so a company made from it is taxed as before, on the
+chart's own VAT accounts. A seeded template is made once per workspace: a later release does not rewrite a copy.
+
+- Rows: the groups, subgroups and three-digit accounts the text lists, and the longer accounts a role needs: 300 to 500
+  rows each, not the full chart. Where a chart has no account for a role, one was added and the notes say so.
+- Spain 0.2.2, France 0.2.1, Portugal 0.4.1, Romania 0.3.2. Belgium, Germany, Mexico and China ship none yet: their
+  sources could not be read or used on the day (docs/charts.md).
 
 ## ERP 0.35.0 and the country add-ons' patches: chart of accounts templates, and accounts found by their role
 

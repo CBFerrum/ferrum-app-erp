@@ -51,5 +51,6 @@
   rules:
     - {name: time_format, check: "doc.posting_time == null || doc.posting_time.matches('^[0-2][0-9]:[0-5][0-9](:[0-5][0-9])?$')", message: "Posting time must be HH:MM or HH:MM:SS"}
   actions:
-    - {name: receive_transfer, label: Receive, docstatus: [1], permission: read, condition: "doc.through_transit && doc.transit_status != 'Received'"}
+    - {name: receive_transfer, label: Receive, docstatus: [1], permission: read, condition: "doc.through_transit && doc.transit_status != 'Received'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: StockEntry}, id: {type: string, format: uuid, x-ferrum-link: StockEntry}, number: {type: [string, "null"]}}}, completion: "A draft Stock Entry receiving what is still in transit of this transfer, from the transit warehouse into the target warehouses, exists for a caller allowed to create one; no stock moves until it is submitted, committed with this receipt"}}
   list: {columns: [number, purpose, posting_date, total_amount, transit_status], sort: posting_date desc}

@@ -34,10 +34,13 @@ overlays:
       - {op: add_field, after: customer_name, field: {name: sg_peppol_status, type: select, label: Peppol, options: [Pending, Sent, Failed], read_only: true, no_copy: true, in_filter: true}}
       - {op: add_field, after: sg_peppol_status, field: {name: sg_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
       - {op: add_field, after: sg_peppol_message_id, field: {name: sg_peppol_error, type: text, label: Peppol Error, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: sg_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: sg_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.sg_peppol_status != 'Sent'"}}
+      - {op: add_action, action: {name: sg_pint, group: e-Invoice, label: Download E-invoice (PINT), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The PINT e-invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: sg_send_peppol, group: e-Invoice, label: Send through Peppol, docstatus: [1], permission: submit, condition: "doc.sg_peppol_status != 'Sent'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to the customer's Peppol access point is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: sg_record_peppol, group: e-Invoice, label: Record the Access Point's Answer, docstatus: [1], permission: submit,
-          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}]}}
+          params: [{name: message_id, label: Message ID (empty when refused), type: data}, {name: error, label: Error, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The access point's answer for the invoice that waits for it is recorded on it: Sent with the message id given, or Failed with the error, committed with this receipt"}}}
 
 seed:
   # The return is content, not code: a definition over ERP's tax ledger (ERP's TaxReturnDefinition).

@@ -42,7 +42,10 @@ overlays:
       - {op: add_field, after: it_sdi_status, field: {name: it_sdi_file, type: data, label: SDI File, read_only: true, no_copy: true}}
       - {op: add_field, after: it_sdi_file, field: {name: it_sdi_id, type: data, label: SDI Identifier, read_only: true, no_copy: true}}
       - {op: add_field, after: it_sdi_id, field: {name: it_sdi_error, type: text, label: SDI Message, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: it_fatturapa, group: e-Invoice, label: Download FatturaPA, docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: it_send_sdi, group: e-Invoice, label: Send to SDI, docstatus: [1], permission: submit, condition: "doc.it_sdi_status != 'Delivered'"}}
+      - {op: add_action, action: {name: it_fatturapa, group: e-Invoice, label: Download FatturaPA, docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The FatturaPA file is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: it_send_sdi, group: e-Invoice, label: Send to SDI, docstatus: [1], permission: submit, condition: "doc.it_sdi_status != 'Delivered'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}, file: {type: string}}}, completion: "The invoice is marked Pending and the request to the Sistema di Interscambio (SDI) is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: it_record_sdi, group: e-Invoice, label: Record SDI Receipt, docstatus: [1], permission: submit,
-          params: [{name: receipt, label: SDI's Receipt, type: select, options: [RC, NS, MC, AT, DT, NE, EC], required: true}, {name: sdi_id, label: SDI Identifier, type: data}, {name: message, label: SDI's Message, type: text}]}}
+          params: [{name: receipt, label: SDI's Receipt, type: select, options: [RC, NS, MC, AT, DT, NE, EC], required: true}, {name: sdi_id, label: SDI Identifier, type: data}, {name: message, label: SDI's Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "SDI's receipt for the invoice (RC, NS, MC, AT, DT, NE or EC) is recorded on it as its status with its identifier and message, committed with this receipt"}}}

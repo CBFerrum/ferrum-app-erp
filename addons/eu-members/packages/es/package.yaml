@@ -30,4 +30,483 @@ overlays:
       - {op: add_field, after: es_csv, field: {name: es_verifactu_error, type: text, label: AEAT's Message, read_only: true, no_copy: true}}
       - {op: add_action, action: {name: es_record_aeat, group: e-Invoice, label: Record AEAT's Answer, docstatus: [1, 2], permission: submit,
           params: [{name: state, label: State, type: select, options: [Correcto, AceptadoConErrores, Incorrecto], required: true}, {name: csv, label: CSV, type: data},
-                   {name: message, label: AEAT's Message, type: text}]}}
+                   {name: message, label: AEAT's Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "AEAT's answer for the record that waits for it is recorded: Accepted (Correcto, or accepted with errors) with its CSV, or Rejected with the message, committed with this receipt"}}}
+
+seed:
+  - entity: ChartTemplate
+    key: [template_name]
+    records:
+      - template_name: "Spain: Plan General de Contabilidad"
+        country: ES
+        notes: "Not yet reviewed by an accountant. Source, read on 2026-11-19: the Boletín Oficial del Estado's consolidated text of Real Decreto 1514/2007, Cuarta parte (Cuadro de cuentas): https://www.boe.es/buscar/act.php?id=BOE-A-2007-19884. Rows: groups 1 to 9 as the Plan titles them, their two-digit subgroups and three-digit accounts (groups 8 and 9 to subgroups only), and the four-digit accounts the roles below need. Group 1, 4 and 5 are not rows (each mixes assets and liabilities): their subgroups are the roots, and an account whose nature differs from its subgroup's (407 and 406 in 40, 438 and 437 in 43, 460/465 in 46, 475 in 47, 485 in 48, 499 in 49 and the like) stands on its own. Names are the Plan's, typographical slips included. Added, not in the Plan: Z01 and Z02 (groupings of the public-finance accounts of group 47 that the roles 1150 and 2130 need), Z03 (opening balances, standing for 3300) and Z04 (absorbed overheads, 5130). Roles: 1111 4300, 2111 4000, 2121 4009, 1121 572, 1131 570, 1141 300, 1142 330, 1151 472, 1152 473, 2131 477, 2132 4751, 1170 480, 2150 485, 3200 120, 4110 700, 5110 600, 5120 610, 5210 629, 5260 668, 5270 678: which account plays which role is a reading of their names, not the Plan's. A name the text gives to more than one account carries the account's number in brackets, because a company's account names are unique."
+        accounts:
+          - {account_number: "10", account_name: "CAPITAL", is_group: true, root_type: Equity}
+          - {account_number: "100", account_name: "Capital social", parent_number: "10", root_type: Equity, account_type: Equity}
+          - {account_number: "101", account_name: "Fondo social", parent_number: "10", root_type: Equity, account_type: Equity}
+          - {account_number: "102", account_name: "Capital", parent_number: "10", root_type: Equity, account_type: Equity}
+          - {account_number: "103", account_name: "Socios por desembolsos no exigidos", parent_number: "10", root_type: Equity}
+          - {account_number: "104", account_name: "Socios por aportaciones no dinerarias pendientes", parent_number: "10", root_type: Equity}
+          - {account_number: "108", account_name: "Acciones o participaciones propias en situaciones especiales", parent_number: "10", root_type: Equity}
+          - {account_number: "109", account_name: "Acciones o participaciones propias para reducción de capital", parent_number: "10", root_type: Equity}
+          - {account_number: "11", account_name: "RESERVAS Y OTROS INSTRUMENTOS DE PATRIMONIO", is_group: true, root_type: Equity}
+          - {account_number: "110", account_name: "Prima de emisión o asunción", parent_number: "11", root_type: Equity}
+          - {account_number: "111", account_name: "Otros instrumentos de patrimonio neto", parent_number: "11", root_type: Equity}
+          - {account_number: "112", account_name: "Reserva legal", parent_number: "11", root_type: Equity}
+          - {account_number: "113", account_name: "Reservas voluntarias", parent_number: "11", root_type: Equity}
+          - {account_number: "114", account_name: "Reservas especiales", parent_number: "11", root_type: Equity}
+          - {account_number: "115", account_name: "Reservas por pérdidas y ganancias actuariales y otros ajustes", parent_number: "11", root_type: Equity}
+          - {account_number: "118", account_name: "Aportaciones de socios o propietarios", parent_number: "11", root_type: Equity}
+          - {account_number: "119", account_name: "Diferencias por ajuste del capital a euros", parent_number: "11", root_type: Equity}
+          - {account_number: "12", account_name: "RESULTADOS PENDIENTES DE APLICACIÓN", is_group: true, root_type: Equity}
+          - {account_number: "120", account_name: "Remanente", parent_number: "12", root_type: Equity, account_type: Equity, standard_number: "3200"}
+          - {account_number: "121", account_name: "Resultados negativos de ejercicios anteriores", parent_number: "12", root_type: Equity}
+          - {account_number: "129", account_name: "Resultado del ejercicio", parent_number: "12", root_type: Equity}
+          - {account_number: "13", account_name: "SUBVENCIONES, DONACIONES Y AJUSTES POR CAMBIOS DE VALOR", is_group: true, root_type: Equity}
+          - {account_number: "130", account_name: "Subvenciones oficiales de capital", parent_number: "13", root_type: Equity}
+          - {account_number: "131", account_name: "Donaciones y legados de capital", parent_number: "13", root_type: Equity}
+          - {account_number: "132", account_name: "Otras subvenciones, donaciones y legados", parent_number: "13", root_type: Equity}
+          - {account_number: "133", account_name: "Ajustes por valoración en activos financieros a valor razonable con cambios en el patrimonio neto", parent_number: "13", root_type: Equity}
+          - {account_number: "134", account_name: "Operaciones de cobertura", parent_number: "13", root_type: Equity}
+          - {account_number: "135", account_name: "Diferencias de conversión", parent_number: "13", root_type: Equity}
+          - {account_number: "136", account_name: "Ajustes por valoración en activos no corrientes y grupos enajenables de elementos, mantenidos para la venta", parent_number: "13", root_type: Equity}
+          - {account_number: "137", account_name: "Ingresos fiscales a distribuir en varios ejercicios", parent_number: "13", root_type: Equity}
+          - {account_number: "14", account_name: "PROVISIONES", is_group: true, root_type: Liability}
+          - {account_number: "140", account_name: "Provisión por retribuciones a largo plazo al personal", parent_number: "14", root_type: Liability}
+          - {account_number: "141", account_name: "Provisión para impuestos", parent_number: "14", root_type: Liability}
+          - {account_number: "142", account_name: "Provisión para otras responsabilidades", parent_number: "14", root_type: Liability}
+          - {account_number: "143", account_name: "Provisión por desmantelamiento, retiro o rehabilitación del inmovilizado", parent_number: "14", root_type: Liability}
+          - {account_number: "145", account_name: "Provisión para actuaciones medioambientales", parent_number: "14", root_type: Liability}
+          - {account_number: "146", account_name: "Provisión para reestructuraciones", parent_number: "14", root_type: Liability}
+          - {account_number: "147", account_name: "Provisión por transacciones con pagos basados en instrumentos de patrimonio", parent_number: "14", root_type: Liability}
+          - {account_number: "15", account_name: "DEUDAS A LARGO PLAZO CON CARACTERÍSTICAS ESPECIALES", is_group: true, root_type: Liability}
+          - {account_number: "150", account_name: "Acciones o participaciones a largo plazo consideradas como pasivos financieros", parent_number: "15", root_type: Liability}
+          - {account_number: "153", account_name: "Desembolsos no exigidos por acciones o participaciones consideradas como pasivos financieros", parent_number: "15", root_type: Liability}
+          - {account_number: "154", account_name: "Aportaciones no dinerarias pendientes por acciones o participaciones consideradas como pasivos financieros", parent_number: "15", root_type: Liability}
+          - {account_number: "16", account_name: "DEUDAS A LARGO PLAZO CON PARTES VINCULADAS", is_group: true, root_type: Liability}
+          - {account_number: "160", account_name: "Deudas a largo plazo con entidades de crédito vinculadas", parent_number: "16", root_type: Liability}
+          - {account_number: "161", account_name: "Proveedores de inmovilizado a largo plazo, partes vinculadas", parent_number: "16", root_type: Liability}
+          - {account_number: "162", account_name: "Acreedores por arrendamiento financiero a largo plazo, partes vinculadas", parent_number: "16", root_type: Liability}
+          - {account_number: "163", account_name: "Otras deudas a largo plazo con partes vinculadas", parent_number: "16", root_type: Liability}
+          - {account_number: "17", account_name: "DEUDAS A LARGO PLAZO POR PRÉSTAMOS RECIBIDOS, EMPRÉSTITOS Y OTROS CONCEPTOS", is_group: true, root_type: Liability}
+          - {account_number: "170", account_name: "Deudas a largo plazo con entidades de crédito", parent_number: "17", root_type: Liability}
+          - {account_number: "171", account_name: "Deudas a largo plazo", parent_number: "17", root_type: Liability}
+          - {account_number: "172", account_name: "Deudas a largo plazo transformables en subvenciones, donaciones y legados", parent_number: "17", root_type: Liability}
+          - {account_number: "173", account_name: "Proveedores de inmovilizado a largo plazo", parent_number: "17", root_type: Liability}
+          - {account_number: "174", account_name: "Acreedores por arrendamiento financiero a largo plazo", parent_number: "17", root_type: Liability}
+          - {account_number: "175", account_name: "Efectos a pagar a largo plazo", parent_number: "17", root_type: Liability}
+          - {account_number: "176", account_name: "Pasivos por derivados financieros a largo plazo", parent_number: "17", root_type: Liability}
+          - {account_number: "177", account_name: "Obligaciones y bonos", parent_number: "17", root_type: Liability}
+          - {account_number: "178", account_name: "Obligaciones y bonos convertibles", parent_number: "17", root_type: Liability}
+          - {account_number: "179", account_name: "Deudas representadas en otros valores negociables", parent_number: "17", root_type: Liability}
+          - {account_number: "18", account_name: "PASIVOS POR FIANZAS, GARANTÍAS Y OTROS CONCEPTOS A LARGO PLAZO", is_group: true, root_type: Liability}
+          - {account_number: "180", account_name: "Fianzas recibidas a largo plazo", parent_number: "18", root_type: Liability}
+          - {account_number: "181", account_name: "Anticipos recibidos por ventas o prestaciones de servicios a largo plazo", parent_number: "18", root_type: Liability}
+          - {account_number: "185", account_name: "Depósitos recibidos a largo plazo", parent_number: "18", root_type: Liability}
+          - {account_number: "189", account_name: "Garantías financieras a largo plazo", parent_number: "18", root_type: Liability}
+          - {account_number: "19", account_name: "SITUACIONES TRANSITORIAS DE FINANCIACIÓN", is_group: true, root_type: Equity}
+          - {account_number: "190", account_name: "Acciones o participaciones emitidas", parent_number: "19", root_type: Equity}
+          - {account_number: "192", account_name: "Suscriptores de acciones", parent_number: "19", root_type: Equity}
+          - {account_number: "194", account_name: "Capital emitido pendiente de inscripción", parent_number: "19", root_type: Equity}
+          - {account_number: "195", account_name: "Acciones o participaciones emitidas consideradas como pasivos financieros", parent_number: "19", root_type: Equity}
+          - {account_number: "197", account_name: "Suscriptores de acciones consideradas como pasivos financieros", parent_number: "19", root_type: Equity}
+          - {account_number: "199", account_name: "Acciones o participaciones emitidas consideradas como pasivos financieros pendientes de inscripción.", parent_number: "19", root_type: Equity}
+          - {account_number: "2", account_name: "Activo no corriente", is_group: true, root_type: Asset}
+          - {account_number: "20", account_name: "INMOVILIZACIONES INTANGIBLES", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "200", account_name: "Investigación", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "201", account_name: "Desarrollo", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "202", account_name: "Concesiones administrativas", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "203", account_name: "Propiedad industrial", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "204", account_name: "Fondo de comercio", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "205", account_name: "Derechos de traspaso", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "206", account_name: "Aplicaciones informáticas", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "209", account_name: "Anticipos para inmovilizaciones intangibles", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "21", account_name: "INMOVILIZACIONES MATERIALES", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "210", account_name: "Terrenos y bienes naturales", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "211", account_name: "Construcciones", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "212", account_name: "Instalaciones técnicas", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "213", account_name: "Maquinaria", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "214", account_name: "Utillaje", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "215", account_name: "Otras instalaciones", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "216", account_name: "Mobiliario", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "217", account_name: "Equipos para procesos de información", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "218", account_name: "Elementos de transporte", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "219", account_name: "Otro inmovilizado material", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "22", account_name: "INVERSIONES INMOBILIARIAS", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "220", account_name: "Inversiones en terrenos y bienes naturales", parent_number: "22", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "221", account_name: "Inversiones en construcciones", parent_number: "22", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "23", account_name: "INMOVILIZACIONES MATERIALES EN CURSO", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "230", account_name: "Adaptación de terrenos y bienes naturales", parent_number: "23", root_type: Asset}
+          - {account_number: "231", account_name: "Construcciones en curso", parent_number: "23", root_type: Asset}
+          - {account_number: "232", account_name: "Instalaciones técnicas en montaje", parent_number: "23", root_type: Asset}
+          - {account_number: "233", account_name: "Maquinaria en montaje", parent_number: "23", root_type: Asset}
+          - {account_number: "237", account_name: "Equipos para procesos de información en montaje", parent_number: "23", root_type: Asset}
+          - {account_number: "239", account_name: "Anticipos para inmovilizaciones materiales", parent_number: "23", root_type: Asset}
+          - {account_number: "24", account_name: "INVERSIONES FINANCIERAS A LARGO PLAZO EN PARTES VINCULADAS", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "240", account_name: "Participaciones a largo plazo en partes vinculadas", parent_number: "24", root_type: Asset}
+          - {account_number: "241", account_name: "Valores representativos de deuda a largo plazo de partes vinculadas", parent_number: "24", root_type: Asset}
+          - {account_number: "242", account_name: "Créditos a largo plazo a partes vinculadas", parent_number: "24", root_type: Asset}
+          - {account_number: "249", account_name: "Desembolsos pendientes sobre participaciones a largo plazo en partes vinculadas", parent_number: "24", root_type: Asset}
+          - {account_number: "25", account_name: "OTRAS INVERSIONES FINANCIERAS A LARGO PLAZO", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "250", account_name: "Inversiones financieras a largo plazo en instrumentos de patrimonio", parent_number: "25", root_type: Asset}
+          - {account_number: "251", account_name: "Valores representativos de deuda a largo plazo", parent_number: "25", root_type: Asset}
+          - {account_number: "252", account_name: "Créditos a largo plazo", parent_number: "25", root_type: Asset}
+          - {account_number: "253", account_name: "Créditos a largo plazo por enajenación de inmovilizado", parent_number: "25", root_type: Asset}
+          - {account_number: "254", account_name: "Créditos a largo plazo al personal", parent_number: "25", root_type: Asset}
+          - {account_number: "255", account_name: "Activos por derivados financieros a largo plazo", parent_number: "25", root_type: Asset}
+          - {account_number: "257", account_name: "Derechos de reembolso derivados de contratos de seguro relativos a retribuciones a largo plazo al personal", parent_number: "25", root_type: Asset}
+          - {account_number: "258", account_name: "Imposiciones a largo plazo", parent_number: "25", root_type: Asset}
+          - {account_number: "259", account_name: "Desembolsos pendientes sobre participaciones en el patrimonio neto a largo plazo", parent_number: "25", root_type: Asset}
+          - {account_number: "26", account_name: "FIANZAS Y DEPÓSITOS CONSTITUIDOS A LARGO PLAZO", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "260", account_name: "Fianzas constituidas a largo plazo", parent_number: "26", root_type: Asset}
+          - {account_number: "265", account_name: "Depósitos constituidos a largo plazo", parent_number: "26", root_type: Asset}
+          - {account_number: "28", account_name: "AMORTIZACIÓN ACUMULADA DEL INMOVILIZADO", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "280", account_name: "Amortización acumulada del inmovilizado intangible", parent_number: "28", root_type: Asset}
+          - {account_number: "281", account_name: "Amortización acumulada del inmovilizado material", parent_number: "28", root_type: Asset}
+          - {account_number: "282", account_name: "Amortización acumulada de las inversiones inmobiliarias", parent_number: "28", root_type: Asset}
+          - {account_number: "29", account_name: "DETERIORO DE VALOR DE ACTIVOS NO CORRIENTES", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "290", account_name: "Deterioro de valor del inmovilizado intangible", parent_number: "29", root_type: Asset}
+          - {account_number: "291", account_name: "Deterioro de valor del inmovilizado material", parent_number: "29", root_type: Asset}
+          - {account_number: "292", account_name: "Deterioro de valor de las inversiones inmobiliarias", parent_number: "29", root_type: Asset}
+          - {account_number: "293", account_name: "Deterioro de valor de participaciones a largo plazo", parent_number: "29", root_type: Asset}
+          - {account_number: "294", account_name: "Deterioro de valor de valores representativos de deuda a largo plazo de partes vinculadas", parent_number: "29", root_type: Asset}
+          - {account_number: "295", account_name: "Deterioro de valor de créditos a largo plazo a partes vinculadas", parent_number: "29", root_type: Asset}
+          - {account_number: "297", account_name: "Deterioro de valor de valores representativos de deuda a largo plazo", parent_number: "29", root_type: Asset}
+          - {account_number: "298", account_name: "Deterioro de valor de créditos a largo plazo", parent_number: "29", root_type: Asset}
+          - {account_number: "3", account_name: "Existencias", is_group: true, root_type: Asset}
+          - {account_number: "30", account_name: "COMERCIALES", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "300", account_name: "Mercaderías A", parent_number: "30", root_type: Asset, account_type: Stock, standard_number: "1141"}
+          - {account_number: "301", account_name: "Mercaderías B", parent_number: "30", root_type: Asset}
+          - {account_number: "31", account_name: "MATERIAS PRIMAS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "310", account_name: "Materias primas A", parent_number: "31", root_type: Asset}
+          - {account_number: "311", account_name: "Materias primas B", parent_number: "31", root_type: Asset}
+          - {account_number: "32", account_name: "OTROS APROVISIONAMIENTOS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "320", account_name: "Elementos y conjuntos incorporables", parent_number: "32", root_type: Asset}
+          - {account_number: "321", account_name: "Combustibles", parent_number: "32", root_type: Asset}
+          - {account_number: "322", account_name: "Repuestos", parent_number: "32", root_type: Asset}
+          - {account_number: "325", account_name: "Materiales diversos", parent_number: "32", root_type: Asset}
+          - {account_number: "326", account_name: "Embalajes", parent_number: "32", root_type: Asset}
+          - {account_number: "327", account_name: "Envases", parent_number: "32", root_type: Asset}
+          - {account_number: "328", account_name: "Material de oficina", parent_number: "32", root_type: Asset}
+          - {account_number: "33", account_name: "PRODUCTOS EN CURSO", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "330", account_name: "Productos en curso A", parent_number: "33", root_type: Asset, account_type: Stock, standard_number: "1142"}
+          - {account_number: "331", account_name: "Productos en curso B", parent_number: "33", root_type: Asset}
+          - {account_number: "34", account_name: "PRODUCTOS SEMITERMINADOS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "340", account_name: "Productos semiterminados A", parent_number: "34", root_type: Asset}
+          - {account_number: "341", account_name: "Productos semiterminados B", parent_number: "34", root_type: Asset}
+          - {account_number: "35", account_name: "PRODUCTOS TERMINADOS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "350", account_name: "Productos terminados A", parent_number: "35", root_type: Asset}
+          - {account_number: "351", account_name: "Productos terminados B", parent_number: "35", root_type: Asset}
+          - {account_number: "36", account_name: "SUBPRODUCTOS, RESIDUOS Y MATERIALES RECUPERADOS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "360", account_name: "Subproductos A", parent_number: "36", root_type: Asset}
+          - {account_number: "361", account_name: "Subproductos B", parent_number: "36", root_type: Asset}
+          - {account_number: "365", account_name: "Residuos A", parent_number: "36", root_type: Asset}
+          - {account_number: "366", account_name: "Residuos B", parent_number: "36", root_type: Asset}
+          - {account_number: "368", account_name: "Materiales recuperados A", parent_number: "36", root_type: Asset}
+          - {account_number: "369", account_name: "Materiales recuperados B", parent_number: "36", root_type: Asset}
+          - {account_number: "39", account_name: "DETERIORO DE VALOR DE LAS EXISTENCIAS", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "390", account_name: "Deterioro de valor de las mercaderías", parent_number: "39", root_type: Asset}
+          - {account_number: "391", account_name: "Deterioro de valor de las materias primas", parent_number: "39", root_type: Asset}
+          - {account_number: "392", account_name: "Deterioro de valor de otros aprovisionamientos", parent_number: "39", root_type: Asset}
+          - {account_number: "393", account_name: "Deterioro de valor de los productos en curso", parent_number: "39", root_type: Asset}
+          - {account_number: "394", account_name: "Deterioro de valor de los productos semiterminados", parent_number: "39", root_type: Asset}
+          - {account_number: "395", account_name: "Deterioro de valor de los productos terminados", parent_number: "39", root_type: Asset}
+          - {account_number: "396", account_name: "Deterioro de valor de los subproductos, residuos y materiales recuperados", parent_number: "39", root_type: Asset}
+          - {account_number: "40", account_name: "PROVEEDORES", is_group: true, root_type: Liability}
+          - {account_number: "400", account_name: "Proveedores", parent_number: "40", is_group: true, root_type: Liability}
+          - {account_number: "4000", account_name: "Proveedores (euros)", parent_number: "400", root_type: Liability, account_type: Payable, standard_number: "2111"}
+          - {account_number: "4009", account_name: "Proveedores, facturas pendientes de recibir o de formalizar", parent_number: "400", root_type: Liability, account_type: "Stock Received But Not Billed", standard_number: "2121"}
+          - {account_number: "401", account_name: "Proveedores, efectos comerciales a pagar", parent_number: "40", root_type: Liability}
+          - {account_number: "403", account_name: "Proveedores, empresas del grupo", parent_number: "40", root_type: Liability}
+          - {account_number: "404", account_name: "Proveedores, empresas asociadas", parent_number: "40", root_type: Liability}
+          - {account_number: "405", account_name: "Proveedores, otras partes vinculadas", parent_number: "40", root_type: Liability}
+          - {account_number: "406", account_name: "Envases y embalajes a devolver a proveedores", root_type: Asset}
+          - {account_number: "407", account_name: "Anticipos a proveedores", root_type: Asset}
+          - {account_number: "41", account_name: "ACREEDORES VARIOS", is_group: true, root_type: Liability}
+          - {account_number: "410", account_name: "Acreedores por prestaciones de servicios", parent_number: "41", root_type: Liability}
+          - {account_number: "411", account_name: "Acreedores, efectos comerciales a pagar", parent_number: "41", root_type: Liability}
+          - {account_number: "419", account_name: "Acreedores por operaciones en común", parent_number: "41", root_type: Liability}
+          - {account_number: "43", account_name: "CLIENTES", is_group: true, root_type: Asset}
+          - {account_number: "430", account_name: "Clientes", parent_number: "43", is_group: true, root_type: Asset}
+          - {account_number: "4300", account_name: "Clientes (euros)", parent_number: "430", root_type: Asset, account_type: Receivable, standard_number: "1111"}
+          - {account_number: "431", account_name: "Clientes, efectos comerciales a cobrar", parent_number: "43", root_type: Asset}
+          - {account_number: "432", account_name: "Clientes, operaciones de «factoring»", parent_number: "43", root_type: Asset}
+          - {account_number: "433", account_name: "Clientes, empresas del grupo", parent_number: "43", root_type: Asset}
+          - {account_number: "434", account_name: "Clientes, empresas asociadas", parent_number: "43", root_type: Asset}
+          - {account_number: "435", account_name: "Clientes, otras partes vinculadas", parent_number: "43", root_type: Asset}
+          - {account_number: "436", account_name: "Clientes de dudoso cobro", parent_number: "43", root_type: Asset}
+          - {account_number: "437", account_name: "Envases y embalajes a devolver por clientes", root_type: Liability}
+          - {account_number: "438", account_name: "Anticipos de clientes", root_type: Liability}
+          - {account_number: "44", account_name: "DEUDORES VARIOS", is_group: true, root_type: Asset}
+          - {account_number: "440", account_name: "Deudores", parent_number: "44", root_type: Asset}
+          - {account_number: "441", account_name: "Deudores, efectos comerciales a cobrar", parent_number: "44", root_type: Asset}
+          - {account_number: "446", account_name: "Deudores de dudoso cobro", parent_number: "44", root_type: Asset}
+          - {account_number: "449", account_name: "Deudores por operaciones en común", parent_number: "44", root_type: Asset}
+          - {account_number: "46", account_name: "PERSONAL", is_group: true, root_type: Liability}
+          - {account_number: "460", account_name: "Anticipos de remuneraciones", root_type: Asset}
+          - {account_number: "465", account_name: "Remuneraciones pendientes de pago", parent_number: "46", root_type: Liability}
+          - {account_number: "466", account_name: "Remuneraciones mediante sistemas de aportación definida pendientes de pago", parent_number: "46", root_type: Liability}
+          - {account_number: "47", account_name: "ADMINISTRACIONES PÚBLICAS", is_group: true, root_type: Liability}
+          - {account_number: "470", account_name: "Hacienda Pública, deudora por diversos conceptos", parent_number: "Z01", root_type: Asset}
+          - {account_number: "471", account_name: "Organismos de la Seguridad Social, deudores", root_type: Asset}
+          - {account_number: "472", account_name: "Hacienda Pública, IVA soportado", parent_number: "Z01", root_type: Asset, account_type: Tax, standard_number: "1151"}
+          - {account_number: "473", account_name: "Hacienda Pública, retenciones y pagos a cuenta", parent_number: "Z01", root_type: Asset, account_type: Tax, standard_number: "1152"}
+          - {account_number: "474", account_name: "Activos por impuesto diferido", parent_number: "Z01", root_type: Asset}
+          - {account_number: "475", account_name: "Hacienda Pública, acreedora por conceptos fiscales", parent_number: "Z02", is_group: true, root_type: Liability}
+          - {account_number: "4751", account_name: "Hacienda Pública, acreedora por retenciones practicadas", parent_number: "475", root_type: Liability, account_type: Tax, standard_number: "2132"}
+          - {account_number: "476", account_name: "Organismos de la Seguridad Social, acreedores", parent_number: "47", root_type: Liability}
+          - {account_number: "477", account_name: "Hacienda Pública, IVA repercutido", parent_number: "Z02", root_type: Liability, account_type: Tax, standard_number: "2131"}
+          - {account_number: "479", account_name: "Pasivos por diferencias temporarias imponibles", parent_number: "Z02", root_type: Liability}
+          - {account_number: "48", account_name: "AJUSTES POR PERIODIFICACIÓN", is_group: true, root_type: Liability}
+          - {account_number: "480", account_name: "Gastos anticipados", root_type: Asset, standard_number: "1170"}
+          - {account_number: "485", account_name: "Ingresos anticipados", parent_number: "48", root_type: Liability, standard_number: "2150"}
+          - {account_number: "49", account_name: "DETERIORO DE VALOR DE CRÉDITOS COMERCIALES Y PROVISIONES A CORTO PLAZO", is_group: true, root_type: Asset}
+          - {account_number: "490", account_name: "Deterioro de valor de créditos por operaciones comerciales", parent_number: "49", root_type: Asset}
+          - {account_number: "493", account_name: "Deterioro de valor de créditos por operaciones comerciales con partes vinculadas", parent_number: "49", root_type: Asset}
+          - {account_number: "499", account_name: "Provisiones por operaciones comerciales", root_type: Liability}
+          - {account_number: "50", account_name: "EMPRÉSTITOS, DEUDAS CON CARÁCTERÍSTICAS ESPECIALES Y OTRAS EMISIONES ANÁLOGAS A CORTO PLAZO", is_group: true, root_type: Liability}
+          - {account_number: "500", account_name: "Obligaciones y bonos a corto plazo Obligaciones y bonos convertibles a corto plazo", parent_number: "50", root_type: Liability}
+          - {account_number: "501", account_name: "Acciones o participaciones a corto plazo consideradas como pasivos financieros", parent_number: "50", root_type: Liability}
+          - {account_number: "505", account_name: "Deudas representadas en otros valores negociables a corto plazo", parent_number: "50", root_type: Liability}
+          - {account_number: "506", account_name: "Intereses a corto plazo de empréstitos y otras emisiones análogas", parent_number: "50", root_type: Liability}
+          - {account_number: "507", account_name: "Dividendos de acciones o participaciones consideradas como pasivos financieros", parent_number: "50", root_type: Liability}
+          - {account_number: "509", account_name: "Valores negociables amortizados", parent_number: "50", root_type: Liability}
+          - {account_number: "51", account_name: "DEUDAS A CORTO PLAZO CON PARTES VINCULADAS", is_group: true, root_type: Liability}
+          - {account_number: "510", account_name: "Deudas a corto plazo con entidades de crédito vinculadas", parent_number: "51", root_type: Liability}
+          - {account_number: "511", account_name: "Proveedores de inmovilizado a corto plazo, partes vinculadas", parent_number: "51", root_type: Liability}
+          - {account_number: "512", account_name: "Acreedores por arrendamiento financiero a corto plazo, partes vinculadas.", parent_number: "51", root_type: Liability}
+          - {account_number: "513", account_name: "Otras deudas a corto plazo con partes vinculadas", parent_number: "51", root_type: Liability}
+          - {account_number: "514", account_name: "Intereses a corto plazo de deudas con partes vinculadas", parent_number: "51", root_type: Liability}
+          - {account_number: "52", account_name: "DEUDAS A CORTO PLAZO POR PRÉSTAMOS RECIBIDOS Y OTROS CONCEPTOS", is_group: true, root_type: Liability}
+          - {account_number: "520", account_name: "Deudas a corto plazo con entidades de crédito", parent_number: "52", root_type: Liability}
+          - {account_number: "521", account_name: "Deudas a corto plazo", parent_number: "52", root_type: Liability}
+          - {account_number: "522", account_name: "Deudas a corto plazo transformables en subvenciones, donaciones y legados", parent_number: "52", root_type: Liability}
+          - {account_number: "523", account_name: "Proveedores de inmovilizado a corto plazo", parent_number: "52", root_type: Liability}
+          - {account_number: "524", account_name: "Acreedores por arrendamiento financiero a corto plazo", parent_number: "52", root_type: Liability}
+          - {account_number: "525", account_name: "Efectos a pagar a corto plazo", parent_number: "52", root_type: Liability}
+          - {account_number: "526", account_name: "Dividendo activo a pagar", parent_number: "52", root_type: Liability}
+          - {account_number: "527", account_name: "Intereses a corto plazo de deudas con entidades de crédito", parent_number: "52", root_type: Liability}
+          - {account_number: "528", account_name: "Intereses a corto plazo de deudas", parent_number: "52", root_type: Liability}
+          - {account_number: "529", account_name: "Provisiones a corto plazo", parent_number: "52", root_type: Liability}
+          - {account_number: "53", account_name: "INVERSIONES FINANCIERAS A CORTO PLAZO EN PARTES VINCULADAS", is_group: true, root_type: Asset}
+          - {account_number: "530", account_name: "Participaciones a corto plazo en partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "531", account_name: "Valores representativos de deuda a corto plazo de partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "532", account_name: "Créditos a corto plazo a partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "533", account_name: "Intereses a corto plazo de valores representativos de deuda de partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "534", account_name: "Intereses a corto plazo de créditos a partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "535", account_name: "Dividendo a cobrar de inversiones financieras en partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "539", account_name: "Desembolsos pendientes sobre participaciones a corto plazo en partes vinculadas", parent_number: "53", root_type: Asset}
+          - {account_number: "54", account_name: "OTRAS INVERSIONES FINANCIERAS A CORTO PLAZO", is_group: true, root_type: Asset}
+          - {account_number: "540", account_name: "Inversiones financieras a corto plazo en instrumentos de patrimonio", parent_number: "54", root_type: Asset}
+          - {account_number: "541", account_name: "Valores representativos de deuda a corto plazo", parent_number: "54", root_type: Asset}
+          - {account_number: "542", account_name: "Créditos a corto plazo", parent_number: "54", root_type: Asset}
+          - {account_number: "543", account_name: "Créditos a corto plazo por enajenación de inmovilizado", parent_number: "54", root_type: Asset}
+          - {account_number: "544", account_name: "Créditos a corto plazo al personal", parent_number: "54", root_type: Asset}
+          - {account_number: "545", account_name: "Dividendo a cobrar", parent_number: "54", root_type: Asset}
+          - {account_number: "546", account_name: "Intereses a corto plazo de valores representativos de deudas", parent_number: "54", root_type: Asset}
+          - {account_number: "547", account_name: "Intereses a corto plazo de créditos", parent_number: "54", root_type: Asset}
+          - {account_number: "548", account_name: "Imposiciones a corto plazo", parent_number: "54", root_type: Asset}
+          - {account_number: "549", account_name: "Desembolsos pendientes sobre participaciones en el patrimonio neto a corto plazo", parent_number: "54", root_type: Asset}
+          - {account_number: "55", account_name: "OTRAS CUENTAS NO BANCARIAS", is_group: true, root_type: Asset}
+          - {account_number: "550", account_name: "Titular de la explotación", root_type: Equity}
+          - {account_number: "551", account_name: "Cuenta corriente con socios y administradores", parent_number: "55", root_type: Asset}
+          - {account_number: "552", account_name: "Cuenta corriente con otras personas y entidades vinculadas", parent_number: "55", root_type: Asset}
+          - {account_number: "553", account_name: "Cuentas corrientes en fusiones y escisiones", parent_number: "55", root_type: Asset}
+          - {account_number: "554", account_name: "Cuenta corriente con uniones temporales de empresas y comunidades de bienes", parent_number: "55", root_type: Asset}
+          - {account_number: "555", account_name: "Partidas pendientes de aplicación", parent_number: "55", root_type: Asset}
+          - {account_number: "556", account_name: "Desembolsos exigidos sobre participaciones en el patrimonio neto", parent_number: "55", root_type: Asset}
+          - {account_number: "557", account_name: "Dividendo activo a cuenta", root_type: Equity}
+          - {account_number: "558", account_name: "Socios por desembolsos exigidos", parent_number: "55", root_type: Asset}
+          - {account_number: "559", account_name: "Derivados financieros a corto plazo", parent_number: "55", root_type: Asset}
+          - {account_number: "56", account_name: "FIANZAS Y DEPÓSITOS RECIBIDOS Y CONSTITUIDOS A CORTO PLAZO Y AJUSTES POR PERIODIFICACIÓN", is_group: true, root_type: Asset}
+          - {account_number: "560", account_name: "Fianzas recibidas a corto plazo", root_type: Liability}
+          - {account_number: "561", account_name: "Depósitos recibidos a corto plazo", root_type: Liability}
+          - {account_number: "565", account_name: "Fianzas constituidas a corto plazo", parent_number: "56", root_type: Asset}
+          - {account_number: "566", account_name: "Depósitos constituidos a corto plazo", parent_number: "56", root_type: Asset}
+          - {account_number: "567", account_name: "Intereses pagados por anticipado", parent_number: "56", root_type: Asset}
+          - {account_number: "568", account_name: "Intereses cobrados por anticipado", parent_number: "56", root_type: Asset}
+          - {account_number: "569", account_name: "Garantías financieras a corto plazo", parent_number: "56", root_type: Asset}
+          - {account_number: "57", account_name: "TESORERÍA", is_group: true, root_type: Asset}
+          - {account_number: "570", account_name: "Caja, euros", parent_number: "57", root_type: Asset, account_type: Cash, standard_number: "1131"}
+          - {account_number: "571", account_name: "Caja, moneda extranjera", parent_number: "57", root_type: Asset, account_type: Cash}
+          - {account_number: "572", account_name: "Bancos e instituciones de crédito c/c vista, euros", parent_number: "57", root_type: Asset, account_type: Bank, standard_number: "1121"}
+          - {account_number: "573", account_name: "Bancos e instituciones de crédito c/c vista, moneda extranjera", parent_number: "57", root_type: Asset, account_type: Bank}
+          - {account_number: "574", account_name: "Bancos e instituciones de crédito, cuentas de ahorro, euros", parent_number: "57", root_type: Asset, account_type: Bank}
+          - {account_number: "575", account_name: "Bancos e instituciones de crédito, cuentas de ahorro, moneda extranjera", parent_number: "57", root_type: Asset, account_type: Bank}
+          - {account_number: "576", account_name: "Inversiones a corto plazo de gran liquidez", parent_number: "57", root_type: Asset}
+          - {account_number: "58", account_name: "ACTIVOS NO CORRIENTES MANTENIDOS PARA LA VENTA Y ACTIVOS Y PASIVOS ASOCIADOS", is_group: true, root_type: Asset}
+          - {account_number: "580", account_name: "Inmovilizado", parent_number: "58", root_type: Asset}
+          - {account_number: "581", account_name: "Inversiones con personas y entidades vinculadas", parent_number: "58", root_type: Asset}
+          - {account_number: "582", account_name: "Inversiones financieras", parent_number: "58", root_type: Asset}
+          - {account_number: "583", account_name: "Existencias, deudores comerciales y otras cuentas a cobrar", parent_number: "58", root_type: Asset}
+          - {account_number: "584", account_name: "Otros activos", parent_number: "58", root_type: Asset}
+          - {account_number: "585", account_name: "Provisiones", root_type: Liability}
+          - {account_number: "586", account_name: "Deudas con características especiales", root_type: Liability}
+          - {account_number: "587", account_name: "Deudas con personas y entidades vinculadas", root_type: Liability}
+          - {account_number: "588", account_name: "Acreedores comerciales y otras cuentas a pagar", root_type: Liability}
+          - {account_number: "589", account_name: "Otros pasivos", root_type: Liability}
+          - {account_number: "59", account_name: "DETERIORO DEL VALOR DE INVERSIONES FINANCIERAS A CORTO PLAZO Y DE ACTIVOS NO CORRIENTES MANTENIDOS PARA LA VENTA", is_group: true, root_type: Asset}
+          - {account_number: "593", account_name: "Deterioro de valor de participaciones a corto plazo", parent_number: "59", root_type: Asset}
+          - {account_number: "594", account_name: "Deterioro de valor de valores representativos de deuda a corto plazo de partes vinculadas", parent_number: "59", root_type: Asset}
+          - {account_number: "595", account_name: "Deterioro de valor de créditos a corto plazo a partes vinculadas", parent_number: "59", root_type: Asset}
+          - {account_number: "597", account_name: "Deterioro de valor de valores representativos de deuda a corto plazo", parent_number: "59", root_type: Asset}
+          - {account_number: "598", account_name: "Deterioro de valor de créditos a corto plazo", parent_number: "59", root_type: Asset}
+          - {account_number: "599", account_name: "Deterioro de valor de activos no corrientes mantenidos para la venta", parent_number: "59", root_type: Asset}
+          - {account_number: "6", account_name: "Compras y gastos", is_group: true, root_type: Expense}
+          - {account_number: "60", account_name: "COMPRAS", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "600", account_name: "Compras de mercaderías", parent_number: "60", root_type: Expense, account_type: "Cost of Goods Sold", standard_number: "5110"}
+          - {account_number: "601", account_name: "Compras de materias primas", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "602", account_name: "Compras de otros aprovisionamientos", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "606", account_name: "Descuentos sobre compras por pronto pago", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "607", account_name: "Trabajos realizados por otras empresas", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "608", account_name: "Devoluciones de compras y operaciones similares", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "609", account_name: "«Rappels» por compras", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "61", account_name: "VARIACIÓN DE EXISTENCIAS (61)", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "610", account_name: "Variación de existencias de mercaderías", parent_number: "61", root_type: Expense, account_type: "Stock Adjustment", standard_number: "5120"}
+          - {account_number: "611", account_name: "Variación de existencias de materias primas", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "612", account_name: "Variación de existencias de otros aprovisionamientos", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "62", account_name: "SERVICIOS EXTERIORES", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "620", account_name: "Gastos en investigación y desarrollo del ejercicio", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "621", account_name: "Arrendamientos y cánones", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "622", account_name: "Reparaciones y conservación", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "623", account_name: "Servicios de profesionales independientes", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "624", account_name: "Transportes", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "625", account_name: "Primas de seguros", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "626", account_name: "Servicios bancarios y similares", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "627", account_name: "Publicidad, propaganda y relaciones públicas", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "628", account_name: "Suministros", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "629", account_name: "Otros servicios", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5210"}
+          - {account_number: "63", account_name: "TRIBUTOS", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "630", account_name: "Impuesto sobre beneficios", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "631", account_name: "Otros tributos", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "633", account_name: "Ajustes negativos en la imposición sobre beneficios", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "634", account_name: "Ajustes negativos en la imposición indirecta", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "636", account_name: "Devolución de impuestos", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "638", account_name: "Ajustes positivos en la imposición sobre beneficios", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "639", account_name: "Ajustes positivos en la imposición indirecta", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "64", account_name: "GASTOS DE PERSONAL", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "640", account_name: "Sueldos y salarios", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "641", account_name: "Indemnizaciones", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "642", account_name: "Seguridad Social a cargo de la empresa", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "643", account_name: "Retribuciones a largo plazo mediante sistemas de aportación definida", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "644", account_name: "Retribuciones a largo plazo mediante sistemas de prestación definida", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "645", account_name: "Retribuciones al personal mediante instrumentos de patrimonio", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "649", account_name: "Otros gastos sociales", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "65", account_name: "OTROS GASTOS DE GESTIÓN", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "650", account_name: "Pérdidas de créditos comerciales incobrables", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "651", account_name: "Resultados de operaciones en común (651)", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "659", account_name: "Otras pérdidas en gestión corriente", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "66", account_name: "GASTOS FINANCIEROS", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "660", account_name: "Gastos financieros por actualización de provisiones", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "661", account_name: "Intereses de obligaciones y bonos", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "662", account_name: "Intereses de deudas", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "663", account_name: "Pérdidas por valoración de instrumentos financieros por su valor razonable", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "664", account_name: "Gastos por dividendos de acciones o participaciones consideradas como pasivos financieros", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "665", account_name: "Intereses por descuento de efectos y operaciones de «factoring»", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "666", account_name: "Pérdidas en participaciones y valores representativos de deuda", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "667", account_name: "Pérdidas de créditos no comerciales", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "668", account_name: "Diferencias negativas de cambio", parent_number: "66", root_type: Expense, account_type: "Exchange Gain Loss", standard_number: "5260"}
+          - {account_number: "669", account_name: "Otros gastos financieros", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "67", account_name: "PÉRDIDAS PROCEDENTES DE ACTIVOS NO CORRIENTES Y GASTOS EXCEPCIONALES", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "670", account_name: "Pérdidas procedentes del inmovilizado intangible", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "671", account_name: "Pérdidas procedentes del inmovilizado material", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "672", account_name: "Pérdidas procedentes de las inversiones inmobiliarias", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "673", account_name: "Pérdidas procedentes de participaciones a largo plazo en partes vinculadas", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "675", account_name: "Pérdidas por operaciones con obligaciones propias", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "678", account_name: "Gastos excepcionales", parent_number: "67", root_type: Expense, account_type: "Round Off", standard_number: "5270"}
+          - {account_number: "68", account_name: "DOTACIONES PARA AMORTIZACIONES", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "680", account_name: "Amortización del inmovilizado intangible", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "681", account_name: "Amortización del inmovilizado material", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "682", account_name: "Amortización de las inversiones inmobiliarias", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "69", account_name: "PÉRDIDAS POR DETERIOROY OTRAS DOTACIONES", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "690", account_name: "Pérdidas por deterioro del inmovilizado intangible", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "691", account_name: "Pérdidas por deterioro del inmovilizado material", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "692", account_name: "Pérdidas por deterioro de las inversiones inmobiliarias", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "693", account_name: "Pérdidas por deterioro de existencias", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "694", account_name: "Pérdidas por deterioro de créditos por operaciones comerciales", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "695", account_name: "Dotación a la provisión por operaciones comerciales", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "696", account_name: "Pérdidas por deterioro de participaciones y valores representativos de deuda a largo plazo", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "697", account_name: "Pérdidas por deterioro de créditos a largo plazo", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "698", account_name: "Pérdidas por deterioro de participaciones y valores representativos de deuda a corto plazo", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "699", account_name: "Pérdidas por deterioro de créditos a corto plazo", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "7", account_name: "Ventas e ingresos", is_group: true, root_type: Income}
+          - {account_number: "70", account_name: "VENTAS DE MERCADERÍAS, DE PRODUCCIÓN PROPIA, DE SERVICIOS, ETC", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "700", account_name: "Ventas de mercaderías", parent_number: "70", root_type: Income, account_type: Income, standard_number: "4110"}
+          - {account_number: "701", account_name: "Ventas de productos terminados", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "702", account_name: "Ventas de productos semiterminados", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "703", account_name: "Ventas de subproductos y residuos", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "704", account_name: "Ventas de envases y embalajes", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "705", account_name: "Prestaciones de servicios", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "706", account_name: "Descuentos sobre ventas por pronto pago", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "708", account_name: "Devoluciones de ventas y operaciones similares", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "709", account_name: "«Rappels» sobre ventas", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "71", account_name: "VARIACIÓN DE EXISTENCIAS (71)", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "710", account_name: "Variación de existencias de productos en curso", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "711", account_name: "Variación de existencias de productos semiterminados", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "712", account_name: "Variación de existencias de productos terminados", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "713", account_name: "Variación de existencias de subproductos, residuos y materiales recuperados", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "73", account_name: "TRABAJOS REALIZADOS PARA LA EMPRESA", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "730", account_name: "Trabajos realizados para el inmovilizado intangible", parent_number: "73", root_type: Income, account_type: Income}
+          - {account_number: "731", account_name: "Trabajos realizados para el inmovilizado material", parent_number: "73", root_type: Income, account_type: Income}
+          - {account_number: "732", account_name: "Trabajos realizados en inversiones inmobiliarias", parent_number: "73", root_type: Income, account_type: Income}
+          - {account_number: "733", account_name: "Trabajos realizados para el inmovilizado material en curso", parent_number: "73", root_type: Income, account_type: Income}
+          - {account_number: "74", account_name: "SUBVENCIONES, DONACIONESY LEGADOS", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "740", account_name: "Subvenciones, donaciones y legados a la explotación", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "746", account_name: "Subvenciones, donaciones y legados de capital transferidos al resultado del ejercicio", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "747", account_name: "Otras subvenciones, donaciones y legados transferidos al resultado del ejercicio", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "75", account_name: "OTROS INGRESOS DE GESTIÓN", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "751", account_name: "Resultados de operaciones en común (751)", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "752", account_name: "Ingresos por arrendamientos", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "753", account_name: "Ingresos de propiedad industrial cedida en explotación", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "754", account_name: "Ingresos por comisiones", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "755", account_name: "Ingresos por servicios al personal", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "759", account_name: "Ingresos por servicios diversos", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "76", account_name: "INGRESOS FINANCIEROS", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "760", account_name: "Ingresos de participaciones en instrumentos de patrimonio", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "761", account_name: "Ingresos de valores representativos de deuda", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "762", account_name: "Ingresos de créditos", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "763", account_name: "Beneficios por valoración de instrumentos financieros por su valor razonable", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "766", account_name: "Beneficios en participaciones y valores representativos de deuda", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "767", account_name: "Ingresos de activos afectos y de derechos de reembolso relativos a retribuciones a largo plazo", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "768", account_name: "Diferencias positivas de cambio", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "769", account_name: "Otros ingresos financieros", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "77", account_name: "BENEFICIOS PROCEDENTES DE ACTIVOS NO CORRIENTES E INGRESOS EXCEPCIONALES", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "770", account_name: "Beneficios procedentes del inmovilizado intangible", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "771", account_name: "Beneficios procedentes del inmovilizado material", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "772", account_name: "Beneficios procedentes de las inversiones inmobiliarias", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "773", account_name: "Beneficios procedentes de participaciones a largo plazo en partes vinculadas", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "774", account_name: "Diferencia negativa en combinaciones de negocios", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "775", account_name: "Beneficios por operaciones con obligaciones propias", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "778", account_name: "Ingresos excepcionales", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "79", account_name: "EXCESOS Y APLICACIONES DE PROVISIONES Y DE PÉRDIDAS POR DETERIORO", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "790", account_name: "Reversión del deterioro del inmovilizado intangible", parent_number: "79", root_type: Income}
+          - {account_number: "791", account_name: "Reversión del deterioro del inmovilizado material", parent_number: "79", root_type: Income}
+          - {account_number: "792", account_name: "Reversión del deterioro de las inversiones inmobiliarias", parent_number: "79", root_type: Income}
+          - {account_number: "793", account_name: "Reversión del deterioro de existencias", parent_number: "79", root_type: Income}
+          - {account_number: "794", account_name: "Reversión del deterioro de créditos por operaciones comerciales", parent_number: "79", root_type: Income}
+          - {account_number: "795", account_name: "Exceso de provisiones", parent_number: "79", root_type: Income}
+          - {account_number: "796", account_name: "Reversión del deterioro de participaciones y valores representativos de deuda a largo plazo", parent_number: "79", root_type: Income}
+          - {account_number: "797", account_name: "Reversión del deterioro de créditos a largo plazo", parent_number: "79", root_type: Income}
+          - {account_number: "798", account_name: "Reversión del deterioro de participaciones y valores representativos de deuda a corto plazo", parent_number: "79", root_type: Income}
+          - {account_number: "799", account_name: "Reversión del deterioro de créditos a corto plazo", parent_number: "79", root_type: Income}
+          - {account_number: "8", account_name: "Gastos imputados al patrimonio neto", is_group: true, root_type: Equity}
+          - {account_number: "80", account_name: "GASTOS FINANCIEROS POR VALORACIÓN DE ACTIVOS Y PASIVOS", parent_number: "8", root_type: Equity}
+          - {account_number: "81", account_name: "GASTOS EN OPERACIONES DE COBERTURA", parent_number: "8", root_type: Equity}
+          - {account_number: "82", account_name: "GASTOS POR DIFERENCIAS DE CONVERSIÓN", parent_number: "8", root_type: Equity}
+          - {account_number: "83", account_name: "IMPUESTO SOBRE BENEFICIOS", parent_number: "8", root_type: Equity}
+          - {account_number: "84", account_name: "TRANSFERENCIAS DE SUBVENCIONES, DONACIONESY LEGADOS", parent_number: "8", root_type: Equity}
+          - {account_number: "85", account_name: "GASTOS POR PÉRDIDAS ACTUARIALES Y AJUSTES EN LOS ACTIVOS POR RETRIBUCIONES A LARGO PLAZO DE PRESTACIÓN DEFINIDA", parent_number: "8", root_type: Equity}
+          - {account_number: "86", account_name: "GASTOS POR ACTIVOS NO CORRIENTES EN VENTA", parent_number: "8", root_type: Equity}
+          - {account_number: "89", account_name: "GASTOS DE PARTICIPACIONES EN EMPRESAS DEL GRUPO O ASOCIADAS CON AJUSTES VALORATIVOS POSITIVOS PREVIOS", parent_number: "8", root_type: Equity}
+          - {account_number: "9", account_name: "Ingresos imputados al patrimonio neto", is_group: true, root_type: Equity}
+          - {account_number: "90", account_name: "INGRESOS FINANCIEROS POR VALORACIÓN DE ACTIVOSY PASIVOS", parent_number: "9", root_type: Equity}
+          - {account_number: "91", account_name: "INGRESOS EN OPERACIONES DE COBERTURA", parent_number: "9", root_type: Equity}
+          - {account_number: "92", account_name: "INGRESOS POR DIFERENCIAS DE CONVERSIÓN", parent_number: "9", root_type: Equity}
+          - {account_number: "94", account_name: "INGRESOS POR SUBVENCIONES, DONACIONES Y LEGADOS", parent_number: "9", root_type: Equity}
+          - {account_number: "95", account_name: "INGRESOS POR GANANCIAS ACTUARIALES Y AJUSTES EN LOS ACTIVOS POR RETRIBUCIONES A LARGO PLAZO DE PRESTACIÓN DEFINIDA", parent_number: "9", root_type: Equity}
+          - {account_number: "96", account_name: "INGRESOS POR ACTIVOS NO CORRIENTES EN VENTA", parent_number: "9", root_type: Equity}
+          - {account_number: "99", account_name: "INGRESOS DE PARTICIPACIONES EN EMPRESAS DEL GRUPO O ASOCIADAS CON AJUSTES VALORATIVOS NEGATIVOS PREVIOS", parent_number: "9", root_type: Equity}
+          - {account_number: "Z01", account_name: "Hacienda Pública, deudora (grouping added: its accounts are in group 47)", is_group: true, root_type: Asset, standard_number: "1150"}
+          - {account_number: "Z02", account_name: "Hacienda Pública, acreedora (grouping added: its accounts are in group 47)", is_group: true, root_type: Liability, standard_number: "2130"}
+          - {account_number: "Z03", account_name: "Apertura (account added: the Plan has none for opening balances)", root_type: Equity, account_type: Temporary, standard_number: "3300"}
+          - {account_number: "Z04", account_name: "Gastos indirectos de fabricación absorbidos (account added: the Plan has none)", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5130"}

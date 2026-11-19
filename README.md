@@ -850,7 +850,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Tax returns worked out from the books | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | E-invoicing networks (Peppol, IRP, SDI, KSeF and more) | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
 | Supplier e-invoices received into bills | ❌ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
-| Country charts of accounts to pick at set-up | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Country charts of accounts to pick at set-up | 🟡 ⁹ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Countries covered by tax localisation | 🟡 ² | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Audit and statistical files (SAF-T, Intrastat, DATEV) | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | Deferred revenue and expense | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -890,7 +890,8 @@ cover many more. ³ Revenue is deferred and recognised by the day, without alloc
 obligations. ⁴ Done in the Ferrum Assets app, which posts to this ledger. ⁵ Done in the Ferrum CRM app, which
 makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You describe each carrier's calls; none
 ships built in. ⁸ Customers see their invoices; suppliers see requests for
-quotation, orders and bills. For the leaders, 🟡 means partly, or through another edition, module or partner
+quotation, orders and bills. ⁹ Four statutory charts (France, Spain, Portugal, Romania), not yet reviewed by an
+accountant; other countries use the standard chart. For the leaders, 🟡 means partly, or through another edition, module or partner
 app.</sub>
 
 ### 🏆 Where Ferrum ERP stands out
@@ -957,7 +958,7 @@ app.</sub>
 
 **Finance**
 - [ ] A financial report designer for statutory layouts and ratios.
-- [ ] Country charts of accounts to pick at set-up: templates (docs/charts.md); no national chart shipped yet.
+- [ ] Country charts of accounts to pick at set-up: templates, and the statutory charts of France, Spain, Portugal and Romania, ship (docs/charts.md); Belgium, Germany, Mexico and China wait for a source that can be read and used.
 - [ ] Cost allocations by percent or driver, and intercompany journal entries.
 - [ ] Locks per sub-ledger, a close checklist and an adjustment period.
 - [ ] Budget versions and scenarios; ageing buckets of your own.

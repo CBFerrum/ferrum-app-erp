@@ -45,7 +45,8 @@
     - {name: scored_until, type: date, label: Scored Until, read_only: true, no_copy: true}
     - {name: disabled, type: check, in_filter: true, description: A disabled scorecard never warns or blocks}
   actions:
-    - {name: refresh, label: Score Ended Periods Now, permission: write}
+    - {name: refresh, label: Score Ended Periods Now, permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {periods_scored: {type: integer}, current_score: {type: [string, "null"]}, current_standing: {type: [string, "null"]}, scored_until: {type: [string, "null"]}}}, completion: "The scorecard's periods that have ended are scored from the supplier's invoices, receipts and quotations, and its current score and standing follow, committed with this receipt"}}
   list: {columns: [supplier_name, period, current_score, current_standing], sort: supplier_name asc}
 
 - name: SupplierScorecardPeriod
