@@ -20,4 +20,5 @@ overlays:
           description: "Construction work, scrap metal, mobile phones and the like: a business customer in Germany accounts for the VAT"}}
   - entity: SalesInvoice
     ops:
-      - {op: add_action, action: {name: de_xrechnung, group: e-Invoice, label: Download XRechnung, docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: de_xrechnung, group: e-Invoice, label: Download XRechnung, docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The XRechnung e-invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}

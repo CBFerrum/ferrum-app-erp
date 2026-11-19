@@ -247,3 +247,8 @@ fn ro() {
 fn gb() {
     check("gb");
 }
+
+#[test]
+fn de() {
+    check("de");
+}
