@@ -222,3 +222,8 @@ fn eu() {
 fn fr() {
     check("fr");
 }
+
+#[test]
+fn it() {
+    check("it");
+}
