@@ -60,6 +60,31 @@ const LEFT: &[(&str, &str, &str)] = &[
         "Subscription.change_plans",
         "Takes a list of plans (plans), which cannot be declared yet: the platform has no array type for action parameters (addons/finance/src/subscription.rs:549)",
     ),
+    (
+        "procurement",
+        "MaterialRequest.make_purchase_order",
+        "Also takes a list of line ids (items): the platform has no array type for action parameters (addons/procurement/src/material_request.rs:408)",
+    ),
+    (
+        "procurement",
+        "MaterialRequest.make_rfq",
+        "Also takes lists (items, suppliers): the platform has no array type for action parameters (addons/procurement/src/material_request.rs:500-505)",
+    ),
+    (
+        "procurement",
+        "MaterialRequest.make_work_order",
+        "Also takes a list of line ids (items): the platform has no array type for action parameters (addons/procurement/src/material_request.rs:459)",
+    ),
+    (
+        "procurement",
+        "MaterialRequest.make_stock_entry",
+        "Also takes a list of line ids (items): the platform has no array type for action parameters (addons/procurement/src/material_request.rs:539)",
+    ),
+    (
+        "procurement",
+        "RequestForQuotation.send",
+        "Also takes a list of suppliers: the platform has no array type for action parameters (addons/procurement/src/rfq.rs:221)",
+    ),
     // LEFT-ROWS
 ];
 
@@ -131,4 +156,9 @@ fn manufacturing() {
 #[test]
 fn finance() {
     check("finance");
+}
+
+#[test]
+fn procurement() {
+    check("procurement");
 }

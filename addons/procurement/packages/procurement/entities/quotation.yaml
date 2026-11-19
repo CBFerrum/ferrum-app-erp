@@ -59,5 +59,6 @@
   rules:
     - {name: valid_after_date, check: "doc.valid_till == null || doc.valid_till >= doc.posting_date", message: "Valid till cannot be before the quotation date"}
   actions:
-    - {name: make_purchase_order, label: Create Purchase Order, docstatus: [1], permission: read, condition: "doc.status == 'Submitted'"}
+    - {name: make_purchase_order, label: Create Purchase Order, docstatus: [1], permission: read, condition: "doc.status == 'Submitted'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseOrder}, id: {type: string, format: uuid, x-ferrum-link: PurchaseOrder}, number: {type: [string, "null"]}}}, completion: "A draft Purchase Order of what the quotation has not ordered yet exists, its lines pointing back to the quotation's and to the material requests they fill, for a caller allowed to create one, committed with this receipt"}}
   list: {columns: [number, supplier_name, posting_date, valid_till, grand_total, status], sort: posting_date desc}

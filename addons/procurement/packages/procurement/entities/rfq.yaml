@@ -54,5 +54,6 @@
     - {name: send, label: Send to Suppliers, docstatus: [1], permission: submit,
        confirm: "Email each supplier a link to submit their quotation?"}
     - {name: make_supplier_quotation, label: Create Supplier Quotation, docstatus: [1], permission: read,
-       params: [{name: supplier, label: Supplier, type: link, to: Supplier, required: true, description: "One of the suppliers this request invited"}]}
+       params: [{name: supplier, label: Supplier, type: link, to: Supplier, required: true, description: "One of the suppliers this request invited"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: SupplierQuotation}, id: {type: string, format: uuid, x-ferrum-link: SupplierQuotation}, number: {type: [string, "null"]}}}, completion: "A draft Supplier Quotation for the invited supplier, with the request's lines, exists, for a caller allowed to create one, committed with this receipt"}}
   list: {columns: [number, transaction_date, response_deadline, status], sort: transaction_date desc}
