@@ -212,3 +212,8 @@ fn sg() {
 fn my() {
     check("my");
 }
+
+#[test]
+fn eu() {
+    check("eu");
+}
