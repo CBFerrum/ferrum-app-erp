@@ -177,3 +177,8 @@ fn mfg_ops() {
 fn stock_ops() {
     check("stock_ops");
 }
+
+#[test]
+fn wms() {
+    check("wms");
+}
