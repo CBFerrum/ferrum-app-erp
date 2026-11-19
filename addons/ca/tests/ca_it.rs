@@ -3,6 +3,9 @@
 //! selling into Ontario, British Columbia (PST), Quebec (QST), Alberta, Nova Scotia, Saskatchewan
 //! (no PST registration) and the United States, buying at home, and its GST/HST and QST returns.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
@@ -175,6 +178,35 @@ async fn scenario() {
     .await;
     assert_eq!(taxes(&pi), vec![("GST/HST".into(), n("26"))]);
     k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("purchase");
+
+    // a_template_company_is_still_taxed (erp-4): a company made from a national chart without the provincial accounts
+    // gets them, each under the group standing for its parent, and HST books to the accounts standing for 2131 and 1151.
+    let template = chart::national_template(&k, &ctx, &cid.to_string(), "Canadian National", &["2161", "2162", "1158"]).await;
+    let nat = insert(
+        "Company",
+        json!({"company_name": "Maple National Inc", "abbr": "MN", "default_currency": cad["id"], "country": "Canada", "ca_province": "ON",
+               "ca_business_number": "123456789RT0001", "ca_qst_number": "1234567890TQ0001", "ca_pst_provinces": "BC", "chart_template": template}),
+    )
+    .await;
+    let nid = uid(&nat).to_string();
+    let role = async |number: &str| chart::account(&k, &ctx, &nid, number).await;
+    for (number, parent) in [("2161", "2130"), ("2162", "2130"), ("1158", "1150")] {
+        let made = k.get(&ctx, "Account", role(number).await.parse().unwrap(), false).await.unwrap();
+        assert_eq!(made["parent_account"], json!(role(parent).await), "{number} under the {parent} role");
+    }
+    let si = insert("SalesInvoice", json!({"company": nid, "customer": on.to_string(), "items": [{"item": widget.to_string(), "qty": "1"}]})).await;
+    k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("the template company's sale");
+    assert!(chart::posted(&k, &ctx, si["id"].as_str().unwrap()).await.contains(&(role("2131").await, n("-13"))), "HST on the account standing for 2131");
+    let pi = insert(
+        "PurchaseInvoice",
+        json!({"company": nid, "supplier": supplier.to_string(), "bill_no": "OS-N", "items": [{"item": widget.to_string(), "qty": "2", "price_list_rate": "100"}]}),
+    )
+    .await;
+    k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("the template company's purchase");
+    assert!(
+        chart::posted(&k, &ctx, pi["id"].as_str().unwrap()).await.contains(&(role("1151").await, n("26"))),
+        "HST recovered on the account standing for 1151"
+    );
 
     // The returns: 300 of sales; 13 + 5 + 5 collected; 26 recovered.
     let report = async |name: &str| -> HashMap<String, Decimal> {

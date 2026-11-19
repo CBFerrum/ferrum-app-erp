@@ -4,6 +4,9 @@
 //! in France, outside the EU and buying from France; VAT numbers checked in VIES; rates from TEDB;
 //! the EC sales list and the OSS return; EN 16931 e-invoices and their Peppol hand-over.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::routing::post;
 use axum::{Json, Router};
 use ferrum_kernel::tenant::NewTenant;
@@ -428,6 +431,39 @@ async fn scenario() {
     let pi = t.submit("PurchaseInvoice", uid(&pi)).await;
     assert_eq!(dec(&pi["outstanding_amount"]), n("100"));
     assert_eq!((t.gl(cid, "1151").await, t.gl(cid, "2151").await), (n("19"), n("-19")));
+
+    // ───────────── a_template_company_is_still_taxed (erp-4) ─────────────
+    // A company made from a national chart that lacks the EU's own accounts: they are made under the group standing
+    // for Duties and Taxes, and VAT books to the accounts standing for 2131, 1151 and 2151.
+    let template = chart::national_template(&t.k, &t.ctx, &cid.to_string(), "German National", &["2150", "2151"]).await;
+    let nat = t
+        .insert(
+            "Company",
+            json!({"company_name": "Muster National GmbH", "abbr": "MN", "default_currency": eur["id"], "country": "Deutschland",
+                   "eu_vat_number": "DE123456789", "chart_template": template}),
+        )
+        .await;
+    let nid = uid(&nat).to_string();
+    let oss_account = t.get("Account", chart::account(&t.k, &t.ctx, &nid, "2150").await.parse().unwrap()).await;
+    let duties = chart::account(&t.k, &t.ctx, &nid, "2130").await;
+    assert_eq!((oss_account["account_number"].clone(), oss_account["parent_account"].clone()), (Value::Null, json!(duties)), "made under the 2130 role");
+    let si = t.insert("SalesInvoice", json!({"company": nid, "customer": kunde.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]})).await;
+    t.submit("SalesInvoice", uid(&si)).await;
+    let output = chart::account(&t.k, &t.ctx, &nid, "2131").await;
+    assert!(chart::posted(&t.k, &t.ctx, si["id"].as_str().unwrap()).await.contains(&(output, n("-19"))), "VAT on the account standing for 2131");
+    let pi = t
+        .insert(
+            "PurchaseInvoice",
+            json!({"company": nid, "supplier": fournisseur.to_string(), "bill_no": "F-N", "items": [{"item": widget.to_string(), "qty": "2", "price_list_rate": "50"}]}),
+        )
+        .await;
+    t.submit("PurchaseInvoice", uid(&pi)).await;
+    let lines = chart::posted(&t.k, &t.ctx, pi["id"].as_str().unwrap()).await;
+    let (input, reverse) = (chart::account(&t.k, &t.ctx, &nid, "1151").await, chart::account(&t.k, &t.ctx, &nid, "2151").await);
+    assert!(
+        lines.contains(&(input, n("19"))) && lines.contains(&(reverse, n("-19"))),
+        "the reverse charge on the accounts standing for 1151 and 2151: {lines:?}"
+    );
 
     // ───────────── TEDB's rates, and an item's suggested from its CN code ─────────────
     let before = t.list("EuVatRate", json!({})).await.len();

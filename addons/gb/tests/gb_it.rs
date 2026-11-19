@@ -4,6 +4,9 @@
 //! services), a VAT return's nine boxes, connecting through HMRC's sign-in, filing with a refreshed
 //! token and the fraud prevention headers, and a refused return.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -290,6 +293,32 @@ async fn scenario() {
         (n("100"), json!(true), n("500"))
     );
     k.submit(&ctx, "PurchaseInvoice", uid(&import), None).await.expect("import of services");
+
+    // ───────────── a_template_company_is_still_taxed (erp-4) ─────────────
+    // A company made from a national chart without the reverse-charge account: it is made under the group standing for
+    // Duties and Taxes, and VAT books to the accounts standing for 2131, 1151 and 2151.
+    let template = chart::national_template(&k, &ctx, &cid.to_string(), "UK National", &["2151"]).await;
+    let nat = insert(
+        "Company",
+        json!({"company_name": "Acme National Ltd", "abbr": "AN", "default_currency": gbp["id"], "country": "United Kingdom", "gb_vrn": "GB 123 4567 82",
+               "chart_template": template}),
+    )
+    .await;
+    let nid = uid(&nat).to_string();
+    let role = async |number: &str| chart::account(&k, &ctx, &nid, number).await;
+    let reverse = k.get(&ctx, "Account", role("2151").await.parse().unwrap(), false).await.unwrap();
+    assert_eq!((reverse["account_number"].clone(), reverse["parent_account"].clone()), (Value::Null, json!(role("2130").await)), "made under the 2130 role");
+    let si = insert("SalesInvoice", json!({"company": nid, "customer": brit.to_string(), "items": [{"item": widget.to_string(), "qty": "1"}]})).await;
+    k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("the template company's sale");
+    assert!(chart::posted(&k, &ctx, si["id"].as_str().unwrap()).await.contains(&(role("2131").await, n("-20"))), "VAT on the account standing for 2131");
+    let pi = insert(
+        "PurchaseInvoice",
+        json!({"company": nid, "supplier": consultant.to_string(), "bill_no": "N-1", "items": [{"item": advice.to_string(), "qty": "1", "price_list_rate": "500"}]}),
+    )
+    .await;
+    k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("the template company's import of services");
+    let lines = chart::posted(&k, &ctx, pi["id"].as_str().unwrap()).await;
+    assert!(lines.contains(&(role("1151").await, n("100"))) && lines.contains(&(role("2151").await, n("-100"))), "the reverse charge by role: {lines:?}");
 
     // ───────────── the VAT return's nine boxes ─────────────
     let today = ctx.today();

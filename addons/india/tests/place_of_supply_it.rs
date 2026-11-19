@@ -5,6 +5,9 @@
 //! the first and IGST on the second; and the seller's and buyer's GSTINs come through ERP's tax
 //! registration seam.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use ferrum_india::gstin_check_char;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
@@ -147,6 +150,36 @@ async fn scenario() {
     let plain = order(json!({})).await;
     assert_eq!(plain["in_place_of_supply"], json!("29"));
     assert_eq!(accounts(&plain), ["IGST 18%"]);
+
+    // a_template_company_is_still_taxed (erp-4): a company made from a national chart without India's GST accounts gets
+    // them under the groups standing for 1150 and 2130, and its local sale books CGST and SGST to them.
+    let template = chart::national_template(
+        &k,
+        &ctx,
+        co["id"].as_str().unwrap(),
+        "Indian National",
+        &["1153", "1154", "1155", "2133", "2134", "2135", "2136", "2137", "2138"],
+    )
+    .await;
+    let nat = insert(
+        "Company",
+        json!({"company_name": "Pune National", "abbr": "PN", "default_currency": inr["id"], "country": "India", "in_gstin": gstin("27AAPFU0939F1Z"),
+               "chart_template": template}),
+    )
+    .await;
+    let nid = nat["id"].as_str().unwrap().to_string();
+    let role = async |number: &str| chart::account(&k, &ctx, &nid, number).await;
+    for (number, parent) in [("1153", "1150"), ("2133", "2130"), ("2134", "2130")] {
+        let made = k.get(&ctx, "Account", role(number).await.parse().unwrap(), false).await.unwrap();
+        assert_eq!(made["parent_account"], json!(role(parent).await), "{number} under the {parent} role");
+    }
+    let si =
+        insert("SalesInvoice", json!({"company": nid, "customer": customer["id"], "ship_to": site["id"], "items": [{"item": item["id"], "qty": "1"}]})).await;
+    assert_eq!(accounts(&si), ["CGST 9%", "SGST 9%"]);
+    k.submit(&ctx, "SalesInvoice", si["id"].as_str().unwrap().parse().unwrap(), None).await.expect("the template company's sale");
+    let lines = chart::posted(&k, &ctx, si["id"].as_str().unwrap()).await;
+    let nine = rust_decimal::Decimal::from(-9);
+    assert!(lines.contains(&(role("2133").await, nine)) && lines.contains(&(role("2134").await, nine)), "CGST and SGST by role: {lines:?}");
 
     // ERP's own layouts print the company's and the party's registrations through its seam, under India's label: a
     // sales order (the company sells), a purchase order (it buys), and a journal entry (the company's alone).

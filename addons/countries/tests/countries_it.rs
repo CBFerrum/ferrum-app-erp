@@ -4,6 +4,9 @@
 //! country with its package, a company there selling at home and abroad, buying at home, buying
 //! services from abroad, and its return.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post, put};
@@ -1078,6 +1081,30 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
             tx.commit().await.unwrap();
             assert_eq!(output, Some(got["SR_TAX"]), "sg: the output tax the return counts is the output tax account's");
         }
+    }
+    if code == "th" {
+        // a_template_company_is_still_taxed: a company made from a national chart books VAT on the accounts standing
+        // for output and input tax (erp-4).
+        let template = chart::national_template(k, &ctx, &cid.to_string(), "Thai National", &[]).await;
+        let mut national = obj(json!({"company_name": "Thailand National", "abbr": "THN", "default_currency": currency["id"], "country": case.country,
+                                      "chart_template": template}));
+        national.insert(country.number_field.into(), json!(case.number));
+        let nid = uid(&insert("Company", Value::Object(national)).await).to_string();
+        let si = insert("SalesInvoice", json!({"company": nid, "customer": home.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]})).await;
+        k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("th: the template company's sale");
+        let output = chart::account(k, &ctx, &nid, "2131").await;
+        assert!(chart::posted(k, &ctx, si["id"].as_str().unwrap()).await.contains(&(output, Decimal::from(-7))), "th: VAT on the account standing for 2131");
+        let pi = insert(
+            "PurchaseInvoice",
+            json!({"company": nid, "supplier": supplier.to_string(), "bill_no": "N-1", "items": [{"item": goods.to_string(), "qty": "1", "price_list_rate": "100"}]}),
+        )
+        .await;
+        k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("th: the template company's purchase");
+        let input = chart::account(k, &ctx, &nid, "1151").await;
+        assert!(
+            chart::posted(k, &ctx, pi["id"].as_str().unwrap()).await.contains(&(input, Decimal::from(7))),
+            "th: input VAT on the account standing for 1151"
+        );
     }
     if code == "sg" {
         // A rate kept as data wins over the built-in 9%, and stops when it ends.
