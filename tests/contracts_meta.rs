@@ -97,3 +97,8 @@ fn check(name: &str) {
 fn accounting() {
     check("accounting");
 }
+
+#[test]
+fn selling() {
+    check("selling");
+}
