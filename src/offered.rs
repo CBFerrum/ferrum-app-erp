@@ -15,6 +15,7 @@ use crate::util::{company, id, s, sys};
 use ferrum_kernel::{Action, Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
 
 /// Lines in one posting, and lines in one priced document, at most.
@@ -77,10 +78,39 @@ fn only_apps(hc: &HookCtx<'_>) -> Result<()> {
     if hc.ctx.is_system { Ok(()) } else { Err(Error::Forbidden("an app posts to the ledger for its own records; people post journal entries".into())) }
 }
 
+/// The ids of `ids` that are rows of `table` in this workspace (and of `company`, not groups, where asked): one query.
+async fn existing(hc: &mut HookCtx<'_>, table: &str, ids: &BTreeSet<Uuid>, company: Option<Uuid>) -> Result<HashSet<Uuid>> {
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let list: Vec<Uuid> = ids.iter().copied().collect();
+    let sql = match company {
+        None => format!("select id from {table} where tenant_id = $1 and id = any($2)"),
+        Some(_) => format!("select id from {table} where tenant_id = $1 and id = any($2) and company = $3 and not coalesce(is_group, false)"),
+    };
+    let found: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(hc.ctx.tenant).bind(&list).bind(company).fetch_all(&mut **hc.tx).await?;
+    Ok(found.into_iter().collect())
+}
+
+/// One line as given, its ids read.
+struct Given {
+    account: Uuid,
+    dr: Decimal,
+    cr: Decimal,
+    txn: Option<(Decimal, String, Decimal)>,
+    customer: Option<Uuid>,
+    supplier: Option<Uuid>,
+    cost_center: Option<Uuid>,
+    project: Option<Uuid>,
+    against: Option<(String, Uuid)>,
+    remarks: Option<String>,
+}
+
 /// `post_entry {posting_date, source_entity, source_id, source_number?, memo?, lines}`: one balanced entry for the
 /// app's record. Each line: `account`, `debit` or `credit` in the company's currency, and as needed `currency`,
 /// `amount_txn` (signed, debit positive) and `exchange_rate` for another currency, `customer`, `supplier`,
-/// `cost_center`, `project`, `against_entity` with `against_id`, `remarks`.
+/// `cost_center`, `project`, `against_entity` with `against_id`, `remarks`. Every id must name a record that is there
+/// (the company's own, for accounts and cost centers): the ledger keeps a line for ever, so it never points at nothing.
 async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
     only_apps(hc)?;
     let cid = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
@@ -88,8 +118,8 @@ async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<V
     let on = date_of(params, "posting_date")?.ok_or_else(|| Error::field("posting_date", "is required"))?;
     let (entity, source_id) = source(hc, params).await?;
     let rows = list(params, "lines")?;
-    let mut lines = Vec::with_capacity(rows.len());
-    let (mut debit, mut credit) = (Decimal::ZERO, Decimal::ZERO);
+    // The lines as given, each id read.
+    let mut given = Vec::with_capacity(rows.len());
     for (i, row) in rows.iter().enumerate() {
         let bad = |k: &str, m: &str| Error::Validation(vec![FieldError::new(k, m).in_row("lines", i)]);
         let link = |k: &str| match row.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()) {
@@ -97,16 +127,6 @@ async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<V
             Some(v) => v.parse::<Uuid>().map(Some).map_err(|_| bad(k, "is not an id")),
         };
         let account = link("account")?.ok_or_else(|| bad("account", "is required"))?;
-        let ok: bool =
-            sqlx::query_scalar("select exists (select 1 from e_account where tenant_id = $1 and id = $2 and company = $3 and not coalesce(is_group, false))")
-                .bind(hc.ctx.tenant)
-                .bind(account)
-                .bind(cid)
-                .fetch_one(&mut **hc.tx)
-                .await?;
-        if !ok {
-            return Err(bad("account", "is not a ledger account of this company"));
-        }
         let (dr, cr) = (amount(row, "debit", i)?, amount(row, "credit", i)?);
         if dr < Decimal::ZERO || cr < Decimal::ZERO || (!dr.is_zero() && !cr.is_zero()) {
             return Err(bad("debit", "give a debit or a credit, not below zero"));
@@ -114,28 +134,117 @@ async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<V
         if dr.round_dp(co.precision) != dr || cr.round_dp(co.precision) != cr {
             return Err(bad("debit", &format!("has more than the company currency's {} decimals", co.precision)));
         }
-        debit += dr;
-        credit += cr;
-        let mut l = Line::new(account, dr - cr, &co.currency_code);
-        if let Some(cur) = row.get("currency").and_then(Value::as_str).filter(|c| !c.is_empty() && *c != co.currency_code) {
-            let txn = amount(row, "amount_txn", i)?;
-            let rate = match row.get("exchange_rate") {
-                Some(v) if !v.is_null() => ferrum_kernel::value::parse_decimal(v).map_err(|m| bad("exchange_rate", &m))?,
-                _ => return Err(bad("exchange_rate", "is required with another currency")),
-            };
-            if txn.is_zero() || (txn > Decimal::ZERO) != (dr > cr) {
-                return Err(bad("amount_txn", "is the line's amount in its currency, with the same sign"));
+        let txn = match row.get("currency").and_then(Value::as_str).filter(|c| !c.is_empty() && *c != co.currency_code) {
+            None => None,
+            Some(cur) => {
+                let txn = amount(row, "amount_txn", i)?;
+                let rate = match row.get("exchange_rate") {
+                    Some(v) if !v.is_null() => ferrum_kernel::value::parse_decimal(v).map_err(|m| bad("exchange_rate", &m))?,
+                    _ => return Err(bad("exchange_rate", "is required with another currency")),
+                };
+                if txn.is_zero() || (txn > Decimal::ZERO) != (dr > cr) {
+                    return Err(bad("amount_txn", "is the line's amount in its currency, with the same sign"));
+                }
+                Some((txn, cur.to_string(), rate))
             }
-            l = l.txn(txn, cur, rate);
+        };
+        let (customer, supplier) = (link("customer")?, link("supplier")?);
+        if customer.is_some() && supplier.is_some() {
+            return Err(bad("supplier", "a line has one party: a customer or a supplier"));
         }
-        l = l.customer(link("customer")?).supplier(link("supplier")?).cost_center(link("cost_center")?).project(link("project")?);
-        if let (Some(e), Some(a)) = (row.get("against_entity").and_then(Value::as_str).filter(|e| !e.is_empty()), link("against_id")?) {
-            l = l.against(e, a);
+        let against = match (row.get("against_entity").and_then(Value::as_str).filter(|e| !e.is_empty()), link("against_id")?) {
+            (Some(e), Some(a)) => Some((e.to_string(), a)),
+            (None, None) => None,
+            _ => return Err(bad("against_id", "give against_entity and against_id together")),
+        };
+        given.push(Given {
+            account,
+            dr,
+            cr,
+            txn,
+            customer,
+            supplier,
+            cost_center: link("cost_center")?,
+            project: link("project")?,
+            against,
+            remarks: row.get("remarks").and_then(Value::as_str).filter(|r| !r.is_empty()).map(|r| r.chars().take(1000).collect()),
+        });
+    }
+    // What is there, one query a kind over the call's distinct ids.
+    let ids = |f: fn(&Given) -> Option<Uuid>| given.iter().filter_map(f).collect::<BTreeSet<Uuid>>();
+    let account_ids: Vec<Uuid> = ids(|g| Some(g.account)).into_iter().collect();
+    let types: HashMap<Uuid, String> = sqlx::query_as::<_, (Uuid, String)>(
+        "select id, coalesce(account_type, '') from e_account where tenant_id = $1 and company = $2 and not coalesce(is_group, false) and id = any($3)",
+    )
+    .bind(hc.ctx.tenant)
+    .bind(cid)
+    .bind(&account_ids)
+    .fetch_all(&mut **hc.tx)
+    .await?
+    .into_iter()
+    .collect();
+    let customers = existing(hc, "e_customer", &ids(|g| g.customer), None).await?;
+    let suppliers = existing(hc, "e_supplier", &ids(|g| g.supplier), None).await?;
+    let projects = existing(hc, "e_project", &ids(|g| g.project), None).await?;
+    let cost_centers = existing(hc, "e_cost_center", &ids(|g| g.cost_center), Some(cid)).await?;
+    let mut against_found: HashSet<(String, Uuid)> = HashSet::new();
+    let entities: BTreeSet<String> = given.iter().filter_map(|g| g.against.as_ref().map(|a| a.0.clone())).collect();
+    for e in entities {
+        let Some(table) = hc.ctx.schema.entity(&e).map(|x| x.table.clone()) else { continue };
+        let of: BTreeSet<Uuid> = given.iter().filter_map(|g| g.against.as_ref().filter(|a| a.0 == e).map(|a| a.1)).collect();
+        for found in existing(hc, &table, &of, None).await? {
+            against_found.insert((e.clone(), found));
         }
-        if let Some(r) = row.get("remarks").and_then(Value::as_str).filter(|r| !r.is_empty()) {
-            l = l.remarks(r.chars().take(1000).collect::<String>());
+    }
+    let mut errors = Vec::new();
+    let mut lines = Vec::with_capacity(given.len());
+    let (mut debit, mut credit) = (Decimal::ZERO, Decimal::ZERO);
+    for (i, g) in given.into_iter().enumerate() {
+        let mut bad = |k: &str, m: &str| errors.push(FieldError::new(k, m).in_row("lines", i));
+        match types.get(&g.account) {
+            None => bad("account", "is not a ledger account of this company"),
+            Some(typ) => {
+                // The journal entry's rule: a receivable or payable line needs its party.
+                let party = g.customer.map(|_| "Customer").or(g.supplier.map(|_| "Supplier"));
+                if party.is_none()
+                    && let Some((_, m)) = crate::accounting::party_problem(None, typ)
+                {
+                    bad(if typ == "Payable" { "supplier" } else { "customer" }, m);
+                }
+            }
+        }
+        if g.customer.is_some_and(|c| !customers.contains(&c)) {
+            bad("customer", "is not a customer of this workspace");
+        }
+        if g.supplier.is_some_and(|c| !suppliers.contains(&c)) {
+            bad("supplier", "is not a supplier of this workspace");
+        }
+        if g.project.is_some_and(|c| !projects.contains(&c)) {
+            bad("project", "is not a project of this workspace");
+        }
+        if g.cost_center.is_some_and(|c| !cost_centers.contains(&c)) {
+            bad("cost_center", "is not a cost center of this company (nor a group)");
+        }
+        if let Some(a) = g.against.as_ref().filter(|a| !against_found.contains(a)) {
+            bad("against_id", &format!("no {} has this id", a.0));
+        }
+        debit += g.dr;
+        credit += g.cr;
+        let mut l = Line::new(g.account, g.dr - g.cr, &co.currency_code);
+        if let Some((txn, cur, rate)) = &g.txn {
+            l = l.txn(*txn, cur, *rate);
+        }
+        l = l.customer(g.customer).supplier(g.supplier).cost_center(g.cost_center).project(g.project);
+        if let Some((e, a)) = &g.against {
+            l = l.against(e, *a);
+        }
+        if let Some(r) = g.remarks {
+            l = l.remarks(r);
         }
         lines.push(l);
+    }
+    if !errors.is_empty() {
+        return Err(Error::Validation(errors));
     }
     if debit != credit {
         return Err(Error::field("lines", format!("debits {debit} and credits {credit} differ: an entry balances")));

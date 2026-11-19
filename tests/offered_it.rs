@@ -152,21 +152,72 @@ async fn scenario() {
             n
         }
     };
-    let balanced = json!([{"account": receivable, "debit": "100.10"}, {"account": bank, "credit": "100.10", "remarks": "paid"}]);
+    let globex = uid(&k.insert(&admin, "Customer", obj(json!({"customer_name": "Globex"}))).await.unwrap()["id"]);
+    let balanced = json!([{"account": receivable, "debit": "100.10", "customer": globex}, {"account": bank, "credit": "100.10", "remarks": "paid"}]);
 
     // ── a posting balances to the cent, or nothing is written ──
-    let e = call(&k, &vault, &admin, post(json!([{"account": receivable, "debit": "100.10"}, {"account": bank, "credit": "100.00"}]), voucher).key("u-1"))
-        .await
-        .unwrap_err();
+    let e = call(
+        &k,
+        &vault,
+        &admin,
+        post(json!([{"account": receivable, "debit": "100.10", "customer": globex}, {"account": bank, "credit": "100.00"}]), voucher).key("u-1"),
+    )
+    .await
+    .unwrap_err();
     assert!(refused(&e, "differ: an entry balances"), "{e:?}");
-    let e = call(&k, &vault, &admin, post(json!([{"account": receivable, "debit": "0.001"}, {"account": bank, "credit": "0.001"}]), voucher).key("u-2"))
-        .await
-        .unwrap_err();
+    let e = call(
+        &k,
+        &vault,
+        &admin,
+        post(json!([{"account": receivable, "debit": "0.001", "customer": globex}, {"account": bank, "credit": "0.001"}]), voucher).key("u-2"),
+    )
+    .await
+    .unwrap_err();
     assert!(refused(&e, "decimals"), "a fraction of a cent is refused, not rounded: {e:?}");
     let e = call(&k, &vault, &admin, post(json!([{"account": group, "debit": "1"}, {"account": bank, "credit": "1"}]), voucher).key("u-3")).await.unwrap_err();
     assert!(refused(&e, "not a ledger account of this company"), "{e:?}");
     let e = call(&k, &vault, &admin, post(balanced.clone(), Uuid::now_v7()).key("u-4")).await.unwrap_err();
     assert!(refused(&e, "no CallerVoucher has this id"), "{e:?}");
+    // Every id a line gives names a record that is there: the ledger keeps a line for ever.
+    let with = |extra: Value| {
+        let mut l = json!({"account": bank, "debit": "10"});
+        l.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        json!([l, {"account": receivable, "credit": "10", "customer": globex}])
+    };
+    // a_line_with_a_customer_of_no_one_is_refused
+    let e = call(
+        &k,
+        &vault,
+        &admin,
+        post(json!([{"account": receivable, "debit": "10", "customer": Uuid::now_v7()}, {"account": bank, "credit": "10"}]), voucher).key("u-5"),
+    )
+    .await
+    .unwrap_err();
+    assert!(refused(&e, "is not a customer of this workspace"), "{e:?}");
+    // a_cost_center_of_another_company_is_refused
+    let other = k.insert(&admin, "Company", obj(json!({"company_name": "Other Co", "abbr": "OT", "default_currency": inr["id"]}))).await.unwrap();
+    let elsewhere = find("CostCenter", json!({"company": other["id"]})).await;
+    let e = call(&k, &vault, &admin, post(with(json!({"cost_center": elsewhere["id"]})), voucher).key("u-6")).await.unwrap_err();
+    assert!(refused(&e, "is not a cost center of this company"), "{e:?}");
+    // a_receivable_line_without_its_customer_is_refused (the journal entry's rule)
+    let e = call(&k, &vault, &admin, post(json!([{"account": receivable, "debit": "10"}, {"account": bank, "credit": "10"}]), voucher).key("u-7"))
+        .await
+        .unwrap_err();
+    assert!(refused(&e, "receivable/payable lines need a party"), "{e:?}");
+    // against_must_exist
+    let e =
+        call(&k, &vault, &admin, post(with(json!({"against_entity": "CallerVoucher", "against_id": Uuid::now_v7()})), voucher).key("u-8")).await.unwrap_err();
+    assert!(refused(&e, "no CallerVoucher has this id"), "{e:?}");
+    let e = call(&k, &vault, &admin, post(with(json!({"against_entity": "NoSuchThing", "against_id": voucher})), voucher).key("u-9")).await.unwrap_err();
+    assert!(refused(&e, "no NoSuchThing has this id"), "{e:?}");
+    // A closed period is the database's refusal, in its words, not an internal error.
+    let year = find("FiscalYear", json!({"company": cid.to_string()})).await;
+    let start = year["start_date"].as_str().unwrap().to_string();
+    k.run_action(&admin, "FiscalYear", uid(&year["id"]), "close_period", json!({"period_start": start})).await.expect("close the first month");
+    let mut early = post(balanced.clone(), voucher).key("u-10");
+    early.input["params"]["posting_date"] = json!(start);
+    let e = call(&k, &vault, &admin, early).await.unwrap_err();
+    assert!(matches!(e, Error::Invalid(_) | Error::Validation(_)) && refused(&e, "is closed"), "{e:?}");
     assert_eq!(entries(voucher).await, 0, "nothing refused was written");
 
     // ── one key posts once: repeated, and racing ──
