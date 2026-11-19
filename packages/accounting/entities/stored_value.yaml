@@ -211,20 +211,24 @@
     - {name: warned_on, type: date, read_only: true, hidden: true, no_copy: true}
     - {name: state, type: select, options: [Active, Blocked, Expired, Used Up], default: Active, read_only: true, in_list: true, in_filter: true}
   actions:
-    - {name: block, label: Block, permission: write, condition: "doc.state == 'Active'", confirm: "Block it? Nothing can be taken from or put onto it until it is unblocked."}
-    - {name: unblock, label: Unblock, permission: write, condition: "doc.state == 'Blocked'"}
+    - {name: block, label: Block, permission: write, condition: "doc.state == 'Active'", confirm: "Block it? Nothing can be taken from or put onto it until it is unblocked.",
+      contract: {effect: transactional_action, returns: {type: object, properties: {account: {type: string, format: uuid, x-ferrum-link: StoredValueAccount}, state: {type: string}}}, completion: "The account is Blocked: nothing can be taken from or put onto it until it is unblocked, committed with this receipt", compensate_with: unblock}}
+    - {name: unblock, label: Unblock, permission: write, condition: "doc.state == 'Blocked'",
+      contract: {effect: transactional_action, returns: {type: object, properties: {account: {type: string, format: uuid, x-ferrum-link: StoredValueAccount}, state: {type: string}}}, completion: "The account is usable again (Used Up when nothing is left on it), committed with this receipt", compensate_with: block}}
     - name: new_code
       label: New Code
       permission: write
       confirm: "Give it a new code? The old code stops working; the new one (and a new PIN, for a kind that needs one) is shown once."
       params:
-        - {name: proof, label: Proof, description: "From its kind's prove (new_code), for a code and PIN of the holder's choosing; both are made here when empty"}
+        - {name: proof, label: Proof, secret: true, description: "From its kind's prove (new_code), for a code and PIN of the holder's choosing; both are made here when empty"}
+      contract: {effect: transactional_action, returns: {type: object, properties: {account: {type: string, format: uuid, x-ferrum-link: StoredValueAccount}, code: {type: [string, "null"]}, pin: {type: [string, "null"]}}}, completion: "The account has a new code (and PIN, for a kind that needs one) and the old code no longer works; a code and PIN made here are in this answer only", answer_once: {fields: [code, pin], then: "Make a new code with New Code"}}
     - name: adjust
       label: Adjust
       permission: write
       params:
         - {name: amount, label: Amount or Units, required: true, description: "Positive adds, negative takes away"}
         - {name: reason, label: Reason, required: true}
+      contract: {effect: transactional_action, returns: {type: object, properties: {account: {type: string, format: uuid, x-ferrum-link: StoredValueAccount}, entry: {type: string, format: uuid}, balance: {type: string}}}, completion: "The account's balance is changed by the amount and the change is booked against the kind's Adjustment Account, committed with this receipt"}
     - name: cash_out
       label: Cash Out
       permission: write
@@ -232,4 +236,5 @@
       params:
         - {name: amount, label: Amount, description: "The whole balance when empty"}
         - {name: paid_from, label: Paid From, type: link, to: Account, required: true, description: "The bank or cash account the money leaves"}
+      contract: {effect: transactional_action, returns: {type: object, properties: {account: {type: string, format: uuid, x-ferrum-link: StoredValueAccount}, entry: {type: string, format: uuid}, balance: {type: string}}}, completion: "The amount leaves the account and is paid out of the named bank or cash account in the ledger, committed with this receipt"}
   list: {columns: [code_hint, kind, holder, balance, expires_on, state], sort: issued_on desc}

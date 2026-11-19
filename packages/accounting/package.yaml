@@ -101,8 +101,10 @@ overlays:
             returns: {type: object, properties: {created: {type: boolean}, added: {type: array, items: {type: string}}, defaults_set: {type: integer}, message: {type: string}}}
             completion: "The company has every account of its chart (its template's, or the standard one) and its default links are set"
       - {op: add_action, action: {name: post_opening_invoices, label: Post Opening Invoices, permission: write,
-          confirm: "Post every draft opening invoice of this company against its Opening Balance Account? All are posted, or none if one is refused."}}
-      - {op: add_action, action: {name: recognise_deferred, label: Recognise Deferred Revenue and Expense, permission: write, params: [{name: through, type: date, label: Through, description: "The last day to recognise; yesterday when empty"}]}}
+          confirm: "Post every draft opening invoice of this company against its Opening Balance Account? All are posted, or none if one is refused.",
+         contract: {effect: transactional_action, returns: {type: object, properties: {posted: {type: integer}, message: {type: string}}}, completion: "Every draft opening invoice of the company is submitted and posted against its Opening Balance Account, or none is, committed with this receipt"}}}
+      - {op: add_action, action: {name: recognise_deferred, label: Recognise Deferred Revenue and Expense, permission: write, params: [{name: through, type: date, label: Through, description: "The last day to recognise; yesterday when empty"}],
+         contract: {effect: transactional_action, returns: {type: object, properties: {lines: {type: integer}, through: {type: string, format: date}, left: {type: array, items: {type: string}}, message: {type: string}}}, completion: "Deferred revenue and expense up to the day given is recognised once in the ledger and what could not be is listed in left, committed with this receipt"}}}
   - entity: Customer
     ops:
       - {op: add_field, column: true, after: default_price_list, field: {name: receivable_account, type: link, to: Account, link_filters: {account_type: Receivable, is_group: false}, description: Overrides the company default}}
