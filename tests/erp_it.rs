@@ -1832,10 +1832,7 @@ async fn scenario() {
     .await;
     let completed = t.action("Company", older, "setup_chart_of_accounts", json!({})).await;
     assert_eq!(completed["added"], json!(["Prepaid Expenses", "Accrued Income", "Deferred Revenue", "Accrued Expenses"]), "{completed}");
-    assert_eq!(
-        completed["message"],
-        json!("Added Prepaid Expenses, Accrued Income, Deferred Revenue, Accrued Expenses from the standard chart; 2 default accounts set")
-    );
+    assert_eq!(completed["message"], json!("Added Prepaid Expenses, Accrued Income, Deferred Revenue, Accrued Expenses to the chart; 2 default accounts set"));
     let deferred = older_account("Deferred Revenue").await;
     assert_eq!(
         (deferred["parent_account"].clone(), deferred["account_number"].clone()),
