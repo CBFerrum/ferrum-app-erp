@@ -187,3 +187,8 @@ fn wms() {
 fn ae() {
     check("ae");
 }
+
+#[test]
+fn au() {
+    check("au");
+}
