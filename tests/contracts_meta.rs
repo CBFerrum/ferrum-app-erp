@@ -227,3 +227,8 @@ fn fr() {
 fn it() {
     check("it");
 }
+
+#[test]
+fn pl() {
+    check("pl");
+}
