@@ -197,3 +197,8 @@ fn au() {
 fn jp() {
     check("jp");
 }
+
+#[test]
+fn nz() {
+    check("nz");
+}
