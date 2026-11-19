@@ -66,8 +66,10 @@
     - {name: project, type: link, to: Project}
     - {name: terms, type: text}
   actions:
-    - {name: make_purchase_receipt, label: Create Purchase Receipt, docstatus: [1], permission: read, condition: "doc.per_received < 100.0 && doc.status != 'Closed'"}
-    - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'"}
+    - {name: make_purchase_receipt, label: Create Purchase Receipt, docstatus: [1], permission: read, condition: "doc.per_received < 100.0 && doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseReceipt}, id: {type: string, format: uuid, x-ferrum-link: PurchaseReceipt}, number: {type: [string, "null"]}}}, completion: "A draft Purchase Receipt of what is still open to receive on the order exists, its lines pointing back to the order's, for a caller allowed to create one; no stock moves until it is submitted, committed with this receipt"}}
+    - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseInvoice}, id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, number: {type: [string, "null"]}}}, completion: "A draft Purchase Invoice of what is still open to bill on the order exists, its lines pointing back to the order's, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
     - name: update_items
       label: Update Items
       docstatus: [1]
@@ -79,8 +81,10 @@
         - {name: qty, type: data, label: Quantity, description: "The line's new quantity, never below what was received or billed on it. 0 removes a line with nothing received or billed"}
         - {name: price, type: data, label: Price, description: "The line's new agreed price, for what is not yet billed"}
         - {name: schedule_date, type: date, label: Required By, description: "Moves the order's required-by date, and its lines' that had it"}
-    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
-    - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
+    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The order is Closed: what was still open on each line is recorded as closed short, committed with this receipt", compensate_with: reopen}}
+    - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The order is open again: the quantities closed short are cleared and its status and percentages follow what was received and billed, committed with this receipt", compensate_with: close}}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: PurchaseReceiptItem
@@ -160,14 +164,18 @@
     - {name: per_billed, type: percent, read_only: true, no_copy: true}
     - {name: status, type: select, options: [Draft, To Bill, Completed, Return, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
   actions:
-    - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
-    - {name: make_purchase_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: make_purchase_invoice, label: Create Purchase Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseInvoice}, id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, number: {type: [string, "null"]}}}, completion: "A draft Purchase Invoice of what this receipt has not billed yet exists, its lines pointing back to the receipt's, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
+    - {name: make_purchase_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseReceipt}, id: {type: string, format: uuid, x-ferrum-link: PurchaseReceipt}, number: {type: [string, "null"]}}}, completion: "A draft return Purchase Receipt of what can still go back to the supplier exists against this receipt, for a caller allowed to create one; no stock moves until it is submitted, committed with this receipt"}}
     - {name: return_rejected, label: Return Rejected Goods, docstatus: [1], permission: read, condition: "!doc.is_return",
-       params: [{name: make, type: select, options: [Return, Debit Note], label: Make, description: "Return: a return sending the rejected goods back. Debit Note: a debit note against the supplier's invoice that billed them, at its price, with no goods moving"}]}
+       params: [{name: make, type: select, options: [Return, Debit Note], label: Make, description: "Return: a return sending the rejected goods back. Debit Note: a debit note against the supplier's invoice that billed them, at its price, with no goods moving"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}, completion: "A draft of what the receipt rejected exists, for a caller allowed to create one: a return of the goods (Purchase Receipt) or, when asked for a debit note, a debit note against the supplier's latest invoice that billed it (Purchase Invoice, no goods moving); entity says which, committed with this receipt"}}
     - {name: make_carrier_shipment, label: Ship by Carrier, docstatus: [1], permission: read, condition: "doc.is_return",
        params: [{name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "The company's only enabled connection when empty"},
                 {name: weight, label: Weight, required: true, description: "Of the first parcel, in the connection's weight unit; add more parcels on the shipment"},
-                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}]}
+                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: CarrierShipment}, id: {type: string, format: uuid, x-ferrum-link: CarrierShipment}, number: {type: [string, "null"]}}}, completion: "A draft Carrier Shipment of this return with one parcel of the weight given exists, for a caller allowed to create one; the carrier is not contacted, committed with this receipt"}}
   list: {columns: [number, supplier_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: PurchaseInvoiceItem
@@ -282,9 +290,12 @@
     - {name: return_needs_source, check: "!doc.is_return || doc.return_against != null || (doc.return_reason != null && doc.return_reason != '')", on: submit,
        message: "A debit note without its original invoice needs a reason: a rebate, a correction from before these books"}
   actions:
-    - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
-    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0"}
+    - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A draft Payment Entry for the invoice's outstanding amount exists, allocated to it, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
+    - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A draft refund Payment Entry for the credit left on this debit note exists, allocated to it, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
     - {name: make_debit_note, label: Create Debit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
        params: [{name: credit_percent, type: data, label: Debit of Price Only (%),
-                 description: "Empty: the goods go back, for what is still returnable. A figure (10): no goods go back, and that share of each line's price is debited"}]}
+                 description: "Empty: the goods go back, for what is still returnable. A figure (10): no goods go back, and that share of each line's price is debited"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseInvoice}, id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, number: {type: [string, "null"]}}}, completion: "A draft debit note against the invoice exists, for the goods that can still go back or the share of price given, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
   list: {columns: [number, supplier_name, bill_no, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}

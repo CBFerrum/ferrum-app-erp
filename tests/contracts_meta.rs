@@ -102,3 +102,8 @@ fn accounting() {
 fn selling() {
     check("selling");
 }
+
+#[test]
+fn buying() {
+    check("buying");
+}
