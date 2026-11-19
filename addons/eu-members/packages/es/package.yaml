@@ -30,4 +30,5 @@ overlays:
       - {op: add_field, after: es_csv, field: {name: es_verifactu_error, type: text, label: AEAT's Message, read_only: true, no_copy: true}}
       - {op: add_action, action: {name: es_record_aeat, group: e-Invoice, label: Record AEAT's Answer, docstatus: [1, 2], permission: submit,
           params: [{name: state, label: State, type: select, options: [Correcto, AceptadoConErrores, Incorrecto], required: true}, {name: csv, label: CSV, type: data},
-                   {name: message, label: AEAT's Message, type: text}]}}
+                   {name: message, label: AEAT's Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "AEAT's answer for the record that waits for it is recorded: Accepted (Correcto, or accepted with errors) with its CSV, or Rejected with the message, committed with this receipt"}}}

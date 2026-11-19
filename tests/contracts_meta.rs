@@ -232,3 +232,8 @@ fn it() {
 fn pl() {
     check("pl");
 }
+
+#[test]
+fn es() {
+    check("es");
+}
