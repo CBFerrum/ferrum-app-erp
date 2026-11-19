@@ -1849,7 +1849,7 @@ async fn scenario() {
     assert_eq!(t.get("Company", older).await["default_deferred_revenue_account"], deferred["id"]);
     assert_eq!(
         t.action("Company", older, "setup_chart_of_accounts", json!({})).await["message"],
-        json!("This company's chart already has every standard account")
+        json!("This company's chart already has every account of its chart")
     );
 
     // ───────────── revenue and expense over a service period (FERRUM-ERP-006) ─────────────
