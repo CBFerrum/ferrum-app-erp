@@ -112,3 +112,8 @@ fn buying() {
 fn inventory() {
     check("inventory");
 }
+
+#[test]
+fn manufacturing() {
+    check("manufacturing");
+}

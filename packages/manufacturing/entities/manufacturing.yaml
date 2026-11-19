@@ -64,7 +64,8 @@
     - {name: total_cost, type: currency, read_only: true, no_copy: true, in_list: true}
     - {name: change_note, type: text, description: Engineering change description for this revision}
   actions:
-    - {name: update_cost, label: Update Cost, docstatus: [0, 1], permission: write}
+    - {name: update_cost, label: Update Cost, docstatus: [0, 1], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {raw_material_cost: {type: [string, "null"]}, total_cost: {type: [string, "null"]}}}, completion: "The BOM's lines and totals are costed again at today's rates, committed with this receipt"}}
   list: {columns: [number, item_name, revision, is_default, total_cost], sort: created_at desc}
 
 - name: WorkOrder
@@ -93,9 +94,13 @@
     - {name: status, type: select, options: [Draft, Not Started, In Process, Completed, Stopped, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: actual_cost, type: currency, read_only: true, no_copy: true}
   actions:
-    - {name: manufacture, label: Produce, docstatus: [1], permission: submit, condition: "doc.produced_qty < doc.qty && doc.status != 'Stopped'"}
-    - {name: stop, label: Stop, docstatus: [1], permission: submit}
-    - {name: resume, label: Resume, docstatus: [1], permission: submit, condition: "doc.status == 'Stopped'"}
+    - {name: manufacture, label: Produce, docstatus: [1], permission: submit, condition: "doc.produced_qty < doc.qty && doc.status != 'Stopped'",
+       params: [{name: qty, label: Quantity, description: "How many to produce; what remains of the order when empty"}, {name: posting_date, type: date, label: Posting Date}, {name: submit, type: check, label: Submit the Entry, description: "On unless set to no: a draft is left to add batch or serial numbers to"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: StockEntry}, id: {type: string, format: uuid, x-ferrum-link: StockEntry}, number: {type: [string, "null"]}}}, completion: "A Manufacture Stock Entry for the quantity (the rest of the order when none is given) exists, consuming the BOM's materials and receiving the finished goods and by-products, submitted unless asked to leave it as a draft; the work order's produced quantity follows the entry"}}
+    - {name: stop, label: Stop, docstatus: [1], permission: submit,
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The work order is Stopped: nothing more is produced on it until it is resumed, committed with this receipt", compensate_with: resume}}
+    - {name: resume, label: Resume, docstatus: [1], permission: submit, condition: "doc.status == 'Stopped'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The work order is In Process, or Not Started when nothing was produced, and can be produced on again, committed with this receipt", compensate_with: stop}}
   list: {columns: [number, item_name, qty, produced_qty, status], sort: planned_start_date desc}
 
 - name: MrpLine
@@ -157,5 +162,7 @@
     - {name: messages, type: table, of: MrpMessage, label: Action Messages}
     - {name: status, type: select, options: [Draft, Planned, Orders Created], default: Draft, read_only: true, in_list: true}
   actions:
-    - {name: run, label: Run MRP, docstatus: [0], permission: write}
-    - {name: create_orders, label: Create Purchase Orders & Work Orders, docstatus: [0], permission: write, condition: "doc.status == 'Planned'"}
+    - {name: run, label: Run MRP, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {lines: {type: integer}}}, completion: "The MRP run's lines hold what each item needs ordered, bought or made, and the run is Planned, committed with this receipt"}}
+    - {name: create_orders, label: Create Purchase Orders & Work Orders, docstatus: [0], permission: write, condition: "doc.status == 'Planned'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A Purchase Order for each supplier, a Work Order for each item to make and one Stock Entry for the transfers exist as drafts, each MRP line names the document made for it, and the run is Orders Created, committed with this receipt"}}
