@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.35.0 and the country add-ons' patches: chart of accounts templates, and accounts found by their role
+
+A company's accounts can now be made from a **Chart of Accounts Template** (a new record, Setup menu) chosen when the
+company is created; without one, the standard chart as before. Each template account says which standard account it
+**stands for** (Account's new Stands For), and every look-up of an account by the standard chart's number goes through
+`setup::standard_account`: on the standard chart by number as always, on a template's chart by the role, never by a
+number a national chart may use for something else. Add-ons make their own tax accounts with `setup::ensure_account`.
+docs/charts.md lists the roles a template must map; a template that leaves one out is refused when saved.
+
+- Company gains Chart of Accounts, which cannot be changed after the company is made. Create Chart of Accounts
+  (renamed, now with a contract) adds the accounts of the company's chart it lacks, once.
+- New accounts of the standard chart carry their own number as Stands For; existing ones are left as they are and
+  still found by number.
+- No national chart ships in this release. The add-ons whose look-ups moved: European Union 0.5.1, United Kingdom
+  0.4.2, Canada 0.2.1, United States 0.3.2, India 0.9.2, Poland, Italy and Spain 0.2.1, and the countries engine's
+  thirteen (United Arab Emirates 0.3.1, Australia 0.3.1, China 0.4.1, Indonesia 0.4.1, Japan 0.4.1, Mexico 0.3.1,
+  Malaysia 0.5.2, New Zealand 0.4.1, Philippines 0.4.1, Saudi Arabia 0.4.1, Singapore 0.4.1, Thailand 0.4.1,
+  Vietnam 0.4.1).
+
 ## ERP 0.34.0 (accounting 0.4.0, selling 0.2.0): operations other apps call instead of ERP's code
 
 Assets, HR, Point of Sale and Commerce post to the ledger, Bookings and Helpdesk find a person's customer, and CRM

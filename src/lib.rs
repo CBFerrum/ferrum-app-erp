@@ -86,6 +86,7 @@ pub fn register(h: &mut HookRegistry) {
     h.scoped(&only("accounting"), |h| {
         h.register("NumberSeries", Arc::new(series::SeriesRecordHook))
             .register("Company", Arc::new(setup::CompanyHook))
+            .register("ChartTemplate", Arc::new(setup::ChartTemplateHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))

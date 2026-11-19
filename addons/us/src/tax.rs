@@ -378,11 +378,8 @@ pub async fn certificate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, customer: Option<Uu
 }
 
 pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
-    let found = find(k, &sys(ctx), tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
-    found
-        .first()
-        .and_then(|a| s(a, "id"))
-        .map(str::to_string)
+    ferrum_app_erp::setup::standard_account(k, ctx, tx, company, number)
+        .await?
         .ok_or_else(|| Error::invalid(format!("the company has no account {number} for US sales and use tax: create its chart of accounts first")))
 }
 
@@ -582,14 +579,9 @@ impl Localization for Us {
         for (number, name, parent, root) in
             [(USE_TAX_PAYABLE, "Use Tax Payable", "Duties and Taxes", "Liability"), (USE_TAX_EXPENSE, "Use Tax Expense", "Indirect Expenses", "Expense")]
         {
-            let Some(parent) = accounts.get(parent) else { continue };
+            let Some(parent) = accounts.get(parent).and(ferrum_app_erp::setup::coa_number(parent)) else { continue };
             let kind = if root == "Liability" { "Tax" } else { "Expense" };
-            let Value::Object(a) = json!({"account_name": name, "account_number": number, "company": company.to_string(), "is_group": false, "root_type": root,
-                                          "account_type": kind, "parent_account": parent, "account_currency": co.get("default_currency")})
-            else {
-                continue;
-            };
-            hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await?;
+            ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, number, name, parent, root, kind).await?;
         }
         Ok(())
     }

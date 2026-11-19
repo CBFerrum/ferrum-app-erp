@@ -87,7 +87,19 @@ overlays:
             effect: transactional_action
             returns: {type: object, properties: {reversed: {type: integer}}}
             completion: "Every entry posted for the record and not reversed yet is reversed, once, committed with this receipt"
-      - {op: add_action, action: {name: setup_chart_of_accounts, label: Create Standard Chart of Accounts, permission: write, confirm: 'Create the standard chart of accounts for this company, or add the standard accounts it lacks?'}}
+      - {op: add_field, column: true, after: fy_start_month, field: {name: chart_template, type: link, to: ChartTemplate, link_filters: {disabled: false}, label: Chart of Accounts,
+          description: "The chart this company's accounts are made from when it is created; empty: the standard chart. It cannot be changed afterwards"}}
+      - op: add_action
+        action:
+          name: setup_chart_of_accounts
+          label: Create Chart of Accounts
+          permission: write
+          confirm: "Create this company's chart of accounts, or add the accounts of its chart it lacks?"
+          params: []
+          contract:
+            effect: transactional_action
+            returns: {type: object, properties: {created: {type: boolean}, added: {type: array, items: {type: string}}, defaults_set: {type: integer}, message: {type: string}}}
+            completion: "The company has every account of its chart (its template's, or the standard one) and its default links are set"
       - {op: add_action, action: {name: post_opening_invoices, label: Post Opening Invoices, permission: write,
           confirm: "Post every draft opening invoice of this company against its Opening Balance Account? All are posted, or none if one is refused."}}
       - {op: add_action, action: {name: recognise_deferred, label: Recognise Deferred Revenue and Expense, permission: write, params: [{name: through, type: date, label: Through, description: "The last day to recognise; yesterday when empty"}]}}
@@ -131,7 +143,7 @@ modules:
     label: Setup
     icon: settings
     order: 90
-    items: [Company, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project, NumberSeries, PaymentApprovalSettings]
+    items: [Company, ChartTemplate, FiscalYear, Currency, ExchangeRate, Uom, CostCenter, Project, NumberSeries, PaymentApprovalSettings]
   - name: masters
     label: Masters
     icon: database
@@ -170,6 +182,7 @@ roles:
       - {entity: Company, read: true, write: true, create: true}
       - {entity: FiscalYear, read: true, write: true, create: true, delete: true}
       - {entity: Account, read: true, write: true, create: true, delete: true, export: true, import: true}
+      - {entity: ChartTemplate, read: true, write: true, create: true, delete: true, export: true}
       - {entity: CostCenter, read: true, write: true, create: true, delete: true}
       - {entity: FinanceBook, read: true, write: true, create: true, delete: true}
       - {entity: AccountingDimension, read: true, write: true, create: true, delete: true, export: true, import: true}
@@ -207,6 +220,7 @@ roles:
       - {entity: JournalTemplate, read: true}
       - {entity: WriteOffReason, read: true}
       - {entity: Account, read: true}
+      - {entity: ChartTemplate, read: true}
       - {entity: WithholdingCategory, read: true}
       - {entity: StoredValueKind, read: true}
       - {entity: StoredValueAccount, read: true}

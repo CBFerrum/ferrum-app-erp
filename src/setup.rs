@@ -94,14 +94,15 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("overhead_absorbed_account", "Manufacturing Overheads Absorbed"),
 ];
 
-/// One account of the standard chart, as a new record for `company`.
-fn standard_account(company: Uuid, currency: &Value, entry: &(&str, &str, &str, bool, &str, &str), parent: Option<&String>, number: bool) -> Doc {
+/// One account of the standard chart, as a new record for `company`, standing for itself.
+fn coa_record(company: Uuid, currency: &Value, entry: &(&str, &str, &str, bool, &str, &str), parent: Option<&String>, number: bool) -> Doc {
     let &(account_number, name, _, is_group, root, typ) = entry;
     let mut d = Doc::new();
     d.insert("account_name".into(), json!(name));
     if number {
         d.insert("account_number".into(), json!(account_number));
     }
+    d.insert("standard_number".into(), json!(account_number));
     d.insert("company".into(), json!(company.to_string()));
     d.insert("is_group".into(), json!(is_group));
     d.insert("root_type".into(), json!(root));
@@ -131,10 +132,24 @@ pub async fn setup_company(hc: &mut HookCtx<'_>, company: Uuid) -> Result<bool> 
     let co = k.get_tx(&sctx, hc.tx, "Company", company, false).await?;
     let currency = co.get("default_currency").cloned().unwrap_or(Value::Null);
     let mut ids: HashMap<&str, String> = HashMap::new();
-    for entry in COA {
-        let parent = (!entry.2.is_empty()).then(|| ids.get(entry.2)).flatten();
-        let created = k.insert_tx(&sctx, hc.tx, "Account", standard_account(company, &currency, entry, parent, true)).await?;
-        ids.insert(entry.1, s(&created, "id").unwrap_or_default().to_string());
+    match id(&co, "chart_template") {
+        None => {
+            for entry in COA {
+                let parent = (!entry.2.is_empty()).then(|| ids.get(entry.2)).flatten();
+                let created = k.insert_tx(&sctx, hc.tx, "Account", coa_record(company, &currency, entry, parent, true)).await?;
+                ids.insert(entry.1, s(&created, "id").unwrap_or_default().to_string());
+            }
+        }
+        Some(template) => {
+            let rows = template_rows(hc, template).await?;
+            let made = add_template_rows(hc, company, &currency, &rows, &HashMap::new()).await?;
+            // The roles, by the standard chart's names, as the defaults and the add-ons ask for them.
+            for &(number, name, ..) in COA {
+                if let Some(a) = rows.iter().find(|r| s(r, "standard_number") == Some(number)).and_then(|r| s(r, "account_number")).and_then(|n| made.get(n)) {
+                    ids.insert(name, a.clone());
+                }
+            }
+        }
     }
     let mut cc = Doc::new();
     cc.insert("cost_center_name".into(), json!("Main"));
@@ -199,7 +214,7 @@ pub async fn complete_chart(hc: &mut HookCtx<'_>, company: Uuid) -> Result<(Vec<
                 None => continue,
             },
         };
-        let doc = standard_account(company, &currency, entry, parent.as_ref(), !numbers.contains(entry.0));
+        let doc = coa_record(company, &currency, entry, parent.as_ref(), !numbers.contains(entry.0));
         let created = k.insert_tx(&sctx, hc.tx, "Account", doc).await?;
         ids.insert(entry.1.to_string(), s(&created, "id").unwrap_or_default().to_string());
         added.push(entry.1);
@@ -219,14 +234,237 @@ pub async fn complete_chart(hc: &mut HookCtx<'_>, company: Uuid) -> Result<(Vec<
     Ok((added, linked))
 }
 
+/// A template's rows, refused when it is disabled.
+async fn template_rows(hc: &mut HookCtx<'_>, template: Uuid) -> Result<Vec<Doc>> {
+    let t = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "ChartTemplate", template, false).await?;
+    if crate::util::b(&t, "disabled") {
+        return Err(Error::field("chart_template", "this chart of accounts template is disabled"));
+    }
+    Ok(rows(&t, "accounts"))
+}
+
+/// Inserts the template rows whose numbers are not in `have` (number → account id), parents first, each under its
+/// template parent where that parent is there. Answers every number's account id, those there before included.
+async fn add_template_rows(
+    hc: &mut HookCtx<'_>,
+    company: Uuid,
+    currency: &Value,
+    rows: &[Doc],
+    have: &HashMap<String, String>,
+) -> Result<HashMap<String, String>> {
+    let sctx = sys(hc.ctx);
+    let mut made: HashMap<String, String> = have.clone();
+    let mut left: Vec<&Doc> = rows.iter().filter(|r| s(r, "account_number").is_some_and(|n| !made.contains_key(n))).collect();
+    while !left.is_empty() {
+        let before = left.len();
+        let mut next = Vec::new();
+        for r in left {
+            let parent = s(r, "parent_number");
+            let parent_id = match parent {
+                None => None,
+                Some(p) => match made.get(p) {
+                    Some(id) => Some(id.clone()),
+                    None if rows.iter().any(|x| s(x, "account_number") == Some(p)) => {
+                        next.push(r);
+                        continue;
+                    }
+                    // Its parent is in neither the template nor the company: it is left out.
+                    None => continue,
+                },
+            };
+            let mut d = Doc::new();
+            for f in ["account_number", "account_name", "root_type", "account_type", "cash_flow_section", "standard_number"] {
+                if let Some(v) = r.get(f).filter(|v| !v.is_null() && v.as_str() != Some("")) {
+                    d.insert(f.into(), v.clone());
+                }
+            }
+            d.insert("is_group".into(), json!(crate::util::b(r, "is_group")));
+            d.insert("company".into(), json!(company.to_string()));
+            d.insert("account_currency".into(), currency.clone());
+            if let Some(p) = parent_id {
+                d.insert("parent_account".into(), json!(p));
+            }
+            let created = hc.kernel.insert_tx(&sctx, hc.tx, "Account", d).await?;
+            made.insert(s(r, "account_number").unwrap_or_default().to_string(), s(&created, "id").unwrap_or_default().to_string());
+        }
+        if next.len() == before {
+            return Err(Error::field("chart_template", "the template's parents form a loop"));
+        }
+        left = next;
+    }
+    Ok(made)
+}
+
+/// `setup_chart_of_accounts` on a template company with accounts: the template's rows it lacks (by number), then
+/// the default links still empty, from the roles.
+async fn complete_from_template(hc: &mut HookCtx<'_>, company: Uuid, template: Uuid) -> Result<(Vec<String>, usize)> {
+    let sctx = sys(hc.ctx);
+    let k = hc.kernel;
+    let rows = template_rows(hc, template).await?;
+    let accounts = k.find_tx(&sctx, hc.tx, "Account", &[Filter::eq("company", company.to_string())], None, 100_000).await?;
+    let have: HashMap<String, String> = accounts.iter().filter_map(|a| Some((s(a, "account_number")?.to_string(), s(a, "id")?.to_string()))).collect();
+    let co = k.get_tx(&sctx, hc.tx, "Company", company, false).await?;
+    let currency = co.get("default_currency").cloned().unwrap_or(Value::Null);
+    let made = add_template_rows(hc, company, &currency, &rows, &have).await?;
+    let added: Vec<String> =
+        rows.iter().filter_map(|r| s(r, "account_number")).filter(|n| !have.contains_key(*n) && made.contains_key(*n)).map(str::to_string).collect();
+    let mut v = Doc::new();
+    for &(field, account) in DEFAULTS {
+        if co.get(field).is_some_and(|x| !x.is_null()) {
+            continue;
+        }
+        let Some(number) = COA.iter().find(|e| e.1 == account).map(|e| e.0) else { continue };
+        if let Some(a) = standard_account(k, hc.ctx, hc.tx, company, number).await? {
+            v.insert(field.into(), json!(a));
+        }
+    }
+    let linked = v.len();
+    if linked > 0 {
+        k.set_values_tx(&sctx, hc.tx, "Company", company, v).await?;
+    }
+    Ok((added, linked))
+}
+
+/// The company's account that plays the standard chart's account `number`: on the standard chart (no template) the
+/// account with that number, as always; on a template's chart the one standing for it. Never the second by the first's
+/// rule: a national chart may give that number to something else.
+pub async fn standard_account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<Option<String>> {
+    let sctx = sys(ctx);
+    let co = k.get_tx(&sctx, tx, "Company", company, false).await?;
+    let field = if id(&co, "chart_template").is_some() { "standard_number" } else { "account_number" };
+    let found = k.find_tx(&sctx, tx, "Account", &[Filter::eq("company", company.to_string()), Filter::eq(field, number)], None, 1).await?;
+    Ok(found.first().and_then(|a| s(a, "id")).map(str::to_string))
+}
+
+/// The company's account standing for `number`, made now under the account standing for `parent_number` when it has
+/// none: numbered `number` on the standard chart, unnumbered on a template's (its numbers are the template's); named
+/// `name`, or `name (number)` when the company has an account of that name already.
+#[allow(clippy::too_many_arguments)]
+pub async fn ensure_account(
+    k: &Kernel,
+    ctx: &Ctx,
+    tx: &mut Tx,
+    company: Uuid,
+    number: &str,
+    name: &str,
+    parent_number: &str,
+    root_type: &str,
+    account_type: &str,
+) -> Result<String> {
+    if let Some(found) = standard_account(k, ctx, tx, company, number).await? {
+        return Ok(found);
+    }
+    let parent = standard_account(k, ctx, tx, company, parent_number)
+        .await?
+        .ok_or_else(|| Error::invalid(format!("the company's chart has no account standing for {parent_number}")))?;
+    let sctx = sys(ctx);
+    let co = k.get_tx(&sctx, tx, "Company", company, false).await?;
+    let taken = !k.find_tx(&sctx, tx, "Account", &[Filter::eq("company", company.to_string()), Filter::eq("account_name", name)], None, 1).await?.is_empty();
+    let mut a = Doc::new();
+    a.insert("account_name".into(), json!(if taken { format!("{name} ({number})") } else { name.to_string() }));
+    if id(&co, "chart_template").is_none() {
+        a.insert("account_number".into(), json!(number));
+    }
+    a.insert("standard_number".into(), json!(number));
+    a.insert("company".into(), json!(company.to_string()));
+    a.insert("is_group".into(), json!(false));
+    a.insert("root_type".into(), json!(root_type));
+    if !account_type.is_empty() {
+        a.insert("account_type".into(), json!(account_type));
+    }
+    a.insert("parent_account".into(), json!(parent));
+    a.insert("account_currency".into(), co.get("default_currency").cloned().unwrap_or(Value::Null));
+    let created = k.insert_tx(&sctx, tx, "Account", a).await?;
+    Ok(s(&created, "id").unwrap_or_default().to_string())
+}
+
+/// The standard chart's number of the standard account named `name` (as the add-ons name parents).
+pub fn coa_number(name: &str) -> Option<&'static str> {
+    COA.iter().find(|e| e.1 == name).map(|e| e.0)
+}
+
+/// What is wrong with a template's rows, in words: numbers once, parents that are groups of the same root, no
+/// party account as a group, each standard number once, and every role ERP and its add-ons book to mapped to a row
+/// of the right kind.
+pub fn template_problems(rows: &[Doc]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut by_number: HashMap<&str, &Doc> = HashMap::new();
+    for r in rows {
+        let n = s(r, "account_number").unwrap_or_default();
+        if by_number.insert(n, r).is_some() {
+            out.push(format!("account {n} appears twice"));
+        }
+    }
+    for r in rows {
+        let n = s(r, "account_number").unwrap_or_default();
+        let group = crate::util::b(r, "is_group");
+        if group && matches!(s(r, "account_type"), Some("Receivable" | "Payable")) {
+            out.push(format!("account {n}: a receivable or payable account cannot be a group"));
+        }
+        if let Some(p) = s(r, "parent_number") {
+            match by_number.get(p) {
+                None => out.push(format!("account {n}: its parent {p} is not in the template")),
+                Some(parent) if !crate::util::b(parent, "is_group") => out.push(format!("account {n}: its parent {p} is not a group")),
+                Some(parent) if s(parent, "root_type") != s(r, "root_type") => out.push(format!("account {n}: its root type is not its parent {p}'s")),
+                _ => {}
+            }
+        }
+    }
+    let mut stands: HashMap<&str, &Doc> = HashMap::new();
+    for r in rows {
+        if let Some(sn) = s(r, "standard_number")
+            && stands.insert(sn, r).is_some()
+        {
+            out.push(format!("two accounts stand for {sn}"));
+        }
+    }
+    let name = |n: &str| COA.iter().find(|e| e.0 == n).map_or("", |e| e.1);
+    let leaves = DEFAULTS.iter().filter_map(|(_, a)| COA.iter().find(|e| e.1 == *a).map(|e| e.0)).chain(["1142", "1151", "1152", "2131", "2132"]);
+    for n in leaves {
+        match stands.get(n) {
+            None => out.push(format!("no account stands for {n} ({})", name(n))),
+            Some(r) if crate::util::b(r, "is_group") => out.push(format!("the account standing for {n} ({}) is a group", name(n))),
+            _ => {}
+        }
+    }
+    for n in ["1150", "2130"] {
+        match stands.get(n) {
+            None => out.push(format!("no group stands for {n} ({})", name(n))),
+            Some(r) if !crate::util::b(r, "is_group") => out.push(format!("the account standing for {n} ({}) is not a group", name(n))),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A template is saved only whole (`template_problems`).
+pub struct ChartTemplateHook;
+
+#[async_trait]
+impl DocHook for ChartTemplateHook {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        let problems = template_problems(&rows(doc, "accounts"));
+        if problems.is_empty() {
+            return Ok(());
+        }
+        Err(Error::Validation(problems.into_iter().map(|m| ferrum_kernel::FieldError::new("accounts", m)).collect()))
+    }
+}
+
 pub struct CompanyHook;
 
 #[async_trait]
 impl DocHook for CompanyHook {
     async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
-        if old.is_none() {
-            let company = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
-            setup_company(hc, company).await?;
+        match old {
+            None => {
+                let company = id(doc, "id").ok_or_else(|| Error::internal("company without id"))?;
+                setup_company(hc, company).await?;
+            }
+            Some(old) if id(old, "chart_template") != id(doc, "chart_template") => {
+                return Err(Error::field("chart_template", "a company's chart is chosen when it is made"));
+            }
+            Some(_) => {}
         }
         Ok(())
     }
@@ -243,13 +481,19 @@ impl DocHook for CompanyHook {
             return Ok(None);
         }
         if setup_company(hc, company).await? {
-            return Ok(Some(json!({"created": true, "message": "Standard chart of accounts created"})));
+            return Ok(Some(json!({"created": true, "added": [], "defaults_set": 0, "message": "Chart of accounts created"})));
         }
-        let (added, linked) = complete_chart(hc, company).await?;
+        let (added, linked) = match id(doc, "chart_template") {
+            Some(template) => complete_from_template(hc, company, template).await?,
+            None => {
+                let (added, linked) = complete_chart(hc, company).await?;
+                (added.into_iter().map(str::to_string).collect(), linked)
+            }
+        };
         let message = match (added.is_empty(), linked) {
-            (true, 0) => "This company's chart already has every standard account".to_string(),
+            (true, 0) => "This company's chart already has every account of its chart".to_string(),
             (true, n) => format!("{n} default account{} set", if n == 1 { "" } else { "s" }),
-            (false, n) => format!("Added {} from the standard chart; {n} default account{} set", added.join(", "), if n == 1 { "" } else { "s" }),
+            (false, n) => format!("Added {} to the chart; {n} default account{} set", added.join(", "), if n == 1 { "" } else { "s" }),
         };
         Ok(Some(json!({"created": false, "added": added, "defaults_set": linked, "message": message})))
     }
@@ -393,5 +637,44 @@ mod tests {
         for a in COA {
             assert!(a.2.is_empty() || parents.contains(&a.2), "{} has unknown parent {}", a.1, a.2);
         }
+    }
+
+    /// The standard chart as a template's rows, each standing for itself.
+    fn standard_rows() -> Vec<Doc> {
+        COA.iter()
+            .map(|&(number, name, parent, is_group, root, typ)| {
+                let parent = COA.iter().find(|e| e.1 == parent).map(|e| e.0);
+                let v = json!({"account_number": number, "account_name": name, "parent_number": parent, "is_group": is_group, "root_type": root,
+                               "account_type": if typ.is_empty() { Value::Null } else { json!(typ) }, "standard_number": number});
+                v.as_object().cloned().unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_template_must_map_every_role() {
+        assert_eq!(template_problems(&standard_rows()), Vec::<String>::new(), "the standard chart is a whole template");
+        let without = |n: &str| {
+            standard_rows()
+                .into_iter()
+                .map(|mut r| {
+                    if r["standard_number"] == json!(n) {
+                        r.insert("standard_number".into(), Value::Null);
+                    }
+                    r
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(template_problems(&without("2131")).contains(&"no account stands for 2131 (Output Tax)".to_string()));
+        assert!(template_problems(&without("2130")).contains(&"no group stands for 2130 (Duties and Taxes)".to_string()));
+        let mut twice = standard_rows();
+        twice.iter_mut().find(|r| r["account_number"] == json!("2132")).unwrap().insert("standard_number".into(), json!("2131"));
+        assert!(template_problems(&twice).iter().any(|m| m == "two accounts stand for 2131"));
+        let mut under_leaf = standard_rows();
+        under_leaf.iter_mut().find(|r| r["account_number"] == json!("2132")).unwrap().insert("parent_number".into(), json!("2131"));
+        assert!(template_problems(&under_leaf).contains(&"account 2132: its parent 2131 is not a group".to_string()));
+        let mut grouped = standard_rows();
+        grouped.iter_mut().find(|r| r["account_number"] == json!("1111")).unwrap().insert("is_group".into(), json!(true));
+        assert!(template_problems(&grouped).iter().any(|m| m.contains("1111: a receivable or payable account cannot be a group")));
     }
 }

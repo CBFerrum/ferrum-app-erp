@@ -15,7 +15,7 @@ use chrono::Utc;
 use ferrum_app_erp::submission::Channel;
 use ferrum_eu::ubl::invoice;
 use ferrum_eu::vat::{INPUT_TAX, OSS_VAT, OUTPUT_TAX};
-use ferrum_kernel::{Doc, DocHook, Error, FieldError, Filter, HookCtx, Result};
+use ferrum_kernel::{Doc, DocHook, Error, FieldError, HookCtx, Result};
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 use std::fmt::Write;
@@ -276,9 +276,7 @@ pub async fn faktura(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Faktura> {
     let cid = id(&company, "id").unwrap_or_default();
     let mut vat_accounts = Vec::new();
     for n in [OUTPUT_TAX, INPUT_TAX, OSS_VAT] {
-        let a = crate::util::find(hc.kernel, &ctx, hc.tx, "Account", vec![Filter::eq("company", cid.to_string()), Filter::eq("account_number", n)], None, 1)
-            .await?;
-        vat_accounts.extend(a.first().and_then(|a| s(a, "id")).map(str::to_string));
+        vat_accounts.extend(ferrum_app_erp::setup::standard_account(hc.kernel, &ctx, hc.tx, cid, n).await?);
     }
     let buyer_country = inv.buyer.country.clone().unwrap_or_else(|| "PL".into());
     let buyer_home = buyer_country == "PL";

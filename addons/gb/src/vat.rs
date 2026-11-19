@@ -169,11 +169,8 @@ async fn plan(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, side: Side) -> Resu
 }
 
 pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
-    let found = find(k, ctx, tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
-    found
-        .first()
-        .and_then(|a| s(a, "id"))
-        .map(str::to_string)
+    ferrum_app_erp::setup::standard_account(k, ctx, tx, company, number)
+        .await?
         .ok_or_else(|| Error::invalid(format!("the company has no account {number} for UK VAT: create its chart of accounts first")))
 }
 
@@ -330,13 +327,12 @@ impl Localization for Uk {
         if s(&co, "country_code") != Some("GB") {
             return Ok(());
         }
-        let Some(parent) = accounts.get("Duties and Taxes") else { return Ok(()) };
-        let Value::Object(a) = json!({"account_name": "VAT Owed (reverse charge)", "account_number": REVERSE_CHARGE_VAT, "company": company.to_string(), "is_group": false,
-                                      "root_type": "Liability", "account_type": "Tax", "parent_account": parent, "account_currency": co.get("default_currency")})
-        else {
+        if !accounts.contains_key("Duties and Taxes") {
             return Ok(());
-        };
-        hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await.map(|_| ())
+        }
+        ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, REVERSE_CHARGE_VAT, "VAT Owed (reverse charge)", "2130", "Liability", "Tax")
+            .await
+            .map(|_| ())
     }
 }
 

@@ -188,11 +188,8 @@ fn line_taxes(plan: &Plan, item: &Doc) -> (Decimal, Decimal, Decimal, &'static s
 }
 
 async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
-    let found = find(k, ctx, tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
-    found
-        .first()
-        .and_then(|a| s(a, "id"))
-        .map(str::to_string)
+    ferrum_app_erp::setup::standard_account(k, ctx, tx, company, number)
+        .await?
         .ok_or_else(|| Error::invalid(format!("the company has no account {number} for Canadian sales taxes: create its chart of accounts first")))
 }
 
@@ -324,13 +321,8 @@ impl Localization for Canada {
             return Ok(());
         }
         for (number, name, parent, root) in ADDED {
-            let Some(parent) = accounts.get(parent) else { continue };
-            let Value::Object(a) = json!({"account_name": name, "account_number": number, "company": company.to_string(), "is_group": false, "root_type": root,
-                                          "account_type": "Tax", "parent_account": parent, "account_currency": co.get("default_currency")})
-            else {
-                continue;
-            };
-            hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await?;
+            let Some(parent) = accounts.get(parent).and(ferrum_app_erp::setup::coa_number(parent)) else { continue };
+            ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, number, name, parent, root, "Tax").await?;
         }
         Ok(())
     }

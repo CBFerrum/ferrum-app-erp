@@ -54,6 +54,7 @@
   fields:
     - {name: account_name, type: data, required: true, in_list: true}
     - {name: account_number, type: data, in_list: true}
+    - {name: standard_number, type: data, max_length: 10, read_only: true, no_copy: true, label: Stands For, description: "The standard account whose part it plays; set when the chart is made"}
     - {name: company, type: link, to: Company, in_list: true, required: true, locked: true, in_filter: true}
     - {name: parent_account, type: link, to: Account, link_filters: {company: {from: company}, is_group: true}, in_filter: true}
     - {name: is_group, type: check, in_list: true, in_filter: true}
@@ -72,6 +73,33 @@
   rules:
     - {name: party_accounts_are_leaves, check: "!(doc.is_group && (doc.account_type == 'Receivable' || doc.account_type == 'Payable'))", message: "Receivable/Payable accounts cannot be groups"}
   list: {columns: [account_number, account_name, root_type, is_group], sort: account_number asc}
+
+- name: ChartTemplateAccount
+  label: Template Account
+  kind: child
+  fields:
+    - {name: account_number, type: data, required: true, in_list: true}
+    - {name: account_name, type: data, required: true, in_list: true}
+    - {name: parent_number, type: data, in_list: true, description: "The number of its parent in this template; empty for a root"}
+    - {name: is_group, type: check, in_list: true}
+    - {name: root_type, type: select, options: [Asset, Liability, Equity, Income, Expense], required: true, in_list: true}
+    - {name: account_type, type: select, options: [Receivable, Payable, Bank, Cash, Stock, Cost of Goods Sold, Stock Received But Not Billed, Tax, Income, Expense, Round Off, Exchange Gain Loss, Stock Adjustment, Fixed Asset, Equity, Temporary]}
+    - {name: cash_flow_section, type: select, options: [Operating, Investing, Financing]}
+    - {name: standard_number, type: data, max_length: 10, in_list: true, label: Stands For, description: "The standard chart's number of the account whose part it plays (2131: output tax). Empty: none"}
+
+- name: ChartTemplate
+  label: Chart of Accounts Template
+  kind: master
+  module: setup
+  title_field: template_name
+  description: "A chart of accounts a new company can be given: its accounts, and which of them stand for the standard accounts ERP and its add-ons book to."
+  fields:
+    - {name: template_name, type: data, required: true, unique: true, in_list: true}
+    - {name: country, type: data, max_length: 2, in_list: true, in_filter: true, description: "The country whose chart it is (ISO code); empty: any"}
+    - {name: notes, type: text, description: "The law or standard it follows, and its date"}
+    - {name: disabled, type: check, in_filter: true}
+    - {name: accounts, type: table, of: ChartTemplateAccount, required: true}
+  list: {columns: [template_name, country, disabled], sort: template_name asc}
 
 - name: ItemTaxRate
   label: Item Tax Rate

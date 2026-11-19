@@ -272,12 +272,10 @@ pub async fn plan(c: &Country, k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc, si
     Ok(Some((Plan { side, on, goods_abroad, services_abroad, reverse, simplified, rates }, company)))
 }
 
+/// The company's account standing for the standard account `number` (on a template's chart, the one mapped to it).
 pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
-    let found = find(k, &sys(ctx), tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
-    found
-        .first()
-        .and_then(|a| s(a, "id"))
-        .map(str::to_string)
+    ferrum_app_erp::setup::standard_account(k, ctx, tx, company, number)
+        .await?
         .ok_or_else(|| Error::invalid(format!("the company has no account {number} for its taxes: create its chart of accounts first")))
 }
 
@@ -465,20 +463,10 @@ impl Localization for National {
         let reverse = [(REVERSE_CHARGE, "Tax Owed (reverse charge)", "Duties and Taxes", "Liability")];
         let extra: &[_] = if matches!(c.reverse_charge, ReverseCharge::Never) { &[] } else { &reverse };
         for (number, name, parent, root) in c.accounts.iter().chain(extra) {
-            let Some(parent) = accounts.get(parent) else { continue };
-            if !find(hc.kernel, &sctx, hc.tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", *number)], None, 1)
-                .await?
-                .is_empty()
-            {
-                continue;
-            }
+            // Only under a parent the chart has (the standard chart's name of it).
+            let Some(parent) = accounts.get(parent).and(ferrum_app_erp::setup::coa_number(parent)) else { continue };
             let kind = if *root == "Expense" { "Expense" } else { "Tax" };
-            let Value::Object(a) = json!({"account_name": name, "account_number": number, "company": company.to_string(), "is_group": false, "root_type": root,
-                                          "account_type": kind, "parent_account": parent, "account_currency": co.get("default_currency")})
-            else {
-                continue;
-            };
-            hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await?;
+            ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, number, name, parent, root, kind).await?;
         }
         Ok(())
     }

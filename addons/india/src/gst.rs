@@ -377,18 +377,12 @@ impl Localization for India {
         }
         let mut ids: HashMap<&str, String> = HashMap::new();
         for (number, name, parent, root) in GST_ACCOUNTS {
-            let parent_id = accounts.get(parent).ok_or_else(|| Error::internal(format!("the standard chart of accounts has no '{parent}' for {name}")))?;
-            let mut a = Doc::new();
-            a.insert("account_name".into(), json!(name));
-            a.insert("account_number".into(), json!(number));
-            a.insert("company".into(), json!(company.to_string()));
-            a.insert("is_group".into(), json!(false));
-            a.insert("root_type".into(), json!(root));
-            a.insert("account_currency".into(), co.get("default_currency").cloned().unwrap_or(Value::Null));
-            a.insert("account_type".into(), json!("Tax"));
-            a.insert("parent_account".into(), json!(parent_id));
-            let created = hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await?;
-            ids.insert(name, s(&created, "id").unwrap_or_default().to_string());
+            accounts
+                .get(parent)
+                .ok_or_else(|| Error::invalid(format!("the company's chart has no account standing for '{parent}', which {name} goes under")))?;
+            let parent = ferrum_app_erp::setup::coa_number(parent).ok_or_else(|| Error::internal(format!("'{parent}' is not a standard account")))?;
+            let made = ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, number, name, parent, root, "Tax").await?;
+            ids.insert(name, made);
         }
         let row = |acc: &str, desc: &str, rate: &str| json!({"charge_type": "On Net Total", "account": ids.get(acc), "description": desc, "rate": rate});
         // Input tax the company claims, owed in cash on the RCM account.
