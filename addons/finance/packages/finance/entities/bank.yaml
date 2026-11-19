@@ -145,15 +145,25 @@
   rules:
     - {name: one_side, check: "(doc.deposit > 0.0) != (doc.withdrawal > 0.0)", message: "Enter either a deposit or a withdrawal"}
   actions:
-    - {name: get_suggestions, label: Find Matching Vouchers, docstatus: [1], permission: read, condition: "doc.unallocated_amount > 0.0"}
+    - {name: get_suggestions, label: Find Matching Vouchers, docstatus: [1], permission: read, condition: "doc.unallocated_amount > 0.0",
+       read_only: true,
+       params: [{name: window_days, type: int, label: Window (Days), description: "How far either side of the line's date to look; 30 when empty, at most 366"}],
+       contract: {effect: query, returns: {type: object, properties: {unallocated_amount: {type: string}, suggestions: {type: array, items: {type: object}}}}, completion: "The vouchers that could settle what is left unallocated on this bank line are ranked, best first, and none is changed"}}
     - {name: reconcile, label: Reconcile, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0"}
-    - {name: unreconcile, label: Undo Reconciliation, docstatus: [1], permission: write, condition: "doc.allocated_amount > 0.0"}
+    - {name: unreconcile, label: Undo Reconciliation, docstatus: [1], permission: write, condition: "doc.allocated_amount > 0.0",
+       params: [{name: payment_entry, label: Voucher, description: "Only this voucher's allocation is undone; all of them when empty"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: BankTransaction}, unallocated_amount: {type: string}, allocated_amount: {type: string}}}, completion: "The allocations of the line (or of the one voucher given) are taken off it and those vouchers are no longer marked cleared, committed with this receipt", compensate_with: reconcile}}
     - {name: make_payment_entry, label: Create Payment Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
        params: [{name: customer, label: Customer, type: link, to: Customer, description: "Who paid, for money received"},
-                {name: supplier, label: Supplier, type: link, to: Supplier, description: "Who was paid, for money paid out"}]}
+                {name: supplier, label: Supplier, type: link, to: Supplier, description: "Who was paid, for money paid out"},
+                {name: party, label: Party, description: "The customer (money received) or supplier (money paid out); it is used instead of the two fields above when given"},
+                {name: allocate_invoices, label: Settle Open Invoices, type: check, description: "Settle the party's oldest open invoices with it; an advance otherwise"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A Payment Entry for what is left unallocated on the line exists, submitted and reconciled with it, settling the party's oldest open invoices when asked and an advance otherwise, committed with this receipt"}}
     - {name: make_journal_entry, label: Create Journal Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
        params: [{name: account, label: Account, type: link, to: Account, required: true, description: "The account to book against, not the bank's own"},
-                {name: remark, label: Remark, type: text}]}
+                {name: remark, label: Remark, type: text},
+                {name: cost_center, label: Cost Center, type: link, to: CostCenter}, {name: project, label: Project, type: link, to: Project}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: JournalEntry}, id: {type: string, format: uuid, x-ferrum-link: JournalEntry}, number: {type: [string, "null"]}}}, completion: "A balanced Journal Entry between the bank account and the account given for what is left unallocated on the line exists, submitted and reconciled with it, committed with this receipt"}}
     - name: apply_rule
       label: Book by Rule
       docstatus: [1]

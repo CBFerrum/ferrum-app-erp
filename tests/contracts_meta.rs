@@ -50,6 +50,16 @@ const LEFT: &[(&str, &str, &str)] = &[
         "CarrierShipment.track",
         "Declared permission read but it writes the shipment's tracking under the system's rights and calls the carrier (src/shipping.rs:693-704)",
     ),
+    (
+        "finance",
+        "BankTransaction.reconcile",
+        "Takes a list of vouchers (vouchers), which cannot be declared yet: the platform has no array type for action parameters (addons/finance/src/bank.rs:418)",
+    ),
+    (
+        "finance",
+        "Subscription.change_plans",
+        "Takes a list of plans (plans), which cannot be declared yet: the platform has no array type for action parameters (addons/finance/src/subscription.rs:549)",
+    ),
     // LEFT-ROWS
 ];
 
@@ -116,4 +126,9 @@ fn inventory() {
 #[test]
 fn manufacturing() {
     check("manufacturing");
+}
+
+#[test]
+fn finance() {
+    check("finance");
 }
