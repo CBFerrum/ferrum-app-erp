@@ -13,7 +13,8 @@ overlays:
       - {op: add_field, after: mfo_operations, field: {name: mfo_operations_routing, type: data, read_only: true, hidden: true}}
       - {op: set_property, field: operating_cost, property: read_only_if, value: "size(doc.mfo_operations) > 0"}
       - {op: set_property, field: operating_cost, property: description, value: "Labour and overheads per BOM quantity; with operations it is their cost"}
-      - {op: add_action, action: {name: mfo_update_operating_cost, label: Update Operating Cost, docstatus: [0, 1], permission: write, condition: "size(doc.mfo_operations) > 0"}}
+      - {op: add_action, action: {name: mfo_update_operating_cost, label: Update Operating Cost, docstatus: [0, 1], permission: write, condition: "size(doc.mfo_operations) > 0",
+           contract: {effect: transactional_action, returns: {type: object, properties: {operating_cost: {type: string}, total_cost: {type: string}}}, completion: "The BOM's operating cost is its operations costed at today's hour rates and the total follows, committed with this receipt"}}}
   - entity: BomItem
     ops:
       - {op: add_field, field: {name: mfo_operation, type: link, to: Operation, label: Consumed at Operation, description: Materials without one go with the first operation}}
@@ -25,7 +26,8 @@ overlays:
       - {op: add_field, after: mfo_planned_operating_cost, field: {name: mfo_actual_operating_cost, type: currency, read_only: true, no_copy: true, label: Actual Operating Cost}}
       - {op: add_field, after: mfo_actual_operating_cost, field: {name: mfo_production_plan, type: link, to: ProductionPlan, read_only: true, label: Production Plan, in_filter: true}}
       - {op: add_field, after: mfo_production_plan, field: {name: mfo_production_plan_item, type: data, read_only: true, hidden: true}}
-      - {op: add_action, action: {name: mfo_make_job_cards, label: Create Job Cards, docstatus: [1], permission: write, condition: "size(doc.mfo_operations) > 0"}}
+      - {op: add_action, action: {name: mfo_make_job_cards, label: Create Job Cards, docstatus: [1], permission: write, condition: "size(doc.mfo_operations) > 0",
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string, const: JobCard}, id: {type: string, format: uuid, x-ferrum-link: JobCard}, number: {type: [string, "null"]}}}}}}, completion: "A draft Job Card exists for each operation of the work order that is not completed or on a draft card, for a caller allowed to create them, committed with this receipt"}}}
   - entity: StockEntry
     ops:
       - {op: add_field, field: {name: mfo_job_card, type: link, to: JobCard, read_only: true, label: Job Card, in_filter: true}}

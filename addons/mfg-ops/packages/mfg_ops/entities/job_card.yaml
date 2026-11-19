@@ -45,5 +45,7 @@
     - {label: Time, fields: [time_logs, total_time_in_mins, total_completed_qty, scrap_qty]}
     - {label: Cost and Materials, columns: 2, collapsible: true, fields: [hour_rate, operating_cost, transferred_qty, wo_operation, remarks]}
   actions:
-    - {name: make_material_transfer, label: Transfer Materials, docstatus: [0], permission: write}
+    - {name: make_material_transfer, label: Transfer Materials, docstatus: [0], permission: write,
+       params: [{name: qty, label: Quantity, description: "How many the materials are for; what the card has not had transferred yet when empty"}, {name: from_warehouse, label: From Warehouse, type: link, to: Warehouse, required: true, description: "Where the materials are now"}, {name: submit, type: check, label: Submit the Entry, description: "On unless set to no: a draft is left to add batch or serial numbers to"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: StockEntry}, id: {type: string, format: uuid, x-ferrum-link: StockEntry}, number: {type: [string, "null"]}}}, completion: "A Material Transfer Stock Entry of the materials this operation consumes, from the warehouse given to the work order's raw material warehouse, exists, submitted unless asked to leave it as a draft, committed with this receipt"}}
   list: {columns: [number, item_name, operation, workstation, for_quantity, total_completed_qty, status], sort: created_at desc}

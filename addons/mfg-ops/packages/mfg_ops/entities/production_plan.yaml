@@ -105,10 +105,16 @@
     - {label: Production, fields: [po_items, sub_assemblies, total_planned_qty, total_produced_qty]}
     - {label: Materials, fields: [warehouses, raw_materials]}
   actions:
-    - {name: get_sales_orders, label: Get Sales Orders, docstatus: [0], permission: write}
-    - {name: get_material_requests, label: Get Material Requests, docstatus: [0], permission: write}
-    - {name: get_items, label: Get Items, docstatus: [0], permission: write}
-    - {name: get_raw_materials, label: Get Raw Materials, docstatus: [0], permission: write}
-    - {name: make_work_orders, label: Create Work Orders, docstatus: [1], permission: read, condition: "doc.status != 'Completed'"}
-    - {name: make_material_requests, label: Request Materials, docstatus: [1], permission: read}
+    - {name: get_sales_orders, label: Get Sales Orders, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {added: {type: integer}}}, completion: "The plan lists the open sales orders that match its filters, those not on it already, committed with this receipt"}}
+    - {name: get_material_requests, label: Get Material Requests, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {added: {type: integer}}}, completion: "The plan lists the open material requests that match its filters, those not on it already, committed with this receipt"}}
+    - {name: get_items, label: Get Items, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {items: {type: integer}}}, completion: "The plan's items to produce are filled from its sales orders and material requests, committed with this receipt"}}
+    - {name: get_raw_materials, label: Get Raw Materials, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {raw_materials: {type: integer}, sub_assemblies: {type: integer}}}, completion: "The plan's raw materials and sub-assemblies are worked out from its items' BOMs against stock and what is on order, committed with this receipt"}}
+    - {name: make_work_orders, label: Create Work Orders, docstatus: [1], permission: read, condition: "doc.status != 'Completed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Work Order exists for each planned item for the quantity no work order covers yet, for a caller allowed to create them, and the plan's progress follows, committed with this receipt"}}
+    - {name: make_material_requests, label: Request Materials, docstatus: [1], permission: read,
+       contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}, skipped_no_supplier: {type: array, items: {type: string}}}}, completion: "Draft Material Requests or Purchase Orders exist for the raw materials still to order, one per supplier for purchases, for a caller allowed to create them; items with no approved supplier are listed in skipped_no_supplier, committed with this receipt"}}
   list: {columns: [number, posting_date, total_planned_qty, total_produced_qty, status], sort: created_at desc}

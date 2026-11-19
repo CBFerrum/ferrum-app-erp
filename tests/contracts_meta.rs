@@ -162,3 +162,8 @@ fn finance() {
 fn procurement() {
     check("procurement");
 }
+
+#[test]
+fn mfg_ops() {
+    check("mfg_ops");
+}
