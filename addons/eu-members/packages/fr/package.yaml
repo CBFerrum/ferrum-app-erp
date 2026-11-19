@@ -34,8 +34,11 @@ overlays:
           read_only: true, no_copy: true, in_filter: true}}
       - {op: add_field, after: fr_pa_status, field: {name: fr_pa_id, type: data, label: PA Reference, read_only: true, no_copy: true}}
       - {op: add_field, after: fr_pa_id, field: {name: fr_pa_error, type: text, label: PA Message, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: fr_ubl, group: e-Invoice, label: Download E-invoice (UBL), docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: fr_send_pa, group: e-Invoice, label: Send to the PA, docstatus: [1], permission: submit, condition: "doc.fr_pa_status != 'Deposited'"}}
+      - {op: add_action, action: {name: fr_ubl, group: e-Invoice, label: Download E-invoice (UBL), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The UBL e-invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: fr_send_pa, group: e-Invoice, label: Send to the PA, docstatus: [1], permission: submit, condition: "doc.fr_pa_status != 'Deposited'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to the company's approved platform (PA) is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: fr_record_pa, group: e-Invoice, label: Record the PA's Status, docstatus: [1], permission: submit,
           params: [{name: status, label: Status, type: select, options: [Deposited, Rejected, Refused, Disputed, Approved, Paid], required: true}, {name: pa_id, label: PA Reference, type: data},
-                   {name: message, label: Message, type: text}]}}
+                   {name: message, label: Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The platform's status for the invoice (Deposited, Rejected, Refused, Disputed, Approved or Paid) and its reference are recorded on it, committed with this receipt"}}}

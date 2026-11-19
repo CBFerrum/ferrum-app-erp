@@ -217,3 +217,8 @@ fn my() {
 fn eu() {
     check("eu");
 }
+
+#[test]
+fn fr() {
+    check("fr");
+}
