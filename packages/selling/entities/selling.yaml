@@ -283,6 +283,8 @@
   module: selling
   submittable: true
   company_scoped: true
+  # The portal shows these by their customer (src/portal.rs): a merge that moves it is an administrator's.
+  reach_links: [customer]
   title_field: customer_name
   numbering: {template: "SINV-{FY}-{seq:5}", gapless: true, on: submit, date_field: posting_date}
   search_fields: [po_no]

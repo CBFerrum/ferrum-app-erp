@@ -30,6 +30,8 @@
   module: buying
   submittable: true
   company_scoped: true
+  # The portal shows these by their supplier (src/portal.rs): a merge that moves it is an administrator's.
+  reach_links: [supplier]
   title_field: supplier_name
   numbering: {template: "PO-{FY}-{seq:5}", on: submit, date_field: posting_date}
   fields:
@@ -217,6 +219,8 @@
   module: buying
   submittable: true
   company_scoped: true
+  # The portal shows these by their supplier (src/portal.rs): a merge that moves it is an administrator's.
+  reach_links: [supplier]
   title_field: supplier_name
   numbering: {template: "PINV-{FY}-{seq:5}", on: submit, date_field: posting_date}
   search_fields: [bill_no]
