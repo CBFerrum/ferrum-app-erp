@@ -182,3 +182,8 @@ fn stock_ops() {
 fn wms() {
     check("wms");
 }
+
+#[test]
+fn ae() {
+    check("ae");
+}
