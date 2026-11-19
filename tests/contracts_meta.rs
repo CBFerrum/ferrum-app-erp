@@ -107,3 +107,8 @@ fn selling() {
 fn buying() {
     check("buying");
 }
+
+#[test]
+fn inventory() {
+    check("inventory");
+}
