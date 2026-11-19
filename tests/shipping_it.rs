@@ -218,7 +218,7 @@ async fn scenario() {
     let inbound = |body: &Value, token: &str| {
         let (k, id) = (t.k.clone(), held["id"].as_str().unwrap().parse().unwrap());
         let (body, headers) = (serde_json::to_vec(body).unwrap(), std::collections::BTreeMap::from([("x-hook-token".to_string(), token.to_string())]));
-        async move { k.connection_inbound(id, &headers, &body).await }
+        async move { k.connection_inbound(id, &headers, &std::collections::BTreeMap::new(), &body).await }
     };
     let told = json!({"data": {"tracking": "TRK1", "state": "DELIVERED"}});
     assert!(inbound(&told, "wrong").await.is_err());
