@@ -1,5 +1,13 @@
 # Changelog
 
+## European Union 0.5.2: OSS VAT no longer posts to Deferred Revenue
+
+The EU add-on made its OSS VAT account under the standard number 2150, which the standard chart already gives
+Deferred Revenue: on a company with the standard chart the add-on found that account and posted OSS VAT to it, and
+its e-invoices (EN 16931, Italy's FatturaPA, Poland's FA(3)) counted deferred revenue as VAT. OSS VAT Payable now
+stands for 2153, a number neither the standard chart nor a member state's add-on uses (Spain's 2152 is the equivalence surcharge), and is made when a company is set up or its EU VAT
+accounts are. Found by the test that a company made from a national chart is still taxed (erp-4).
+
 ## ERP 0.35.0 and the country add-ons' patches: chart of accounts templates, and accounts found by their role
 
 A company's accounts can now be made from a **Chart of Accounts Template** (a new record, Setup menu) chosen when the

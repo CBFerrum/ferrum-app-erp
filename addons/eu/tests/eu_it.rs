@@ -248,7 +248,7 @@ async fn scenario() {
     let cid = uid(&co);
     let co = t.get("Company", cid).await;
     assert_eq!((co["country_code"].clone(), co["eu_vat_number"].clone()), (json!("DE"), json!("DE123456789")));
-    for number in ["2150", "2151", "2131", "1151"] {
+    for number in ["2153", "2151", "2131", "1151"] {
         assert_eq!(t.list("Account", json!({"company": cid.to_string(), "account_number": number})).await.len(), 1, "account {number}");
     }
     let nos = t.list("Uom", json!({"uom_name": "Nos"})).await.remove(0);
@@ -409,7 +409,8 @@ async fn scenario() {
     assert_eq!(breakdown(&oss), vec![("Reduced".into(), n("5.5"), n("200"), n("11")), ("Standard".into(), n("20"), n("110"), n("22"))]);
     assert!(oss["eu_legal_text"].as_str().unwrap().contains("One-Stop Shop"));
     t.submit("SalesInvoice", uid(&oss)).await;
-    assert_eq!(t.gl(cid, "2150").await, n("-33"), "OSS VAT is owed apart from the home VAT");
+    assert_eq!(t.gl(cid, "2153").await, n("-33"), "OSS VAT is owed apart from the home VAT");
+    assert_eq!(t.gl(cid, "2150").await, n("0"), "never on the standard chart's 2150, Deferred Revenue");
 
     // ───────────── outside the EU ─────────────
     let export = sale(acme, vec![(widget, "2"), (advice, "1")]).await.expect("export");
@@ -435,7 +436,7 @@ async fn scenario() {
     // ───────────── a_template_company_is_still_taxed (erp-4) ─────────────
     // A company made from a national chart that lacks the EU's own accounts: they are made under the group standing
     // for Duties and Taxes, and VAT books to the accounts standing for 2131, 1151 and 2151.
-    let template = chart::national_template(&t.k, &t.ctx, &cid.to_string(), "German National", &["2150", "2151"]).await;
+    let template = chart::national_template(&t.k, &t.ctx, &cid.to_string(), "German National", &["2153", "2151"]).await;
     let nat = t
         .insert(
             "Company",
@@ -444,7 +445,7 @@ async fn scenario() {
         )
         .await;
     let nid = uid(&nat).to_string();
-    let oss_account = t.get("Account", chart::account(&t.k, &t.ctx, &nid, "2150").await.parse().unwrap()).await;
+    let oss_account = t.get("Account", chart::account(&t.k, &t.ctx, &nid, "2153").await.parse().unwrap()).await;
     let duties = chart::account(&t.k, &t.ctx, &nid, "2130").await;
     assert_eq!((oss_account["account_number"].clone(), oss_account["parent_account"].clone()), (Value::Null, json!(duties)), "made under the 2130 role");
     let si = t.insert("SalesInvoice", json!({"company": nid, "customer": kunde.to_string(), "items": [{"item": advice.to_string(), "qty": "1"}]})).await;

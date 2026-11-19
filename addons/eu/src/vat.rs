@@ -52,10 +52,10 @@ pub fn iso_code(vies: &str) -> &str {
 }
 
 /// The accounts EU VAT posts to, by their numbers in a company's chart: the standard chart's input
-/// and output tax, and the two the add-on adds.
+/// and output tax, and the two the add-on adds (numbers neither the standard chart nor a member state uses: the chart's 2150 is Deferred Revenue, Spain's 2152 the equivalence surcharge).
 pub const INPUT_TAX: &str = "1151";
 pub const OUTPUT_TAX: &str = "2131";
-pub const OSS_VAT: &str = "2150";
+pub const OSS_VAT: &str = "2153";
 pub const REVERSE_CHARGE_VAT: &str = "2151";
 const ADDED_ACCOUNTS: &[(&str, &str)] = &[(OSS_VAT, "OSS VAT Payable"), (REVERSE_CHARGE_VAT, "VAT Owed (reverse charge)")];
 
