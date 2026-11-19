@@ -202,3 +202,8 @@ fn jp() {
 fn nz() {
     check("nz");
 }
+
+#[test]
+fn sg() {
+    check("sg");
+}
