@@ -53,9 +53,11 @@ overlays:
       # or, when the invoice is not there, a new submission.
       - {op: add_action, action: {name: my_record_myinvois, group: e-Invoice, label: Record MyInvois's Answer, docstatus: [1], permission: submit, condition: "doc.my_einvoice_status == 'Pending'",
           params: [{name: uuid, label: Document UUID, type: data, required: true}, {name: status, label: Status, type: select, options: [Valid, Invalid], required: true},
-                   {name: long_id, label: Long ID (for a valid document), type: data}, {name: validated_at, label: Validated At, type: data}, {name: message, label: LHDN's Reasons (for an invalid document), type: text}]}}
+                   {name: long_id, label: Long ID (for a valid document), type: data}, {name: validated_at, label: Validated At, type: data}, {name: message, label: LHDN's Reasons (for an invalid document), type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "LHDN's answer for the invoice that waits for it is recorded on it: Valid with the document's long id and validation link, or Invalid with the reasons, committed with this receipt"}}}
       - {op: add_action, action: {name: my_submit_again, group: e-Invoice, label: Submit to MyInvois Again, docstatus: [1], permission: submit, condition: "doc.my_einvoice_status == 'Pending'",
-          confirm: "Only when the MyInvois portal does not have this invoice: submit it again?"}}
+          confirm: "Only when the MyInvois portal does not have this invoice: submit it again?",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is submitted to MyInvois again: a new request is queued with this receipt for the company's connector, after the person has checked that the portal does not have it; the answer is recorded on the invoice"}}}
   # The return's boxes sum the tax ledger by this country's own categories too.
   - entity: TaxReturnBoxDefinition
     ops:

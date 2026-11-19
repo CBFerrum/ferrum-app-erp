@@ -207,3 +207,8 @@ fn nz() {
 fn sg() {
     check("sg");
 }
+
+#[test]
+fn my() {
+    check("my");
+}
