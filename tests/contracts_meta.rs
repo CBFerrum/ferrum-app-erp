@@ -85,6 +85,11 @@ const LEFT: &[(&str, &str, &str)] = &[
         "RequestForQuotation.send",
         "Also takes a list of suppliers: the platform has no array type for action parameters (addons/procurement/src/rfq.rs:221)",
     ),
+    (
+        "stock_ops",
+        "Item.make_variants",
+        "Takes the attributes to combine as a free object (attributes), which cannot be declared yet (addons/stock-ops/src/variants.rs:324)",
+    ),
     // LEFT-ROWS
 ];
 
@@ -166,4 +171,9 @@ fn procurement() {
 #[test]
 fn mfg_ops() {
     check("mfg_ops");
+}
+
+#[test]
+fn stock_ops() {
+    check("stock_ops");
 }

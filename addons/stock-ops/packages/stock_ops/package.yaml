@@ -17,12 +17,15 @@ overlays:
       - {op: add_action, action: {name: make_variants, label: Create Variants, permission: create, condition: "doc.stk_has_variants"}}
   - entity: SalesOrder
     ops:
-      - {op: add_action, action: {name: make_pick_list, label: Create Pick List, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'"}}
+      - {op: add_action, action: {name: make_pick_list, label: Create Pick List, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'",
+           contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PickList}, id: {type: string, format: uuid, x-ferrum-link: PickList}, number: {type: [string, "null"]}, shortages: {type: array, items: {type: object}}}}, completion: "A draft Pick List of what is left to deliver on the order, placed in the warehouses that hold it, exists for a caller allowed to create one; what could not be placed is in shortages, committed with this receipt"}}}
   - entity: DeliveryNote
     ops:
       - {op: add_field, after: items, field: {name: stk_packed_items, type: table, of: PackedItem, label: Packed Items}}
-      - {op: add_action, action: {name: make_packing_slip, label: Create Packing Slip, docstatus: [0], permission: read}}
-      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read}}
+      - {op: add_action, action: {name: make_packing_slip, label: Create Packing Slip, docstatus: [0], permission: read,
+           contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PackingSlip}, id: {type: string, format: uuid, x-ferrum-link: PackingSlip}, number: {type: [string, "null"]}}}, completion: "A draft Packing Slip of what this delivery note has not packed yet, in the next case number, exists for a caller allowed to create one, committed with this receipt"}}}
+      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read,
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Quality Inspection exists for each stock line of the document whose item asks for one and that has none yet, for a caller allowed to create them, committed with this receipt"}}}
   - entity: DeliveryNoteItem
     ops:
       - {op: add_field, field: {name: stk_pick_list, type: link, to: PickList, label: Pick List, read_only: true}}
@@ -30,16 +33,20 @@ overlays:
   - entity: SalesInvoice
     ops:
       - {op: add_field, after: items, field: {name: stk_packed_items, type: table, of: PackedItem, label: Packed Items, visible_if: "doc.update_stock"}}
-      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read, condition: "doc.update_stock"}}
+      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read, condition: "doc.update_stock",
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Quality Inspection exists for each stock line of the document whose item asks for one and that has none yet, for a caller allowed to create them, committed with this receipt"}}}
   - entity: PurchaseReceipt
     ops:
-      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read}}
+      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read,
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Quality Inspection exists for each stock line of the document whose item asks for one and that has none yet, for a caller allowed to create them, committed with this receipt"}}}
   - entity: PurchaseInvoice
     ops:
-      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read, condition: "doc.update_stock"}}
+      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read, condition: "doc.update_stock",
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Quality Inspection exists for each stock line of the document whose item asks for one and that has none yet, for a caller allowed to create them, committed with this receipt"}}}
   - entity: StockEntry
     ops:
-      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read}}
+      - {op: add_action, action: {name: make_quality_inspections, label: Create Quality Inspections, docstatus: [0], permission: read,
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Quality Inspection exists for each stock line of the document whose item asks for one and that has none yet, for a caller allowed to create them, committed with this receipt"}}}
   - entity: StockEntryItem
     ops:
       - {op: add_field, field: {name: stk_pick_list, type: link, to: PickList, label: Pick List, read_only: true}}
