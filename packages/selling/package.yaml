@@ -1,5 +1,5 @@
 package: selling
-version: 0.3.0
+version: 0.4.0
 label: Selling
 description: Sales orders, deliveries and invoices with exact tax maths, receivables and pricing rules.
 depends: [accounting, inventory]

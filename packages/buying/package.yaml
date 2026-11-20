@@ -1,5 +1,5 @@
 package: buying
-version: 0.2.0
+version: 0.3.0
 label: Buying
 description: Purchase orders, receipts and supplier invoices with three-way matching against orders and receipts.
 depends: [accounting, inventory]

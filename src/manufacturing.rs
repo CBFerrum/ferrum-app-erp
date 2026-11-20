@@ -431,7 +431,7 @@ impl MrpRunHook {
                  min(coalesce(l.delivery_date, o.delivery_date, o.posting_date)) \
                  from e_sales_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
                  where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') \
-                 and l.qty > coalesce(l.delivered_qty, 0) and ($3::date is null or coalesce(l.delivery_date, o.delivery_date, o.posting_date) <= $3::date) \
+                 and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false) and ($3::date is null or coalesce(l.delivery_date, o.delivery_date, o.posting_date) <= $3::date) \
                  group by l.item",
                 q(&lines)
             )))
@@ -712,7 +712,7 @@ async fn bucketed(hc: &mut HookCtx<'_>, doc: &Doc, bucket: crate::planning::Buck
         let rows_: Vec<(Uuid, Uuid, Decimal, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "select l.item, coalesce(l.warehouse, o.set_warehouse), (l.qty - coalesce(l.delivered_qty, 0)) * coalesce(nullif(l.conversion_factor, 0), 1), \
              coalesce(l.delivery_date, o.delivery_date, o.posting_date) from e_sales_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
-             where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.delivered_qty, 0) \
+             where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false) \
              and coalesce(l.warehouse, o.set_warehouse) = any($3)",
             q(&lines)
         )))

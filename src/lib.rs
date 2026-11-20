@@ -21,6 +21,7 @@ pub mod change;
 pub mod credit;
 pub mod deferred;
 pub mod dimensions;
+pub mod drop_ship;
 pub mod flow;
 pub mod instruments;
 pub mod journal_template;

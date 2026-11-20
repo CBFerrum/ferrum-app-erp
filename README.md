@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.36.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.37.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.36.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.37.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -430,7 +430,7 @@ add-on brings it.
 - **Reports:** Finance Overview (Accounts today), Budget Variance, Bank Reconciliation Statement, Cash Flow
   Forecast, Receivables by Installment Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
 
-### 📋 Procurement add-on (0.2.1)
+### 📋 Procurement add-on (0.2.2)
 
 - **Material requests** to buy, transfer, issue, manufacture or receive from a customer, each line tracking
   what was ordered and received; purchase requests become purchase orders grouped by preferred supplier.
@@ -442,7 +442,7 @@ add-on brings it.
 - **Reports:** Material Request Status, Procurement Tracker, Supplier Quotation Comparison, Supplier Scorecard
   Ranking, Purchase Analytics.
 
-### 🗃️ Stock Operations add-on (0.3.0)
+### 🗃️ Stock Operations add-on (0.3.1)
 
 - **Stock reconciliation** of counted quantities (and rates), cancelled exactly.
 - **Landed cost vouchers** that add freight, duty and other charges to received stock still on hand.
@@ -455,7 +455,7 @@ add-on brings it.
 - **Reports:** Stock Reconciliation Variance, Landed Cost Allocation, Pick List Status, Quality Inspection
   Summary, Variant Stock Matrix, Stock Ageing.
 
-### ⚙️ Manufacturing Operations add-on (0.3.0)
+### ⚙️ Manufacturing Operations add-on (0.3.1)
 
 - **Workstations** with an hour rate, working hours, holidays and parallel capacity; **operations** and
   **routings** that cost a BOM's operating time into finished goods.
@@ -468,7 +468,7 @@ add-on brings it.
 - **Reports:** Job Card Summary, Capacity Planning, Work Order Operations, Production Plan Status,
   Subcontracting Status.
 
-### 🏬 Warehouse Management add-on (WMS, 0.4.0)
+### 🏬 Warehouse Management add-on (WMS, 0.4.1)
 
 Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, count, see a bin and work a task.
 
@@ -866,7 +866,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Purchase approvals by amount | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Requests for quotation and supplier scorecards | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ |
 | Blanket orders and purchase agreements | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Drop shipment | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Drop shipment | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁶ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Batches, serials and expiry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Transfers through goods in transit | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -909,7 +909,7 @@ app.</sub>
 - 🏦 Bank feeds.
 - 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
-- 🛒 Drop shipment, standard costing and demand forecasting.
+- 🛒 Standard costing and demand forecasting.
 - 🌍 The number of countries localised, and partner ecosystems around each product.
 
 > [!NOTE]
@@ -919,6 +919,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.37.0** Drop shipment: the supplier delivers to the customer; the receipt books cost of sales and moves no stock.
 - [x] **0.36.0** Purchase and sales agreements: orders take the agreed price and never draw past the agreed quantity.
 - [x] **0.35.0** A company's chart can come from a template, and every add-on finds its accounts by the role they play.
 - [x] **0.34.0** Other apps post to the ledger, find a person's customer and price a document through operations, without compiling against ERP.
@@ -953,7 +954,7 @@ app.</sub>
 **Selling and buying**
 - [ ] Amount in words on printed documents, and a discount as an amount.
 - [ ] An Overdue status and customer statements e-mailed in bulk.
-- [ ] Drop shipment and pricing rules when buying.
+- [ ] Pricing rules when buying.
 
 ### 🔭 Later
 

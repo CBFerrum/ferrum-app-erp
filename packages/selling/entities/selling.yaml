@@ -116,6 +116,9 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, label: Supplier Delivers, description: "The supplier sends it straight to the customer: no stock is held, reserved or issued for this line"}
+    - {name: drop_ship_supplier, type: link, to: Supplier, label: Delivering Supplier, visible_if: "doc.drop_ship", required_if: "doc.drop_ship"}
+    - {name: drop_ship_ordered_qty, type: decimal, read_only: true, no_copy: true, label: Ordered from Supplier}
     - {name: delivery_date, type: date}
     - {name: available_qty, type: decimal, read_only: true, no_copy: true, label: Available When Entered,
        description: "In stock units, at the line's warehouse when the draft was last saved: on hand less what open orders have yet to take"}
@@ -183,6 +186,17 @@
     - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
        description: "Lets this order through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   actions:
+    - name: make_drop_ship_order
+      label: Order from Supplier
+      docstatus: [1]
+      permission: read
+      condition: "doc.status != 'Closed'"
+      params:
+        - {name: supplier, type: link, to: Supplier, label: Supplier, description: "Only this supplier's lines; empty: every supplier with lines left to order"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {orders: {type: array, items: {type: object, properties: {entity: {type: string, const: PurchaseOrder}, id: {type: string, format: uuid, x-ferrum-link: PurchaseOrder}, number: {type: [string, "null"]}, supplier: {type: string, format: uuid}}}}}}
+        completion: "A draft purchase order per supplier for the lines the supplier delivers that are not yet ordered, shipped to the customer, exists for a caller allowed to create one, committed with this receipt"
     - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'",
        contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: DeliveryNote}, id: {type: string, format: uuid, x-ferrum-link: DeliveryNote}, number: {type: [string, "null"]}}}, completion: "A draft Delivery Note of what is still open to deliver on the order exists, its lines pointing back to the order's, for a caller allowed to create one; nothing is delivered until it is submitted, committed with this receipt"}}
     - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'",
@@ -333,6 +347,7 @@
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, read_only: true, label: Supplier Delivers}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
     - {name: delivery_note, type: link, to: DeliveryNote, read_only: true}

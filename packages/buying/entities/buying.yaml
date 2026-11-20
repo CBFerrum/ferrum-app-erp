@@ -87,6 +87,9 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, read_only: true, label: Supplier Delivers}
+    - {name: sales_order, type: data, read_only: true, label: Sales Order, description: "The sales order this line is delivered for (its id)"}
+    - {name: so_line, type: data, read_only: true}
     - {name: schedule_date, type: date, label: Required By}
     - {name: received_qty, type: decimal, read_only: true, no_copy: true, in_list: true, description: "Above the quantity when more was received, within the over-receipt allowance"}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
@@ -114,6 +117,7 @@
     - {name: schedule_date, type: date, label: Required By}
     - {name: supplier_address, type: link, to: Address, label: Supplier Address, description: "The supplier's; their primary billing address when empty"}
     - {name: ship_to, type: link, to: Address, label: Ship To, description: Where the goods are delivered}
+    - {name: drop_ship_customer, type: link, to: Customer, read_only: true, label: Delivered To Customer}
     - {name: delivery_country, type: data, label: Delivery Country, description: "Where the goods are received when there is no ship-to address: a country name or ISO code, kept as the code. Follows the ship-to address when there is one"}
     - {name: delivery_region, type: data, label: Delivery Region, description: "The state, province or region the goods are received, as countries' tax rules read it. Follows the ship-to address when there is one"}
     - {name: currency, type: link, to: Currency}
@@ -182,6 +186,9 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}, in_list: true}
+    - {name: drop_ship, type: check, read_only: true, label: Supplier Delivers}
+    - {name: sales_order, type: data, read_only: true, label: Sales Order, description: "The sales order this line is delivered for (its id)"}
+    - {name: so_line, type: data, read_only: true}
     - {name: purchase_order, type: link, to: PurchaseOrder, read_only: true}
     - {name: po_line, type: data, read_only: true}
     - {name: billed_qty, type: decimal, read_only: true, no_copy: true}
@@ -279,6 +286,7 @@
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, read_only: true, label: Supplier Delivers}
     - {name: purchase_order, type: link, to: PurchaseOrder, read_only: true}
     - {name: po_line, type: data, read_only: true}
     - {name: purchase_receipt, type: link, to: PurchaseReceipt, read_only: true}

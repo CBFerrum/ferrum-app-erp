@@ -134,7 +134,8 @@ async fn post_line_stock(hc: &mut HookCtx<'_>, co: &Company, entity: &str, doc: 
     let mut moves = Vec::new();
     for (i, r) in rows(doc, "items").iter().enumerate() {
         let Some(item) = id(r, "item") else { continue };
-        if !is_stock_item(hc, &mut cache, item).await? {
+        // A line the supplier delivers straight to the customer never moves the company's stock.
+        if b(r, "drop_ship") || !is_stock_item(hc, &mut cache, item).await? {
             continue;
         }
         let wh = id(r, "warehouse").ok_or_else(|| Error::Validation(vec![FieldError::new("warehouse", "is required for stock items").in_row("items", i)]))?;
@@ -520,6 +521,10 @@ fn return_input(hc: &HookCtx<'_>, side: Side, entity: &str, doc: &Doc, percent: 
         // A returned delivery or receipt takes back what its order shows delivered or received.
         line_fields.extend([n.order_link, n.order_line]);
     }
+    // A line the supplier delivered goes back the same way (crate::drop_ship).
+    if let Some(c) = hc.ctx.schema.entity(entity).and_then(|e| e.children.get("items")).and_then(|c| hc.ctx.schema.entity(&c.entity)) {
+        line_fields.extend(["drop_ship", "sales_order", "so_line"].into_iter().filter(|f| c.field(f).is_some()));
+    }
     let extra = flow::shared_line_fields(&hc.ctx.schema, entity, entity);
     let mut input = flow::map_document_with(
         doc,
@@ -600,6 +605,11 @@ impl DocHook for OrderHook {
     }
 
     async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        for (i, r) in rows(doc, "items").iter().enumerate() {
+            if b(r, "drop_ship") && id(r, "item").is_none() {
+                return Err(Error::Validation(vec![FieldError::new("drop_ship", "needs an item: the supplier delivers goods").in_row("items", i)]));
+            }
+        }
         check_lines(hc, doc, None).await
     }
 
@@ -618,6 +628,9 @@ impl DocHook for OrderHook {
         crate::promotion::count_uses(hc, doc, 1).await?;
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
         crate::agreement::drawn(hc, self.0, doc, true).await?;
+        if self.0 == Side::Buying {
+            crate::drop_ship::recount(hc, doc, true).await?;
+        }
         if self.0 == Side::Selling {
             crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, id(doc, "id").unwrap_or_default(), false).await?;
         }
@@ -639,7 +652,11 @@ impl DocHook for OrderHook {
             crate::stored_value::order_cancelled(hc, id(doc, "id").unwrap_or_default()).await?;
         }
         refresh_order(hc.kernel, hc.ctx, hc.tx, n.order, id(doc, "id").unwrap_or_default(), n.fulfil_field, n.fulfil_pct).await?;
-        crate::agreement::drawn(hc, self.0, doc, false).await
+        crate::agreement::drawn(hc, self.0, doc, false).await?;
+        if self.0 == Side::Buying {
+            crate::drop_ship::recount(hc, doc, false).await?;
+        }
+        Ok(())
     }
 
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
@@ -650,7 +667,13 @@ impl DocHook for OrderHook {
             // What the order draws on its agreements, as changed (a line added may name one too).
             let now = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, n.order, oid, false).await?;
             crate::agreement::drawn(hc, self.0, &now, true).await?;
+            if self.0 == Side::Buying {
+                crate::drop_ship::recount(hc, &now, true).await?;
+            }
             return Ok(Some(out));
+        }
+        if self.0 == Side::Selling && name == "make_drop_ship_order" {
+            return crate::drop_ship::make_order(hc, doc, params).await.map(Some);
         }
         if self.0 == Side::Selling && name == "reserve_stock" {
             return crate::reservation::reserve_order(hc.kernel, hc.ctx, hc.tx, oid, true).await.map(Some);
@@ -691,6 +714,9 @@ impl DocHook for OrderHook {
             }
             // Closed short gives its agreements back what was never received; a re-open takes it again, if it can.
             crate::agreement::drawn(hc, self.0, doc, !closing).await?;
+            if self.0 == Side::Buying {
+                crate::drop_ship::recount(hc, doc, !closing).await?;
+            }
             return Ok(Some(json!({"status": if closing { "Closed" } else { "reopened" }})));
         }
         let header = header_fields(self.0);
@@ -702,15 +728,39 @@ impl DocHook for OrderHook {
             return Ok(None);
         };
         let extra = flow::shared_line_fields(&hc.ctx.schema, n.order, target);
+        let mut line_fields = LINE_FIELDS.to_vec();
+        // Drop shipment (crate::drop_ship): read-only fields do not travel by themselves.
+        if hc
+            .ctx
+            .schema
+            .entity(target)
+            .and_then(|e| e.children.get("items"))
+            .and_then(|c| hc.ctx.schema.entity(&c.entity))
+            .is_some_and(|c| c.field("drop_ship").is_some())
+        {
+            line_fields.push("drop_ship");
+            if self.0 == Side::Buying && target == n.shipment {
+                line_fields.extend(["sales_order", "so_line"]);
+            }
+        }
         let mut input = flow::map_document_with(
             doc,
-            &MapSpec { done_field: done, link_field: n.order_link, line_field: n.order_line, header: &header, line_fields: LINE_FIELDS },
+            &MapSpec { done_field: done, link_field: n.order_link, line_field: n.order_line, header: &header, line_fields: &line_fields },
             &extra,
         )?;
         if target == n.shipment {
-            // A line without an item is a service: billed, never delivered or received.
+            // A line without an item is a service: billed, never delivered or received. A line the supplier
+            // delivers is never delivered from the company's stock.
+            let supplier_delivers: Vec<String> =
+                rows(doc, "items").iter().filter(|r| self.0 == Side::Selling && b(r, "drop_ship")).filter_map(|r| s(r, "id").map(str::to_string)).collect();
             if let Some(Value::Array(lines)) = input.get_mut("items") {
-                lines.retain(|l| l.get("item").is_some_and(|v| !v.is_null()));
+                lines.retain(|l| {
+                    l.get("item").is_some_and(|v| !v.is_null())
+                        && !l.get(n.order_line).and_then(Value::as_str).is_some_and(|x| supplier_delivers.iter().any(|d| d == x))
+                });
+                if lines.is_empty() && !supplier_delivers.is_empty() {
+                    return Err(Error::invalid("the supplier delivers the open lines of this order: order them from the supplier (Order from Supplier)"));
+                }
                 if lines.is_empty() {
                     return Err(Error::invalid("nothing on this order is delivered or received: its open lines have no item and are billed on an invoice"));
                 }
@@ -747,10 +797,17 @@ impl DocHook for ShipmentHook {
         Ok(())
     }
 
-    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        if self.0 == Side::Selling {
+            crate::drop_ship::refuse_delivery(hc, doc).await?;
+        }
         let mut errors = Vec::new();
         for (i, r) in rows(doc, "items").iter().enumerate() {
-            if id(r, "warehouse").is_none() {
+            if b(r, "drop_ship") {
+                if d(r, "rejected_qty") > Decimal::ZERO {
+                    errors.push(FieldError::new("rejected_qty", "the supplier delivered it to the customer: nothing is rejected here").in_row("items", i));
+                }
+            } else if id(r, "warehouse").is_none() {
                 errors.push(FieldError::new("warehouse", "is required").in_row("items", i));
             }
         }
@@ -793,7 +850,13 @@ impl DocHook for ShipmentHook {
             entry.lines.push(Line::new(inv, p.value, &co.currency_code));
             entry.lines.push(Line::new(offset, -p.value, &co.currency_code));
         }
+        if self.0 == Side::Buying {
+            entry.lines.extend(crate::drop_ship::cost_lines(&co, doc)?);
+        }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        if self.0 == Side::Buying && !rejected_return {
+            crate::drop_ship::deliver(hc, doc, Decimal::ONE).await?;
+        }
         let sign = if ret { -Decimal::ONE } else { Decimal::ONE };
         let mut orders = Vec::new();
         for r in rows(doc, "items").into_iter().filter(|_| !rejected_return) {
@@ -834,6 +897,9 @@ impl DocHook for ShipmentHook {
         }
         stock::reverse_moves(hc.tx, hc.ctx, &co, n.shipment, sid, on, ts).await?;
         ledger::reverse(hc.tx, hc.ctx, n.shipment, sid, on, co.precision).await?;
+        if self.0 == Side::Buying && !rejected_return {
+            crate::drop_ship::deliver(hc, doc, -Decimal::ONE).await?;
+        }
         let sign = if b(doc, "is_return") { Decimal::ONE } else { -Decimal::ONE };
         let mut orders = Vec::new();
         for r in rows(doc, "items").into_iter().filter(|_| !rejected_return) {
@@ -872,6 +938,9 @@ impl DocHook for ShipmentHook {
         let header = header_fields(self.0);
         let mut line_fields = LINE_FIELDS.to_vec();
         line_fields.extend([n.order_link, n.order_line]);
+        if self.0 == Side::Buying {
+            line_fields.push("drop_ship");
+        }
         let extra = flow::shared_line_fields(&hc.ctx.schema, n.shipment, n.invoice);
         let mut input = flow::map_document_with(
             doc,
@@ -1202,7 +1271,7 @@ impl DocHook for InvoiceHook {
             if q.is_zero() || (ret && q > Decimal::ZERO) || (!ret && q < Decimal::ZERO) {
                 errors.push(FieldError::new("qty", if ret { "returns need negative quantities" } else { "quantity must be positive" }).in_row("items", i));
             }
-            if b(doc, "update_stock") && id(r, "item").is_some() && id(r, "warehouse").is_none() {
+            if b(doc, "update_stock") && id(r, "item").is_some() && !b(r, "drop_ship") && id(r, "warehouse").is_none() {
                 errors.push(FieldError::new("warehouse", "is required when updating stock").in_row("items", i));
             }
         }
@@ -1294,11 +1363,19 @@ impl DocHook for InvoiceHook {
                 if stock && deferred.is_some() {
                     return Err(Error::field(format!("items.{i}.enable_deferred_expense"), "a stock item is valued by its stock, not deferred"));
                 }
-                if stock && update_stock {
+                if stock && b(r, "drop_ship") {
+                    // The supplier delivered it to the customer: from its receipt, clear what the receipt booked;
+                    // with Update Stock, straight to cost of sales; from the order alone, "received but not billed".
+                    if let Some(lines) = crate::drop_ship::bill_lines(hc, &co, r, *base).await? {
+                        entry.lines.extend(lines);
+                        continue;
+                    }
+                    let to = if update_stock { "cogs_account" } else { "srbnb_account" };
+                    account = Some(co.require(to, "cost of goods sold or stock received but not billed account")?);
+                } else if stock && update_stock {
                     // Valued by the stock moves below; nothing to book here.
                     continue;
-                }
-                if stock && b(doc, "price_only") {
+                } else if stock && b(doc, "price_only") {
                     // A lower price for goods kept: a price variance, as on a receipt's bill.
                     account = Some(co.require("stock_adjustment_account", "stock adjustment account")?);
                 } else if stock {
@@ -1467,7 +1544,8 @@ impl DocHook for InvoiceHook {
             let (q, unit) = (d(&r, "qty"), Some(unit_factor(&r)));
             if let (Some(o), Some(line)) = (id(&r, n.order_link), id(&r, n.order_line)) {
                 add_progress_in(hc.kernel, hc.ctx, hc.tx, n.order, o, line, "billed_qty", q, unit).await?;
-                if update_stock {
+                // A line the supplier delivered was counted delivered by its receipt.
+                if update_stock && !b(&r, "drop_ship") {
                     add_progress_in(hc.kernel, hc.ctx, hc.tx, n.order, o, line, n.fulfil_field, q, unit).await?;
                 }
                 if !orders.contains(&o) {

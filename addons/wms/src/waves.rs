@@ -96,7 +96,7 @@ async fn release(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result<Value>
             "select l.id, l.item, (greatest(l.qty - coalesce(l.delivered_qty, 0), 0) * coalesce(nullif(l.conversion_factor, 0), 1))::numeric(28,9), i.item_code from e_sales_order__items l \
              join e_item i on i.tenant_id = l.tenant_id and i.id = l.item \
              join e_sales_order o on o.tenant_id = l.tenant_id and o.id = l.parent_id \
-             where l.tenant_id = $1 and l.parent_id = $2 and o.docstatus = 1 and i.is_stock_item order by l.idx",
+             where l.tenant_id = $1 and l.parent_id = $2 and o.docstatus = 1 and i.is_stock_item and not coalesce(l.drop_ship, false) order by l.idx",
         )
         .bind(ctx.tenant)
         .bind(order)

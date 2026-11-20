@@ -1,5 +1,19 @@
 # Changelog
 
+## ERP 0.37.0 (selling 0.4.0, buying 0.3.0): drop shipment
+
+A sales order line marked **Supplier Delivers**, with its supplier, is sent by the supplier straight to the customer
+(docs/drop-shipment.md). **Order from Supplier** makes a draft purchase order per supplier for what is not yet ordered,
+shipped to the customer; submitting, cancelling, changing, closing or re-opening it recounts each sales line's
+**Ordered from Supplier** under the sales order's row lock, so suppliers are never ordered more than was sold. The
+purchase receipt records that the supplier shipped: no stock move, cost of goods sold debited and stock received but
+not billed credited, and the sales line marked delivered; cancelling or returning it reverses both. The supplier's
+bill clears what the receipt booked and puts any price difference in cost of goods sold. The customer is invoiced as
+always; with Update Stock its drop-ship lines move no stock and are not delivered twice. Drop-ship lines are left out
+of reservations, promises, both requirements runs, production plans (Manufacturing Operations), reorder levels
+(Procurement), pick waves (Warehouse Management) and pick lists (Stock Operations); a delivery note may not deliver one. Add-on patches: Procurement 0.2.2, Warehouse
+Management 0.4.1, Stock Operations 0.3.1, Manufacturing Operations 0.3.1.
+
 ## ERP 0.36.0 (selling 0.3.0, buying 0.2.0): purchase and sales agreements
 
 A **Purchase Agreement** (Buying) or **Sales Agreement** (Selling) records items with an agreed quantity and price per

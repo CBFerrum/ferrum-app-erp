@@ -93,7 +93,7 @@ select r.parent_id as item, coalesce(i.item_code, '') as item_code, r.warehouse,
            coalesce((select sum((l.qty - coalesce(l.delivered_qty, 0)) * coalesce(nullif(l.conversion_factor, 0), 1)) from e_sales_order__items l \
                      join e_sales_order o on o.tenant_id = l.tenant_id and o.id = l.parent_id \
                      where l.tenant_id = r.tenant_id and l.item = r.parent_id and l.warehouse = r.warehouse \
-                       and o.docstatus = 1 and o.status <> 'Closed' and l.qty > coalesce(l.delivered_qty, 0)), 0)) as reserved, \
+                       and o.docstatus = 1 and o.status <> 'Closed' and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false)), 0)) as reserved, \
   exists (select 1 from e_material_request__items l join e_material_request m on m.tenant_id = l.tenant_id and m.id = l.parent_id \
           where l.tenant_id = r.tenant_id and l.item = r.parent_id and l.warehouse = r.warehouse \
             and m.docstatus = 1 and m.status <> 'Stopped' and m.material_request_type <> 'Material Issue' \

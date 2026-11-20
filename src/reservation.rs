@@ -60,7 +60,7 @@ async fn refresh(tx: &mut Tx, tenant: Uuid, item: Uuid, warehouse: Uuid, company
     let reserved: Decimal = sqlx::query_scalar(
         "select coalesce(sum(greatest(l.qty - coalesce(l.delivered_qty, 0), 0) * coalesce(nullif(l.conversion_factor, 0), 1)), 0) from e_sales_order__items l \
          join e_sales_order o on o.tenant_id = l.tenant_id and o.id = l.parent_id \
-         where l.tenant_id = $1 and l.item = $2 and coalesce(l.warehouse, o.set_warehouse) = $3 \
+         where l.tenant_id = $1 and not coalesce(l.drop_ship, false) and l.item = $2 and coalesce(l.warehouse, o.set_warehouse) = $3 \
          and o.docstatus = 1 and o.status not in ('Closed', 'Completed')",
     )
     .bind(tenant)
@@ -121,7 +121,7 @@ pub async fn held(tx: &mut Tx, ctx: &Ctx, item: Uuid, warehouse: Uuid, except: O
     Ok(sqlx::query_scalar(
         "select coalesce(sum(least(l.stock_reserved_qty, greatest(l.qty - coalesce(l.delivered_qty, 0), 0) * coalesce(nullif(l.conversion_factor, 0), 1))), 0) \
          from e_sales_order__items l join e_sales_order o on o.tenant_id = l.tenant_id and o.id = l.parent_id \
-         where l.tenant_id = $1 and l.item = $2 and coalesce(l.warehouse, o.set_warehouse) = $3 and coalesce(l.stock_reserved_qty, 0) > 0 \
+         where l.tenant_id = $1 and not coalesce(l.drop_ship, false) and l.item = $2 and coalesce(l.warehouse, o.set_warehouse) = $3 and coalesce(l.stock_reserved_qty, 0) > 0 \
          and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and (l.reserved_until is null or l.reserved_until >= $5) \
          and l.id is distinct from $4",
     )
@@ -197,6 +197,9 @@ pub async fn reserve_order(k: &Kernel, ctx: &Ctx, tx: &mut Tx, order: Uuid, aske
     let mut lines: Vec<(Uuid, Uuid, Uuid, Decimal, Decimal)> = Vec::new();
     for r in crate::util::rows(&doc, "items") {
         let (Some(line), Some(item)) = (crate::util::id(&r, "id"), crate::util::id(&r, "item")) else { continue };
+        if crate::util::b(&r, "drop_ship") {
+            continue;
+        }
         let Some(wh) = crate::util::id(&r, "warehouse").or(crate::util::id(&doc, "set_warehouse")) else { continue };
         let factor = Some(crate::util::d(&r, "conversion_factor")).filter(|f| !f.is_zero()).unwrap_or(Decimal::ONE);
         let open = ((crate::util::d(&r, "qty") - crate::util::d(&r, "delivered_qty")).max(Decimal::ZERO) * factor).round_dp(9);
@@ -352,6 +355,9 @@ pub async fn promise_lines(ctx: &Ctx, tx: &mut Tx, doc: &mut Doc) -> Result<()> 
     let mut items = crate::util::rows(doc, "items");
     for r in items.iter_mut() {
         let (Some(item), Some(wh)) = (crate::util::id(r, "item"), crate::util::id(r, "warehouse").or(header)) else { continue };
+        if crate::util::b(r, "drop_ship") {
+            continue;
+        }
         let stock: bool = sqlx::query_scalar("select coalesce(is_stock_item, false) from e_item where tenant_id = $1 and id = $2")
             .bind(ctx.tenant)
             .bind(item)
