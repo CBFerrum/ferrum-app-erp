@@ -1258,9 +1258,23 @@ async fn foreign_bank(t: &T, am: &Ctx, bank_charges: Uuid) {
     let je = t.get("JournalEntry", vid(&made)).await;
     let bank_line = je["accounts"].as_array().unwrap().iter().find(|l| l["account"] == json!(gl.to_string())).unwrap().clone();
     assert_eq!((bank_line["currency"].clone(), dec(&bank_line["credit_in_currency"])), (json!(usd), n("1")), "{je:?}");
+    // 0.40 rupees out of it is less than a cent at 83.10: posted without its dollars (Posted Without a Rate), it is in
+    // neither the balance per books nor the vouchers, and is listed beneath them rather than left out silently.
+    let small = uid(&t
+        .make(
+            am,
+            "JournalEntry",
+            json!({"company": cid, "posting_date": "2026-06-15", "accounts": [{"account": bank_charges.to_string(), "debit": "0.40"}, {"account": gl.to_string(), "credit": "0.40"}]}),
+        )
+        .await);
     // The statement in dollars: both journals in the books, nothing unexplained.
     let st = t.report(am, "bank_reconciliation_statement", &[("bank_account", ba.to_string()), ("as_of", "2026-06-30".into())]).await;
     assert_eq!((dec(&st["totals"]["book_balance"]), dec(&st["totals"]["difference"])), (n("-3.5"), Decimal::ZERO), "{st}");
+    let listed: Vec<&Value> = st["rows"].as_array().unwrap().iter().filter(|r| r["voucher_id"] == json!(small.to_string())).collect();
+    assert!(
+        listed.len() == 1 && listed[0]["description"].as_str().is_some_and(|d| d.contains("-0.4") && d.contains("INR")),
+        "the line without its dollars is listed: {st}"
+    );
 }
 
 /// Statement files read with the formats Finance ships and with a format of the account's own: a trial run
