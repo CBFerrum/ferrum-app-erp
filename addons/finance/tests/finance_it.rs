@@ -1215,7 +1215,52 @@ async fn scenario() {
     let stripe_co = uid(&t.insert(&a, "Customer", customer("Stripe Payouts Ltd", json!({}))).await);
     bank_rules(&t, &am, &au, Accounts { bank_gl, bank_charges, other_income, unit, customer: stripe_co }).await;
     bank_feeds(&t, &am, &au, bank_gl, bank_charges).await;
+    foreign_bank(&t, &am, bank_charges).await;
     t.books_balance().await;
+}
+
+/// A bank kept in another currency (S1-E1-fix M6): its journals are offered for matching and listed by the
+/// reconciliation statement in its own currency, and a journal made from one of its statement lines is booked in it.
+async fn foreign_bank(t: &T, am: &Ctx, bank_charges: Uuid) {
+    let cid = t.company.to_string();
+    let currency = async |code: &str| t.find_one("Currency", json!({"code": code})).await["id"].as_str().unwrap().to_string();
+    let (usd, inr) = (currency("USD").await, currency("INR").await);
+    t.insert(&t.admin, "ExchangeRate", json!({"from_currency": usd, "to_currency": inr, "rate": "83.10", "valid_from": "2026-06-01"})).await;
+    let group = t.account("Bank Accounts").await;
+    let gl = uid(&t
+        .insert(
+            &t.admin,
+            "Account",
+            json!({"account_name": "USD Clearing", "company": cid, "parent_account": group.to_string(), "root_type": "Asset", "account_type": "Bank", "account_currency": usd}),
+        )
+        .await);
+    let ba = uid(&t.insert(am, "BankAccount", json!({"account_name": "USD Clearing", "company": cid, "account": gl.to_string(), "currency": usd})).await);
+    // A fee as Payments books it: 2.50 USD out at 83.10, the charges account balancing it.
+    let fee = uid(&t
+        .make(
+            am,
+            "JournalEntry",
+            json!({"company": cid, "posting_date": "2026-06-10", "accounts": [{"account": bank_charges.to_string(), "debit": "1", "balances": true},
+                   {"account": gl.to_string(), "currency": usd, "exchange_rate": "83.10", "credit_in_currency": "2.50"}]}),
+        )
+        .await);
+    let line = |amount: &str, what: &str| json!({"bank_account": ba.to_string(), "date": "2026-06-12", "withdrawal": amount, "description": what});
+    let card = uid(&t.make(am, "BankTransaction", line("2.50", "Card fees")).await);
+    let sug = t.action(am, "BankTransaction", card, "get_suggestions", json!({})).await;
+    assert!(sug["suggestions"].as_array().unwrap().iter().any(|v| v["payment_entry"] == json!(fee.to_string())), "the fee journal is offered: {sug}");
+    let r =
+        t.action(am, "BankTransaction", card, "reconcile", json!({"vouchers": [{"payment_document": "JournalEntry", "payment_entry": fee.to_string()}]})).await;
+    assert_eq!(r["status"], json!("Reconciled"), "{r}");
+    // A wire fee booked from its statement line: in dollars, at the day's rate.
+    let wire = uid(&t.make(am, "BankTransaction", line("1.00", "Wire fee")).await);
+    let made = t.action(am, "BankTransaction", wire, "make_journal_entry", json!({"account": bank_charges.to_string()})).await;
+    assert_eq!(t.get("BankTransaction", wire).await["status"], json!("Reconciled"));
+    let je = t.get("JournalEntry", vid(&made)).await;
+    let bank_line = je["accounts"].as_array().unwrap().iter().find(|l| l["account"] == json!(gl.to_string())).unwrap().clone();
+    assert_eq!((bank_line["currency"].clone(), dec(&bank_line["credit_in_currency"])), (json!(usd), n("1")), "{je:?}");
+    // The statement in dollars: both journals in the books, nothing unexplained.
+    let st = t.report(am, "bank_reconciliation_statement", &[("bank_account", ba.to_string()), ("as_of", "2026-06-30".into())]).await;
+    assert_eq!((dec(&st["totals"]["book_balance"]), dec(&st["totals"]["difference"])), (n("-3.5"), Decimal::ZERO), "{st}");
 }
 
 /// Statement files read with the formats Finance ships and with a format of the account's own: a trial run

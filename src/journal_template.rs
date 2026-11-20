@@ -71,12 +71,13 @@ impl DocHook for TemplateHook {
 }
 
 /// Makes every entry that is due by `today`, each period in a transaction of its own. Returns how
-/// many were made.
+/// many were made. A template whose entry is refused stops for the round, and its company's accounts
+/// managers are told why, once (`accounting::tell_once`).
 pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<usize> {
     let Some(ent) = ctx.schema.entity(ENTITY) else { return Ok(0) };
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let due: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "select id from {} where tenant_id = $1 and not coalesce(disabled, false) and next_date <= $2 order by next_date, id",
+    let due: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select id, company from {} where tenant_id = $1 and not coalesce(disabled, false) and next_date <= $2 order by next_date, id",
         ferrum_kernel::ddl::q(&ent.table)
     )))
     .bind(ctx.tenant)
@@ -85,7 +86,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<usize> {
     .await?;
     tx.rollback().await?;
     let mut made = 0;
-    for tid in due {
+    for (tid, company) in due {
         // One period a round of the loop, until the template has nothing more due.
         for _ in 0..1000 {
             let mut tx = k.db.tenant_tx(ctx.tenant).await?;
@@ -101,6 +102,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<usize> {
                 Err(e) => {
                     tx.rollback().await?;
                     tracing::warn!(tenant = %ctx.tenant, template = %tid, "recurring journal not made: {e}");
+                    crate::accounting::tell_once(k, ctx, ENTITY, tid, company, "A recurring journal was not made", &e.to_string()).await?;
                     break;
                 }
             }

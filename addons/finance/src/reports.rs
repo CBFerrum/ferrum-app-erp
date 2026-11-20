@@ -260,6 +260,13 @@ pub(crate) async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Re
            select 'JournalEntry', j.id, j.number, j.posting_date, sum(coalesce(a.debit, 0) - coalesce(a.credit, 0)), j.remark \
            from e_journal_entry j join e_journal_entry__accounts a on a.tenant_id = j.tenant_id and a.parent_id = j.id \
            where $5 and j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and a.account = $3 and j.posting_date <= $4 \
+           group by j.id, j.number, j.posting_date, j.remark \
+           union all \
+           select 'JournalEntry', j.id, j.number, j.posting_date, sum(l.debit_txn - l.credit_txn), j.remark \
+           from e_journal_entry j join journal_entry e on e.tenant_id = j.tenant_id and e.source_entity = 'JournalEntry' and e.source_id = j.id \
+             and e.reversal_of is null join journal_line l on l.tenant_id = e.tenant_id and l.entry_id = e.id \
+           where not $5 and j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and l.account_id = $3 and trim(l.currency) = $6 \
+             and j.posting_date <= $4 \
            group by j.id, j.number, j.posting_date, j.remark) \
          select v.kind, v.id, v.number, v.posting_date, v.amount, v.party, coalesce((select sum(x.allocated_amount) from e_bank_transaction__allocations x \
            join e_bank_transaction t on t.tenant_id = x.tenant_id and t.id = x.parent_id \

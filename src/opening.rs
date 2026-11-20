@@ -175,14 +175,17 @@ impl DocHook for OpeningInvoiceHook {
 
     async fn before_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let oid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
-        let live: i64 = sqlx::query_scalar(
-            "select count(*) from allocation a where a.tenant_id = $1 and a.open_item_id = $2 and a.reversal_of is null \
-             and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id)",
+        let (live, by_journal): (i64, Option<bool>) = sqlx::query_as(
+            "select count(*), bool_or(a.payment_entity = 'JournalEntry') from allocation a where a.tenant_id = $1 and a.open_item_id = $2 \
+             and a.reversal_of is null and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id)",
         )
         .bind(hc.ctx.tenant)
         .bind(oid)
         .fetch_one(&mut **hc.tx)
         .await?;
+        if by_journal == Some(true) {
+            return Err(crate::ledger::settled_by_journal());
+        }
         if live > 0 {
             return Err(Error::invalid(format!("{} has payments allocated to it; cancel those payments first", named(doc))));
         }

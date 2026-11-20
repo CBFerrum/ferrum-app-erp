@@ -11,15 +11,22 @@
     - {name: reference_no, type: data, label: Invoice / Reference No, visible_if: "doc.party_type != null",
        description: "The number the customer or supplier knows it by (an invoice from the books before): what payments and statements show; the entry's number when empty"}
     - {name: due_date, type: date, visible_if: "doc.party_type != null", description: "When what the party owes falls due, for ageing and reminders; the entry's date when empty"}
-    - {name: currency, type: link, to: Currency, visible_if: "doc.party_type != null", label: Party Currency,
-       description: "Empty: the company's. Another currency carries what the party owes in it: give the rate and the amount in it, and the debit or credit is worked out"}
-    - {name: exchange_rate, type: decimal, min: "0", visible_if: "doc.currency != null", description: "Party currency → company currency"}
+    - {name: currency, type: link, to: Currency, label: Party Currency,
+       description: "Empty: the company's. A customer's or supplier's line carries what they owe in another currency, and a line on a bank or cash account kept in another currency is booked in it: give the amount in it and the rate, and the debit or credit is worked out"}
+    - {name: exchange_rate, type: decimal, min: "0", visible_if: "doc.currency != null",
+       description: "Line currency → company currency. A bank or cash line without one takes the day's rate; a customer's or supplier's line needs one"}
     - {name: debit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Debit (Party Currency)}
     - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
+    - {name: without_rate, type: check, read_only: true, no_copy: true, label: Posted Without a Rate, visible_if: "doc.without_rate",
+       description: "Given in the company's currency on an account kept in another, with no rate given and none for the day: posted without the account's own amount; the accounts managers are told"}
+    - {name: day_rate, type: decimal, read_only: true, no_copy: true, label: Day's Rate, visible_if: "doc.day_rate > 0.0",
+       description: "Taken for the entry's day at each save where a line needs a rate and none is given: a bank or cash line in another currency, or a line in the company's currency on an account kept in another"}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: project, type: link, to: Project}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}"}
     - {name: remarks, type: data}
+    - {name: balances, type: check, label: Balances the Entry,
+       description: "On one line in the company's currency: its debit or credit, on the side it is given with any amount, is set to what balances the entry once the other lines are rounded; refused when that would be zero or less"}
   rules:
     - {name: one_side, check: "(doc.debit > 0.0) != (doc.credit > 0.0)", message: "Each line needs either a debit or a credit"}
 
@@ -54,6 +61,13 @@
   rules:
     - {name: balanced, check: "doc.total_debit == doc.total_credit", message: "Total debit must equal total credit", on: submit}
     - {name: not_empty, check: "doc.total_debit > 0.0", message: "The entry has no amounts", on: submit}
+  actions:
+    - {name: settle_line, label: Settle Line, docstatus: [1], permission: submit, hidden: true,
+       params: [{name: line, label: Line, type: data, required: true, description: "A customer's or supplier's line of this entry (its id)"},
+                {name: against, label: Against, type: data, required: true,
+                 description: "An open item of the same party, account and currency on the other side (its id): an invoice, a credit note, a payment or another entry's line"},
+                {name: amount, label: Amount, type: currency, description: "In the line's currency; empty, as far as both are open"}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {settled: {type: string}, left: {type: string}}}, completion: "The line and the item are settled against each other by the amount answered, any exchange difference between their two rates is booked, and what is left open on the line is answered, committed with this receipt"}}
   list: {columns: [number, posting_date, entry_type, total_debit], sort: posting_date desc}
 
 - name: PaymentReference

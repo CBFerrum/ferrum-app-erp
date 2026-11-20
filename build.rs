@@ -20,8 +20,11 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
 }
 
 fn main() {
+    // This checkout, read when the script runs: the compiled script is shared by checkouts at other paths that share a
+    // target directory, so a path fixed when it was compiled would list another checkout's files.
+    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     // The interface's built files, without the build's own notes (dotfiles such as .source).
-    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui").join("dist");
+    let ui = dir.join("ui").join("dist");
     println!("cargo:rerun-if-changed={}", ui.display());
     let mut code = String::from("/// ERP's own interface: its built files (path under ui/dist, content).\npub static UI: &[(&str, &[u8])] = &[\n");
     let mut files = Vec::new();
@@ -37,7 +40,7 @@ fn main() {
     // Relative to the crate, like the paths below: checkouts at other paths can share a target
     // directory (Cargo hashes path crates relative to their workspace) without mixing up files.
     println!("cargo:rerun-if-changed=packages");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages");
+    let root = dir.join("packages");
     let mut code = String::from("// (package, path inside the package, content)\npub static EMBEDDED: &[(&str, &str, &str)] = &[\n");
     let mut packages: Vec<_> =
         std::fs::read_dir(&root).expect("packages/").filter_map(|e| e.ok()).filter(|e| e.path().join("package.yaml").is_file()).collect();

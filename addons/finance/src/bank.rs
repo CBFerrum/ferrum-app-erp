@@ -265,13 +265,15 @@ pub struct Bank {
     pub gl: Uuid,
     pub company: Company,
     pub currency: String,
+    pub currency_id: Uuid,
 }
 
 pub async fn bank(hc: &mut HookCtx<'_>, bank_account: Uuid) -> Result<Bank> {
     let ba = get(hc.kernel, hc.ctx, hc.tx, "BankAccount", bank_account).await?;
     let co = company(hc.kernel, hc.ctx, hc.tx, id(&ba, "company").unwrap_or_default()).await?;
-    let (code, _) = currency(hc.kernel, hc.ctx, hc.tx, id(&ba, "currency").unwrap_or(co.currency_id)).await?;
-    Ok(Bank { gl: id(&ba, "account").ok_or_else(|| Error::invalid("the bank account has no GL account"))?, company: co, currency: code })
+    let currency_id = id(&ba, "currency").unwrap_or(co.currency_id);
+    let (code, _) = currency(hc.kernel, hc.ctx, hc.tx, currency_id).await?;
+    Ok(Bank { gl: id(&ba, "account").ok_or_else(|| Error::invalid("the bank account has no GL account"))?, company: co, currency: code, currency_id })
 }
 
 /// Submitted payment and journal entries on the bank's GL account dated within `[from, to]`
@@ -322,9 +324,10 @@ pub async fn vouchers(hc: &mut HookCtx<'_>, bank: &Bank, from: NaiveDate, to: Na
         let signed = if matches!(kind.as_deref(), Some("Pay" | "Internal Transfer")) { -amount } else { amount };
         out.push(Voucher { entity: "PaymentEntry", id: vid, number, date, amount: signed, party, reference, remark });
     }
-    // Journal entries are booked in the company currency.
-    if bank.currency == bank.company.currency_code {
-        let jes: Vec<(Uuid, Option<String>, NaiveDate, Decimal, Option<String>, Option<String>)> = sqlx::query_as(
+    // Journal entries: in the company currency from their lines; on a bank kept in another currency, in its currency
+    // as the ledger booked them (a line given in it, or one given in the company's at the day's rate).
+    let jes: Vec<(Uuid, Option<String>, NaiveDate, Decimal, Option<String>, Option<String>)> = if bank.currency == bank.company.currency_code {
+        sqlx::query_as(
             "select j.id, j.number, j.posting_date, sum(coalesce(a.debit, 0) - coalesce(a.credit, 0)), j.remark, string_agg(a.remarks, ' ') \
              from e_journal_entry j join e_journal_entry__accounts a on a.tenant_id = j.tenant_id and a.parent_id = j.id \
              where j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and a.account = $3 and j.posting_date between $4 and $5 \
@@ -337,10 +340,28 @@ pub async fn vouchers(hc: &mut HookCtx<'_>, bank: &Bank, from: NaiveDate, to: Na
         .bind(to)
         .bind(only)
         .fetch_all(&mut **hc.tx)
-        .await?;
-        for (vid, number, date, amount, remark, line_remarks) in jes {
-            out.push(Voucher { entity: "JournalEntry", id: vid, number, date, amount, party: None, reference: line_remarks, remark });
-        }
+        .await?
+    } else {
+        sqlx::query_as(
+            "select j.id, j.number, j.posting_date, sum(l.debit_txn - l.credit_txn), j.remark, string_agg(l.remarks, ' ') \
+             from e_journal_entry j join journal_entry e on e.tenant_id = j.tenant_id and e.source_entity = 'JournalEntry' and e.source_id = j.id \
+             and e.reversal_of is null join journal_line l on l.tenant_id = e.tenant_id and l.entry_id = e.id \
+             where j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and l.account_id = $3 and trim(l.currency) = $7 \
+             and j.posting_date between $4 and $5 and ($6::uuid is null or j.id = $6) \
+             group by j.id, j.number, j.posting_date, j.remark having sum(l.debit_txn - l.credit_txn) <> 0",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(bank.company.id)
+        .bind(bank.gl)
+        .bind(from)
+        .bind(to)
+        .bind(only)
+        .bind(&bank.currency)
+        .fetch_all(&mut **hc.tx)
+        .await?
+    };
+    for (vid, number, date, amount, remark, line_remarks) in jes {
+        out.push(Voucher { entity: "JournalEntry", id: vid, number, date, amount, party: None, reference: line_remarks, remark });
     }
     Ok(out)
 }
@@ -928,19 +949,25 @@ async fn make_journal(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result
     if account == bank.gl {
         return Err(Error::field("account", "choose an account other than the bank's own"));
     }
-    if bank.currency != bank.company.currency_code {
-        return Err(Error::invalid("journal entries are in the company currency; record a payment entry for this foreign-currency account"));
-    }
     let amount = money(d(doc, "unallocated_amount"));
     let dim = |k: &str| params.get(k).cloned().filter(|v| !v.is_null()).unwrap_or(Value::Null);
     let other = json!({"account": account.to_string(), "cost_center": dim("cost_center"), "project": dim("project"),
                        "remarks": s(doc, "description").unwrap_or_default()});
     let (mut debit, mut credit) = (json!({"account": bank.gl.to_string()}), other);
-    if signed(doc) < Decimal::ZERO {
+    let into_bank = signed(doc) >= Decimal::ZERO;
+    if !into_bank {
         std::mem::swap(&mut debit, &mut credit);
     }
     debit["debit"] = amount.clone();
-    credit["credit"] = amount;
+    credit["credit"] = amount.clone();
+    // A bank kept in another currency: its line in that currency at the day's rate, the other line balancing it.
+    if bank.currency != bank.company.currency_code {
+        let (bank_line, in_currency, other_line) =
+            if into_bank { (&mut debit, "debit_in_currency", &mut credit) } else { (&mut credit, "credit_in_currency", &mut debit) };
+        bank_line["currency"] = json!(bank.currency_id.to_string());
+        bank_line[in_currency] = amount;
+        other_line["balances"] = json!(true);
+    }
     let remark = params
         .get("remark")
         .and_then(Value::as_str)
