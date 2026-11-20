@@ -29,7 +29,10 @@ export interface Draft {
 }
 
 export interface WithoutRate {
-  journal_entry: string;
+  /** What posted it: a journal entry, or another app's record that posted straight through the ledger. */
+  voucher_type: string;
+  voucher_id: string;
+  voucher_no?: string | null;
   posting_date: string;
   account: string;
   amount: string;

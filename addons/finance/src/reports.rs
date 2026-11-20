@@ -343,7 +343,7 @@ pub(crate) async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Re
     if !missing.is_empty() {
         rows.push(json!({"description": format!("Not in the balance above: posted in {} without the amount in {code}", co.currency), "_bold": true}));
         for w in &missing {
-            rows.push(json!({"date": w.on, "voucher_type": "JournalEntry", "voucher_id": w.journal, "voucher_no": w.number,
+            rows.push(json!({"date": w.on, "voucher_type": w.entity, "voucher_id": w.id, "voucher_no": w.number,
                 "description": format!("{} {}", w.amount, co.currency), "_indent": 1}));
         }
     }

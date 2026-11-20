@@ -264,15 +264,7 @@ impl DocHook for JournalEntryHook {
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         if !lacking.is_empty() {
             let number = s(doc, "number").unwrap_or_default().to_string();
-            // A journal in the company's currency on the account would itself be converted: an Exchange Revaluation's
-            // line in the company's currency is not, so it moves the account's own balance alone.
-            let body = format!(
-                "{number} posted {} without the amount in the account's own currency, so that account's own balance lacks it. \
-                 Add the rate where there is none, then book a journal entry of type Exchange Revaluation with two lines on the account: \
-                 the missing amount in its currency, and the same value in the company's currency the other way round (an Exchange \
-                 Revaluation leaves that line unconverted), so that only the account's own balance moves.",
-                lacking.join("; ")
-            );
+            let body = without_rate_notice(&number, &lacking);
             tell_accounts_managers(hc.tx, hc.ctx.tenant, Some(co.id), &format!("Journal {number} posted without a rate"), &body, "JournalEntry", Some(jid))
                 .await?;
         }
@@ -317,6 +309,19 @@ impl DocHook for JournalEntryHook {
         }
         settle_line(hc, doc, params).await.map(Some)
     }
+}
+
+/// What the accounts managers are told when `what` posted `lacking` (each "500 INR on USD Bank (why)") in the company's
+/// currency on accounts kept in another, without that currency's amount. A journal in the company's currency on such an
+/// account is itself converted; an Exchange Revaluation's line in the company's currency is not, so the advice names it.
+pub(crate) fn without_rate_notice(what: &str, lacking: &[String]) -> String {
+    format!(
+        "{what} posted {} without the amount in the account's own currency, so that account's own balance lacks it. Add the rate where \
+         there is none, then book a journal entry of type Exchange Revaluation with two lines on the account: the missing amount in its \
+         currency, and the same value in the company's currency the other way round (an Exchange Revaluation leaves that line \
+         unconverted), so that only the account's own balance moves.",
+        lacking.join("; ")
+    )
 }
 
 /// Tells `title` and `body`, linked to `entity` `record`, to the Accounts Managers of `company` as the platform counts

@@ -132,6 +132,13 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
     if entry.reversal_of.is_none() {
         crate::dimensions::prepare(tx, ctx, entry.company, &mut entry.lines).await?;
     }
+    // A journal entry has the rule in its own hooks (and marks its lines); an exchange revaluation's lines change the
+    // company's figure alone; a reversal mirrors what it reverses.
+    let lacking = if entry.reversal_of.is_none() && !matches!(entry.source_entity.as_str(), "JournalEntry" | "ExchangeRevaluation") {
+        own_currency(tx, ctx, &mut entry).await?
+    } else {
+        Vec::new()
+    };
     let mut merged: BTreeMap<MergeKey, Line> = BTreeMap::new();
     for l in entry.lines {
         // A line in another currency than the company's keeps its own rate and side: merged across them, its amount in
@@ -221,7 +228,84 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
         .bind(Value::Array(line_rows))
         .execute(&mut **tx)
         .await?;
+    if !lacking.is_empty() {
+        // Told in the posting's own transaction: nobody hears of an entry that does not post.
+        let what = entry.source_number.clone().unwrap_or_else(|| format!("{} {}", entry.source_entity, entry.source_id));
+        let body = crate::accounting::without_rate_notice(&what, &lacking);
+        crate::accounting::tell_accounts_managers(
+            tx,
+            ctx.tenant,
+            Some(entry.company),
+            &format!("{what} posted without a rate"),
+            &body,
+            &entry.source_entity,
+            Some(entry.source_id),
+        )
+        .await?;
+    }
     Ok(Some(entry_id))
+}
+
+/// The rule of a journal entry's lines (accounting 0.4.1) for every other caller of [`post`]: a line given in the company's
+/// currency on an account kept in another carries that currency's amount at the entry's day's rate, so the account's own
+/// balance moves and no caller has to change. With no rate, or when the amount is less than that currency's smallest unit
+/// at it, the line is posted as before 0.4.1, in the company's currency alone; the lines so left are returned ("500 INR on
+/// USD Bank (why)") for the accounts managers' notice. Company figures are never changed, so the entry balances as given.
+async fn own_currency(tx: &mut Tx, ctx: &Ctx, entry: &mut Entry) -> Result<Vec<String>> {
+    let accounts: Vec<Uuid> = entry.lines.iter().map(|l| l.account).collect();
+    // Each account kept in another currency than the company's: its name, that currency's id, code and places, the
+    // company's currency (id and code) and how it rounds.
+    type Kept = (Uuid, String, Uuid, String, i32, Uuid, String, String);
+    let kept: Vec<Kept> = sqlx::query_as(
+        "select a.id, coalesce(a.account_name, ''), c.id, c.code, coalesce(c.precision, 2)::int4, k.id, k.code, coalesce(co.rounding_mode, '') \
+         from e_account a join e_company co on co.tenant_id = a.tenant_id and co.id = $3 \
+         join e_currency k on k.tenant_id = co.tenant_id and k.id = co.default_currency \
+         join e_currency c on c.tenant_id = a.tenant_id and c.id = a.account_currency \
+         where a.tenant_id = $1 and a.id = any($2) and a.account_currency <> co.default_currency",
+    )
+    .bind(ctx.tenant)
+    .bind(&accounts)
+    .bind(entry.company)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut lacking = Vec::new();
+    for l in entry.lines.iter_mut() {
+        let Some((_, name, cur, code, places, base, base_code, rounding)) = kept.iter().find(|k| k.0 == l.account) else { continue };
+        // Given in another currency (the account's, or a party's): its own amount stands.
+        if l.currency.trim() != base_code || l.amount.is_zero() {
+            continue;
+        }
+        let rounding = if rounding == "Half Even" { ferrum_calc::Rounding::HalfEven } else { ferrum_calc::Rounding::HalfUp };
+        let rate = day_rate(tx, ctx.tenant, *cur, *base, entry.posting_date).await?;
+        let txn = rate.map(|r| round_as(l.amount / r, (*places).max(0) as u32, rounding)).filter(|t| !t.is_zero());
+        match (rate, txn) {
+            (Some(r), Some(txn)) => {
+                l.amount_txn = txn;
+                l.currency = code.clone();
+                l.exchange_rate = r;
+            }
+            (Some(r), None) => lacking.push(format!("{} {base_code} on {name} (less than the smallest amount of {code} at {r})", l.amount.abs())),
+            (None, _) => lacking.push(format!("{} {base_code} on {name} (no rate from {code} to {base_code} on {})", l.amount.abs(), entry.posting_date)),
+        }
+    }
+    Ok(lacking)
+}
+
+/// The rate from currency `from` to `to` on `on`, as Exchange Rate gives it: the latest given from one to the other by
+/// that day, else the latest the other way round, inverted.
+async fn day_rate(tx: &mut Tx, tenant: Uuid, from: Uuid, to: Uuid, on: NaiveDate) -> Result<Option<Decimal>> {
+    let found: Option<(Decimal, bool)> = sqlx::query_as(
+        "select rate, from_currency = $2 from e_exchange_rate where tenant_id = $1 and valid_from <= $4 and rate <> 0 \
+         and ((from_currency = $2 and to_currency = $3) or (from_currency = $3 and to_currency = $2)) \
+         order by from_currency = $2 desc, valid_from desc limit 1",
+    )
+    .bind(tenant)
+    .bind(from)
+    .bind(to)
+    .bind(on)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(found.map(|(r, direct)| if direct { r } else { (Decimal::ONE / r).round_dp(9) }))
 }
 
 /// Has a reading transaction see, through `journal_line_in_book`, the common ledger and `book`'s own

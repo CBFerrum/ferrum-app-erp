@@ -63,7 +63,7 @@ another app's operations*). Each is an action on the company (`id` is the compan
 
 | Operation | Input (`params`) | Answer |
 |---|---|---|
-| `accounting.company.post_entry` (accounting ^0.4) | `posting_date`, `source_entity` (the app's entity), `source_id` (a record of it), `source_number?`, `memo?`, `lines`: JSON `[{account, debit \| credit, currency?, amount_txn?, exchange_rate?, customer?, supplier?, cost_center?, project?, against_entity?, against_id?, remarks?}]`, 1 to 500 | `{entry, debit, credit}` (`entry` null when every line nets to nothing) |
+| `accounting.company.post_entry` (accounting ^0.4) | `posting_date`, `source_entity` (the app's entity), `source_id` (a record of it), `source_number?`, `memo?`, `lines`: JSON `[{account, debit \| credit, currency?, amount_txn?, exchange_rate?, customer?, supplier?, cost_center?, project?, against_entity?, against_id?, remarks?}]`, 1 to 500; `amount_txn` at most its currency's decimals; a line without `currency` on an account kept in another takes that one's amount at the day's rate (`ledger::post`) | `{entry, debit, credit}` (`entry` null when every line nets to nothing) |
 | `accounting.company.reverse_entries` (accounting ^0.4) | `source_entity`, `source_id`, `on?` (today) | `{reversed}` |
 | `selling.company.customer_for` (selling ^0.2) | `name`, `email?`, `phone?` | `{customer, created}` |
 | `selling.company.customers_of` (selling ^0.2) | `email` | `{customers}` |
@@ -123,7 +123,7 @@ operations:
 
 | Operation | What it does | What it refuses | Called twice |
 |---|---|---|---|
-| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one journal entry; `None` when they net to nothing | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
+| `ledger::post(tx, ctx, Entry, precision) -> Option<Uuid>` | Merges lines by account and dimensions, rounds them, and appends one journal entry; `None` when they net to nothing. A line given in the company's currency on an account kept in another takes that currency's amount at the day's rate (not for a journal entry, which has the rule itself, an exchange revaluation or a reversal); with no rate, or under that currency's smallest unit, it is posted in the company's currency alone and the company's accounts managers are told | `Error::Internal` when debit and credit differ after rounding; a dimension value that is not one, or an account's required dimension left empty; the database, a closed period or a day no period holds | Two entries |
 | `ledger::reverse(tx, ctx, entity, id, fallback, precision) -> usize` | Appends a reversal of each entry of the source not reversed yet, on its own date or `fallback` when that period is closed; returns how many | | Reverses once |
 | `ledger::reverse_on(tx, ctx, entity, id, on, precision) -> usize` | The same, every reversal dated `on` | The database, when `on`'s period is closed or there is none | Reverses once |
 | `ledger::open_item(tx, ctx, &OpenItem)` | Opens the receivable or payable of an invoice, whose id it takes; nothing for a zero amount | An item already open with that id | Refused |

@@ -197,7 +197,7 @@ export function Revalue() {
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">{t("Journal entry")}</th>
+                  <th scope="col">{t("Posted by")}</th>
                   <th scope="col">{t("Date")}</th>
                   <th scope="col">{t("Account")}</th>
                   <th scope="col" className="num">
@@ -209,7 +209,7 @@ export function Revalue() {
                 {d.without_rate?.map((r, i) => (
                   <tr key={i}>
                     <td>
-                      <LinkTitle to="JournalEntry" id={r.journal_entry} />
+                      <Link to={`/e/${encodeURIComponent(r.voucher_type)}/${encodeURIComponent(r.voucher_id)}`}>{r.voucher_no || r.voucher_id}</Link>
                     </td>
                     <td>{formatDate(r.posting_date)}</td>
                     <td>

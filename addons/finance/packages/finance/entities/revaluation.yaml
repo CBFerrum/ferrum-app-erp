@@ -17,7 +17,9 @@
   label: Posted Without a Rate
   kind: child
   fields:
-    - {name: journal_entry, type: link, to: JournalEntry, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
+    - {name: voucher_type, type: data, read_only: true, in_list: true, label: Posted By, description: "A journal entry, or another app's record that posted straight to the ledger"}
+    - {name: voucher_id, type: data, read_only: true}
+    - {name: voucher_no, type: data, read_only: true, in_list: true, label: Number}
     - {name: posting_date, type: date, read_only: true, in_list: true}
     - {name: account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
     - {name: amount, type: currency, read_only: true, in_list: true, label: In the Company's Currency, description: "Debit positive, credit negative"}
