@@ -22,6 +22,73 @@
   rules:
     - {name: something_to_apply, check: "doc.discount_percent > 0.0 || doc.rate > 0.0", message: "Set a discount or a rate"}
 
+- name: SalesAgreementItem
+  label: Sales Agreement Item
+  kind: child
+  fields:
+    - {name: item, type: link, to: Item, required: true, in_list: true}
+    - {name: item_name, type: data, fetch_from: item.item_name, read_only: true}
+    - {name: qty, type: decimal, required: true, min: "0.000000001", in_list: true, label: Agreed Quantity, description: "In the item's stock unit"}
+    - {name: rate, type: currency, required: true, min: "0", in_list: true, label: Agreed Price, description: "Per stock unit, in the agreement's currency"}
+    - {name: ordered_qty, type: decimal, read_only: true, no_copy: true, in_list: true, label: Ordered, description: "On submitted orders, less what they were closed short of"}
+
+- name: SalesAgreement
+  label: Sales Agreement
+  kind: document
+  module: selling
+  submittable: true
+  company_scoped: true
+  title_field: customer_name
+  numbering: {template: "SA-{FY}-{seq:5}", on: submit, date_field: posting_date}
+  description: "Quantities and prices agreed with a customer for a period; sales orders that name it take its price and draw it down."
+  fields:
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_filter: true}
+    - {name: customer, type: link, to: Customer, required: true, in_filter: true}
+    - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
+    - {name: posting_date, type: date, required: true, default_expr: today, label: Agreement Date, in_list: true}
+    - {name: from_date, type: date, required: true, in_list: true, label: Valid From}
+    - {name: to_date, type: date, required: true, in_list: true, label: Valid To}
+    - {name: currency, type: link, to: Currency, description: "The company's when empty"}
+    - {name: items, type: table, of: SalesAgreementItem, required: true}
+    - {name: per_ordered, type: percent, read_only: true, no_copy: true, in_list: true, label: Ordered (%)}
+    - {name: status, type: select, options: [Draft, Open, Fulfilled, Closed, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: terms, type: text}
+  rules:
+    - {name: dates_in_order, check: "doc.to_date >= doc.from_date", message: "An agreement cannot end before it starts"}
+  actions:
+    - name: make_order
+      label: Create Sales Order
+      docstatus: [1]
+      permission: read
+      condition: "doc.status == 'Open'"
+      params: []
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {entity: {type: string, const: SalesOrder}, id: {type: string, format: uuid, x-ferrum-link: SalesOrder}, number: {type: [string, "null"]}}}
+        completion: "A draft sales order for what is left of each line, at the agreed prices, naming the agreement, exists for a caller allowed to create one, committed with this receipt"
+    - name: close
+      label: Close
+      docstatus: [1]
+      permission: submit
+      condition: "doc.status == 'Open' || doc.status == 'Fulfilled'"
+      params: []
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: string}}}
+        completion: "The agreement is Closed: no further order can draw on it"
+        compensate_with: reopen
+    - name: reopen
+      label: Re-open
+      docstatus: [1]
+      permission: submit
+      condition: "doc.status == 'Closed'"
+      params: []
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: string}}}
+        completion: "Orders can draw on it again: its status is Open or Fulfilled by what is ordered"
+  list: {columns: [number, customer_name, from_date, to_date, per_ordered, status], sort: posting_date desc}
+
 - name: SalesOrderItem
   label: Sales Order Item
   kind: child
@@ -37,6 +104,9 @@
     - {name: price_basis, type: data, hidden: true, no_copy: true, description: "What the price was set for: item, unit, factor and price"}
     - {name: price_list_rate, type: currency, read_only_if: "doc.item != null", description: "From the price list for an item; entered for a line without one"}
     - {name: discount_percent, type: percent, min: "0", max: "100"}
+    - {name: agreement, type: link, to: SalesAgreement, link_filters: {company: {from: parent.company}, customer: {from: parent.customer}, status: Open}, label: Agreement,
+       description: "Takes the agreement's price and counts against its quantity"}
+    - {name: agreement_line, type: data, hidden: true, read_only: true, no_copy: true}
     - {name: promotion_percent, type: data, hidden: true, label: Promotions' Share,
        description: "The exact share of the line's amount promotions take off (after its own discount), kept as text so a return gives back the same share"}
     - {name: added_by_promotion, type: link, to: Promotion, hidden: true, label: Added By Promotion, description: "A free item a promotion added"}
@@ -46,6 +116,9 @@
     - {name: amount, type: currency, read_only: true, in_list: true}
     - {name: net_amount, type: currency, read_only: true}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, label: Supplier Delivers, description: "The supplier sends it straight to the customer: no stock is held, reserved or issued for this line"}
+    - {name: drop_ship_supplier, type: link, to: Supplier, label: Delivering Supplier, visible_if: "doc.drop_ship", required_if: "doc.drop_ship"}
+    - {name: drop_ship_ordered_qty, type: decimal, read_only: true, no_copy: true, label: Ordered from Supplier}
     - {name: delivery_date, type: date}
     - {name: available_qty, type: decimal, read_only: true, no_copy: true, label: Available When Entered,
        description: "In stock units, at the line's warehouse when the draft was last saved: on hand less what open orders have yet to take"}
@@ -113,8 +186,21 @@
     - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
        description: "Lets this order through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   actions:
-    - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'"}
-    - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'"}
+    - name: make_drop_ship_order
+      label: Order from Supplier
+      docstatus: [1]
+      permission: read
+      condition: "doc.status != 'Closed'"
+      params:
+        - {name: supplier, type: link, to: Supplier, label: Supplier, description: "Only this supplier's lines; empty: every supplier with lines left to order"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {orders: {type: array, items: {type: object, properties: {entity: {type: string, const: PurchaseOrder}, id: {type: string, format: uuid, x-ferrum-link: PurchaseOrder}, number: {type: [string, "null"]}, supplier: {type: string, format: uuid}}}}}}
+        completion: "A draft purchase order per supplier for the lines the supplier delivers that are not yet ordered, shipped to the customer, exists for a caller allowed to create one, committed with this receipt"
+    - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.per_delivered < 100.0 && doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: DeliveryNote}, id: {type: string, format: uuid, x-ferrum-link: DeliveryNote}, number: {type: [string, "null"]}}}, completion: "A draft Delivery Note of what is still open to deliver on the order exists, its lines pointing back to the order's, for a caller allowed to create one; nothing is delivered until it is submitted, committed with this receipt"}}
+    - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: SalesInvoice}, id: {type: string, format: uuid, x-ferrum-link: SalesInvoice}, number: {type: [string, "null"]}}}, completion: "A draft Sales Invoice of what is still open to bill on the order exists, its lines pointing back to the order's, for a caller allowed to create one; nothing is billed until it is submitted, committed with this receipt"}}
     - name: update_items
       label: Update Items
       docstatus: [1]
@@ -126,10 +212,14 @@
         - {name: qty, type: data, label: Quantity, description: "The line's new quantity, never below what was delivered or billed on it. 0 removes a line with nothing delivered or billed"}
         - {name: price, type: data, label: Price, description: "For a line without an item: its new price, for what is not yet billed. Items take theirs from the price list and pricing rules"}
         - {name: delivery_date, type: date, label: Delivery Date, description: "Moves the order's delivery date, and its lines' that had it"}
-    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
-    - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'"}
-    - {name: reserve_stock, label: Reserve Stock, docstatus: [1], permission: submit, condition: "doc.status != 'Closed' && doc.per_delivered < 100.0"}
-    - {name: release_stock, label: Release Reservation, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'"}
+    - {name: close, label: Close, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The order is Closed: what was still open on each line is recorded as closed short, and the stock it held is released, committed with this receipt", compensate_with: reopen}}
+    - {name: reopen, label: Re-open, docstatus: [1], permission: submit, condition: "doc.status == 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The order is open again: the quantities closed short are cleared and its status and percentages follow what was delivered and billed, committed with this receipt", compensate_with: close}}
+    - {name: reserve_stock, label: Reserve Stock, docstatus: [1], permission: submit, condition: "doc.status != 'Closed' && doc.per_delivered < 100.0",
+       contract: {effect: transactional_action, returns: {type: object, properties: {lines: {type: array, items: {type: object, properties: {line: {type: string, format: uuid}, reserved: {type: string}, backorder: {type: string}}}}}}, completion: "Each open stock line of the order holds what is free in its warehouse under the item's Hold policy and the rest is back-ordered, committed with this receipt", compensate_with: release_stock}}
+    - {name: release_stock, label: Release Reservation, docstatus: [1], permission: submit, condition: "doc.status != 'Closed'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {released: {type: integer}}}, completion: "Every line of the order gives back what it held and holds nothing, committed with this receipt", compensate_with: reserve_stock}}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: DeliveryNoteItem
@@ -212,12 +302,15 @@
     - {name: credit_release_reason, type: data, perm_group: credit, no_copy: true, label: Credit Release Reason,
        description: "Lets this delivery through over the customer's credit limit; filled in by someone allowed to release credit, and kept"}
   actions:
-    - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return"}
-    - {name: make_sales_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return"}
+    - {name: make_sales_invoice, label: Create Sales Invoice, docstatus: [1], permission: read, condition: "doc.per_billed < 100.0 && !doc.is_return",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: SalesInvoice}, id: {type: string, format: uuid, x-ferrum-link: SalesInvoice}, number: {type: [string, "null"]}}}, completion: "A draft Sales Invoice of what this delivery has not billed yet exists, its lines pointing back to the delivery's, with the carrier labels charged to the customer, for a caller allowed to create one; nothing is billed until it is submitted, committed with this receipt"}}
+    - {name: make_sales_return, label: Create Return, docstatus: [1], permission: read, condition: "!doc.is_return",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: DeliveryNote}, id: {type: string, format: uuid, x-ferrum-link: DeliveryNote}, number: {type: [string, "null"]}}}, completion: "A draft return Delivery Note of what can still come back exists against this delivery, for a caller allowed to create one; no stock moves until it is submitted, committed with this receipt"}}
     - {name: make_carrier_shipment, label: Ship by Carrier, docstatus: [1], permission: read, condition: "!doc.is_return",
        params: [{name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "The company's only enabled connection when empty"},
                 {name: weight, label: Weight, required: true, description: "Of the first parcel, in the connection's weight unit; add more parcels on the shipment"},
-                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}]}
+                {name: length, label: Length}, {name: width, label: Width}, {name: height, label: Height}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: CarrierShipment}, id: {type: string, format: uuid, x-ferrum-link: CarrierShipment}, number: {type: [string, "null"]}}}, completion: "A draft Carrier Shipment of this delivery with one parcel of the weight given exists, for a caller allowed to create one; the carrier is not contacted, committed with this receipt"}}
   list: {columns: [number, customer_name, posting_date, grand_total, status], sort: posting_date desc}
 
 - name: SalesInvoiceItem
@@ -254,6 +347,7 @@
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}}}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}, over the invoice's"}
     - {name: warehouse, type: link, to: Warehouse, link_filters: {company: {from: parent.company}, is_group: false}}
+    - {name: drop_ship, type: check, read_only: true, label: Supplier Delivers}
     - {name: sales_order, type: link, to: SalesOrder, read_only: true}
     - {name: so_line, type: data, read_only: true}
     - {name: delivery_note, type: link, to: DeliveryNote, read_only: true}
@@ -283,6 +377,8 @@
   module: selling
   submittable: true
   company_scoped: true
+  # The portal shows these by their customer (src/portal.rs): a merge that moves it is an administrator's.
+  reach_links: [customer]
   title_field: customer_name
   numbering: {template: "SINV-{FY}-{seq:5}", gapless: true, on: submit, date_field: posting_date}
   search_fields: [po_no]
@@ -368,17 +464,22 @@
     - {name: debit_note_needs_source, check: "!doc.is_debit_note || (doc.debit_note_against != null && !doc.is_return)", on: submit,
        message: "A debit note names the invoice it charges more on, and is not a credit note"}
   actions:
-    - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0"}
+    - {name: make_payment, label: Record Payment, docstatus: [1], permission: read, condition: "doc.outstanding_amount > 0.0",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A draft Payment Entry for the invoice's outstanding amount exists, allocated to it, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
     - {name: make_refund, label: Refund, docstatus: [1], permission: read, condition: "doc.is_return && doc.outstanding_amount < 0.0",
        params: [{name: store_credit, label: Into New Store Credit, type: link, to: StoredValueKind,
-                 description: "Refund onto a new account of this kind held by the customer, instead of money. Empty: back onto the stored value that paid the sale, when its kind says so, else in money"}]}
+                 description: "Refund onto a new account of this kind held by the customer, instead of money. Empty: back onto the stored value that paid the sale, when its kind says so, else in money"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A draft refund Payment Entry for the credit left on this credit note exists, allocated to it (onto stored value when the sale was paid with it or a store-credit kind is given), for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
     - {name: make_credit_note, label: Create Credit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
        params: [{name: credit_percent, type: data, label: Credit of Price Only (%),
-                 description: "Empty: the goods come back, for what is still returnable. A figure (10): no goods come back, and that share of each line's price is credited"}]}
+                 description: "Empty: the goods come back, for what is still returnable. A figure (10): no goods come back, and that share of each line's price is credited"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: SalesInvoice}, id: {type: string, format: uuid, x-ferrum-link: SalesInvoice}, number: {type: [string, "null"]}}}, completion: "A draft credit note against the invoice exists, for the goods that can still come back or the share of price given, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
     - {name: make_debit_note, label: Create Debit Note, docstatus: [1], permission: read, condition: "!doc.is_return",
        params: [{name: charge_percent, type: data, label: Charge on the Price (%),
-                 description: "Empty: the lines as invoiced, to change to what was charged short. A figure (5): that share of each line's price is charged on top"}]}
-    - {name: make_inter_company_invoice, label: Create Purchase Invoice in the Group Company, docstatus: [1], permission: read, condition: "doc.customer_company != null && !doc.is_return"}
+                 description: "Empty: the lines as invoiced, to change to what was charged short. A figure (5): that share of each line's price is charged on top"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: SalesInvoice}, id: {type: string, format: uuid, x-ferrum-link: SalesInvoice}, number: {type: [string, "null"]}}}, completion: "A draft debit note against the invoice exists, its lines as invoiced or at the share of price given, for a caller allowed to create one; nothing is posted until it is submitted, committed with this receipt"}}
+    - {name: make_inter_company_invoice, label: Create Purchase Invoice in the Group Company, docstatus: [1], permission: read, condition: "doc.customer_company != null && !doc.is_return",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PurchaseInvoice}, id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, number: {type: [string, "null"]}}}, completion: "A draft Purchase Invoice of the sale exists in the books of the group company that is the customer, from the supplier that represents the seller, for a caller allowed to create one; none is made while one stands, committed with this receipt"}}
   list: {columns: [number, customer_name, posting_date, grand_total, outstanding_amount, status], sort: posting_date desc}
 
 - name: AppliedPromotion

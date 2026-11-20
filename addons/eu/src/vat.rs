@@ -52,10 +52,10 @@ pub fn iso_code(vies: &str) -> &str {
 }
 
 /// The accounts EU VAT posts to, by their numbers in a company's chart: the standard chart's input
-/// and output tax, and the two the add-on adds.
+/// and output tax, and the two the add-on adds (numbers neither the standard chart nor a member state uses: the chart's 2150 is Deferred Revenue, Spain's 2152 the equivalence surcharge).
 pub const INPUT_TAX: &str = "1151";
 pub const OUTPUT_TAX: &str = "2131";
-pub const OSS_VAT: &str = "2150";
+pub const OSS_VAT: &str = "2153";
 pub const REVERSE_CHARGE_VAT: &str = "2151";
 const ADDED_ACCOUNTS: &[(&str, &str)] = &[(OSS_VAT, "OSS VAT Payable"), (REVERSE_CHARGE_VAT, "VAT Owed (reverse charge)")];
 
@@ -366,10 +366,9 @@ pub async fn standard_rate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, iso: &str, on: &s
     })
 }
 
-/// The id of a company's account by its number (the EU's VAT accounts are found so).
+/// The id of a company's account standing for the standard number (the EU's VAT accounts are found so).
 pub async fn account(k: &Kernel, ctx: &Ctx, tx: &mut Tx, company: Uuid, number: &str) -> Result<String> {
-    let found = find(k, ctx, tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", number)], None, 1).await?;
-    found.first().and_then(|a| s(a, "id")).map(str::to_string).ok_or_else(|| {
+    ferrum_app_erp::setup::standard_account(k, ctx, tx, company, number).await?.ok_or_else(|| {
         let name = ADDED_ACCOUNTS.iter().find(|(n, _)| *n == number).map(|(_, a)| *a).unwrap_or(if number == INPUT_TAX { "Input Tax" } else { "Output Tax" });
         Error::invalid(format!("the company has no account {number} ({name}) for EU VAT: run Set Up EU VAT Accounts on it"))
     })
@@ -383,28 +382,20 @@ async fn add_accounts(hc: &mut HookCtx<'_>, company: Uuid) -> Result<Vec<String>
     if home_of(&co).is_none() {
         return Err(Error::invalid("the company is not in an EU member state (its country)"));
     }
-    let parent =
-        find(hc.kernel, hc.ctx, hc.tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_name", "Duties and Taxes")], None, 1)
-            .await?;
-    let parent = parent
-        .first()
-        .and_then(|a| s(a, "id"))
-        .map(str::to_string)
-        .ok_or_else(|| Error::invalid("the company's chart has no Duties and Taxes group: create its chart of accounts first"))?;
+    use ferrum_app_erp::setup::{ensure_account, standard_account};
+    // Under the group standing for Duties and Taxes (2130), whatever the chart calls it.
+    if standard_account(hc.kernel, &sctx, hc.tx, company, "2130").await?.is_none() {
+        return Err(Error::invalid("the company's chart has no Duties and Taxes group: create its chart of accounts first"));
+    }
     let mut made = Vec::new();
     for (number, name) in ADDED_ACCOUNTS {
-        let exists =
-            find(hc.kernel, hc.ctx, hc.tx, "Account", vec![Filter::eq("company", company.to_string()), Filter::eq("account_number", *number)], None, 1).await?;
-        if !exists.is_empty() {
+        if standard_account(hc.kernel, &sctx, hc.tx, company, number).await?.is_some() {
             continue;
         }
-        let a = json!({"account_name": name, "account_number": number, "company": company.to_string(), "is_group": false, "root_type": "Liability",
-                       "account_type": "Tax", "parent_account": parent, "account_currency": co.get("default_currency")});
-        if let Value::Object(a) = a {
-            hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await?;
-        }
+        ensure_account(hc.kernel, &sctx, hc.tx, company, number, name, "2130", "Liability", "Tax").await?;
         made.push(number.to_string());
     }
+    let _ = co;
     Ok(made)
 }
 

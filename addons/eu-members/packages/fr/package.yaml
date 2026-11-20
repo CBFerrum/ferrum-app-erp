@@ -34,8 +34,348 @@ overlays:
           read_only: true, no_copy: true, in_filter: true}}
       - {op: add_field, after: fr_pa_status, field: {name: fr_pa_id, type: data, label: PA Reference, read_only: true, no_copy: true}}
       - {op: add_field, after: fr_pa_id, field: {name: fr_pa_error, type: text, label: PA Message, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: fr_ubl, group: e-Invoice, label: Download E-invoice (UBL), docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: fr_send_pa, group: e-Invoice, label: Send to the PA, docstatus: [1], permission: submit, condition: "doc.fr_pa_status != 'Deposited'"}}
+      - {op: add_action, action: {name: fr_ubl, group: e-Invoice, label: Download E-invoice (UBL), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The UBL e-invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: fr_send_pa, group: e-Invoice, label: Send to the PA, docstatus: [1], permission: submit, condition: "doc.fr_pa_status != 'Deposited'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to the company's approved platform (PA) is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: fr_record_pa, group: e-Invoice, label: Record the PA's Status, docstatus: [1], permission: submit,
           params: [{name: status, label: Status, type: select, options: [Deposited, Rejected, Refused, Disputed, Approved, Paid], required: true}, {name: pa_id, label: PA Reference, type: data},
-                   {name: message, label: Message, type: text}]}}
+                   {name: message, label: Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The platform's status for the invoice (Deposited, Rejected, Refused, Disputed, Approved or Paid) and its reference are recorded on it, committed with this receipt"}}}
+
+seed:
+  - entity: ChartTemplate
+    key: [template_name]
+    records:
+      - template_name: "France: Plan comptable général"
+        country: FR
+        notes: "Not yet reviewed by an accountant. Source, read on 2026-11-19: the Autorité des normes comptables' PCG, version consolidée au 1er janvier 2026 of règlement ANC n° 2014-03, article 1121-1 (plan de comptes): https://www.anc.gouv.fr/files/anc/files/1_Normes_fran%C3%A7aises/Plans%20comptables/2026/PCG--1er-janvier-2026.pdf. Rows: classes 1 to 7 as the plan titles them, their two-digit accounts and three-digit accounts, and the longer accounts the roles below need (44566, 44571, 4421, 4456, 4457); class 8 (special accounts) is not listed by the plan's table and is left out. Classes 1 and 4 are not rows (they mix balances): their two-digit accounts are the roots, and an account whose nature differs from its parent's (409, 419, 425, 439, 4456 and the like) stands on its own. Entries the plan only describes in brackets (36, 38, 608, 672) and the range 471 to 473 are not rows. Added, not in the plan: 890 Bilan d'ouverture (named in the text of the plan, for opening balances, standing for 3300) and Z01 (absorbed production costs, 5130). Roles: 1111 411, 2111 401, 2121 408, 1121 512, 1131 53, 1141 37, 1142 331, 1150 4456, 1151 44566, 1152 444, 2130 4457, 2131 44571, 2132 4421, 1170 486, 2150 487, 3200 110, 4110 707, 5110 607, 5120 6037, 5210 628, 5260 666, 5270 658: which account plays which role is a reading of their names, not the plan's. A name the text gives to more than one account carries the account's number in brackets, because a company's account names are unique."
+        accounts:
+          - {account_number: "10", account_name: "Capital et réserves", is_group: true, root_type: Equity}
+          - {account_number: "101", account_name: "Capital", parent_number: "10", root_type: Equity}
+          - {account_number: "102", account_name: "Fonds fiduciaires", parent_number: "10", root_type: Equity}
+          - {account_number: "104", account_name: "Primes liées au capital", parent_number: "10", root_type: Equity}
+          - {account_number: "105", account_name: "Écarts de réévaluation", parent_number: "10", root_type: Equity}
+          - {account_number: "106", account_name: "Réserves", parent_number: "10", root_type: Equity}
+          - {account_number: "107", account_name: "Écart d'équivalence", parent_number: "10", root_type: Equity}
+          - {account_number: "108", account_name: "Compte de l'exploitant", parent_number: "10", root_type: Equity}
+          - {account_number: "109", account_name: "Actionnaires : capital souscrit - non appelé", parent_number: "10", root_type: Equity}
+          - {account_number: "11", account_name: "Report à nouveau", is_group: true, root_type: Equity}
+          - {account_number: "110", account_name: "Report à nouveau - solde créditeur", parent_number: "11", root_type: Equity, account_type: Equity, standard_number: "3200"}
+          - {account_number: "119", account_name: "Report à nouveau - solde débiteur", parent_number: "11", root_type: Equity}
+          - {account_number: "12", account_name: "Résultat de l'exercice", is_group: true, root_type: Equity}
+          - {account_number: "120", account_name: "Résultat de l'exercice - bénéfice", parent_number: "12", root_type: Equity}
+          - {account_number: "129", account_name: "Résultat de l'exercice – perte", parent_number: "12", root_type: Equity}
+          - {account_number: "13", account_name: "Subventions d'investissement", is_group: true, root_type: Equity}
+          - {account_number: "131", account_name: "Subventions d'investissement octroyées", parent_number: "13", root_type: Equity}
+          - {account_number: "139", account_name: "Subventions d'investissement inscrites au compte de résultat", parent_number: "13", root_type: Equity}
+          - {account_number: "14", account_name: "Provisions réglementées", is_group: true, root_type: Equity}
+          - {account_number: "143", account_name: "Provisions réglementées pour hausse de prix", parent_number: "14", root_type: Equity}
+          - {account_number: "145", account_name: "Amortissements dérogatoires", parent_number: "14", root_type: Equity}
+          - {account_number: "148", account_name: "Autres provisions réglementées", parent_number: "14", root_type: Equity}
+          - {account_number: "15", account_name: "Provisions", is_group: true, root_type: Liability}
+          - {account_number: "151", account_name: "Provisions pour risques", parent_number: "15", root_type: Liability}
+          - {account_number: "152", account_name: "Provisions pour charges", parent_number: "15", root_type: Liability}
+          - {account_number: "16", account_name: "Emprunts et dettes assimilées, fonds non remboursables et avances conditionnées", is_group: true, root_type: Liability}
+          - {account_number: "161", account_name: "Emprunts obligataires convertibles si non-inscrits dans le compte 167", parent_number: "16", root_type: Liability}
+          - {account_number: "162", account_name: "Obligations représentatives de passifs nets remis en fiducie si non-inscrites dans le compte 167", parent_number: "16", root_type: Liability}
+          - {account_number: "163", account_name: "Autres emprunts obligataires si non-inscrits dans le compte 167", parent_number: "16", root_type: Liability}
+          - {account_number: "164", account_name: "Emprunts auprès des établissements de crédit si non-inscrits dans le compte 167", parent_number: "16", root_type: Liability}
+          - {account_number: "165", account_name: "Dépôts et cautionnements reçus", parent_number: "16", root_type: Liability}
+          - {account_number: "166", account_name: "Participation des salariés aux résultats (166)", parent_number: "16", root_type: Liability}
+          - {account_number: "167", account_name: "Fonds non remboursables et avances conditionnées", parent_number: "16", root_type: Liability}
+          - {account_number: "168", account_name: "Autres emprunts et dettes assimilées", parent_number: "16", root_type: Liability}
+          - {account_number: "169", account_name: "Primes de remboursement des emprunts", parent_number: "16", root_type: Liability}
+          - {account_number: "17", account_name: "Dettes rattachées à des participations", is_group: true, root_type: Liability}
+          - {account_number: "171", account_name: "Dettes rattachées à des participations - groupe", parent_number: "17", root_type: Liability}
+          - {account_number: "174", account_name: "Dettes rattachées à des participations - hors groupe", parent_number: "17", root_type: Liability}
+          - {account_number: "178", account_name: "Dettes rattachées à des sociétés en participation", parent_number: "17", root_type: Liability}
+          - {account_number: "18", account_name: "Comptes de liaison des établissements et sociétés en participation", is_group: true, root_type: Liability}
+          - {account_number: "181", account_name: "Comptes de liaison des établissements", parent_number: "18", root_type: Liability}
+          - {account_number: "186", account_name: "Biens et prestations de services échangés entre établissements - charges", parent_number: "18", root_type: Liability}
+          - {account_number: "187", account_name: "Biens et prestations de services échangés entre établissements - produits", parent_number: "18", root_type: Liability}
+          - {account_number: "188", account_name: "Comptes de liaison des sociétés en participation", parent_number: "18", root_type: Liability}
+          - {account_number: "2", account_name: "COMPTES D'IMMOBILISATIONS", is_group: true, root_type: Asset}
+          - {account_number: "20", account_name: "Immobilisations incorporelles et frais d’établissement", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "201", account_name: "Frais d'établissement", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "203", account_name: "Frais de développement", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "205", account_name: "Concessions et droits similaires, brevets, licences, marques, procédés, solutions informatiques, droits et valeurs similaires", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "206", account_name: "Droit au bail", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "207", account_name: "Fonds commercial", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "208", account_name: "Autres immobilisations incorporelles", parent_number: "20", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "21", account_name: "Immobilisations corporelles (21)", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "211", account_name: "Terrains", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "212", account_name: "Agencements et aménagements de terrains (même ventilation que celle du compte 211)", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "213", account_name: "Constructions", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "214", account_name: "Constructions sur sol d'autrui (même ventilation que celle du compte 213)", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "215", account_name: "Installations techniques, matériels et outillages industriels", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "218", account_name: "Autres immobilisations corporelles", parent_number: "21", root_type: Asset, account_type: "Fixed Asset"}
+          - {account_number: "22", account_name: "Immobilisations mises en concession", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "229", account_name: "Droits du concédant (présentés dans la rubrique autres fonds propres)", parent_number: "22", root_type: Asset}
+          - {account_number: "23", account_name: "Immobilisations en cours, avances et acomptes", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "231", account_name: "Immobilisations corporelles en cours", parent_number: "23", root_type: Asset}
+          - {account_number: "232", account_name: "Immobilisations incorporelles en cours", parent_number: "23", root_type: Asset}
+          - {account_number: "237", account_name: "Avances et acomptes versés sur commandes d'immobilisations incorporelles", parent_number: "23", root_type: Asset}
+          - {account_number: "238", account_name: "Avances et acomptes versés sur commandes d'immobilisations corporelles", parent_number: "23", root_type: Asset}
+          - {account_number: "26", account_name: "Participations et créances rattachées à des participations", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "261", account_name: "Titres de participation", parent_number: "26", root_type: Asset}
+          - {account_number: "262", account_name: "Titres évalués par équivalence", parent_number: "26", root_type: Asset}
+          - {account_number: "266", account_name: "Autres formes de participation", parent_number: "26", root_type: Asset}
+          - {account_number: "267", account_name: "Créances rattachées à des participations", parent_number: "26", root_type: Asset}
+          - {account_number: "268", account_name: "Créances rattachées à des sociétés en participation", parent_number: "26", root_type: Asset}
+          - {account_number: "269", account_name: "Versements restant à effectuer sur titres de participation non libérés", parent_number: "26", root_type: Asset}
+          - {account_number: "27", account_name: "Autres immobilisations financières", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "271", account_name: "Titres immobilisés autres que les titres immobilisés de l'activité de portefeuille (droit de propriété)", parent_number: "27", root_type: Asset}
+          - {account_number: "272", account_name: "Titres immobilisés (droit de créance)", parent_number: "27", root_type: Asset}
+          - {account_number: "273", account_name: "Titres immobilisés de l'activité de portefeuille", parent_number: "27", root_type: Asset}
+          - {account_number: "274", account_name: "Prêts", parent_number: "27", root_type: Asset}
+          - {account_number: "275", account_name: "Dépôts et cautionnements versés", parent_number: "27", root_type: Asset}
+          - {account_number: "276", account_name: "Autres créances immobilisées", parent_number: "27", root_type: Asset}
+          - {account_number: "277", account_name: "Actions propres ou parts propres", parent_number: "27", root_type: Asset}
+          - {account_number: "278", account_name: "Mali de fusion sur actifs financiers", parent_number: "27", root_type: Asset}
+          - {account_number: "279", account_name: "Versements restant à effectuer sur titres immobilisés non libérés", parent_number: "27", root_type: Asset}
+          - {account_number: "28", account_name: "Amortissements des immobilisations", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "280", account_name: "Amortissements des immobilisations incorporelles et des frais d’établissement (même ventilation que celle du compte 20)", parent_number: "28", root_type: Asset}
+          - {account_number: "281", account_name: "Amortissements des immobilisations corporelles (même ventilation que celle du compte 21)", parent_number: "28", root_type: Asset}
+          - {account_number: "282", account_name: "Amortissements des immobilisations mises en concession", parent_number: "28", root_type: Asset}
+          - {account_number: "29", account_name: "Dépréciations des immobilisations", parent_number: "2", is_group: true, root_type: Asset}
+          - {account_number: "290", account_name: "Dépréciations des immobilisations incorporelles", parent_number: "29", root_type: Asset}
+          - {account_number: "291", account_name: "Dépréciations des immobilisations corporelles", parent_number: "29", root_type: Asset}
+          - {account_number: "292", account_name: "Dépréciations des immobilisations mises en concession", parent_number: "29", root_type: Asset}
+          - {account_number: "293", account_name: "Dépréciations des immobilisations en cours", parent_number: "29", root_type: Asset}
+          - {account_number: "296", account_name: "Dépréciations des participations et créances rattachées à des participations", parent_number: "29", root_type: Asset}
+          - {account_number: "297", account_name: "Dépréciations des autres immobilisations financières", parent_number: "29", root_type: Asset}
+          - {account_number: "3", account_name: "COMPTES DE STOCKS ET EN-COURS", is_group: true, root_type: Asset}
+          - {account_number: "31", account_name: "Matières premières et fournitures", parent_number: "3", root_type: Asset}
+          - {account_number: "32", account_name: "Autres approvisionnements", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "321", account_name: "Matières consommables", parent_number: "32", root_type: Asset}
+          - {account_number: "322", account_name: "Fournitures consommables", parent_number: "32", root_type: Asset}
+          - {account_number: "326", account_name: "Emballages", parent_number: "32", root_type: Asset}
+          - {account_number: "33", account_name: "En-cours de production de biens", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "331", account_name: "Produits en cours", parent_number: "33", root_type: Asset, account_type: Stock, standard_number: "1142"}
+          - {account_number: "335", account_name: "Travaux en cours", parent_number: "33", root_type: Asset}
+          - {account_number: "34", account_name: "En-cours de production de services", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "341", account_name: "Études en cours", parent_number: "34", root_type: Asset}
+          - {account_number: "345", account_name: "Prestations de services en cours", parent_number: "34", root_type: Asset}
+          - {account_number: "35", account_name: "Stocks de produits", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "351", account_name: "Produits intermédiaires", parent_number: "35", root_type: Asset}
+          - {account_number: "355", account_name: "Produits finis", parent_number: "35", root_type: Asset}
+          - {account_number: "358", account_name: "Produits résiduels ou matières de récupération", parent_number: "35", root_type: Asset}
+          - {account_number: "37", account_name: "Stocks de marchandises", parent_number: "3", root_type: Asset, account_type: Stock, standard_number: "1141"}
+          - {account_number: "39", account_name: "Dépréciations des stocks et en-cours", parent_number: "3", is_group: true, root_type: Asset}
+          - {account_number: "391", account_name: "Dépréciations des matières premières et fournitures", parent_number: "39", root_type: Asset}
+          - {account_number: "392", account_name: "Dépréciations des autres approvisionnements", parent_number: "39", root_type: Asset}
+          - {account_number: "393", account_name: "Dépréciations des en-cours de production de biens", parent_number: "39", root_type: Asset}
+          - {account_number: "394", account_name: "Dépréciations des en-cours de production de services", parent_number: "39", root_type: Asset}
+          - {account_number: "395", account_name: "Dépréciations des stocks de produits", parent_number: "39", root_type: Asset}
+          - {account_number: "397", account_name: "Dépréciations des stocks de marchandises", parent_number: "39", root_type: Asset}
+          - {account_number: "40", account_name: "Fournisseurs et comptes rattachés", is_group: true, root_type: Liability}
+          - {account_number: "401", account_name: "Fournisseurs", parent_number: "40", root_type: Liability, account_type: Payable, standard_number: "2111"}
+          - {account_number: "403", account_name: "Fournisseurs - Effets à payer", parent_number: "40", root_type: Liability}
+          - {account_number: "404", account_name: "Fournisseurs d'immobilisations", parent_number: "40", root_type: Liability}
+          - {account_number: "405", account_name: "Fournisseurs d'immobilisations - Effets à payer", parent_number: "40", root_type: Liability}
+          - {account_number: "408", account_name: "Fournisseurs - Factures non parvenues", parent_number: "40", root_type: Liability, account_type: "Stock Received But Not Billed", standard_number: "2121"}
+          - {account_number: "409", account_name: "Fournisseurs débiteurs", root_type: Asset}
+          - {account_number: "41", account_name: "Clients et comptes rattachés", is_group: true, root_type: Asset}
+          - {account_number: "411", account_name: "Clients", parent_number: "41", root_type: Asset, account_type: Receivable, standard_number: "1111"}
+          - {account_number: "413", account_name: "Clients - Effets à recevoir", parent_number: "41", root_type: Asset}
+          - {account_number: "416", account_name: "Clients douteux ou litigieux", parent_number: "41", root_type: Asset}
+          - {account_number: "418", account_name: "Clients - Produits non encore facturés", parent_number: "41", root_type: Asset}
+          - {account_number: "419", account_name: "Clients créditeurs", root_type: Liability}
+          - {account_number: "42", account_name: "Personnel et comptes rattachés", is_group: true, root_type: Liability}
+          - {account_number: "421", account_name: "Personnel - Rémunérations dues", parent_number: "42", root_type: Liability}
+          - {account_number: "422", account_name: "Comité social et économique", parent_number: "42", root_type: Liability}
+          - {account_number: "424", account_name: "Participation des salariés aux résultats (424)", parent_number: "42", root_type: Liability}
+          - {account_number: "425", account_name: "Personnel - Avances et acomptes et autres comptes débiteurs", root_type: Asset}
+          - {account_number: "426", account_name: "Personnel - Dépôts", parent_number: "42", root_type: Liability}
+          - {account_number: "427", account_name: "Personnel - Oppositions", parent_number: "42", root_type: Liability}
+          - {account_number: "428", account_name: "Personnel - Charges à payer", parent_number: "42", root_type: Liability}
+          - {account_number: "43", account_name: "Sécurité sociale et autres organismes sociaux", is_group: true, root_type: Liability}
+          - {account_number: "431", account_name: "Sécurité sociale", parent_number: "43", root_type: Liability}
+          - {account_number: "437", account_name: "Autres organismes sociaux", parent_number: "43", root_type: Liability}
+          - {account_number: "438", account_name: "Organismes sociaux - Charges à payer", parent_number: "43", root_type: Liability}
+          - {account_number: "439", account_name: "Organismes sociaux - Produits à recevoir", root_type: Asset}
+          - {account_number: "44", account_name: "État et autres collectivités publiques", is_group: true, root_type: Liability}
+          - {account_number: "441", account_name: "État - Subventions et aides à recevoir", root_type: Asset}
+          - {account_number: "442", account_name: "Contributions, impôts et taxes recouvrés pour le compte de l'État", parent_number: "44", is_group: true, root_type: Liability}
+          - {account_number: "4421", account_name: "Prélèvements à la source (Impôt sur le revenu)", parent_number: "442", root_type: Liability, account_type: Tax, standard_number: "2132"}
+          - {account_number: "444", account_name: "État - Impôts sur les bénéfices", root_type: Asset, account_type: Tax, standard_number: "1152"}
+          - {account_number: "445", account_name: "État - Taxes sur le chiffre d'affaires", parent_number: "44", is_group: true, root_type: Liability}
+          - {account_number: "4456", account_name: "Taxes sur le chiffre d'affaires déductibles", is_group: true, root_type: Asset, standard_number: "1150"}
+          - {account_number: "44566", account_name: "TVA sur autres biens et services", parent_number: "4456", root_type: Asset, account_type: Tax, standard_number: "1151"}
+          - {account_number: "4457", account_name: "Taxes sur le chiffre d'affaires collectées", parent_number: "445", is_group: true, root_type: Liability, standard_number: "2130"}
+          - {account_number: "44571", account_name: "TVA collectée", parent_number: "4457", root_type: Liability, account_type: Tax, standard_number: "2131"}
+          - {account_number: "446", account_name: "Obligations cautionnées", parent_number: "44", root_type: Liability}
+          - {account_number: "447", account_name: "Autres impôts, taxes et versements assimilés", parent_number: "44", root_type: Liability}
+          - {account_number: "448", account_name: "État - Charges à payer et produits à recevoir", parent_number: "44", root_type: Liability}
+          - {account_number: "449", account_name: "Quotas d’émission à acquérir", parent_number: "44", root_type: Liability}
+          - {account_number: "45", account_name: "Groupe et associés", is_group: true, root_type: Liability}
+          - {account_number: "451", account_name: "Groupe", root_type: Asset}
+          - {account_number: "455", account_name: "Associés - Comptes courants", parent_number: "45", root_type: Liability}
+          - {account_number: "456", account_name: "Associés - Opérations sur le capital", root_type: Asset}
+          - {account_number: "457", account_name: "Associés - Dividendes à payer", parent_number: "45", root_type: Liability}
+          - {account_number: "458", account_name: "Associés - Opérations faites en commun et en GIE", parent_number: "45", root_type: Liability}
+          - {account_number: "46", account_name: "Débiteurs divers et créditeurs divers", is_group: true, root_type: Liability}
+          - {account_number: "462", account_name: "Créances sur cessions d'immobilisations", root_type: Asset}
+          - {account_number: "464", account_name: "Dettes sur acquisitions de valeurs mobilières de placement", parent_number: "46", root_type: Liability}
+          - {account_number: "465", account_name: "Créances sur cessions de valeurs mobilières de placement", root_type: Asset}
+          - {account_number: "467", account_name: "Divers comptes débiteurs et produits à recevoir", root_type: Asset}
+          - {account_number: "468", account_name: "Divers comptes créditeurs et charges à payer", parent_number: "46", root_type: Liability}
+          - {account_number: "47", account_name: "Comptes transitoires ou d'attente", is_group: true, root_type: Liability}
+          - {account_number: "474", account_name: "Différences d’évaluation – Actif", root_type: Asset}
+          - {account_number: "475", account_name: "Différences d’évaluation – Passif", parent_number: "47", root_type: Liability}
+          - {account_number: "476", account_name: "Différence de conversion - Actif", root_type: Asset}
+          - {account_number: "477", account_name: "Différences de conversion - Passif", parent_number: "47", root_type: Liability}
+          - {account_number: "478", account_name: "Autres comptes transitoires", parent_number: "47", root_type: Liability}
+          - {account_number: "48", account_name: "Comptes de régularisation", is_group: true, root_type: Liability}
+          - {account_number: "481", account_name: "Frais d’émission des emprunts", root_type: Asset}
+          - {account_number: "486", account_name: "Charges constatées d'avance", root_type: Asset, standard_number: "1170"}
+          - {account_number: "487", account_name: "Produits constatés d'avance", parent_number: "48", root_type: Liability, standard_number: "2150"}
+          - {account_number: "488", account_name: "Comptes de répartition périodique des charges et des produits", parent_number: "48", root_type: Liability}
+          - {account_number: "49", account_name: "Dépréciations des comptes de tiers", is_group: true, root_type: Asset}
+          - {account_number: "491", account_name: "Dépréciations des comptes de clients", parent_number: "49", root_type: Asset}
+          - {account_number: "495", account_name: "Dépréciations des comptes du groupe et des associés", parent_number: "49", root_type: Asset}
+          - {account_number: "496", account_name: "Dépréciations des comptes de débiteurs divers", parent_number: "49", root_type: Asset}
+          - {account_number: "5", account_name: "COMPTES FINANCIERS", is_group: true, root_type: Asset}
+          - {account_number: "50", account_name: "Valeurs mobilières de placement", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "502", account_name: "Actions propres", parent_number: "50", root_type: Asset}
+          - {account_number: "503", account_name: "Actions", parent_number: "50", root_type: Asset}
+          - {account_number: "504", account_name: "Autres titres conférant un droit de propriété", parent_number: "50", root_type: Asset}
+          - {account_number: "505", account_name: "Obligations et bons émis par la société et rachetés par elle", parent_number: "50", root_type: Asset}
+          - {account_number: "506", account_name: "Obligations", parent_number: "50", root_type: Asset}
+          - {account_number: "507", account_name: "Bons du Trésor et bons de caisse à court terme", parent_number: "50", root_type: Asset}
+          - {account_number: "508", account_name: "Autres valeurs mobilières de placement et autres créances assimilées", parent_number: "50", root_type: Asset}
+          - {account_number: "509", account_name: "Versements restant à effectuer sur valeurs mobilières de placement non libérées", parent_number: "50", root_type: Asset}
+          - {account_number: "51", account_name: "Banques, établissements financiers et assimilés", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "511", account_name: "Valeurs à l'encaissement", parent_number: "51", root_type: Asset, account_type: Bank}
+          - {account_number: "512", account_name: "Banques", parent_number: "51", root_type: Asset, account_type: Bank, standard_number: "1121"}
+          - {account_number: "517", account_name: "Autres organismes financiers", parent_number: "51", root_type: Asset}
+          - {account_number: "518", account_name: "Intérêts courus", parent_number: "51", root_type: Asset}
+          - {account_number: "519", account_name: "Concours bancaires courants", root_type: Liability}
+          - {account_number: "52", account_name: "Instruments financiers à terme et jetons détenus", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "521", account_name: "Instruments financiers à terme", parent_number: "52", root_type: Asset}
+          - {account_number: "522", account_name: "Jetons détenus", parent_number: "52", root_type: Asset}
+          - {account_number: "523", account_name: "Jetons auto-détenus", parent_number: "52", root_type: Asset}
+          - {account_number: "524", account_name: "Jetons empruntés", parent_number: "52", root_type: Asset}
+          - {account_number: "53", account_name: "Caisse", parent_number: "5", root_type: Asset, account_type: Cash, standard_number: "1131"}
+          - {account_number: "58", account_name: "Virements internes", parent_number: "5", root_type: Asset}
+          - {account_number: "59", account_name: "Dépréciations des comptes financiers", parent_number: "5", is_group: true, root_type: Asset}
+          - {account_number: "590", account_name: "Dépréciations des valeurs mobilières de placement", parent_number: "59", root_type: Asset}
+          - {account_number: "6", account_name: "COMPTES DE CHARGES", is_group: true, root_type: Expense}
+          - {account_number: "60", account_name: "Achats (sauf 603)", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "601", account_name: "Achats stockés - Matières premières et fournitures", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "602", account_name: "Achats stockés - Autres approvisionnements", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "604", account_name: "Achats d'études et prestations de services", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "605", account_name: "Achats de matériel, équipements et travaux", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "606", account_name: "Achats non stockés de matière et fournitures", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "607", account_name: "Achats de marchandises", parent_number: "60", root_type: Expense, account_type: "Cost of Goods Sold", standard_number: "5110"}
+          - {account_number: "609", account_name: "Rabais, remises et ristournes obtenus sur achats (même ventilation que celle du compte 60)", parent_number: "60", root_type: Expense, account_type: Expense}
+          - {account_number: "603", account_name: "Variation des stocks d'approvisionnements et de marchandises", parent_number: "60", is_group: true, root_type: Expense}
+          - {account_number: "6037", account_name: "Variation des stocks de marchandises", parent_number: "603", root_type: Expense, account_type: "Stock Adjustment", standard_number: "5120"}
+          - {account_number: "61", account_name: "Services extérieurs", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "611", account_name: "Sous-traitance générale", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "612", account_name: "Redevances de crédit-bail", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "613", account_name: "Locations", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "614", account_name: "Charges locatives et de copropriété", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "615", account_name: "Entretien et réparation", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "616", account_name: "Primes d'assurances", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "617", account_name: "Études et recherches", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "618", account_name: "Divers (618)", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "619", account_name: "Rabais, remises et ristournes obtenus sur services extérieurs", parent_number: "61", root_type: Expense, account_type: Expense}
+          - {account_number: "62", account_name: "Autres services extérieurs", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "621", account_name: "Personnel extérieur à l'entité", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "622", account_name: "Rémunérations d'intermédiaires et honoraires", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "623", account_name: "Publicité, publications, relations publiques", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "624", account_name: "Transports de biens et transports collectifs du personnel", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "625", account_name: "Déplacements, missions et réceptions", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "626", account_name: "Frais postaux et de télécommunications", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "627", account_name: "Services bancaires et assimilés", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "628", account_name: "Divers (628)", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5210"}
+          - {account_number: "629", account_name: "Rabais, remises et ristournes obtenus sur autres services extérieurs", parent_number: "62", root_type: Expense, account_type: Expense}
+          - {account_number: "63", account_name: "Impôts, taxes et versements assimilés", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "631", account_name: "Impôts, taxes et versements assimilés sur rémunérations (administrations des impôts)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "633", account_name: "Impôts, taxes et versements assimilés sur rémunérations (autres organismes)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "635", account_name: "Autres impôts, taxes et versements assimilés (administrations des impôts)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "637", account_name: "Autres impôts, taxes et versements assimilés (autres organismes)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "638", account_name: "Rappel d’impôts (autres qu’impôts sur les bénéfices)", parent_number: "63", root_type: Expense, account_type: Expense}
+          - {account_number: "64", account_name: "Charges de personnel", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "641", account_name: "Rémunérations du personnel", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "644", account_name: "Rémunération du travail de l'exploitant", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "645", account_name: "Cotisations de sécurité sociale et de prévoyance", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "646", account_name: "Cotisations sociales personnelles de l'exploitant", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "647", account_name: "Autres cotisations sociales", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "648", account_name: "Autres charges de personnel", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "649", account_name: "Remboursements de charges de personnel", parent_number: "64", root_type: Expense, account_type: Expense}
+          - {account_number: "65", account_name: "Autres charges de gestion courante", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "651", account_name: "Redevances pour concessions, brevets, licences, marques, procédés, solutions informatiques, droits et valeurs similaires (651)", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "653", account_name: "Rémunérations de l’activité des administrateurs et des gérants (653)", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "654", account_name: "Pertes sur créances irrécouvrables", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "655", account_name: "Quote-part de résultat sur opérations faites en commun (655)", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "656", account_name: "Pertes de change sur créances et dettes commerciales", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "657", account_name: "Valeurs comptables des immobilisations incorporelles et corporelles cédées", parent_number: "65", root_type: Expense, account_type: Expense}
+          - {account_number: "658", account_name: "Pénalités et autres charges", parent_number: "65", root_type: Expense, account_type: "Round Off", standard_number: "5270"}
+          - {account_number: "66", account_name: "Charges financières", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "661", account_name: "Charges d'intérêts", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "664", account_name: "Pertes sur créances liées à des participations", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "665", account_name: "Escomptes accordés", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "666", account_name: "Pertes de change financières", parent_number: "66", root_type: Expense, account_type: "Exchange Gain Loss", standard_number: "5260"}
+          - {account_number: "667", account_name: "Charges sur cession d’éléments financiers", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "668", account_name: "Autres charges financières", parent_number: "66", root_type: Expense, account_type: Expense}
+          - {account_number: "67", account_name: "Charges exceptionnelles", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "678", account_name: "Autres charges exceptionnelles", parent_number: "67", root_type: Expense, account_type: Expense}
+          - {account_number: "68", account_name: "Dotations aux amortissements, aux dépréciations et aux provisions", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "681", account_name: "Dotations aux amortissements, aux dépréciations et aux provisions (à inscrire dans les charges d'exploitation)", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "686", account_name: "Dotations aux amortissements, aux dépréciations et aux provisions (à inscrire dans les charges financières)", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "687", account_name: "Dotations aux amortissements, aux dépréciations et aux provisions (à inscrire dans les charges exceptionnelles)", parent_number: "68", root_type: Expense, account_type: Expense}
+          - {account_number: "69", account_name: "Participation des salariés - Impôts sur les bénéfices et assimilés", parent_number: "6", is_group: true, root_type: Expense}
+          - {account_number: "691", account_name: "Participation des salariés aux résultats (691)", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "695", account_name: "Impôts sur les bénéfices", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "696", account_name: "Suppléments d'impôt sur les sociétés liés aux distributions", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "698", account_name: "Intégration fiscale", parent_number: "69", root_type: Expense, account_type: Expense}
+          - {account_number: "699", account_name: "Produits - Reports en arrière des déficits", root_type: Income, account_type: Expense}
+          - {account_number: "7", account_name: "COMPTES DE PRODUITS", is_group: true, root_type: Income}
+          - {account_number: "70", account_name: "Ventes de produits fabriqués, prestations de services, marchandises", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "701", account_name: "Ventes de produits finis", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "702", account_name: "Ventes de produits intermédiaires", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "703", account_name: "Ventes de produits résiduels", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "704", account_name: "Travaux", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "705", account_name: "Études", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "706", account_name: "Prestations de services", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "707", account_name: "Ventes de marchandises", parent_number: "70", root_type: Income, account_type: Income, standard_number: "4110"}
+          - {account_number: "708", account_name: "Produits des activités annexes", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "709", account_name: "Rabais, remises et ristournes accordés", parent_number: "70", root_type: Income, account_type: Income}
+          - {account_number: "71", account_name: "Production stockée (ou déstockage)", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "713", account_name: "Variation des stocks des en-cours de production et de produits", parent_number: "71", root_type: Income, account_type: Income}
+          - {account_number: "72", account_name: "Production immobilisée", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "721", account_name: "Immobilisations incorporelles", parent_number: "72", root_type: Income, account_type: Income}
+          - {account_number: "722", account_name: "Immobilisations corporelles (722)", parent_number: "72", root_type: Income, account_type: Income}
+          - {account_number: "74", account_name: "Subventions", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "741", account_name: "Subventions d’exploitation", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "742", account_name: "Subventions d’équilibre", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "747", account_name: "Quote-part des subventions d’investissement virée au résultat de l’exercice", parent_number: "74", root_type: Income, account_type: Income}
+          - {account_number: "75", account_name: "Autres produits de gestion courante", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "751", account_name: "Redevances pour concessions, brevets, licences, marques, procédés, solutions informatiques, droits et valeurs similaires (751)", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "752", account_name: "Revenus des immeubles non affectés à des activités professionnelles", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "753", account_name: "Rémunérations de l’activité des administrateurs et des gérants (753)", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "754", account_name: "Ristournes perçues des coopératives provenant des excédents", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "755", account_name: "Quote-part de résultat sur opérations faites en commun (755)", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "756", account_name: "Gains de change sur créances et dettes commerciales", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "757", account_name: "Produits des cessions d’immobilisations incorporelles et corporelles", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "758", account_name: "Indemnités et autres produits", parent_number: "75", root_type: Income, account_type: Income}
+          - {account_number: "76", account_name: "Produits financiers", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "761", account_name: "Produits de participations", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "762", account_name: "Produits des autres immobilisations financières", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "763", account_name: "Revenus des autres créances", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "764", account_name: "Revenus des valeurs mobilières de placement", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "765", account_name: "Escomptes obtenus", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "766", account_name: "Gains de change financiers", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "767", account_name: "Produits sur cession d’éléments financiers", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "768", account_name: "Autres produits financiers", parent_number: "76", root_type: Income, account_type: Income}
+          - {account_number: "77", account_name: "Produits exceptionnels", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "778", account_name: "Autres produits exceptionnels", parent_number: "77", root_type: Income, account_type: Income}
+          - {account_number: "78", account_name: "Reprises sur amortissements, dépréciations et provisions", parent_number: "7", is_group: true, root_type: Income}
+          - {account_number: "781", account_name: "Reprises sur amortissements, dépréciations et provisions (à inscrire dans les produits d'exploitation)", parent_number: "78", root_type: Income, account_type: Income}
+          - {account_number: "786", account_name: "Reprises sur dépréciations et provisions (à inscrire dans les produits financiers)", parent_number: "78", root_type: Income, account_type: Income}
+          - {account_number: "787", account_name: "Reprises sur dépréciations et provisions (à inscrire dans les produits exceptionnels)", parent_number: "78", root_type: Income, account_type: Income}
+          - {account_number: "890", account_name: "Bilan d'ouverture", root_type: Equity, account_type: Temporary, standard_number: "3300"}
+          - {account_number: "Z01", account_name: "Frais de fabrication absorbés (account added: the plan has none)", parent_number: "62", root_type: Expense, account_type: Expense, standard_number: "5130"}

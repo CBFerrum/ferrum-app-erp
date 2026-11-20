@@ -6,7 +6,7 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
 import { ShipmentDesk, ShippingHome } from "./Shipping";
-import { cheapest, chooseBody, connectionOf, may, type Shipment } from "./shipments";
+import { cheapest, cheapestByCurrency, chooseBody, connectionOf, may, offerKey, type Shipment } from "./shipments";
 
 const perms = { read: "all", write: "all", create: "all", delete: "none", submit: "none", cancel: "none", export: "all", import: "none" };
 const ship = (over: Partial<Shipment> = {}): Shipment => ({
@@ -51,6 +51,30 @@ describe("the shipping desk", () => {
     const html = screen("/desk/shipping/s1", one(ship({ status: "Rated", rates, service: "Ground" })));
     expect(text(html)).toContain("Ground is chosen.");
     expect(html.match(/<button[^>]*>[^<]*Buy the label/)?.[0]).not.toContain("disabled");
+  });
+
+  it("compares the company's carriers: each offer names its carrier, the cheapest per currency is marked", () => {
+    const both = [
+      { carrier: "k1", carrier_name: "Courier One", service: "Ground", amount: "9", currency: "EUR", days: 4 },
+      { carrier: "k2", carrier_name: "Courier Two", service: "Ground", amount: "7", currency: "EUR", days: 5 },
+      { carrier: "k2", carrier_name: "Courier Two", service: "Air", amount: "30", currency: "USD", days: 1 },
+    ];
+    const t = text(
+      screen("/desk/shipping/s1", (qc) => {
+        one(ship({ status: "Rated", rates: both }))(qc);
+        qc.setQueryData(["erp", "shipment-carriers", "co"], { rows: [{ id: "k1", connection_name: "Courier One", enabled: true }, { id: "k2", connection_name: "Courier Two", enabled: true }] });
+      }),
+    );
+    expect(t).toContain("Compare carriers");
+    expect(t).toContain("Courier One · Ground · 9.00 EUR · 4 days");
+    expect(t).not.toContain("Courier One · Ground · 9.00 EUR · 4 days · Cheapest");
+    expect(t).toContain("Courier Two · Ground · 7.00 EUR · 5 days · Cheapest");
+    expect(t).toContain("Courier Two · Air · 30.00 USD · 1 days · Cheapest");
+    const alone = text(screen("/desk/shipping/s1", (qc) => {
+      one(ship({ status: "Rated", rates }))(qc);
+      qc.setQueryData(["erp", "shipment-carriers", "co"], { rows: [{ id: "k1", connection_name: "Courier One", enabled: true }] });
+    }));
+    expect(alone).not.toContain("Compare carriers");
   });
 
   it("shows the tracking number, the label file and tracking once the label is bought, and no second buy", () => {
@@ -109,5 +133,8 @@ describe("what a shipment may do in each state", () => {
     expect(connectionOf(list, "Fast")?.id).toBe("c1");
     expect(connectionOf(list, null)).toBeNull();
     expect(chooseBody("Ground")).toEqual({ service: "Ground" });
+    expect(chooseBody("Ground", "k2")).toEqual({ service: "Ground", carrier: "k2" });
+    expect(offerKey({ service: "Ground", amount: "1" }, "k1")).toBe("k1|Ground");
+    expect(cheapestByCurrency([{ service: "A", amount: "5", currency: "EUR" }, { service: "B", amount: "3", currency: "EUR" }, { service: "C", amount: "9", currency: "USD" }]).map((r) => r.service)).toEqual(["B", "C"]);
   });
 });

@@ -76,7 +76,8 @@
   rules:
     - {name: has_overdue, check: "size(doc.overdue_payments) > 0", message: "The customer has no overdue payments in this currency", on: submit}
   actions:
-    - {name: send_letter, label: Email Dunning Letter, docstatus: [1], permission: write, confirm: "Email the dunning letter to the customer?"}
+    - {name: send_letter, label: Email Dunning Letter, docstatus: [1], permission: write, confirm: "Email the dunning letter to the customer?",
+       contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {sent_to: {type: string}}}, completion: "The dunning letter is queued by e-mail to the address given or the customer's and the dunning records to whom and when; delivery is not confirmed"}}
   form:
     - {label: Dunning, columns: 2, fields: [company, customer, customer_name, posting_date, dunning_type, dunning_level, currency, conversion_rate, status]}
     - {label: Overdue Payments, columns: 1, fields: [overdue_payments]}

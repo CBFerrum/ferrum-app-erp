@@ -20,6 +20,7 @@ pub mod payment_run;
 mod reports;
 mod revaluation;
 mod rules;
+mod statement;
 mod subscription;
 mod terms;
 
@@ -102,6 +103,9 @@ pub fn register(h: &mut HookRegistry) {
         .register("*", Arc::new(budget::ActualExpenseCheck))
         .register("BankAccount", Arc::new(bank::BankAccountHook))
         .register("BankTransaction", Arc::new(bank::BankTransactionHook))
+        .register("StatementFormat", Arc::new(statement::StatementFormatHook))
+        .register("BankRule", Arc::new(bank::BankRuleHook))
+        .register("BankFeedLine", Arc::new(bank::BankFeedLineHook))
         .register("PaymentEntry", Arc::new(bank::VoucherGuard))
         .register("JournalEntry", Arc::new(bank::VoucherGuard))
         .register("PeriodClosingVoucher", Arc::new(closing::ClosingHook))

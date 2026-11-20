@@ -51,6 +51,16 @@ export interface Line {
   allocations: Cleared[];
   /** The entry that clears this line exactly, when there is one. */
   match: Match | null;
+  /** The bank rule that would book this line, when no entry in the books matches it exactly. */
+  rule?: RuleHint | null;
+}
+
+export interface RuleHint {
+  id: string;
+  name: string;
+  book_as: "Journal Entry" | "Payment Entry";
+  /** The account a journal books to, or the party a payment is from or to. */
+  target?: string | null;
 }
 
 export interface Book {
@@ -114,6 +124,14 @@ export function exactMatches(lines: Line[]): { lines: Line[]; money_in: string; 
     money_in: sum(picked.filter(isDeposit).map((l) => l.unallocated)),
     money_out: sum(picked.filter((l) => !isDeposit(l)).map((l) => l.unallocated)),
   };
+}
+
+/** The lines a rule would book (no exact match, nothing reconciled yet), and how many each rule takes. */
+export function ruledLines(lines: Line[]): { lines: Line[]; per_rule: { name: string; count: number }[] } {
+  const picked = lines.filter((l) => l.rule && !l.match && l.status === "Unreconciled");
+  const per: Map<string, number> = new Map();
+  for (const l of picked) per.set(l.rule!.name, (per.get(l.rule!.name) ?? 0) + 1);
+  return { lines: picked, per_rule: [...per.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count })) };
 }
 
 /** Why an entry was put forward, in words. */

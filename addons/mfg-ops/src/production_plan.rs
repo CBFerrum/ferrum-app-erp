@@ -250,7 +250,7 @@ impl ProductionPlanHook {
             "select o.id from e_sales_order o where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') \
              and ($3::uuid is null or o.customer = $3) and ($4::date is null or o.posting_date >= $4::date) and ($5::date is null or o.posting_date <= $5::date) \
              and exists (select 1 from {lines} l join e_bom m on m.tenant_id = l.tenant_id and m.company = o.company and m.item = l.item \
-                         and m.docstatus = 1 and m.is_active where l.tenant_id = o.tenant_id and l.parent_id = o.id and l.qty > coalesce(l.delivered_qty, 0)) \
+                         and m.docstatus = 1 and m.is_active where l.tenant_id = o.tenant_id and l.parent_id = o.id and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false)) \
              order by o.posting_date, o.number"
         )))
         .bind(hc.ctx.tenant)

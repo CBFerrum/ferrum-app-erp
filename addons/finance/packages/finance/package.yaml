@@ -12,7 +12,7 @@ modules:
     order: 25
     # report:bank_reconciliation is not a report of the server's: the ERP interface answers that address
     # with the reconciliation workbench, so it shows in the sidebar beside the bank's records.
-    items: [report:finance_overview, Budget, MonthlyDistribution, BankAccount, BankTransaction, PaymentRun, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
+    items: [report:finance_overview, Budget, MonthlyDistribution, BankAccount, BankTransaction, BankFeedLine, StatementFormat, BankRule, PaymentRun, report:bank_reconciliation, PaymentAllocation, ExchangeRevaluation, PeriodClosingVoucher, PaymentTermsTemplate,
             DunningType, Dunning, SubscriptionPlan, Subscription, report:budget_variance, report:bank_reconciliation_statement, report:cash_flow_forecast,
             report:receivables_by_due_date, report:dunning_summary, report:subscription_metrics]
 
@@ -23,6 +23,9 @@ roles:
       - {entity: MonthlyDistribution, read: true, write: true, create: true, delete: true}
       - {entity: BankAccount, read: true, write: true, create: true, delete: true, export: true, read_groups: [bank_details], write_groups: [bank_details]}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, import: true}
+      - {entity: StatementFormat, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: BankRule, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: BankFeedLine, read: true, delete: true, export: true}
       - {entity: PaymentRun, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: ExchangeRevaluation, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
@@ -38,6 +41,9 @@ roles:
       - {entity: MonthlyDistribution, read: true}
       - {entity: BankAccount, read: true}
       - {entity: BankTransaction, read: true, write: true, create: true, delete: true, submit: true}
+      - {entity: StatementFormat, read: true}
+      - {entity: BankRule, read: true}
+      - {entity: BankFeedLine, read: true}
       - {entity: PaymentRun, read: true, write: true, create: true, delete: true}
       - {entity: PaymentAllocation, read: true, write: true, create: true, delete: true, submit: true}
       - {entity: ExchangeRevaluation, read: true}
@@ -57,7 +63,8 @@ overlays:
       - {op: add_field, field: {name: fin_subscription_period_start, type: date, read_only: true, label: Subscription Period From}}
       - {op: add_field, field: {name: fin_subscription_period_end, type: date, read_only: true, label: Subscription Period To}}
       - op: add_action
-        action: {name: allocate_advances, label: Allocate Advance Payments, docstatus: [1], permission: submit, condition: "doc.outstanding_amount > 0.0"}
+        action: {name: allocate_advances, label: Allocate Advance Payments, docstatus: [1], permission: submit, condition: "doc.outstanding_amount > 0.0",
+             contract: {effect: transactional_action, returns: {type: object, properties: {allocated: {type: string}, outstanding: {type: string}, advances: {type: array, items: {type: object, properties: {payment_entry: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}, allocated: {type: string}}}}}}, completion: "The party's unallocated payments in the invoice's currency and account are allocated to it, oldest first, until nothing is outstanding or none is left, committed with this receipt"}}
   - entity: PurchaseInvoice
     ops:
       - {op: add_field, after: due_date, field: {name: fin_payment_terms_template, type: link, to: PaymentTermsTemplate, label: Payment Terms Template}}
@@ -66,12 +73,16 @@ overlays:
           description: "Disputed, or a match exception: payment runs leave it out until it is released"}}
       - {op: add_field, after: fin_payment_hold, field: {name: fin_hold_reason, type: text, read_only: true, no_copy: true, label: Why on Hold}}
       - op: add_action
-        action: {name: allocate_advances, label: Allocate Advance Payments, docstatus: [1], permission: submit, condition: "doc.outstanding_amount > 0.0"}
+        action: {name: allocate_advances, label: Allocate Advance Payments, docstatus: [1], permission: submit, condition: "doc.outstanding_amount > 0.0",
+             contract: {effect: transactional_action, returns: {type: object, properties: {allocated: {type: string}, outstanding: {type: string}, advances: {type: array, items: {type: object, properties: {payment_entry: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}, allocated: {type: string}}}}}}, completion: "The party's unallocated payments in the invoice's currency and account are allocated to it, oldest first, until nothing is outstanding or none is left, committed with this receipt"}}
       - op: add_action
         action: {name: fin_hold_payment, label: Hold Payment, docstatus: [1], permission: submit, condition: "!doc.fin_payment_hold",
-                 params: [{name: reason, label: Why, type: text, required: true}]}
+                 params: [{name: reason, label: Why, type: text, required: true}],
+             contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, fin_payment_hold: {type: boolean}, fin_hold_reason: {type: [string, "null"]}}}, completion: "The invoice is on hold: payment runs leave it out until it is released, committed with this receipt", compensate_with: fin_release_payment}}
       - op: add_action
-        action: {name: fin_release_payment, label: Release Payment, docstatus: [1], permission: submit, condition: "doc.fin_payment_hold"}
+        action: {name: fin_release_payment, label: Release Payment, docstatus: [1], permission: submit, condition: "doc.fin_payment_hold",
+             params: [{name: reason, type: text, label: Note, description: "Kept as the reason on the invoice when given"}],
+             contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PurchaseInvoice}, fin_payment_hold: {type: boolean}, fin_hold_reason: {type: [string, "null"]}}}, completion: "The invoice is not on hold: payment runs may pay it again, committed with this receipt", compensate_with: fin_hold_payment}}
   - entity: Supplier
     ops:
       - {op: add_field, column: true, field: {name: fin_iban, type: data, max_length: 42, label: IBAN / Account No, description: "Where payment runs pay them"}}
@@ -150,3 +161,80 @@ documents:
           Supplier,Account,Bank Code,Amount,Currency,Reference,Pay On
           {% for l in doc.lines %}{% if l.state == "Paid" and l.round == doc.rounds %}{{ l.supplier_name }},{{ l.iban }},{{ l.bic }},{{ l.amount|fixed(2) }},{{ doc.currency_code }},{{ l.invoice_number }},{{ doc.posting_date }}
           {% endif %}{% endfor %}
+
+# How four standards' statement files are read (docs/statement-formats.md): records, not code, so a bank's
+# variant is a changed or added record. The readers in src/statement.rs know none of them.
+seed:
+  - entity: StatementFormat
+    key: [format_name]
+    records:
+      - format_name: "ISO 20022 statement (camt.053)"
+        kind: Markup
+        notes: "Booked entries of each statement; a batch entry is one line."
+        reading:
+          sniff: ["camt.053"]
+          statement: [Stmt]
+          account: [Acct/Id/IBAN, Acct/Id/Othr/Id]
+          entry: Ntry
+          date: [BookgDt/Dt, BookgDt/DtTm, ValDt/Dt]
+          date_chars: 10
+          amount: [Amt]
+          sign: {at: [CdtDbtInd], in: [CRDT], out: [DBIT]}
+          only: {at: [Sts/Cd, Sts], is: [BOOK]}
+          description: [NtryDtls/TxDtls/RmtInf/Ustrd, AddtlNtryInf]
+          reference: [NtryDtls/TxDtls/Refs/EndToEndId, NtryDtls/TxDtls/RmtInf/Strd/CdtrRefInf/Ref]
+          bank_reference: [AcctSvcrRef, NtryRef]
+          counterparty:
+            in: [NtryDtls/TxDtls/RltdPties/Dbtr/Nm, NtryDtls/TxDtls/RltdPties/Dbtr/Pty/Nm]
+            out: [NtryDtls/TxDtls/RltdPties/Cdtr/Nm, NtryDtls/TxDtls/RltdPties/Cdtr/Pty/Nm]
+          empty: [NOTPROVIDED]
+      - format_name: "ISO 20022 account report (camt.052)"
+        kind: Markup
+        notes: "Booked entries of each account report; a batch entry is one line."
+        reading:
+          sniff: ["camt.052"]
+          statement: [Rpt]
+          account: [Acct/Id/IBAN, Acct/Id/Othr/Id]
+          entry: Ntry
+          date: [BookgDt/Dt, BookgDt/DtTm, ValDt/Dt]
+          date_chars: 10
+          amount: [Amt]
+          sign: {at: [CdtDbtInd], in: [CRDT], out: [DBIT]}
+          only: {at: [Sts/Cd, Sts], is: [BOOK]}
+          description: [NtryDtls/TxDtls/RmtInf/Ustrd, AddtlNtryInf]
+          reference: [NtryDtls/TxDtls/Refs/EndToEndId, NtryDtls/TxDtls/RmtInf/Strd/CdtrRefInf/Ref]
+          bank_reference: [AcctSvcrRef, NtryRef]
+          counterparty:
+            in: [NtryDtls/TxDtls/RltdPties/Dbtr/Nm, NtryDtls/TxDtls/RltdPties/Dbtr/Pty/Nm]
+            out: [NtryDtls/TxDtls/RltdPties/Cdtr/Nm, NtryDtls/TxDtls/RltdPties/Cdtr/Pty/Nm]
+          empty: [NOTPROVIDED]
+      - format_name: "SWIFT MT940"
+        kind: Tagged
+        notes: "Field 61 is a line, the field 86 after it its text; field 25 the account; a statement ends at a line of '-'."
+        reading:
+          sniff: [":61:"]
+          account: {tag: "25"}
+          line:
+            tag: "61"
+            pattern: '^(?P<date>\d{6})(?:\d{4})?(?P<sign>R?[CD])[A-Z]?(?P<amount>[0-9,]+)[A-Z][A-Z0-9]{3}(?P<reference>[^/\r\n]*)(?://(?P<bank_reference>[^\r\n]*))?'
+          detail: {tag: "86", strip: '\?\d\d'}
+          sign: {in: [C, RD], out: [D, RC]}
+          date_format: "%y%m%d"
+          decimal_comma: true
+          empty: [NONREF]
+      - format_name: "OFX and QFX"
+        kind: Markup
+        notes: "OFX 1 (SGML) and OFX 2 (XML), bank and card statements."
+        reading:
+          sniff: ["<OFX>", "OFXHEADER"]
+          loose: true
+          statement: [STMTRS, CCSTMTRS]
+          account: [BANKACCTFROM/ACCTID, CCACCTFROM/ACCTID]
+          entry: STMTTRN
+          date: [DTPOSTED]
+          date_chars: 8
+          date_format: "%Y%m%d"
+          amount: [TRNAMT]
+          description: [NAME, MEMO]
+          reference: [CHECKNUM, REFNUM]
+          bank_reference: [FITID]

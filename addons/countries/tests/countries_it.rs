@@ -4,6 +4,9 @@
 //! country with its package, a company there selling at home and abroad, buying at home, buying
 //! services from abroad, and its return.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post, put};
@@ -42,6 +45,7 @@ macro_rules! each_app {
         $f!(ferrum_countries::cn);
         $f!(ferrum_countries::id);
         $f!(ferrum_countries::jp);
+        $f!(ferrum_countries::kr);
         $f!(ferrum_countries::mx);
         $f!(ferrum_countries::my);
         $f!(ferrum_countries::nz);
@@ -351,7 +355,23 @@ fn cases() -> Vec<Case> {
             ],
         ),
     ];
-    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz", "jp", "cn"] {
+    // South Korea: a country described as data (erp-6), taxed by the same engine. Its company pays VAT by proxy on
+    // services from abroad, which it cannot deduct.
+    all.push(c(
+        "kr",
+        ferrum_domain::countries::name_of("KR").expect("Korea's name"),
+        "KRW",
+        "123-45-67890",
+        None,
+        None,
+        json!({"kr_proxy_payment": true}),
+        "South Korea VAT Return",
+        10,
+        10,
+        10,
+        &[("STD", 100), ("EXP", 100), ("OUT_TAX", 10), ("IN_TAX", 10), ("RC", 100), ("RC_TAX", 10), ("PAYABLE", 0), ("REFUNDABLE", 0)],
+    ));
+    for code in ["sg", "my", "id", "th", "ph", "vn", "sa", "nz", "jp", "cn", "kr"] {
         all.iter_mut().find(|c| c.code == code).unwrap().definition = true;
     }
     for (code, buyer, expect) in pint {
@@ -433,6 +453,19 @@ fn full(code: &str) -> &'static [(&'static str, &'static str)] {
             ("TOTAL", "45"),
         ],
         "id" => &[("A1", "200"), ("A2", "300"), ("A3", "100"), ("PK", "34"), ("JLN", "11"), ("PM", "34"), ("KB", "11")],
+        "kr" => &[
+            ("STD", "200"),
+            ("ZR", "100"),
+            ("EXP", "100"),
+            ("EXM", "100"),
+            ("OUT_TAX", "20"),
+            ("IN_BASE", "100"),
+            ("IN_TAX", "10"),
+            ("RC", "100"),
+            ("RC_TAX", "10"),
+            ("PAYABLE", "10"),
+            ("REFUNDABLE", "0"),
+        ],
         "th" => &[("1", "700"), ("2", "200"), ("3", "100"), ("4", "400"), ("5", "28"), ("6", "200"), ("7", "14"), ("8", "14"), ("9", "0")],
         "ph" => &[("VS", "200"), ("ZR", "200"), ("EX", "100"), ("TS", "500"), ("OT", "24"), ("DP", "100"), ("NR", "100"), ("IT", "24"), ("NV", "0")],
         // Exempt sales are in [26] and [34]: the return in Rust left them out, taking Vietnam's exemption
@@ -1078,6 +1111,31 @@ async fn run(k: &Arc<Kernel>, case: &Case) {
             tx.commit().await.unwrap();
             assert_eq!(output, Some(got["SR_TAX"]), "sg: the output tax the return counts is the output tax account's");
         }
+    }
+    if code == "th" || code == "kr" {
+        // a_template_company_is_still_taxed: a company made from a national chart books VAT on the accounts standing
+        // for output and input tax (erp-4).
+        let template = chart::national_template(k, &ctx, &cid.to_string(), &format!("{} National", case.country), &["5292"]).await;
+        let mut national = obj(
+            json!({"company_name": format!("{} National", case.country), "abbr": format!("{}N", code.to_uppercase()), "default_currency": currency["id"], "country": case.country,
+                                      "chart_template": template}),
+        );
+        national.insert(country.number_field.into(), json!(case.number));
+        let nid = uid(&insert("Company", Value::Object(national)).await).to_string();
+        let si = insert("SalesInvoice", json!({"company": nid, "customer": home.to_string(), "items": [{"item": goods.to_string(), "qty": "1"}]})).await;
+        k.submit(&ctx, "SalesInvoice", uid(&si), None).await.expect("the template company's sale");
+        let output = chart::account(k, &ctx, &nid, "2131").await;
+        let lines = chart::posted(k, &ctx, si["id"].as_str().unwrap()).await;
+        assert!(lines.contains(&(output.clone(), -Decimal::from(case.t))), "{code}: VAT on the account standing for 2131 ({output}): {lines:?}");
+        let pi = insert(
+            "PurchaseInvoice",
+            json!({"company": nid, "supplier": supplier.to_string(), "bill_no": "N-1", "items": [{"item": goods.to_string(), "qty": "1", "price_list_rate": "100"}]}),
+        )
+        .await;
+        k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("the template company's purchase");
+        let input = chart::account(k, &ctx, &nid, "1151").await;
+        let lines = chart::posted(k, &ctx, pi["id"].as_str().unwrap()).await;
+        assert!(lines.contains(&(input.clone(), Decimal::from(case.i))), "{code}: input VAT on the account standing for 1151 ({input}): {lines:?}");
     }
     if code == "sg" {
         // A rate kept as data wins over the built-in 9%, and stops when it ends.

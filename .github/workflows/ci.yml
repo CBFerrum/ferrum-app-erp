@@ -44,6 +44,8 @@ jobs:
           create database ferrum_erp_returns_test owner ferrum;
           create database ferrum_erp_switching_test owner ferrum;
           create database ferrum_erp_orders_test owner ferrum;
+          create database ferrum_erp_agreement_test owner ferrum;
+          create database ferrum_erp_drop_ship_test owner ferrum;
           create database ferrum_finance_test owner ferrum;
           create database ferrum_finance_books_test owner ferrum;
           create database ferrum_procurement_test owner ferrum;

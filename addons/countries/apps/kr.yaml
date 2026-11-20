@@ -1,0 +1,12 @@
+# ERP's add-on for South Korea, described as data (data/kr.json, docs/countries.md): VAT at 10%, exports at 0%, exempt supplies and a VAT return.
+id: kr
+name: "South Korea"
+version: 0.1.0
+publisher: cbferrum
+summary: "VAT at 10%, exports at 0%, exempt supplies and the VAT return for ERP in South Korea"
+categories: [finance]
+runtime: native
+platform: ">=0.4.0, <0.5"
+requires: {erp: ">=0.22"}
+parent: erp
+packages: [kr]

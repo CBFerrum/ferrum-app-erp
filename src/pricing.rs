@@ -538,6 +538,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
     let child_ent = ent.field("items").and_then(|f| f.of.clone()).and_then(|c| ctx.schema.entity(&c).cloned());
     let has_child = |f: &str| child_ent.as_ref().is_some_and(|c| c.field(f).is_some());
     let mut item_cache: HashMap<Uuid, Doc> = HashMap::new();
+    let mut agreements: HashMap<Uuid, Doc> = HashMap::new();
     let typed = typed_prices(k, ctx, tx, ent, doc, side).await?;
     let mut items = rows(doc, "items");
     // Each line's item tax rates (by tax account), for the tax breakdown's categories.
@@ -571,7 +572,9 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
         if has_child("price_basis") {
             restate_price(row, item_id, uom, factor);
         }
-        if d(row, "price_list_rate").is_zero() {
+        // An agreed price (an order line naming an agreement): neither the price list nor a pricing rule applies.
+        let agreed = has_child("agreement") && crate::agreement::price_line(k, ctx, tx, side, doc, row, i, factor, &mut agreements).await?;
+        if !agreed && d(row, "price_list_rate").is_zero() {
             let mut price = match price_list {
                 Some(pl) => item_price(k, ctx, tx, &item, pl, &on, uom, factor).await?,
                 None => None,
@@ -589,6 +592,7 @@ pub async fn calculate(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc:
             }
         }
         if side == Side::Selling
+            && !agreed
             && row.get("discount_percent").is_none_or(Value::is_null)
             && let Some(rule) = best_rule(&rules, &item, to_stock(qty, factor), party.as_ref(), &on, &cel_doc, &user)
         {

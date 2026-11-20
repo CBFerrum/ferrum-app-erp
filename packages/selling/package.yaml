@@ -1,5 +1,5 @@
 package: selling
-version: 0.1.0
+version: 0.2.2
 label: Selling
 description: Sales orders, deliveries and invoices with exact tax maths, receivables and pricing rules.
 depends: [accounting, inventory]
@@ -42,6 +42,48 @@ overlays:
                 incoming: {type: array, items: {type: object, properties: {date: {type: string}, qty: {type: string}, from: {type: string}, id: {type: string, format: uuid}}}},
                 promise_date: {type: [string, "null"]}}}}}},
             completion: "What is available of the item now and by date, per warehouse, and the day the quantity can be promised; nothing is saved"}}}
+      - op: add_action
+        action:
+          name: customer_for
+          label: Customer for a Person
+          permission: read
+          hidden: true
+          params:
+            - {name: name, label: Name, required: true}
+            - {name: email, label: Email}
+            - {name: phone, label: Phone}
+          contract:
+            effect: transactional_action
+            returns: {type: object, properties: {customer: {type: string, format: uuid, x-ferrum-link: Customer}, created: {type: boolean}}}
+            completion: "The person's customer: the oldest enabled one with this email (or phone), or an Individual customer made now"
+      - op: add_action
+        action:
+          name: customers_of
+          label: Customers of an Address
+          permission: read
+          read_only: true
+          hidden: true
+          params:
+            - {name: email, label: Email, required: true}
+          contract:
+            effect: query
+            returns: {type: object, properties: {customers: {type: array, items: {type: string, format: uuid}}}}
+            completion: "The customers an email address belongs to, oldest first; nothing is saved"
+      - op: add_action
+        action:
+          name: price_document
+          label: Price a Document
+          permission: read
+          read_only: true
+          hidden: true
+          params:
+            - {name: document, type: text, label: Document, required: true,
+               description: "JSON: a sales order's fields (a purchase order's when side is Buying): customer or supplier, currency?, price_list?, posting_date?, taxes_and_charges?, items: [{item, qty, uom?, rate?, discount_percentage?}]"}
+            - {name: side, type: select, options: [Selling, Buying], label: Side}
+          contract:
+            effect: query
+            returns: {type: object, properties: {document: {type: object}}}
+            completion: "The document with its prices, discounts, taxes and totals as an order of the company would have them; nothing is saved"
       - {op: add_action, action: {name: price_lines, label: Price Lines With Promotions, permission: read, read_only: true, hidden: true,
           params: [{name: lines, type: text, label: Lines, required: true, description: "JSON: [{item, qty, uom?, price_list_rate?, discount_percent?}], as on a sales order"},
                    {name: customer, type: link, to: Customer, label: Customer, required: true},
@@ -69,12 +111,13 @@ modules:
     label: Selling
     icon: shopping-cart
     order: 40
-    items: [SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, Promotion, PromotionCode, report:receivables, report:statement_of_account, report:sales_register, report:promotions]
+    items: [SalesAgreement, SalesOrder, DeliveryNote, SalesInvoice, PaymentEntry, Customer, PriceList, ItemPrice, PricingRule, Promotion, PromotionCode, report:receivables, report:statement_of_account, report:sales_register, report:promotions]
 
 roles:
   - name: Sales User
     description: Day-to-day selling.
     permissions:
+      - {entity: SalesAgreement, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, export: true, read_groups: [credit]}
@@ -102,6 +145,7 @@ roles:
       - {entity: NumberSeries, read: true}
   - name: Sales Manager
     permissions:
+      - {entity: SalesAgreement, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: SalesOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit]}
@@ -113,6 +157,7 @@ roles:
     permissions:
       # Releasing a document over a customer's credit limit (its Credit Release Reason) is theirs.
       - {entity: SalesInvoice, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true, read_groups: [credit], write_groups: [credit]}
+      - {entity: SalesAgreement, read: true, write: true}
       - {entity: SalesOrder, read: true, write: true, read_groups: [credit], write_groups: [credit]}
       - {entity: DeliveryNote, read: true, write: true, read_groups: [credit], write_groups: [credit]}
       - {entity: NumberSeries, read: true, write: true, create: true, delete: true}

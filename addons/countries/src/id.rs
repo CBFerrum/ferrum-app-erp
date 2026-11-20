@@ -21,7 +21,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "id_kind",
     number_field: "id_npwp",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "an NPWP of 16 digits (or the 15 of the old form)",
     export_reason: "Ekspor: PPN 0%",
     exempt_reason: "PPN dibebaskan (fasilitas)",

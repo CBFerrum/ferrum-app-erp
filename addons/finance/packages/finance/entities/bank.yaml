@@ -19,15 +19,90 @@
     - {name: currency, type: link, to: Currency, description: The GL account's or the company's currency when empty}
     - {name: opening_balance, type: currency, currency: currency, label: Statement Opening Balance, description: The bank's balance on the opening date; the reconciliation statement adds imported transactions to it}
     - {name: opening_date, type: date, label: Statement Opening Date}
+    - {name: statement_format, type: link, to: StatementFormat, label: Statement Format, description: "Read this account's statements with it when an import names none"}
+    - {name: feed_connection, type: data, label: Feed Connection, description: "The name of the connection whose pull brings this account's transactions"}
+    - {name: feed_account_ref, type: data, label: Feed Account Reference, description: "The provider's id of this account, as the feed's lines carry it"}
     - {name: is_default, type: check, in_list: true}
     - {name: disabled, type: check, in_filter: true}
   unique: [[company, account_name]]
   actions:
-    - {name: import_transactions, label: Import Bank Statement (CSV), permission: write, hidden: true}
+    # A statement's text is read with a StatementFormat (docs/statement-formats.md): the one named, the columns
+    # chosen on the screen (inline), the first whose sniff fits the text, or the account's own, in that order.
+    - name: preview_statement
+      label: Preview a Bank Statement
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: text, label: Statement, type: text, required: true, description: "The statement file's text, at most 5 MB"}
+        - {name: format, label: Statement Format, type: link, to: StatementFormat, description: "How to read it; when empty, the format whose sniff fits the text, then the account's own"}
+        - {name: inline, label: Columns, type: text, description: "A Delimited reading as JSON, for a CSV whose columns are chosen on the screen"}
+      contract:
+        effect: query
+        returns: {type: object, properties: {format: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}}},
+                  imported: {type: integer}, duplicates: {type: integer}, skipped: {type: integer}, other_accounts: {type: integer},
+                  errors: {type: array, items: {type: string}}, from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]},
+                  preview: {type: array, items: {type: object, properties: {date: {type: string}, description: {type: string}, reference: {type: string},
+                            deposit: {type: string}, withdrawal: {type: string}, duplicate: {type: boolean}}}}}}
+        completion: "What an import of this text would do; nothing is saved"
+    - name: import_transactions
+      label: Import a Bank Statement
+      permission: write
+      hidden: true
+      params:
+        - {name: text, label: Statement, type: text, required: true, description: "The statement file's text, at most 5 MB"}
+        - {name: format, label: Statement Format, type: link, to: StatementFormat, description: "How to read it; when empty, the format whose sniff fits the text, then the account's own"}
+        - {name: inline, label: Columns, type: text, description: "A Delimited reading as JSON, for a CSV whose columns are chosen on the screen"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {format: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}}},
+                  imported: {type: integer}, duplicates: {type: integer}, skipped: {type: integer}, other_accounts: {type: integer},
+                  from_date: {type: [string, "null"]}, to_date: {type: [string, "null"]}, ruled: {type: integer},
+                  rule_failures: {type: array, items: {type: object, properties: {number: {type: [string, "null"]}, rule: {type: string}, why: {type: string}}}}}}
+        completion: "Every new line is a submitted bank transaction, or nothing is saved; automatic rules have booked the lines they fit, and a line a rule could not book is left to reconcile"
     # The reconciliation screen's two calls. The first only reads; the second reconciles lines through
     # their own Reconcile action, so the caller needs the rights on the lines, not on the account.
-    - {name: workbench, label: Reconciliation Workbench, permission: read, read_only: true, hidden: true}
+    - name: workbench
+      label: Reconciliation Workbench
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: as_of, label: As Of, type: date, description: "The statement's balance on this day; today when empty"}
+        - {name: from, label: From, type: date, description: "Only lines from this day"}
+        - {name: window_days, label: Window (Days), type: int, description: "How many days apart a voucher may be from a line (30)"}
+        - {name: reconciled, label: Matched Lines Too, type: check}
+      contract:
+        effect: query
+        returns: {type: object, properties: {bank_account: {type: string, format: uuid}, name: {type: [string, "null"]}, as_of: {type: string},
+                  figures: {type: object}, counts: {type: object, properties: {unreconciled: {type: integer}, matched: {type: integer}}},
+                  lines: {type: array, items: {type: object, properties: {id: {type: string, format: uuid}, match: {type: [object, "null"]},
+                          rule: {type: [object, "null"], properties: {id: {type: string, format: uuid}, name: {type: string}, book_as: {type: string}, target: {type: [string, "null"]}}}}}},
+                  books: {type: array}, truncated: {type: boolean}, books_truncated: {type: boolean}}}
+        completion: "Everything the reconciliation screen draws; nothing is saved"
     - {name: accept_matches, label: Accept Matches, permission: read, hidden: true}
+    # Feed lines that arrived before the account was linked (docs/bank-feeds.md).
+    - name: take_feed_lines
+      label: Take Feed Lines
+      permission: write
+      condition: "!isEmpty(doc.feed_connection) && !isEmpty(doc.feed_account_ref)"
+      params: []
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {imported: {type: integer}, duplicates: {type: integer}, left: {type: integer}}}
+        completion: "Up to 500 waiting feed lines of this account are bank transactions, or duplicates of ones already there"
+    # Books each listed line by its rule through the line's own apply_rule, all or none.
+    - name: apply_rules
+      label: Apply Bank Rules
+      permission: read
+      hidden: true
+      params:
+        - {name: lines, label: Lines, type: text, required: true, description: "JSON: [{transaction, rule}], 1 to 500"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {applied: {type: integer}, lines: {type: array, items: {type: object, properties: {id: {type: string, format: uuid},
+                  rule: {type: string, format: uuid}, entity: {type: string}, number: {type: [string, "null"]}}}}}}
+        completion: "Every listed line is booked by its rule, or none is"
   list: {columns: [account_name, bank, masked_number, account, is_default], sort: account_name asc}
 
 - name: BankTransactionPayment
@@ -55,6 +130,7 @@
     - {name: date, type: date, required: true, in_list: true, in_filter: true}
     - {name: description, type: text}
     - {name: reference_number, type: data, in_list: true}
+    - {name: bank_reference, type: data, read_only: true, no_copy: true, label: Bank's Reference, description: "The bank's own id of the line, when its statement gives one"}
     - {name: deposit, type: currency, currency: currency, default: 0, min: "0", in_list: true}
     - {name: withdrawal, type: currency, currency: currency, default: 0, min: "0", in_list: true}
     - {name: currency, type: link, to: Currency, fetch_from: bank_account.currency, read_only: true}
@@ -62,19 +138,107 @@
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
     - {name: status, type: select, options: [Unreconciled, Partially Reconciled, Reconciled, Cancelled], default: Unreconciled, read_only: true, no_copy: true,
        in_list: true, in_filter: true}
+    - {name: rule, type: link, to: BankRule, link_filters: {company: {from: company}}, read_only: true, no_copy: true, label: Booked by Rule}
     - {name: transaction_hash, type: data, read_only: true, no_copy: true, hidden: true}
     - {name: allocations, type: table, of: BankTransactionPayment, read_only: true, label: Reconciled Vouchers}
   unique: [[bank_account, transaction_hash]]
   rules:
     - {name: one_side, check: "(doc.deposit > 0.0) != (doc.withdrawal > 0.0)", message: "Enter either a deposit or a withdrawal"}
   actions:
-    - {name: get_suggestions, label: Find Matching Vouchers, docstatus: [1], permission: read, condition: "doc.unallocated_amount > 0.0"}
+    - {name: get_suggestions, label: Find Matching Vouchers, docstatus: [1], permission: read, condition: "doc.unallocated_amount > 0.0",
+       read_only: true,
+       params: [{name: window_days, type: int, label: Window (Days), description: "How far either side of the line's date to look; 30 when empty, at most 366"}],
+       contract: {effect: query, returns: {type: object, properties: {unallocated_amount: {type: string}, suggestions: {type: array, items: {type: object}}}}, completion: "The vouchers that could settle what is left unallocated on this bank line are ranked, best first, and none is changed"}}
     - {name: reconcile, label: Reconcile, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0"}
-    - {name: unreconcile, label: Undo Reconciliation, docstatus: [1], permission: write, condition: "doc.allocated_amount > 0.0"}
+    - {name: unreconcile, label: Undo Reconciliation, docstatus: [1], permission: write, condition: "doc.allocated_amount > 0.0",
+       params: [{name: payment_entry, label: Voucher, description: "Only this voucher's allocation is undone; all of them when empty"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: BankTransaction}, unallocated_amount: {type: string}, allocated_amount: {type: string}}}, completion: "The allocations of the line (or of the one voucher given) are taken off it and those vouchers are no longer marked cleared, committed with this receipt", compensate_with: reconcile}}
     - {name: make_payment_entry, label: Create Payment Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
        params: [{name: customer, label: Customer, type: link, to: Customer, description: "Who paid, for money received"},
-                {name: supplier, label: Supplier, type: link, to: Supplier, description: "Who was paid, for money paid out"}]}
+                {name: supplier, label: Supplier, type: link, to: Supplier, description: "Who was paid, for money paid out"},
+                {name: party, label: Party, description: "The customer (money received) or supplier (money paid out); it is used instead of the two fields above when given"},
+                {name: allocate_invoices, label: Settle Open Invoices, type: check, description: "Settle the party's oldest open invoices with it; an advance otherwise"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: PaymentEntry}, id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, number: {type: [string, "null"]}}}, completion: "A Payment Entry for what is left unallocated on the line exists, submitted and reconciled with it, settling the party's oldest open invoices when asked and an advance otherwise, committed with this receipt"}}
     - {name: make_journal_entry, label: Create Journal Entry, docstatus: [1], permission: write, condition: "doc.unallocated_amount > 0.0",
        params: [{name: account, label: Account, type: link, to: Account, required: true, description: "The account to book against, not the bank's own"},
-                {name: remark, label: Remark, type: text}]}
+                {name: remark, label: Remark, type: text},
+                {name: cost_center, label: Cost Center, type: link, to: CostCenter}, {name: project, label: Project, type: link, to: Project}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: JournalEntry}, id: {type: string, format: uuid, x-ferrum-link: JournalEntry}, number: {type: [string, "null"]}}}, completion: "A balanced Journal Entry between the bank account and the account given for what is left unallocated on the line exists, submitted and reconciled with it, committed with this receipt"}}
+    - name: apply_rule
+      label: Book by Rule
+      docstatus: [1]
+      permission: write
+      condition: "doc.status == 'Unreconciled'"
+      params:
+        - {name: rule, label: Bank Rule, type: link, to: BankRule, description: "Empty: the first rule that fits the line"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {rule: {type: string, format: uuid}, entity: {type: string}, entry: {type: string, format: uuid}, number: {type: [string, "null"]}}}
+        completion: "The line is booked by the rule as a submitted entry and reconciled with it"
   list: {columns: [date, bank_account, reference_number, deposit, withdrawal, unallocated_amount, status], sort: date desc}
+
+- name: StatementFormat
+  label: Statement Format
+  module: finance
+  kind: master
+  title_field: format_name
+  description: "How a bank's statement file is read: which column, element or tag holds each line's date, amount, text and references."
+  fields:
+    - {name: format_name, type: data, required: true, unique: true, in_list: true}
+    - {name: kind, type: select, options: [Delimited, Markup, Tagged], required: true, in_list: true, in_filter: true,
+       description: "Delimited: rows of columns (CSV). Markup: elements (XML, or SGML with unclosed tags). Tagged: lines that start with :TAG:"}
+    - {name: reading, type: json, required: true, label: Reading, description: "Where each part of a line is; docs/statement-formats.md describes it for each kind"}
+    - {name: notes, type: text}
+    - {name: disabled, type: check, in_filter: true}
+  list: {columns: [format_name, kind, disabled], sort: format_name asc}
+
+- name: BankRule
+  label: Bank Rule
+  module: finance
+  kind: master
+  company_scoped: true
+  title_field: rule_name
+  description: "What to book for a statement line no voucher explains: a pattern over its text, direction and amount, and the entry to make."
+  fields:
+    - {name: rule_name, type: data, required: true, in_list: true}
+    - {name: company, type: link, to: Company, required: true, default_expr: "user.default_company", in_list: true, in_filter: true}
+    - {name: bank_account, type: link, to: BankAccount, link_filters: {company: {from: company}}, in_list: true, description: "Only this account's lines; empty: every bank account of the company"}
+    - {name: priority, type: int, default: 10, min: 1, in_list: true, description: "The lowest number is tried first"}
+    - {name: direction, type: select, options: [Money In, Money Out], required: true, in_list: true}
+    - {name: text_contains, type: data, max_length: 140, description: "The line's description or reference contains this, in any case"}
+    - {name: text_pattern, type: data, max_length: 300, description: "A regular expression over the description and reference, in any case"}
+    - {name: amount_min, type: currency, min: "0"}
+    - {name: amount_max, type: currency, min: "0"}
+    - {name: book_as, type: select, options: [Journal Entry, Payment Entry], required: true, in_list: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: company}, is_group: false}, visible_if: "doc.book_as == 'Journal Entry'", required_if: "doc.book_as == 'Journal Entry'"}
+    - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: company}}, visible_if: "doc.book_as == 'Journal Entry'"}
+    - {name: project, type: link, to: Project, visible_if: "doc.book_as == 'Journal Entry'"}
+    - {name: customer, type: link, to: Customer, visible_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money In'", required_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money In'"}
+    - {name: supplier, type: link, to: Supplier, visible_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money Out'", required_if: "doc.book_as == 'Payment Entry' && doc.direction == 'Money Out'"}
+    - {name: allocate_invoices, type: check, visible_if: "doc.book_as == 'Payment Entry'", description: "Settle the party's oldest open invoices; otherwise the payment stays an advance"}
+    - {name: automatic, type: check, in_list: true, description: "Applied when lines are imported, without a person; otherwise offered in the workbench"}
+    - {name: disabled, type: check, in_filter: true}
+  unique: [[company, rule_name]]
+  rules:
+    - {name: some_condition, check: "!isEmpty(doc.text_contains) || !isEmpty(doc.text_pattern) || !isEmpty(doc.amount_min) || !isEmpty(doc.amount_max)", message: "Give the rule a text, a pattern or an amount range: one with none would book every line"}
+    - {name: range_in_order, check: "isEmpty(doc.amount_min) || isEmpty(doc.amount_max) || doc.amount_max >= doc.amount_min", message: "The largest amount cannot be below the smallest"}
+  list: {columns: [priority, rule_name, bank_account, direction, book_as, automatic], sort: priority asc}
+
+- name: BankFeedLine
+  label: Bank Feed Line
+  module: finance
+  kind: master
+  title_field: external_id
+  description: "One transaction as a bank feed delivered it. It becomes a bank transaction of the bank account its account reference names."
+  fields:
+    - {name: connection, type: data, required: true, read_only: true, in_list: true, in_filter: true, description: "The connection that pulled it"}
+    - {name: account_ref, type: data, required: true, read_only: true, in_list: true, in_filter: true, label: Account Reference, description: "The provider's id of the bank account"}
+    - {name: external_id, type: data, required: true, read_only: true, in_list: true, label: Provider's Id}
+    - {name: date, type: date, required: true, read_only: true, in_list: true}
+    - {name: amount, type: decimal, required: true, read_only: true, in_list: true, description: "Money in is positive"}
+    - {name: description, type: text, read_only: true}
+    - {name: reference, type: data, read_only: true}
+    - {name: state, type: select, options: [Waiting, Imported, Duplicate], default: Waiting, read_only: true, in_list: true, in_filter: true}
+    - {name: bank_transaction, type: link, to: BankTransaction, read_only: true}
+  unique: [[connection, external_id]]
+  list: {columns: [date, connection, account_ref, amount, state], sort: date desc}

@@ -58,9 +58,12 @@
     - {name: per_delivered, type: percent, read_only: true, no_copy: true, in_list: true}
     - {name: remarks, type: text}
   actions:
-    - {name: get_item_locations, label: Get Item Locations, docstatus: [0], permission: write}
-    - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.purpose == 'Delivery' && doc.status == 'Open'"}
-    - {name: make_stock_entry, label: Create Stock Entry, docstatus: [1], permission: read, condition: "doc.purpose == 'Material Transfer' && doc.status == 'Open'"}
+    - {name: get_item_locations, label: Get Item Locations, docstatus: [0], permission: write,
+       contract: {effect: transactional_action, returns: {type: object, properties: {shortages: {type: array, items: {type: object}}}}, completion: "The pick list's locations are worked out again from what it asks for, taking from the warehouses and batches that hold stock; what could not be placed is in shortages, committed with this receipt"}}
+    - {name: make_delivery_note, label: Create Delivery Note, docstatus: [1], permission: read, condition: "doc.purpose == 'Delivery' && doc.status == 'Open'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: DeliveryNote}, id: {type: string, format: uuid, x-ferrum-link: DeliveryNote}, number: {type: [string, "null"]}, documents: {type: array, items: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid}, number: {type: [string, "null"]}}}}}}, completion: "A draft Delivery Note of what was picked and not yet delivered exists for each sales order on the list (one for the customer when it names none), for a caller allowed to create them, committed with this receipt"}}
+    - {name: make_stock_entry, label: Create Stock Entry, docstatus: [1], permission: read, condition: "doc.purpose == 'Material Transfer' && doc.status == 'Open'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {entity: {type: string, const: StockEntry}, id: {type: string, format: uuid, x-ferrum-link: StockEntry}, number: {type: [string, "null"]}}}, completion: "A draft Material Transfer Stock Entry of what was picked and not yet moved exists, for a caller allowed to create one, committed with this receipt"}}
   list: {columns: [number, purpose, customer, posting_date, status], sort: posting_date desc}
 
 - name: PackingSlipItem

@@ -268,6 +268,10 @@ async fn order_needs(hc: &mut HookCtx<'_>, so: &Doc, exclude: Option<Uuid>) -> R
     let mut out = Vec::new();
     for r in &lines {
         let (Some(item), Some(line)) = (id(r, "item"), s(r, "id")) else { continue };
+        // A line the supplier delivers is never picked from the company's stock.
+        if r.get("drop_ship").and_then(serde_json::Value::as_bool) == Some(true) {
+            continue;
+        }
         // Picked in stock units, whatever unit the order line counts in.
         let f = unit_factor(r);
         let open = to_stock(d(r, "qty"), f) - to_stock(d(r, "delivered_qty"), f);

@@ -59,5 +59,6 @@
     - {name: status, type: select, options: [Draft, Released, Picked, Closed], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: shortfall, type: json, read_only: true, no_copy: true, description: "What could not be allocated, item by item"}
   actions:
-    - {name: release, label: Release, permission: write, condition: "doc.status == 'Draft'"}
+    - {name: release, label: Release, permission: write, condition: "doc.status == 'Draft'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {tasks: {type: integer}, shortfall: {type: array, items: {type: object}}}}, completion: "The wave is Released: its orders' open lines are allocated by the warehouse's rule, pick tasks are opened (one trip per bin under Batch) and a shipment is prepared for each order; what could not be allocated is in shortfall, committed with this receipt"}}
   list: {columns: [number, warehouse, planned_on, strategy, status], sort: planned_on desc}

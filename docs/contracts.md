@@ -53,6 +53,36 @@ with its batch, expiry, serial and quantity), `batch`, `serial`, `bin` or `docum
 shipment by its tracking number too). Read with the caller's rights, at most 20 matches, a text of at most 200
 characters; `ambiguous` when more than one record answers, nothing when none does. The unit is the item's stock unit.
 
+## Operations through the gate
+
+Five operations let an app use ERP without compiling against it: it declares them under `uses:` in its package
+(with the version range of the package that offers them) and calls them with `Kernel::call_tx` in its own
+transaction, with a key of its own for anything that changes something (the platform's docs/app-contract.md, *Using
+another app's operations*). Each is an action on the company (`id` is the company's id) with a contract;
+`tests/offered_it.rs` calls each as an app does.
+
+| Operation | Input (`params`) | Answer |
+|---|---|---|
+| `accounting.company.post_entry` (accounting ^0.4) | `posting_date`, `source_entity` (the app's entity), `source_id` (a record of it), `source_number?`, `memo?`, `lines`: JSON `[{account, debit \| credit, currency?, amount_txn?, exchange_rate?, customer?, supplier?, cost_center?, project?, against_entity?, against_id?, remarks?}]`, 1 to 500 | `{entry, debit, credit}` (`entry` null when every line nets to nothing) |
+| `accounting.company.reverse_entries` (accounting ^0.4) | `source_entity`, `source_id`, `on?` (today) | `{reversed}` |
+| `selling.company.customer_for` (selling ^0.2) | `name`, `email?`, `phone?` | `{customer, created}` |
+| `selling.company.customers_of` (selling ^0.2) | `email` | `{customers}` |
+| `selling.company.price_document` (selling ^0.2) | `document`: JSON of a sales order's fields (a purchase order's with `side: Buying`), its `items` 1 to 500 | `{document}` with prices, taxes and totals |
+
+* **Pricing answers as its caller.** `price_document` is a query, so it runs with the caller's own rights: a list
+  price typed on an item line is a person's and is dropped, and the item's own price (price list, last purchase or
+  standard rate, pricing rules) is used, as on any order that person makes.
+* **Posting is an app's.** `post_entry` and `reverse_entries` run only for an app's call (which runs as the system)
+  or ERP's own code: a person or an agent asking is refused, and posts journal entries instead. The record must
+  exist; every account must be a ledger (not group) account of the company; amounts are the company currency's,
+  never with more decimals than it has; debits and credits must be equal to the cent, or nothing is written.
+  Another currency's line gives `currency`, `amount_txn` (same sign) and `exchange_rate`.
+* **Once.** The app's key is the posting's identity: the same key answers what was done (`repeated: true`), with
+  other lines it is refused, and racing calls with one key make one posting. Without a key a change is refused.
+  Each new key appends, as the engine's `ledger::post` does. `reverse_entries` reverses what is not reversed yet.
+* `customer_for` takes the oldest enabled customer with the email (or phone), else makes an Individual one, under
+  a lock on the address; `customers_of` reads. A person asking directly needs Customer create (read).
+
 ## Through the engine
 
 Apps that post their own documents' effects (Point of Sale's sales, Commerce's orders, Assets'

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-2026-03</MsgId>
+      <CreDtTm>2026-03-31T18:00:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-1</Id>
+      <Acct>
+        <Id><IBAN>GB82WEST12345698765432</IBAN></Id>
+        <Ccy>EUR</Ccy>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-01</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>E1</NtryRef>
+        <Amt Ccy="EUR">1500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-03-05</Dt></BookgDt>
+        <ValDt><Dt>2026-03-05</Dt></ValDt>
+        <AcctSvcrRef>BANK-0001</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>INV-1001</EndToEndId></Refs>
+            <RltdPties><Dbtr><Nm>Acme Corp</Nm></Dbtr></RltdPties>
+            <RmtInf><Ustrd>Invoice INV-1001 &amp; delivery</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">25.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><DtTm>2026-03-06T09:30:00</DtTm></BookgDt>
+        <AcctSvcrRef>BANK-0002</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>Account fee March</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">99.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <BookgDt><Dt>2026-03-07</Dt></BookgDt>
+        <AcctSvcrRef>BANK-0099</AcctSvcrRef>
+        <AddtlNtryInf>Card payment, not yet booked</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">800.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-03-10</Dt></BookgDt>
+        <AcctSvcrRef>BANK-0003</AcctSvcrRef>
+        <NtryDtls>
+          <Btch><NbOfTxs>2</NbOfTxs></Btch>
+          <TxDtls>
+            <Refs><EndToEndId>R-3</EndToEndId></Refs>
+            <RltdPties><Cdtr><Pty><Nm>Landlord Ltd</Nm></Pty></Cdtr></RltdPties>
+            <RmtInf><Ustrd>Rent March</Ustrd></RmtInf>
+          </TxDtls>
+          <TxDtls>
+            <Refs><EndToEndId>E-7</EndToEndId></Refs>
+            <RltdPties><Cdtr><Pty><Nm>Power Co</Nm></Pty></Cdtr></RltdPties>
+            <RmtInf><Ustrd>Electricity</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

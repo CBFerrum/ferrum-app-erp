@@ -6,6 +6,9 @@
 export type Status = "Draft" | "Rated" | "Label Bought" | "In Transit" | "Delivered" | "Exception" | "Cancelled";
 
 export interface Rate {
+  /** The carrier connection that offered it; offers kept before carriers were compared have none (the shipment's). */
+  carrier?: string | null;
+  carrier_name?: string | null;
   service: string;
   amount: string;
   currency?: string | null;
@@ -81,5 +84,22 @@ export interface PlatformConnection {
 /** The platform connection a carrier names: by its id, or by its name where the field holds that. */
 export const connectionOf = (list: PlatformConnection[] | undefined, field: string | null | undefined): PlatformConnection | null => (field ? (list?.find((c) => c.id === field || c.name === field) ?? null) : null);
 
-/** The body of Choose Rate and Buy Label. */
-export const chooseBody = (service: string) => ({ service });
+/** The cheapest offer in each currency, for a hint; never chosen for the person. */
+export const cheapestByCurrency = (rates: Rate[]): Rate[] => {
+  const best = new Map<string, Rate>();
+  for (const r of rates) {
+    const c = r.currency ?? "";
+    const b = best.get(c);
+    if (!b || Number(r.amount) < Number(b.amount)) best.set(c, r);
+  }
+  return [...best.values()];
+};
+
+/** Whose an offer is: its own carrier, or the shipment's. */
+export const offerCarrier = (r: Rate, shipmentCarrier: string) => r.carrier ?? shipmentCarrier;
+
+/** One offer among several carriers'. */
+export const offerKey = (r: Rate, shipmentCarrier: string) => `${offerCarrier(r, shipmentCarrier)}|${r.service}`;
+
+/** The body of Choose Rate: the service, and whose offer it is. */
+export const chooseBody = (service: string, carrier?: string) => (carrier ? { service, carrier } : { service });

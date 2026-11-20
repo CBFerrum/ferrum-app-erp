@@ -2,8 +2,12 @@
 
 The accountant's work beyond posting, on ERP's ledger.
 
-- **Bank accounts** tied to their ledger accounts, statements imported from CSV (importing one again
-  skips what is already there), and a reconciliation workbench that pairs exact matches so none is
+- **Bank accounts** tied to their ledger accounts, statements imported from CAMT.053, CAMT.052, MT940,
+  OFX and QFX files or a CSV, each read by a statement format that is a record (a bank's own CSV is
+  described once; importing a file again skips what is already there, by the bank's own reference where
+  the file gives one), and a reconciliation workbench; bank rules book a line no entry explains (by its
+  text, a pattern, direction and amount) as a journal or a payment, by hand, in bulk or as lines are imported;
+  a bank feed described as a connection brings transactions without a file (no bank is built in), that pairs exact matches so none is
   used twice; a transfer between two of the company's accounts is cleared on each one's statement.
 - **Payment allocation**: a customer's or supplier's payments, credit notes and journal credits
   applied to their open invoices in one document, with the exchange gain or loss of each pairing.

@@ -56,6 +56,17 @@ connection: Not Booked; Absorbed (the cost is booked to the Freight Account agai
 Account until the carrier's bill comes, taken back when the label is cancelled); Charged to Customer (the
 same, and the invoice made from the delivery charges it once on a line of the Freight Item).
 
+## Templates and comparing carriers
+A **Carrier Template** is the same description as a connection's Calls, with what the connection needs said in words
+and how far it was proven (recorded answers, the provider's sandbox, live). A new connection that names a template and
+leaves Calls empty takes the template's calls once; edit them freely afterwards. A template never holds a key: type
+keys on the connection.
+
+A shipment can hold several carriers' offers: Get Rates with `carrier` asks that carrier (one call, its own request) and
+replaces only that carrier's earlier offers; each offer names its `carrier`. Choose Rate with `service` and `carrier`
+makes that carrier the shipment's; Buy Label then buys from it. The shipment desk's **Compare carriers** asks every
+enabled carrier of the company this way, each on its own.
+
 ## Worked example: one API over many carriers
 
 The addresses are placeholders.

@@ -159,7 +159,8 @@
   rules:
     - {name: positive, check: "doc.paid_amount > 0.0", message: "Paid amount must be greater than zero", on: submit}
   actions:
-    - {name: get_outstanding_invoices, label: Get Outstanding Invoices, docstatus: [0], permission: write}
+    - {name: get_outstanding_invoices, label: Get Outstanding Invoices, docstatus: [0], permission: write,
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentEntry}, paid_amount: {type: string}, references: {type: array, items: {type: object}}}}, completion: "The draft payment lists the party's open invoices in due order, each with the amount allocated to it, and takes the paid amount from them when it had none"}}
   list: {columns: [number, posting_date, payment_type, party_name, paid_amount], sort: posting_date desc}
 
 - name: OpeningInvoice
@@ -265,19 +266,24 @@
     - {name: reminded_on, type: date, read_only: true, description: "When those who deposit were told it can be deposited"}
   actions:
     - {name: deposit, label: Deposit, permission: write, condition: "doc.status == 'Received'",
-       params: [{name: on, label: Deposited On, type: date, description: "Today when empty"}]}
+       params: [{name: on, label: Deposited On, type: date, description: "Today when empty"}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentInstrument}, status: {type: string}}}, completion: "The instrument is Deposited on the day given, committed with this receipt"}}
     - {name: clear, label: Cleared, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
-       params: [{name: on, label: Cleared On, type: date, description: "Today when empty; not before the date written on it"}]}
+       params: [{name: on, label: Cleared On, type: date, description: "Today when empty; not before the date written on it"}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentInstrument}, status: {type: string}}}, completion: "The instrument is Cleared and its amount has moved from the instruments account into the bank account in the ledger, committed with this receipt", compensate_with: bounce}}
     - {name: bounce, label: Bounced, permission: write, condition: "doc.status != 'Bounced' && doc.status != 'Cancelled' && doc.status != 'Replaced'",
        confirm: "The payment is taken back and what it paid is owed again.",
        params: [{name: on, label: Bounced On, type: date, description: "Today when empty"}, {name: reason, label: Reason, type: text, required: true},
-                {name: no_charge, label: Do Not Charge the Customer, type: check, description: "Leave off the mode's charge for a bounce"}]}
+                {name: no_charge, label: Do Not Charge the Customer, type: check, description: "Leave off the mode's charge for a bounce"}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentInstrument}, status: {type: string}}}, completion: "The instrument is Bounced, its payment is cancelled so what it paid is owed again, the customer is charged the mode's charge unless excused, and accounting.instrument_bounced is queued with this receipt"}}
     - {name: cancel_instrument, label: Cancel Instrument, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
        confirm: "The payment is taken back and what it paid is owed again.",
-       params: [{name: on, label: Cancelled On, type: date}, {name: reason, label: Reason, type: text, required: true}]}
+       params: [{name: on, label: Cancelled On, type: date}, {name: reason, label: Reason, type: text, required: true}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentInstrument}, status: {type: string}}}, completion: "The instrument is Cancelled and its payment is cancelled with it so what it paid is owed again, committed with this receipt"}}
     - {name: replace, label: Replace, permission: write, condition: "doc.status == 'Received' || doc.status == 'Deposited' || doc.status == 'Issued'",
        params: [{name: instrument_no, label: New Number, type: data, required: true}, {name: instrument_date, label: Dated, type: date, required: true},
-                {name: bank, label: Drawn On, type: data}, {name: reason, label: Reason, type: text}]}
+                {name: bank, label: Drawn On, type: data}, {name: reason, label: Reason, type: text}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: PaymentInstrument}, status: {type: string}, replaced_by: {type: [string, "null"], format: uuid, x-ferrum-link: PaymentInstrument}}}, completion: "The instrument is Replaced by a new one with the number and date given, and the payment now points to the new one, committed with this receipt"}}
   list: {columns: [instrument_no, instrument_date, direction, party_name, amount, status], sort: instrument_date asc}
 
 # Bad-debt write-off (FN-13): a customer's invoice that will not be paid, written off in one action to
@@ -340,7 +346,8 @@
   actions:
     - {name: record_recovery, label: Record Recovery, docstatus: [1], permission: submit,
        params: [{name: amount, label: Amount Recovered (Company Currency), type: currency, required: true}, {name: on, label: Received On, type: date},
-                {name: bank_account, label: Into, type: link, to: Account, required: true}]}
+                {name: bank_account, label: Into, type: link, to: Account, required: true}],
+      contract: {effect: transactional_action, returns: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: BadDebtWriteOff}, recovered_amount: {type: string}}}, completion: "The amount recovered is booked into the bank account against the write-off, the tax relief taken is owed again in its share, and the write-off shows the total recovered, committed with this receipt"}}
   list: {columns: [number, posting_date, customer_name, invoice_number, amount, recovered_amount], sort: posting_date desc}
 
 # Recurring journals (FN-06, FN-07): a template's lines made into a journal entry every period.

@@ -301,13 +301,12 @@ impl Localization for Spain {
         if s(&co, "country_code") != Some("ES") {
             return Ok(());
         }
-        let Some(parent) = accounts.get("Duties and Taxes") else { return Ok(()) };
-        let Value::Object(a) = json!({"account_name": "Recargo de Equivalencia", "account_number": SURCHARGE, "company": company.to_string(), "is_group": false,
-                                      "root_type": "Liability", "account_type": "Tax", "parent_account": parent, "account_currency": co.get("default_currency")})
-        else {
+        if !accounts.contains_key("Duties and Taxes") {
             return Ok(());
-        };
-        hc.kernel.insert_tx(&sctx, hc.tx, "Account", a).await.map(|_| ())
+        }
+        ferrum_app_erp::setup::ensure_account(hc.kernel, &sctx, hc.tx, company, SURCHARGE, "Recargo de Equivalencia", "2130", "Liability", "Tax")
+            .await
+            .map(|_| ())
     }
 }
 

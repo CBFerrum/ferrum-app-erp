@@ -4,6 +4,9 @@
 //! reseller and through a marketplace; its rate tables, use tax, AvaTax records and voids, and the
 //! sales tax, economic nexus and Form 1099 reports.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -414,6 +417,31 @@ async fn scenario() {
         (json!("Use Tax"), json!(true), n("8.25"), n("100"))
     );
     k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("purchase");
+
+    // a_template_company_is_still_taxed (erp-4): a company made from a national chart without the use-tax accounts
+    // gets them under the groups standing for 2130 and 5200, and use tax books to them.
+    let template = chart::national_template(&k, &ctx, &cid.to_string(), "US National", &["2171", "5290"]).await;
+    let nat = insert(
+        "Company",
+        json!({"company_name": "Lone Star National", "abbr": "LSN", "default_currency": usd["id"], "country": "United States", "us_state": "TX",
+               "us_zip": "78701-1234", "us_registered_states": "TX", "chart_template": template}),
+    )
+    .await;
+    let nid = uid(&nat).to_string();
+    let role = async |number: &str| chart::account(&k, &ctx, &nid, number).await;
+    for (number, parent) in [("2171", "2130"), ("5290", "5200")] {
+        let made = k.get(&ctx, "Account", role(number).await.parse().unwrap(), false).await.unwrap();
+        assert_eq!(made["parent_account"], json!(role(parent).await), "{number} under the {parent} role");
+    }
+    let pi = insert(
+        "PurchaseInvoice",
+        json!({"company": nid, "supplier": supplier.to_string(), "bill_no": "BT-N", "us_accrue_use_tax": true,
+               "items": [{"item": widget.to_string(), "qty": "1", "price_list_rate": "100"}]}),
+    )
+    .await;
+    k.submit(&ctx, "PurchaseInvoice", uid(&pi), None).await.expect("the template company's purchase");
+    let lines = chart::posted(&k, &ctx, pi["id"].as_str().unwrap()).await;
+    assert!(lines.contains(&(role("5290").await, n("8.25"))) && lines.contains(&(role("2171").await, n("-8.25"))), "use tax by role: {lines:?}");
 
     // The reports.
     let report = async |name: &str, params: &[(&str, &str)]| -> Value {

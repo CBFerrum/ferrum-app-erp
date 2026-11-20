@@ -1,5 +1,205 @@
 # Changelog
 
+## ERP 0.40.0 and South Korea 0.1.0: a country described as a data file
+
+A country whose VAT works the common way can now be three files and no Rust (docs/countries.md): a description
+(`addons/countries/data/<code>.json`: rows, rates from a day, categories, reasons, who reverse-charges, accounts, and
+the registration number as shapes and weighted-sum checks), a manifest and a package. `build.rs` makes a module for
+each, and `ferrum_countries::all()` lists them; the thirteen coded countries are unchanged (their number check is now
+`Number::Code`). **South Korea** is the first: VAT at 10% (Value-Added Tax Act article 30), exports at 0% (article 21),
+exempt supplies (article 26), VAT paid by proxy on services from abroad by a company that ticks it (article 52), booked
+as an expense; a ten-digit business registration number (shape only: the Act read gives no check digit); a VAT return
+definition of ERP's own sums. Each fact cites the text read on 20 Nov 2026. The platform must list the `kr` module
+when it pins this release.
+
+## European Union 0.6.0 (eu 0.1.1): Intrastat figures
+
+Items gain **Net Mass (kg)**, **Supplementary Units per Stock Unit** and **Country of Origin** (two capital letters).
+The report **Intrastat** gives a company in a member state its dispatches and arrivals of goods with other member
+states for a period: by partner country, commodity code, origin, nature of transaction (11, or 21 for a return) and,
+on dispatches, the customer's VAT number, with invoiced value in the company's currency, net mass and supplementary
+units, and the lines a declaration would lack (no code, no mass or units, no partner country). Delivery notes and
+purchase receipts count, and invoices only when they update stock; services and cancelled documents do not. Whoever
+may read delivery notes may run it. The national declaration files are not built (they wait for the platform's
+documents over an app's rows).
+
+## ERP 0.39.0 (inventory 0.1.1): carrier templates, and comparing carriers on one shipment
+
+A **Carrier Template** (Inventory) holds a ready-made description of a carrier's calls and says which keys the
+connection needs; it holds no secret. A new Carrier Connection that names a template and has no calls takes the
+template's once; a person's edits afterwards stay. Get Rates takes an optional **carrier**: each carrier is asked on its
+own request (one call, as before) and its offers replace only its own earlier ones, so a shipment holds several
+carriers' offers side by side, each naming its carrier. Choose Rate takes the carrier too: choosing another carrier's
+offer moves the shipment to that carrier, and the label is bought from it. The shipment desk has **Compare carriers**
+(each enabled carrier of the company asked independently, its refusal shown beside the others' offers) and marks the
+cheapest offer per currency. No carrier template ships in this release.
+
+## ERP 0.38.0 (manufacturing 0.1.1): demand forecasts into planning
+
+A **Demand Forecast** (Manufacturing) works out each item's expected monthly demand in a warehouse from what left it on
+deliveries and stock-updating invoices (net of cancellations and returns), by a moving average, simple exponential
+smoothing or a seasonal index on a level, in exact decimals (docs/forecast.md). Work Out the Forecast replaces its
+lines and keeps any figure a person changed. A requirements run that names a computed forecast plans for each month's
+figure less what open sales orders of that month already ask for, by item (unbucketed) or by month (bucketed, when the
+forecast's warehouse is one of the run's); a forecast of another warehouse than an unbucketed run's is refused.
+
+## ERP 0.37.0 (selling 0.2.2, buying 0.1.2): drop shipment
+
+A sales order line marked **Supplier Delivers**, with its supplier, is sent by the supplier straight to the customer
+(docs/drop-shipment.md). **Order from Supplier** makes a draft purchase order per supplier for what is not yet ordered,
+shipped to the customer; submitting, cancelling, changing, closing or re-opening it recounts each sales line's
+**Ordered from Supplier** under the sales order's row lock, so suppliers are never ordered more than was sold. The
+purchase receipt records that the supplier shipped: no stock move, cost of goods sold debited and stock received but
+not billed credited, and the sales line marked delivered; cancelling or returning it reverses both. The supplier's
+bill clears what the receipt booked and puts any price difference in cost of goods sold. The customer is invoiced as
+always; with Update Stock its drop-ship lines move no stock and are not delivered twice. Drop-ship lines are left out
+of reservations, promises, both requirements runs, production plans (Manufacturing Operations), reorder levels
+(Procurement), pick waves (Warehouse Management) and pick lists (Stock Operations); a delivery note may not deliver one. Add-on patches: Procurement 0.2.2, Warehouse
+Management 0.4.1, Stock Operations 0.3.1, Manufacturing Operations 0.3.1.
+
+## ERP 0.36.0 (selling 0.2.1, buying 0.1.1): purchase and sales agreements
+
+A **Purchase Agreement** (Buying) or **Sales Agreement** (Selling) records items with an agreed quantity and price per
+stock unit, valid between two dates (docs/agreements.md). An order line that names one takes its price (times the
+line's unit factor; no price list or pricing rule applies) and counts against its quantity; what each line has
+ordered is recounted from the submitted orders under the agreement's row lock whenever an order is submitted,
+cancelled, changed, closed or re-opened, so two orders at once never draw past what was agreed. An order outside the
+dates, for another party or company, in another currency, or on a closed agreement is refused. Create Purchase Order /
+Create Sales Order makes a draft for what is left; Close and Re-open stop and resume drawing; an agreement that a
+submitted order draws on cannot be cancelled. Each new action has a contract.
+
+- The portal's reads by customer and supplier are declared in `reach_links` (SalesInvoice, PurchaseOrder,
+  PurchaseInvoice): a merge moving them is an administrator's (K0-2).
+
+## European Union 0.5.2: OSS VAT no longer posts to Deferred Revenue
+
+The EU add-on made its OSS VAT account under the standard number 2150, which the standard chart already gives
+Deferred Revenue: on a company with the standard chart the add-on found that account and posted OSS VAT to it, and
+its e-invoices (EN 16931, Italy's FatturaPA, Poland's FA(3)) counted deferred revenue as VAT. OSS VAT Payable now
+stands for 2153, a number neither the standard chart nor a member state's add-on uses (Spain's 2152 is the equivalence surcharge), and is made when a company is set up or its EU VAT
+accounts are. Found by the test that a company made from a national chart is still taxed (erp-4).
+## The Spanish, French, Portuguese and Romanian add-ons' patches: their statutory charts of accounts
+
+A workspace that installs one of these add-ons finds the country's chart in a Company's Chart of Accounts: Spain's
+Plan General de Contabilidad (Real Decreto 1514/2007), France's Plan comptable général (ANC regulation 2014-03),
+Portugal's SNC Código de Contas (Portaria 218/2015) and Romania's Planul de conturi general (OMFP 1802/2014). Each is
+a Chart of Accounts Template seeded with the add-on, built from the text the country's own authority publishes, read
+on 19 November 2026 (the address and the day are in the template's notes), and not yet reviewed by an accountant. A
+template maps every role ERP and its add-ons book to (erp-4), so a company made from it is taxed as before, on the
+chart's own VAT accounts. A seeded template is made once per workspace: a later release does not rewrite a copy.
+
+- Rows: the groups, subgroups and three-digit accounts the text lists, and the longer accounts a role needs: 300 to 500
+  rows each, not the full chart. Where a chart has no account for a role, one was added and the notes say so.
+- Spain 0.2.2, France 0.2.1, Portugal 0.4.1, Romania 0.3.2. Belgium, Germany, Mexico and China ship none yet: their
+  sources could not be read or used on the day (docs/charts.md).
+
+## ERP 0.35.0 and the country add-ons' patches: chart of accounts templates, and accounts found by their role
+
+A company's accounts can now be made from a **Chart of Accounts Template** (a new record, Setup menu) chosen when the
+company is created; without one, the standard chart as before. Each template account says which standard account it
+**stands for** (Account's new Stands For), and every look-up of an account by the standard chart's number goes through
+`setup::standard_account`: on the standard chart by number as always, on a template's chart by the role, never by a
+number a national chart may use for something else. Add-ons make their own tax accounts with `setup::ensure_account`.
+docs/charts.md lists the roles a template must map; a template that leaves one out is refused when saved.
+
+- Company gains Chart of Accounts, which cannot be changed after the company is made. Create Chart of Accounts
+  (renamed, now with a contract) adds the accounts of the company's chart it lacks, once.
+- New accounts of the standard chart carry their own number as Stands For; existing ones are left as they are and
+  still found by number.
+- No national chart ships in this release. The add-ons whose look-ups moved: European Union 0.5.1, United Kingdom
+  0.4.2, Canada 0.2.1, United States 0.3.2, India 0.9.2, Poland, Italy and Spain 0.2.1, and the countries engine's
+  thirteen (United Arab Emirates 0.3.1, Australia 0.3.1, China 0.4.1, Indonesia 0.4.1, Japan 0.4.1, Mexico 0.3.1,
+  Malaysia 0.5.2, New Zealand 0.4.1, Philippines 0.4.1, Saudi Arabia 0.4.1, Singapore 0.4.1, Thailand 0.4.1,
+  Vietnam 0.4.1).
+
+## ERP 0.34.0 (accounting 0.4.0, selling 0.2.0): operations other apps call instead of ERP's code
+
+Assets, HR, Point of Sale and Commerce post to the ledger, Bookings and Helpdesk find a person's customer, and CRM
+prices quotations by compiling against ERP's crate. Five operations now do the same through the gate, each an action
+on the company with a contract (docs/contracts.md, "Operations through the gate"); an app declares them under `uses:`
+and calls them with `Kernel::call_tx` in its own transaction. Nothing existing changes: the engine modules stay for
+the apps that still use them.
+
+- `accounting.company.post_entry` `{posting_date, source_entity, source_id, source_number?, memo?, lines}` appends one
+  balanced entry for a record of the caller's: every account a ledger account of the company, amounts in the
+  company currency with no more decimals than it has, debits equal to credits, or nothing is written. Only an app's
+  call (which runs as the system) posts: a person or an agent is refused. The app's key makes it once: a repeat is
+  answered, the key with other lines is refused, racing calls make one entry. `compensate_with: reverse_entries`.
+- `accounting.company.reverse_entries` `{source_entity, source_id, on?}` reverses what is not reversed yet, once.
+- `selling.company.customer_for` `{name, email?, phone?}` → `{customer, created}`; `selling.company.customers_of`
+  `{email}` → `{customers}`; `selling.company.price_document` `{document, side?}` → the document priced as an order
+  of the company would be, nothing saved.
+- The accounting package is 0.4.0 and selling 0.2.0, the versions a caller's `uses` names (`^0.4`, `^0.2`).
+
+## Finance 0.11.0: bank feeds through a connection's pull
+
+An administrator describes a bank's or an aggregator's API once as a connection (docs/bank-feeds.md has a worked
+description with a placeholder host); its pull writes each transaction as a **Bank Feed Line** (a new entity, as the
+system: people only read and delete them), and Finance turns it into a submitted bank transaction of the bank account
+whose new Feed Connection and Feed Account Reference name it, in the same transaction. No provider is named in code.
+
+- **Once.** A feed line is unique by connection and provider's id; the transaction's hash is the provider's id as the
+  bank's reference, so a line a statement file already brought (camt's `AcctSvcrRef`, OFX's `FITID`) is marked
+  Duplicate and nothing is added.
+- **Automatic bank rules** apply to fed lines as to imported ones.
+- **Waiting lines.** A line for an account not linked yet waits; `finance.bank_account.take_feed_lines` (the bank
+  account's Take Feed Lines button) takes up to 500, each in a savepoint, and says how many are left.
+- A bank account's feed fields are both given or neither, and no two accounts share them. README: the bank row's
+  footnote says what is there; the roadmap line is reworded, not ticked.
+
+## Finance 0.10.0: bank rules book a line no entry in the books explains
+
+A **Bank Rule** (Finance menu, a new entity) says what to book for a statement line with no voucher: lines of one bank
+account or all of a company's, money in or out, a text the line contains, a pattern (a regular expression, any case,
+at most 300 characters), an amount range; and a journal to an account (with cost centre and project) or a payment
+from a customer or to a supplier (settling their oldest invoices or kept as an advance). The lowest priority that
+fits wins, then the name.
+
+- **Three ways to apply one.** `finance.bank_transaction.apply_rule` (write on the line; the entry is made and
+  submitted as the caller, so their rights on journals and payments count) books one line; `finance.bank_account.
+  apply_rules` books a list of lines, all or none; a rule marked automatic is applied as lines are imported, each in
+  a savepoint: one it cannot book (a closed period, a missing right) is left to reconcile and listed in the import's
+  new `rule_failures`, and the import goes on (`ruled` counts the others).
+- **An exact match always wins.** A rule is offered, and applied, only for a line no entry in the books matches
+  exactly within 30 days: booking it would count that money twice.
+- **Once.** The line is locked while it is booked; a second booking waits, then finds it reconciled.
+- **The workbench** gains a contract, and each line the rule that would book it (`rule`): a "Rule: …" badge, a Rule
+  tab with "Book by this rule", and "Apply rules (n)" beside the exact matches. An import's toast says how many rules
+  booked; lines a rule could not book are listed in the dialog. `ui/dist` rebuilt.
+- Bank Transaction gains Booked by Rule.
+
+## Finance 0.9.0: bank statements from CAMT.053, CAMT.052, MT940 and OFX files, read by formats that are records
+
+A statement used to come in only as a CSV whose columns were mapped on every import. Now a **Statement Format**
+(Finance menu, a new entity) says how a bank's file is read, and Finance has three readers that know no standard:
+Delimited (rows of columns), Markup (XML, or SGML whose leaf tags are not closed) and Tagged (lines that start with
+`:TAG:`). Four formats ship as seed records: ISO 20022 statement (camt.053), ISO 20022 account report (camt.052),
+SWIFT MT940, and OFX and QFX. A bank's own CSV is described once and set on its bank account; a bank's variant of
+a standard is a changed or added record, not a release. docs/statement-formats.md describes every key.
+
+- **Two operations in place of one.** `finance.bank_account.preview_statement` (a query, `read` on the bank
+  account) answers what an import would do, nothing saved; `finance.bank_account.import_transactions` (`write`, and
+  Bank Transaction create and submit) stores every new line as a submitted bank transaction, or nothing. Both take
+  `{text, format?, inline?}` and have contracts. The old `csv`, `mapping`, `date_format`, `decimal_comma`,
+  `delimiter`, `header_row` and `dry_run` parameters are gone: columns chosen by hand are `inline`, a Delimited
+  reading as JSON. The format used is the one named, then `inline`, then the first enabled format whose `sniff` fits
+  the text, then the account's own (Bank Account's new Statement Format field).
+- **A line is stored once.** A line with the bank's own reference (camt's `AcctSvcrRef`, MT940's `//` reference,
+  OFX's `FITID`, kept in Bank Transaction's new Bank's Reference field) is that reference on the account, from any
+  file in any format; a line without one is its content, as before. The unique key on the bank account and the
+  line's hash is unchanged: a file imported twice, or by two people at once, adds each line once.
+- **Another account's statement is left out.** When the file names its account and the bank account has an IBAN or
+  number, other accounts' statements are left out and counted; a file only of them is refused, naming the account
+  masked.
+- **Untrusted text.** At most 5 MB and 10,000 lines; a Markup file nested deeper than 64 levels or not well formed is
+  one error; no DTD or external entity is read; patterns are linear-time, at most 500 characters and 1 MB compiled;
+  descriptions and references are cut to their fields.
+- **The import dialog** reads any of these files, says "Read as" the format that fits, offers the others and "CSV,
+  columns chosen here", and falls back to the column mapping when nothing fits. `ui/dist` rebuilt.
+
+Known ceiling: a line first imported from a CSV without the bank's reference and later from a file with it is not
+recognised as the same line.
+
 ## ERP 0.33.1, United Kingdom 0.4.1, India 0.9.1, Malaysia 0.5.1, Romania 0.3.1, Procurement 0.2.1, United States 0.3.1: a request delivered twice is not sent twice
 
 The outbox delivers each request at least once: again when an attempt fails, and again, even after the connector

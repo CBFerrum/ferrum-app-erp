@@ -14,7 +14,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "sa_kind",
     number_field: "sa_vat_number",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a VAT registration number: 15 digits, beginning and ending with 3",
     export_reason: "Zero-rated export",
     exempt_reason: "Exempt supply",

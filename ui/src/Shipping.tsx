@@ -15,7 +15,7 @@ import { act, Gate, useRights } from "./desk";
 import { DeskTabs } from "./DeskTabs";
 import { Loading, LoadFailed } from "./states";
 import { show } from "./money";
-import { cheapest, chooseBody, connectionOf, may, type PlatformConnection, type Rate, type Shipment, TONE } from "./shipments";
+import { cheapestByCurrency, chooseBody, connectionOf, may, offerCarrier, offerKey, type PlatformConnection, type Rate, type Shipment, TONE } from "./shipments";
 
 const STATUS = (s: string) =>
   s === "Draft" ? t("Draft") : s === "Rated" ? t("Rates offered") : s === "Label Bought" ? t("Label bought") : s === "In Transit" ? t("In transit") : s === "Delivered" ? t("Delivered") : s === "Exception" ? t("Problem") : s === "Cancelled" ? t("Cancelled") : isolate(s);
@@ -163,13 +163,21 @@ function Carriers() {
 function Desk({ id }: { id: string }) {
   const qc = useQueryClient();
   const r = useRights("CarrierShipment");
-  const [busy, setBusy] = useState<null | "rate" | "choose" | "buy" | "track" | "cancel">(null);
+  const [busy, setBusy] = useState<null | "rate" | "compare" | "choose" | "buy" | "track" | "cancel">(null);
+  // Comparing carriers: each carrier asked on its own, its answer or refusal kept beside the others'.
+  const [asked, setAsked] = useState<Record<string, { state: "loading" | "done" | "refused"; message?: string }>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [pick, setPick] = useState<string | null>(null);
   // One key for the label this shipment buys: a second press, or a retry after a lost answer, buys one.
   const buyKey = useRef(newKey());
   const q = useQuery({ queryKey: ["erp", "shipment", id], queryFn: ({ signal }) => api.get<Shipment>(docPath("CarrierShipment", id), undefined, signal) });
   const s = q.data;
+  const carriers = useQuery({
+    queryKey: ["erp", "shipment-carriers", s?.company],
+    enabled: !!s?.company,
+    queryFn: ({ signal }) =>
+      api.get<{ rows: Carrier[] }>(docPath("CarrierConnection"), { fields: "id,connection_name,enabled", filters: JSON.stringify({ company: s?.company, enabled: true }), limit: 50 }, signal),
+  });
   const files = useQuery({
     queryKey: ["erp", "shipment-files", id, s?.label_file],
     enabled: !!s?.label_file,
@@ -200,9 +208,32 @@ function Desk({ id }: { id: string }) {
   if (q.error) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} title={t("Could not open the shipment")} />;
   if (!s) return <Loading label={t("Opening the shipment")} />;
   const rates = s.rates ?? [];
-  const best = cheapest(rates);
+  const best = new Set(cheapestByCurrency(rates).map((x) => offerKey(x, s.carrier)));
   const write = r.may("write");
-  const chosen = pick ?? s.service ?? null;
+  const current = rates.find((x) => x.service === s.service && offerCarrier(x, s.carrier) === s.carrier);
+  const chosen = pick ?? (current ? offerKey(current, s.carrier) : null);
+  const chosenRate = rates.find((x) => offerKey(x, s.carrier) === chosen) ?? null;
+  const others = carriers.data?.rows ?? [];
+  const nameOf = (c: string) => others.find((x) => x.id === c)?.connection_name ?? "";
+  const compare = async () => {
+    if (busy) return;
+    setBusy("compare");
+    setProblem(null);
+    setAsked(Object.fromEntries(others.map((c) => [c.id, { state: "loading" as const }])));
+    // Each carrier on its own request: a slow or refusing one never hides the others' offers.
+    await Promise.all(
+      others.map(async (c) => {
+        try {
+          await act("CarrierShipment", id, "get_rates", { carrier: c.id });
+          setAsked((a) => ({ ...a, [c.id]: { state: "done" } }));
+        } catch (e) {
+          setAsked((a) => ({ ...a, [c.id]: { state: "refused", message: errorMessage(e) } }));
+        }
+      }),
+    );
+    await refresh().catch(() => undefined);
+    setBusy(null);
+  };
 
   const buy = async () => {
     const ok = await confirmDialog({ title: t("Buy the label?"), message: t("The carrier charges for it. A second press does not buy another."), confirmLabel: t("Buy the label") });
@@ -277,7 +308,23 @@ function Desk({ id }: { id: string }) {
           <Button disabled={!write || !may.rate(s) || busy !== null} loading={busy === "rate"} onClick={() => void run("rate", () => act("CarrierShipment", id, "get_rates", {}), t("Rates received"))}>
             {rates.length ? t("Ask again") : t("Get rates")}
           </Button>
+          {others.length > 1 && (
+            <Button disabled={!write || !may.rate(s) || busy !== null} loading={busy === "compare"} onClick={() => void compare()}>
+              {t("Compare carriers")}
+            </Button>
+          )}
         </div>
+        {Object.entries(asked).some(([, a]) => a.state !== "done") && (
+          <ul className="erp-stack" aria-live="polite">
+            {Object.entries(asked)
+              .filter(([, a]) => a.state !== "done")
+              .map(([c, a]) => (
+                <li key={c} className={a.state === "refused" ? "text-danger" : "muted"}>
+                  {a.state === "loading" ? t("Asking {carrier}", { carrier: isolate(nameOf(c)) }) : t("{carrier}: {message}", { carrier: isolate(nameOf(c)), message: isolate(a.message ?? "") })}
+                </li>
+              ))}
+          </ul>
+        )}
         {!may.rate(s) && s.tracking_number ? (
           <p className="muted">{t("A label is bought: cancel it to ship another way.")}</p>
         ) : rates.length === 0 ? (
@@ -285,18 +332,26 @@ function Desk({ id }: { id: string }) {
         ) : (
           <fieldset className="erp-stack" disabled={!may.choose(s) || !write}>
             <legend className="sr-only">{t("Rates offered")}</legend>
-            {rates.map((x: Rate) => (
-              <label key={x.service} className="check-field">
-                <input type="radio" name="sh-rate" checked={chosen === x.service} onChange={() => setPick(x.service)} />
-                <span>
-                  {isolate(x.service)} · {isolate(show(x.amount))} {x.currency ? isolate(x.currency) : ""}
-                  {x.days != null && <> · {t("{days} days", { days: x.days })}</>}
-                  {best?.service === x.service && rates.length > 1 && <> · <Badge tone="green">{t("Cheapest")}</Badge></>}
-                </span>
-              </label>
-            ))}
+            {rates.map((x: Rate) => {
+              const key = offerKey(x, s.carrier);
+              return (
+                <label key={key} className="check-field">
+                  <input type="radio" name="sh-rate" checked={chosen === key} onChange={() => setPick(key)} />
+                  <span>
+                    {(x.carrier_name ?? nameOf(offerCarrier(x, s.carrier))) && <>{isolate(x.carrier_name ?? nameOf(offerCarrier(x, s.carrier)))} · </>}
+                    {isolate(x.service)} · {isolate(show(x.amount))} {x.currency ? isolate(x.currency) : ""}
+                    {x.days != null && <> · {t("{days} days", { days: x.days })}</>}
+                    {best.has(key) && rates.length > 1 && <> · <Badge tone="green">{t("Cheapest")}</Badge></>}
+                  </span>
+                </label>
+              );
+            })}
             <div className="erp-actions">
-              <Button disabled={!chosen || chosen === s.service || busy !== null} loading={busy === "choose"} onClick={() => void run("choose", () => act("CarrierShipment", id, "choose_rate", chooseBody(chosen!)), t("Rate chosen"))}>
+              <Button
+                disabled={!chosenRate || chosenRate === current || busy !== null}
+                loading={busy === "choose"}
+                onClick={() => void run("choose", () => act("CarrierShipment", id, "choose_rate", chooseBody(chosenRate!.service, offerCarrier(chosenRate!, s.carrier))), t("Rate chosen"))}
+              >
                 {t("Choose this rate")}
               </Button>
             </div>

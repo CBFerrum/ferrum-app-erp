@@ -28,7 +28,7 @@ pub static COUNTRY: Country = Country {
     default_category: "13%",
     kind_field: "cn_kind",
     number_field: "cn_tax_id",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a unified social credit code: 18 characters whose last checks the rest",
     export_reason: "Export: VAT at 0%",
     exempt_reason: "VAT-exempt",

@@ -431,7 +431,7 @@ impl MrpRunHook {
                  min(coalesce(l.delivery_date, o.delivery_date, o.posting_date)) \
                  from e_sales_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
                  where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') \
-                 and l.qty > coalesce(l.delivered_qty, 0) and ($3::date is null or coalesce(l.delivery_date, o.delivery_date, o.posting_date) <= $3::date) \
+                 and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false) and ($3::date is null or coalesce(l.delivery_date, o.delivery_date, o.posting_date) <= $3::date) \
                  group by l.item",
                 q(&lines)
             )))
@@ -442,6 +442,22 @@ impl MrpRunHook {
             .await?;
             for (item, qty, by) in demand {
                 add(&mut gross, &mut need_by, item, qty, by);
+            }
+        }
+        // A forecast: each item's months up to the demand date, less what its open sales orders already ask for.
+        if let Some((_, planned)) = crate::forecast::planned(hc, doc, Some(wh)).await? {
+            let until = s(doc, "demand_until").and_then(|u| u.parse::<NaiveDate>().ok());
+            let mut forecast: HashMap<Uuid, (Decimal, NaiveDate)> = HashMap::new();
+            for ((item, month), qty) in planned.into_iter().filter(|((_, m), _)| until.is_none_or(|u| *m <= u)) {
+                let e = forecast.entry(item).or_insert((Decimal::ZERO, month));
+                e.0 += qty;
+                e.1 = e.1.min(month);
+            }
+            for (item, (qty, first)) in forecast {
+                let extra = crate::forecast::net_forecast(qty, gross.get(&item).copied().unwrap_or_default());
+                if extra > Decimal::ZERO {
+                    add(&mut gross, &mut need_by, item, extra, first.max(today));
+                }
             }
         }
         // Materials still to be consumed by open work orders are demand too.
@@ -712,7 +728,7 @@ async fn bucketed(hc: &mut HookCtx<'_>, doc: &Doc, bucket: crate::planning::Buck
         let rows_: Vec<(Uuid, Uuid, Decimal, NaiveDate)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "select l.item, coalesce(l.warehouse, o.set_warehouse), (l.qty - coalesce(l.delivered_qty, 0)) * coalesce(nullif(l.conversion_factor, 0), 1), \
              coalesce(l.delivery_date, o.delivery_date, o.posting_date) from e_sales_order o join {} l on l.tenant_id = o.tenant_id and l.parent_id = o.id \
-             where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.delivered_qty, 0) \
+             where o.tenant_id = $1 and o.company = $2 and o.docstatus = 1 and o.status not in ('Closed', 'Completed') and l.qty > coalesce(l.delivered_qty, 0) and not coalesce(l.drop_ship, false) \
              and coalesce(l.warehouse, o.set_warehouse) = any($3)",
             q(&lines)
         )))
@@ -723,6 +739,20 @@ async fn bucketed(hc: &mut HookCtx<'_>, doc: &Doc, bucket: crate::planning::Buck
         .await?;
         for (item, wh, qty, day) in rows_ {
             demand.entry((item, wh)).or_default().push((day, qty));
+        }
+    }
+    // A forecast of one of the run's warehouses: each month's figure less that month's open order demand.
+    if let Some((fwh, planned)) = crate::forecast::planned(hc, doc, None).await?
+        && whs.contains(&fwh)
+    {
+        for ((item, month), qty) in planned.into_iter().filter(|((_, m), _)| *m <= until) {
+            let next = month + chrono::Months::new(1);
+            let ordered: Decimal =
+                demand.get(&(item, fwh)).map(|v| v.iter().filter(|(d, _)| *d >= month && *d < next).map(|(_, q)| *q).sum()).unwrap_or_default();
+            let extra = crate::forecast::net_forecast(qty, ordered);
+            if extra > Decimal::ZERO {
+                demand.entry((item, fwh)).or_default().push((month.max(today), extra));
+            }
         }
     }
     let open_wos: Vec<(Uuid, Uuid, Option<String>, Uuid, Decimal, Uuid, Uuid, NaiveDate, Option<NaiveDate>)> = sqlx::query_as(

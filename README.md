@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.33.1-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.40.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -37,7 +37,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 - 🔗 **One data set with the rest of Ferrum.** Customers, suppliers and items are the platform's shared
   records. The till, the web shop, payroll, fixed assets, CRM quotations and field jobs post through ERP's
   engine, so there is nothing to sync and one set of books.
-- 🌍 **Every country is an add-on.** The engine names no country. 26 countries plug into one localization
+- 🌍 **Every country is an add-on.** The engine names no country. 27 countries plug into one localization
   seam (taxes, e-invoices, returns, registrations, numbering), only for the companies of that country, so one
   workspace can keep companies in India, Germany and the United States side by side.
 - 🧩 **Grows by add-ons and configuration.** Finance, Procurement, Stock Operations, Manufacturing Operations,
@@ -56,10 +56,10 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.33.1`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.40.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
-| ➕ **Add-ons** | 7 for operations and finance (57 more entities, 23 more reports) and 26 country add-ons, all in this repository |
+| ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 27 country add-ons, all in this repository |
 | 🔗 **Depends on** | Ferrum platform `>=0.4.0, <0.5` (its shared core, parties, products and project records) |
 | 🤝 **Works with** | Point of Sale, Commerce, CRM, HR, Assets, Field Service and Bookings, which post through its engine; Operations, which carries the warehouse's and shop floor's devices |
 | 🗣️ **Languages** | English, Arabic and Hindi; pages mirror right to left |
@@ -398,12 +398,19 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.8.0)
+### 💼 Finance add-on (0.11.0)
 
-- **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CSV (columns guessed,
-  a trial run first, lines already there skipped), and a **reconciliation workbench**: statement lines beside
-  the books with the running bank balance, exact matches paired so none is used twice, keyboard shortcuts,
-  many-to-one matches, a payment or journal entry made from a line, the difference always in view.
+- **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CAMT.053, CAMT.052,
+  MT940, OFX and QFX files, or a CSV whose columns are guessed or saved once as the bank's **statement format**
+  (formats are records, so a bank's variant needs no release; a trial run first, lines already there skipped by
+  the bank's own reference, another account's statements left out), and a **reconciliation workbench**:
+  statement lines beside the books with the running bank balance, exact matches paired so none is used twice,
+  keyboard shortcuts, many-to-one matches, a payment or journal entry made from a line, the difference always in
+  view. **Bank rules** book a line no entry explains (its text, a pattern, direction and amount range) as a
+  journal to an account or a payment from or to a party, by hand, for every offered line at once, or as lines are
+  imported; an exact match in the books always wins over a rule. A **bank feed** is a connection you describe (no
+  bank is built in): its pull brings each account's transactions, which arrive as submitted bank transactions past
+  the same duplicate check (docs/bank-feeds.md).
 - **Payment allocation**: a party's payments, credit notes and journal credits applied to open invoices in one
   document, oldest first, with each pairing's exchange gain or loss.
 - **Payment runs**: bills due by a day and those whose early-payment discount is open, leaving out bills on hold;
@@ -423,7 +430,7 @@ add-on brings it.
 - **Reports:** Finance Overview (Accounts today), Budget Variance, Bank Reconciliation Statement, Cash Flow
   Forecast, Receivables by Installment Due Date, Dunning Summary, Subscription MRR, ARR and Churn.
 
-### 📋 Procurement add-on (0.2.1)
+### 📋 Procurement add-on (0.2.2)
 
 - **Material requests** to buy, transfer, issue, manufacture or receive from a customer, each line tracking
   what was ordered and received; purchase requests become purchase orders grouped by preferred supplier.
@@ -435,7 +442,7 @@ add-on brings it.
 - **Reports:** Material Request Status, Procurement Tracker, Supplier Quotation Comparison, Supplier Scorecard
   Ranking, Purchase Analytics.
 
-### 🗃️ Stock Operations add-on (0.3.0)
+### 🗃️ Stock Operations add-on (0.3.1)
 
 - **Stock reconciliation** of counted quantities (and rates), cancelled exactly.
 - **Landed cost vouchers** that add freight, duty and other charges to received stock still on hand.
@@ -448,7 +455,7 @@ add-on brings it.
 - **Reports:** Stock Reconciliation Variance, Landed Cost Allocation, Pick List Status, Quality Inspection
   Summary, Variant Stock Matrix, Stock Ageing.
 
-### ⚙️ Manufacturing Operations add-on (0.3.0)
+### ⚙️ Manufacturing Operations add-on (0.3.1)
 
 - **Workstations** with an hour rate, working hours, holidays and parallel capacity; **operations** and
   **routings** that cost a BOM's operating time into finished goods.
@@ -461,7 +468,7 @@ add-on brings it.
 - **Reports:** Job Card Summary, Capacity Planning, Work Order Operations, Production Plan Status,
   Subcontracting Status.
 
-### 🏬 Warehouse Management add-on (WMS, 0.4.0)
+### 🏬 Warehouse Management add-on (WMS, 0.4.1)
 
 Its own app, **Warehouse**, at `/wms/`, with screens to receive, scan, ship, count, see a bin and work a task.
 
@@ -562,6 +569,9 @@ history. Desks show only where their package is installed and only to people who
 - **Engine modules** in this crate: `ledger`, `stock`, `pricing`, `promotion`, `stored_value`, `flow`, `portal` and
   `localization`; [docs/contracts.md](docs/contracts.md) says how each operation behaves (in the caller's
   transaction, appending, what it refuses, whether calling twice does it twice).
+- **Operations for apps that do not compile against ERP**: `accounting.company.post_entry` and `reverse_entries` (an
+  app's own records in the ledger, balanced to the cent, once per key), `selling.company.customer_for`,
+  `customers_of` and `price_document`; their inputs are in [docs/contracts.md](docs/contracts.md).
 - **Contracted capabilities**: `selling.company.availability`, `selling.company.price_lines`, `inventory.company.scan`, and
   stored value's `prove`, `balance`, `issue`, `redeem`, `refund`, `transfer`, `hold`, `release` and `reverse`.
 - **Events** `accounting.instrument_bounced` and `accounting.stored_value_expiring`, for automations.
@@ -573,32 +583,33 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
-| 🇮🇳 | India | `ferrum-india` 0.9.1 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
-| 🇪🇺 | European Union | `ferrum-eu` 0.5.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
+| 🇮🇳 | India | `ferrum-india` 0.9.2 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
+| 🇪🇺 | European Union | `ferrum-eu` 0.6.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Intrastat figures, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.2.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.2.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
 | 🇫🇷 | France | `ferrum-eu-members` 0.2.0 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
-| 🇮🇹 | Italy | `ferrum-eu-members` 0.2.0 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
-| 🇵🇱 | Poland | `ferrum-eu-members` 0.2.0 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
+| 🇮🇹 | Italy | `ferrum-eu-members` 0.2.1 | Regime forfettario, domestic reverse charge, Natura codes, virtual stamp duty | — | FatturaPA through the company's SDI channel |
+| 🇵🇱 | Poland | `ferrum-eu-members` 0.2.1 | Small business exemption, domestic reverse charge, NIP | — | FA(3) for KSeF |
 | 🇵🇹 | Portugal | `ferrum-eu-members` 0.4.0 | Article 53 exemption, construction reverse charge, NIF | — | Certified invoices: ATCUD, signed hash chain, QR code |
 | 🇷🇴 | Romania | `ferrum-eu-members` 0.3.1 | Small business exemption, domestic reverse charge, CIF | — | CIUS-RO through ANAF's e-Factura |
-| 🇪🇸 | Spain | `ferrum-eu-members` 0.2.0 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
-| 🇬🇧 | United Kingdom | `ferrum-gb` 0.4.1 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
-| 🇺🇸 | United States | `ferrum-us` 0.3.1 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
-| 🇨🇦 | Canada | `ferrum-ca` 0.2.0 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
-| 🇸🇬 | Singapore | `ferrum-countries` 0.4.0 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
-| 🇲🇾 | Malaysia | `ferrum-countries` 0.5.1 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
-| 🇮🇩 | Indonesia | `ferrum-countries` 0.4.0 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
-| 🇹🇭 | Thailand | `ferrum-countries` 0.4.0 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
-| 🇵🇭 | Philippines | `ferrum-countries` 0.4.0 | VAT 12% | 2550Q as a return definition | — |
-| 🇻🇳 | Vietnam | `ferrum-countries` 0.4.0 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
-| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.4.0 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
-| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.3.0 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
-| 🇦🇺 | Australia | `ferrum-countries` 0.3.0 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
-| 🇳🇿 | New Zealand | `ferrum-countries` 0.4.0 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
-| 🇯🇵 | Japan | `ferrum-countries` 0.4.0 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
-| 🇲🇽 | Mexico | `ferrum-countries` 0.3.0 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
-| 🇨🇳 | China | `ferrum-countries` 0.4.0 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
+| 🇪🇸 | Spain | `ferrum-eu-members` 0.2.1 | Recargo de equivalencia; Canary Islands, Ceuta and Melilla | — | VERI\*FACTU chained records and QR code, sent to AEAT |
+| 🇬🇧 | United Kingdom | `ferrum-gb` 0.4.2 | VAT 20%, 5%, zero, exempt; CIS reverse charge; VAT number check | VAT return, nine boxes | Filed through HMRC's Making Tax Digital |
+| 🇺🇸 | United States | `ferrum-us` 0.3.2 | Sales tax by destination at ZIP rates where registered, marketplace facilitators, exemption certificates, taxability, use tax | Sales tax by jurisdiction, economic nexus, Forms 1099 | Sales reported to Avalara AvaTax |
+| 🇨🇦 | Canada | `ferrum-ca` 0.2.1 | GST/HST, PST/RST and QST by province of supply, input tax credits | GST/HST (GST34) and QST | — |
+| 🇸🇬 | Singapore | `ferrum-countries` 0.4.1 | GST 9%, reverse charge | GST F5 as a return definition | PINT SG through InvoiceNow |
+| 🇲🇾 | Malaysia | `ferrum-countries` 0.5.2 | Sales tax and service tax | SST-02 as a return definition | MyInvois through LHDN |
+| 🇮🇩 | Indonesia | `ferrum-countries` 0.4.1 | PPN on 11/12 of the price, luxury goods at 12% | SPT Masa PPN as a return definition | — |
+| 🇹🇭 | Thailand | `ferrum-countries` 0.4.1 | VAT 7%, exports at 0% | PP.30 as a return definition | — |
+| 🇵🇭 | Philippines | `ferrum-countries` 0.4.1 | VAT 12% | 2550Q as a return definition | — |
+| 🇻🇳 | Vietnam | `ferrum-countries` 0.4.1 | VAT 10%, 8% and 5% | 01/GTGT as a return definition | — |
+| 🇸🇦 | Saudi Arabia | `ferrum-countries` 0.4.1 | VAT 15%, reverse charge | ZATCA's VAT return as a return definition | — |
+| 🇦🇪 | United Arab Emirates | `ferrum-countries` 0.3.1 | VAT 5%, reverse charge | VAT 201 by emirate | PINT AE |
+| 🇦🇺 | Australia | `ferrum-countries` 0.3.1 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
+| 🇳🇿 | New Zealand | `ferrum-countries` 0.4.1 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
+| 🇯🇵 | Japan | `ferrum-countries` 0.4.1 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
+| 🇰🇷 | South Korea | `ferrum-countries` 0.1.0 (data file) | VAT 10%, exports at 0%, VAT paid by proxy on services from abroad | VAT return as a return definition | — |
+| 🇲🇽 | Mexico | `ferrum-countries` 0.3.1 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
+| 🇨🇳 | China | `ferrum-countries` 0.4.1 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
 
 Rates, item categories, withholding categories and, for India, Ireland's VAT3 and the ten countries marked "as a
 return definition", the return forms are records the add-on seeds and an accountant can edit. What stays in each
@@ -652,7 +663,7 @@ flowchart TD
     UI["ERP screens at /erp/"] --> API["Ferrum REST, MCP and records frame"]
     API --> ENG
     ENG --> SEAM{"Localization seam"}
-    SEAM --> CTRY["26 country add-ons"]
+    SEAM --> CTRY["27 country add-ons"]
     ENG --> ADD["Finance, Procurement, Stock and Manufacturing Operations"]
     ADD --> EXEC["Quality, Warehouse, Shop Floor"]
     EXEC --> OPS["Operations: devices and robots"]
@@ -724,6 +735,7 @@ outside service and a retry never sends twice.
 | Warehouse | A place stock is kept | holds Stock, Transit or Rejected; parent |
 | Stock Entry | A stock movement | purpose; In Transit, Partly Received, Received |
 | Carrier Connection | A carrier described as calls | rates, label, track, cancel; connection |
+| Carrier Template | A ready-made carrier description to fill a connection from | no secrets |
 | Carrier Shipment | Parcels going by a carrier | Draft, Rated, Label Bought, In Transit, Delivered, Exception, Cancelled |
 | Bill of Materials | How an item is made | revision, items, by- and co-products, cost |
 | Work Order | Making an item | Not Started, In Process, Completed, Stopped |
@@ -733,7 +745,7 @@ outside service and a retry never sends twice.
 
 | Add-on | Entities |
 |---|---|
-| 💼 Finance | Bank Account, Bank Transaction, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
+| 💼 Finance | Bank Account, Bank Transaction, Bank Feed Line, Statement Format, Bank Rule, Payment Allocation, Payment Run, Payment Terms Template, Dunning Type, Dunning, Budget, Monthly Distribution, Exchange Revaluation, Period Closing Voucher, Subscription Plan, Subscription |
 | 📋 Procurement | Material Request, Request for Quotation, Supplier Quotation, Supplier Scorecard, Scorecard Period, Procurement Settings |
 | 🗃️ Stock Operations | Stock Reconciliation, Landed Cost Voucher, Pick List, Packing Slip, Batch, Quality Inspection, Quality Inspection Template, Item Attribute, Product Bundle |
 | ⚙️ Manufacturing Operations | Workstation, Workstation Type, Operation, Routing, Job Card, Production Plan, Subcontracting BOM, Subcontracting Order, Subcontracting Receipt |
@@ -803,7 +815,7 @@ Finance's reverses exchange revaluations on their day.
 | SDI, KSeF, ANAF e-Factura, AEAT, French plateforme agréée, LHDN MyInvois | National e-invoicing | The company's channel or OAuth connection in each country |
 | Portugal's certified invoicing | Signed invoices | The producer's key and certificate number set on the server |
 | Carriers | Rates, labels, tracking | The carrier's API keys in a carrier connection |
-| Banks | Payments and reconciliation | A bank file template (pain.001 built in); statements as CSV |
+| Banks | Payments and reconciliation | A bank file template (pain.001 built in); statements as CSV, CAMT.053, CAMT.052, MT940 and OFX, read by statement formats that are records |
 | Label printers | Item, parcel and bin labels | A ZPL printer, or any printer for page labels |
 
 Each connection is set up per company, so a workspace's companies can use different services or none.
@@ -832,55 +844,57 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Group consolidation with currency translation | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
 | Intercompany invoices mirrored in the other company | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Bank reconciliation workbench | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Bank feeds and statement formats (CAMT.053, MT940, OFX) | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Reconciliation rules that match by pattern | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Bank feeds and statement formats (CAMT.053, MT940, OFX) | 🟡 ¹ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Reconciliation rules that match by pattern | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Payment runs with a bank file | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Payment terms and dunning | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Withholding tax by category with certificates | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ |
 | Tax returns worked out from the books | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | E-invoicing networks (Peppol, IRP, SDI, KSeF and more) | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
 | Supplier e-invoices received into bills | ❌ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
-| Country charts of accounts to pick at set-up | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Countries covered by tax localisation | 🟡 ¹ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Audit and statistical files (SAF-T, Intrastat, DATEV) | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
+| Country charts of accounts to pick at set-up | 🟡 ⁹ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Countries covered by tax localisation | 🟡 ² | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Audit and statistical files (SAF-T, Intrastat, DATEV) | 🟡 ¹¹ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | Deferred revenue and expense | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Revenue recognition by performance obligation (IFRS 15) | 🟡 ² | ✅ | ✅ | 🟡 | ❌ | ❌ |
+| Revenue recognition by performance obligation (IFRS 15) | 🟡 ³ | ✅ | ✅ | 🟡 | ❌ | ❌ |
 | Subscriptions billed by period, with MRR | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Budgets checked against actuals and commitments | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Financial report designer | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Fixed assets and depreciation | 🟡 ³ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Quotations in the same app | 🟡 ⁴ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Fixed assets and depreciation | ✅ ⁴ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Quotations in the same app | ✅ ⁵ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Credit limits with hold and release | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Promotions, coupons and buy-X-get-Y shared with the till | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Gift cards and store credit | ✅ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
 | Purchase approvals by amount | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Requests for quotation and supplier scorecards | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ |
-| Blanket orders and purchase agreements | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Drop shipment | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁵ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Blanket orders and purchase agreements | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Drop shipment | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stock valuation methods (FIFO, moving average, standard cost) | 🟡 ⁶ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Batches, serials and expiry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Transfers through goods in transit | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Available-to-promise and stock reservation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Carrier rates, labels and tracking | 🟡 ⁶ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
+| Carrier rates, labels and tracking | 🟡 ⁷ | 🟡 | ✅ | 🟡 | ✅ | 🟡 |
 | Bins, directed putaway and picking by scan | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | BOMs, work orders, routings and subcontracting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | By-products and co-products | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 |
 | MRP by period with action messages | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| Demand forecasting into planning | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Demand forecasting into planning | ✅ ¹⁰ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Shop floor execution with genealogy and OEE | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
 | Quality holds, nonconformance and corrective action | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ |
-| Customer and supplier portal | 🟡 ⁷ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
+| Customer and supplier portal | 🟡 ⁸ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Same records as CRM, HR, POS and the web shop | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Self-hosted on your own servers | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Open source | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 | No per-user licence fee | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 
-<sub>¹ 26 countries, each an add-on; the leaders cover many more. ² Revenue is deferred and recognised by the day,
-without allocation across performance obligations. ³ In the Ferrum Assets app, which posts to this ledger.
-⁴ In the Ferrum CRM app, which makes ERP's sales orders. ⁵ FIFO and moving average; no standard cost. ⁶ You
-describe each carrier's calls; none ships built in. ⁷ Customers see their invoices; suppliers see requests for
-quotation, orders and bills. For the leaders, 🟡 means partly, or through another edition, module or partner
-app.</sub>
+<sub>¹ Files in five formats, and a feed you describe as a connection; no bank is built in. ² 27 countries, each an add-on; the leaders
+cover many more. ³ Revenue is deferred and recognised by the day, without allocation across performance
+obligations. ⁴ Done in the Ferrum Assets app, which posts to this ledger. ⁵ Done in the Ferrum CRM app, which
+makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You describe each carrier's calls; none
+ships built in. ⁸ Customers see their invoices; suppliers see requests for
+quotation, orders and bills. ⁹ Four statutory charts (France, Spain, Portugal, Romania), not yet reviewed by an
+accountant; other countries use the standard chart. For the leaders, 🟡 means partly, or through another edition, module or partner
+app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoothing, seasonal index). ¹¹ Intrastat figures as a report (European Union add-on); SAF-T, JPK, FEC, DATEV and national Intrastat files are not built.</sub>
 
 ### 🏆 Where Ferrum ERP stands out
 
@@ -894,10 +908,10 @@ app.</sub>
 
 ### 🚧 Where the leaders are still ahead
 
-- 🏦 Bank feeds, statement formats beyond CSV and reconciliation rules.
-- 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
+- 🏦 Bank feeds.
+- 📑 A financial report designer, country charts of accounts, SAF-T, national Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
-- 🛒 Blanket orders, drop shipment, standard costing and demand forecasting.
+- 🛒 Standard costing; demand forecasts beyond three classical monthly methods.
 - 🌍 The number of countries localised, and partner ecosystems around each product.
 
 > [!NOTE]
@@ -907,6 +921,16 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.40.0** A country described as a data file, with no Rust; South Korea the first.
+- [x] **0.39.0** Carrier templates, and one shipment's rates from several carriers side by side.
+- [x] **0.38.0** Demand forecasts worked out from what was sold, planned for less what open orders already ask.
+- [x] **0.37.0** Drop shipment: the supplier delivers to the customer; the receipt books cost of sales and moves no stock.
+- [x] **0.36.0** Purchase and sales agreements: orders take the agreed price and never draw past the agreed quantity.
+- [x] **0.35.0** A company's chart can come from a template, and every add-on finds its accounts by the role they play.
+- [x] **0.34.0** Other apps post to the ledger, find a person's customer and price a document through operations, without compiling against ERP.
+- [x] **Finance 0.11.0** Bank feeds: a connection's pull brings a bank account's transactions, taken once, past the same duplicate check as a file.
+- [x] **Finance 0.10.0** Bank rules book a statement line no entry explains, by hand, in bulk or on import, never over money the books already hold.
+- [x] **Finance 0.9.0** Statements from CAMT.053, CAMT.052, MT940 and OFX files, and a bank's CSV whose columns are saved once, all as statement formats that are records.
 - [x] **0.33.0** Upkeep runs one workspace at a time, on whichever replica is free; the journal's partitions once a day per replica.
 - [x] **0.33.1** A request to an authority, or a supplier's mail, delivered twice is not sent twice: a repeat asks the authority, or leaves it to a person.
 - [x] **0.32.3** A dump of the database holds the journal's lines: its yearly partitions carry the journal's policy.
@@ -922,27 +946,26 @@ app.</sub>
 ### 🔜 Next up
 
 **Banking**
-- [ ] Bank feeds, so transactions arrive without a file.
-- [ ] CAMT.053, MT940 and OFX statements beside CSV.
-- [ ] Reconciliation rules that book a line by its description.
+- [ ] Bank feeds: files in five formats, and a feed you describe as a connection; no bank is built in yet.
+- [x] Reconciliation rules that book a line by its description.
 
 **Tax and compliance**
 - [ ] Domestic VAT returns as definitions for Germany, France, Italy, Spain, Poland, Romania, Belgium and Portugal.
 - [ ] Supplier e-invoices received into draft bills (Peppol, SDI, KSeF).
 - [ ] Saudi Arabia's ZATCA e-invoices and Mexico's CFDI.
-- [ ] SAF-T, JPK, FEC and DATEV exports, and Intrastat.
+- [ ] SAF-T, JPK, FEC and DATEV exports, and national Intrastat files (the figures are a report).
 - [ ] India's GSTR-2B matching and TDS returns.
 
 **Selling and buying**
 - [ ] Amount in words on printed documents, and a discount as an amount.
 - [ ] An Overdue status and customer statements e-mailed in bulk.
-- [ ] Blanket orders, drop shipment and pricing rules when buying.
+- [ ] Pricing rules when buying.
 
 ### 🔭 Later
 
 **Finance**
 - [ ] A financial report designer for statutory layouts and ratios.
-- [ ] Country charts of accounts to pick at set-up.
+- [ ] Country charts of accounts to pick at set-up: templates, and the statutory charts of France, Spain, Portugal and Romania, ship (docs/charts.md); Belgium, Germany, Mexico and China wait for a source that can be read and used.
 - [ ] Cost allocations by percent or driver, and intercompany journal entries.
 - [ ] Locks per sub-ledger, a close checklist and an adjustment period.
 - [ ] Budget versions and scenarios; ageing buckets of your own.
@@ -951,7 +974,7 @@ app.</sub>
 - [ ] A pay-now link on portal invoices.
 
 **Operations**
-- [ ] Demand forecasts and a master production schedule.
+- [ ] A master production schedule.
 - [ ] Standard cost with variances, and production variance reports.
 - [ ] Phantom assemblies and alternative components in a BOM.
 - [ ] Substitute items, several barcodes per item, customer part numbers.

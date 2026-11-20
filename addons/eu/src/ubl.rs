@@ -491,9 +491,7 @@ pub async fn invoice(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Invoice> {
     let cid = id(&company, "id").unwrap_or_default();
     let mut vat_accounts = Vec::new();
     for n in [OUTPUT_TAX, INPUT_TAX, OSS_VAT] {
-        let a = crate::util::find(hc.kernel, &ctx, hc.tx, "Account", vec![Filter::eq("company", cid.to_string()), Filter::eq("account_number", n)], None, 1)
-            .await?;
-        vat_accounts.extend(a.first().and_then(|a| s(a, "id")).map(str::to_string));
+        vat_accounts.extend(ferrum_app_erp::setup::standard_account(hc.kernel, &ctx, hc.tx, cid, n).await?);
     }
     let taxes = rows(doc, "taxes");
     let vat_rows: Vec<&Doc> = taxes.iter().filter(|t| s(t, "account").is_some_and(|a| vat_accounts.iter().any(|v| v == a))).collect();

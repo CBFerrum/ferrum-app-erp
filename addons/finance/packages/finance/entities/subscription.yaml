@@ -57,8 +57,12 @@
     - {name: end_after_start, check: "doc.end_date == null || doc.end_date >= doc.start_date", message: "The end date cannot be before the start date"}
     - {name: end_after_trial, check: "doc.end_date == null || doc.trial_end == null || doc.end_date > doc.trial_end", message: "The subscription must end after its trial"}
   actions:
-    - {name: generate_invoices, label: Generate Due Invoices, permission: write}
+    - {name: generate_invoices, label: Generate Due Invoices, permission: write,
+       params: [{name: as_of, type: date, label: As Of, description: "Invoice what is due up to this day, not later than today; today when empty"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {invoices: {type: array, items: {type: string, format: uuid, x-ferrum-link: SalesInvoice}}, status: {type: [string, "null"]}, next_invoice_date: {type: [string, "null"]}}}, completion: "Every invoice the subscription has come due for up to the day given is made, each once, and the subscription's status and next invoice date follow, committed with this receipt"}}
     - {name: change_plans, label: Change Plans, permission: write, condition: "doc.status != 'Cancelled' && doc.status != 'Completed'"}
     - {name: cancel_subscription, label: Cancel Subscription, permission: write, condition: "doc.status != 'Cancelled' && doc.status != 'Completed'",
-       confirm: "Cancel this subscription?"}
+       confirm: "Cancel this subscription?",
+       params: [{name: at_period_end, type: check, label: At the End of the Period, description: "End it on the last day of the period it is in instead of now"}, {name: date, type: date, label: Cancel On, description: "Today when empty; not in the future unless it is the end of the period"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {invoices: {type: array, items: {type: string, format: uuid, x-ferrum-link: SalesInvoice}}, status: {type: [string, "null"]}, next_invoice_date: {type: [string, "null"]}}}, completion: "The subscription ends on the day given (or at the end of the period it is in) and what was invoiced beyond that day is settled by the credit it makes, committed with this receipt"}}
   list: {columns: [number, customer_name, start_date, next_invoice_date, status], sort: created_at desc}

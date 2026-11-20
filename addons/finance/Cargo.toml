@@ -23,6 +23,9 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 # Dunning letters are Jinja templates, like the kernel's print formats (same crate and version).
 minijinja = { version = "2", features = ["fuel"] }
+# Statement files: XML (and SGML) elements, and the patterns a tagged format describes its lines with.
+quick-xml = "0.42"
+regex = "1"
 
 [dev-dependencies]
 tokio = { workspace = true }

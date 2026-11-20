@@ -1,5 +1,5 @@
 package: eu
-version: 0.1.0
+version: 0.1.1
 label: European Union
 description: EU VAT for ERP. VAT numbers checked in VIES, supplies within the EU (reverse charge, intra-Community, the One-Stop Shop), exports, the member states' rates from the Commission's TEDB, EN 16931 (Peppol BIS Billing 3.0) e-invoices, the EC sales list and the OSS return.
 depends: [selling, buying]
@@ -86,8 +86,10 @@ overlays:
       - {op: add_field, after: eu_iban, field: {name: eu_bic, type: data, label: BIC, max_length: 11}}
       - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_tax_number, eu_distance_sales, eu_peppol_id, eu_street, eu_city, eu_postal_code,
           eu_contact_name, eu_contact_phone, eu_contact_email, eu_iban, eu_bic]}}
-      - {op: add_action, action: {name: eu_setup_vat, label: Set Up EU VAT Accounts, permission: write, confirm: "Create this company's accounts for VAT owed through the One-Stop Shop and under reverse charge?"}}
-      - {op: add_action, action: {name: eu_update_rates, label: Update EU VAT Rates (TEDB), permission: write, confirm: "Fetch the member states' current VAT rates from the Commission's TEDB?"}}
+      - {op: add_action, action: {name: eu_setup_vat, label: Set Up EU VAT Accounts, permission: write, confirm: "Create this company's accounts for VAT owed through the One-Stop Shop and under reverse charge?",
+           contract: {effect: transactional_action, returns: {type: object, properties: {created: {type: array, items: {type: string}}}}, completion: "The company has the accounts for VAT owed through the One-Stop Shop and under reverse charge, those it lacked being created and named in created, committed with this receipt"}}}
+      - {op: add_action, action: {name: eu_update_rates, label: Update EU VAT Rates (TEDB), permission: write, confirm: "Fetch the member states' current VAT rates from the Commission's TEDB?",
+           contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {status: {type: string}, message: {type: string}}}, completion: "A request for the member states' current VAT rates is queued with this receipt for the TEDB connector, which stores them under EU VAT Rates after the commit; no rate is changed here"}}}
   - entity: Customer
     ops:
       - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix (FR12345678901); checked in VIES when it changes"}}
@@ -99,7 +101,9 @@ overlays:
       - {op: add_field, after: eu_vies_checked_at, field: {name: eu_vies_consultation, type: data, label: VIES Consultation Number, read_only: true}}
       - {op: add_field, after: eu_vies_consultation, field: {name: eu_vies_error, type: text, label: VIES Answer, read_only: true}}
       - {op: add_section, after: tax_id, section: {label: EU VAT, collapsible: true, fields: [eu_vat_number, eu_peppol_id, eu_vies_valid, eu_vies_name, eu_vies_address, eu_vies_checked_at, eu_vies_consultation, eu_vies_error]}}
-      - {op: add_action, action: {name: eu_check_vat, label: Check VAT Number (VIES), permission: write, condition: "doc.eu_vat_number != null"}}
+      - {op: add_action, action: {name: eu_check_vat, label: Check VAT Number (VIES), permission: write, condition: "doc.eu_vat_number != null",
+           params: [{name: company, label: Company, type: link, to: Company, description: "The company the check is made for, when the workspace has several"}],
+           contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {status: {type: string}, message: {type: string}}}, completion: "A request to check the customer's VAT number in VIES is queued with this receipt for the VIES connector, which records its answer and consultation number on the customer after the commit; asking again is harmless"}}}
   - entity: Supplier
     ops:
       - {op: add_field, after: tax_id, field: {name: eu_vat_number, type: data, label: VAT Number (EU), max_length: 24, description: "With its country prefix"}}
@@ -110,9 +114,16 @@ overlays:
       - {op: add_field, after: eu_vat_category, field: {name: eu_kind, type: select, label: Goods or Services (EU), options: [Goods, Services, Digital Services],
           description: "Digital services (telecommunications, broadcasting, electronic) are taxed where the consumer is. Empty: goods when it is a stock item, else services"}}
       - {op: add_field, after: eu_kind, field: {name: eu_cn_code, type: data, label: CN Code, max_length: 10, description: "Its Combined Nomenclature code (8 digits)"}}
+      - {op: add_field, after: eu_cn_code, field: {name: eu_net_mass, type: decimal, min: "0", label: Net Mass (kg), description: "Of one stock unit, without packaging: Intrastat adds it up"}}
+      - {op: add_field, after: eu_net_mass, field: {name: eu_supplementary_factor, type: decimal, min: "0", label: Supplementary Units per Stock Unit,
+          description: "For commodity codes that are declared in another unit (pieces, litres, pairs); empty: none"}}
+      - {op: add_field, after: eu_supplementary_factor, field: {name: eu_origin_country, type: data, max_length: 2, label: Country of Origin,
+          description: "Where it was made (ISO code); empty: the company's country on dispatches, the supplier's on arrivals"}}
+      - {op: add_rule, rule: {name: eu_origin_country_code, check: "isEmpty(doc.eu_origin_country) || doc.eu_origin_country.matches('^[A-Z]{2}$')", message: "The country of origin is its two capital letters (ISO 3166-1), e.g. DE"}}
       - {op: add_field, after: eu_cn_code, field: {name: eu_exemption_reason, type: data, label: EU Exemption Reason, max_length: 120, description: "Exempt or zero-rated: a VATEX code (VATEX-EU-132-1E) or the law's words"}}
       - {op: add_field, after: eu_exemption_reason, field: {name: eu_rates, type: table, of: EuItemRate, label: EU Rates by Country}}
-      - {op: add_action, action: {name: eu_suggest_rates, label: Suggest EU Rates (TEDB), permission: write, condition: "doc.eu_cn_code != null"}}
+      - {op: add_action, action: {name: eu_suggest_rates, label: Suggest EU Rates (TEDB), permission: write, condition: "doc.eu_cn_code != null",
+           contract: {effect: transactional_action, returns: {type: object, properties: {suggested: {type: array, items: {type: string}}, ambiguous: {type: array, items: {type: string}}}}, completion: "The item's EU rates by country are filled, for the countries where TEDB's rates settle it from its CN code, and the countries it could not settle are listed in ambiguous, committed with this receipt"}}}
   - entity: SalesInvoice
     ops:
       - {op: add_field, column: true, after: customer_name, field: {name: eu_supply, type: select, label: EU Supply, read_only: true, in_filter: true,
@@ -125,13 +136,17 @@ overlays:
       - {op: add_field, after: eu_peppol_status, field: {name: eu_peppol_message_id, type: data, label: Peppol Message ID, read_only: true, no_copy: true}}
       - {op: add_field, after: eu_peppol_message_id, field: {name: eu_peppol_error, type: text, label: Peppol Answer, read_only: true, no_copy: true}}
       - {op: add_section, after: return_against, section: {label: EU VAT, collapsible: true, fields: [eu_supply, eu_destination, eu_customer_vat, eu_vies_consultation, eu_legal_text, eu_peppol_status, eu_peppol_message_id, eu_peppol_error]}}
-      - {op: add_action, action: {name: eu_ubl, group: e-Invoice, label: Download e-Invoice (UBL), docstatus: [1], permission: read, read_only: true}}
+      - {op: add_action, action: {name: eu_ubl, group: e-Invoice, label: Download e-Invoice (UBL), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {peppol: {type: boolean}, file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The EN 16931 UBL e-invoice is built from the submitted invoice as a file (peppol says whether both parties have a Peppol ID) and nothing is changed or sent"}}}
       - {op: add_action, action: {name: eu_send_peppol, group: e-Invoice, label: Send via Peppol, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status != 'Sent'",
-          confirm: "Send this invoice to the customer's Peppol ID through your access point?"}}
+          confirm: "Send this invoice to the customer's Peppol ID through your access point?",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to send it to the customer's Peppol access point is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: eu_record_peppol, group: e-Invoice, label: Record Peppol Delivery, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status == 'Pending'",
-          params: [{name: message_id, label: The access point's message ID, type: data, required: true}]}}
+          params: [{name: message_id, label: The access point's message ID, type: data, required: true}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The access point's message id for the invoice that waits for it is recorded on it and its Peppol status is Sent, committed with this receipt"}}}
       - {op: add_action, action: {name: eu_record_peppol_failure, group: e-Invoice, label: Record Peppol Failure, docstatus: [1], permission: submit, condition: "doc.eu_peppol_status == 'Pending'",
-          params: [{name: message, label: What went wrong, type: text, required: true}]}}
+          params: [{name: message, label: What went wrong, type: text, required: true}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The access point's failure for the invoice that waits for it is recorded on it and its Peppol status is Failed, committed with this receipt"}}}
   - entity: PurchaseInvoice
     ops:
       - {op: add_field, column: true, after: supplier_name, field: {name: eu_supply, type: select, label: EU Supply, read_only: true, in_filter: true, options: [Domestic, Intra-EU Acquisition, Import]}}

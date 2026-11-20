@@ -1,5 +1,5 @@
 package: inventory
-version: 0.1.0
+version: 0.1.1
 label: Inventory
 description: Append-only stock ledger with moving-average and FIFO cost layers. Backdated entries post forward; nothing is ever reposted.
 depends: [accounting]
@@ -44,7 +44,7 @@ modules:
     label: Inventory
     icon: package
     order: 30
-    items: [StockEntry, CarrierShipment, Item, Warehouse, CarrierConnection, ItemPrice, report:stock_balance, report:goods_in_transit, report:stock_ledger]
+    items: [StockEntry, CarrierShipment, Item, Warehouse, CarrierConnection, CarrierTemplate, ItemPrice, report:stock_balance, report:goods_in_transit, report:stock_ledger]
 
 roles:
   - name: Stock Manager
@@ -62,6 +62,7 @@ roles:
       - {entity: Currency, read: true}
       - {entity: CostCenter, read: true}
       - {entity: CarrierConnection, read: true, write: true, create: true, delete: true}
+      - {entity: CarrierTemplate, read: true, write: true, create: true, delete: true}
       - {entity: CarrierShipment, read: true, write: true, create: true, delete: true, export: true}
       - {entity: Address, read: true}
       - {entity: NumberSeries, read: true}
@@ -74,6 +75,7 @@ roles:
       - {entity: Uom, read: true}
       - {entity: Account, read: true}
       - {entity: CarrierConnection, read: true}
+      - {entity: CarrierTemplate, read: true}
       - {entity: CarrierShipment, read: true, write: true, create: true}
       - {entity: Address, read: true}
       - {entity: NumberSeries, read: true}

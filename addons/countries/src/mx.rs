@@ -27,7 +27,7 @@ pub static COUNTRY: Country = Country {
     default_category: "General 16%",
     kind_field: "mx_kind",
     number_field: "mx_rfc",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "an RFC: 12 characters for a company (3 letters), 13 for a person (4 letters), then 6 digits and 3 characters",
     export_reason: "Exportación: IVA tasa 0%",
     exempt_reason: "Acto exento de IVA",

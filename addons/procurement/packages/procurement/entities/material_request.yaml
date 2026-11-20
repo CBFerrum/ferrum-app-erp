@@ -63,8 +63,10 @@
        condition: "doc.material_request_type in ['Material Transfer', 'Material Issue', 'Customer Provided'] && doc.status != 'Stopped' && doc.per_ordered < 100.0",
        params: [{name: from_warehouse, label: From Warehouse, type: link, to: Warehouse, description: "Where the stock comes from, when the request names none"}]}
     - {name: stop, label: Stop, docstatus: [1], permission: submit, condition: "doc.status != 'Stopped' && doc.per_ordered < 100.0",
-       confirm: "Stop this request? Nothing more can be ordered against it until it is resumed."}
-    - {name: resume, label: Resume, docstatus: [1], permission: submit, condition: "doc.status == 'Stopped'"}
+       confirm: "Stop this request? Nothing more can be ordered against it until it is resumed.",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The request is Stopped: nothing more can be ordered or moved against it until it is resumed, committed with this receipt", compensate_with: resume}}
+    - {name: resume, label: Resume, docstatus: [1], permission: submit, condition: "doc.status == 'Stopped'",
+       contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "The request is open again, its status following what was ordered and received, committed with this receipt", compensate_with: stop}}
   form:
     - {label: Request, columns: 2, fields: [company, material_request_type, transaction_date, schedule_date, requested_by, customer]}
     - {label: Warehouses, columns: 2, fields: [set_warehouse, set_from_warehouse]}

@@ -1,0 +1,26 @@
+{
+  "sources": {
+    "read_on": "2026-11-20",
+    "act": "Value-Added Tax Act (부가가치세법), English and Korean text at the Korea Legislation Research Institute, https://elaw.klri.re.kr/kor_service/lawViewMultiContent.do?hseq=40928 (wholly amended by Act No. 11873, Jun. 7, 2013; last amendment shown Act No. 14387, Dec. 20, 2016); the current Korean text at https://www.law.go.kr/법령/부가가치세법 shows enforcement 2026-01-02 (Act No. 21065)",
+    "rate": "Article 30: 'The tax rate of value-added tax shall be 10 percent.' (부가가치세의 세율은 10퍼센트로 한다.)",
+    "export": "Article 21 (1): the supply of goods that falls within exportation qualifies for the tax rate of zero percent",
+    "exempt": "Article 26 (1): the supply of the goods or services listed is exempt from value-added tax",
+    "reverse_charge": "Article 52 (1): a person receiving services from a non-resident or foreign corporation without a domestic place of business collects VAT when paying, excluding services delivered to a taxable business, including services whose input tax is not deductible under Article 39",
+    "rate_from": "2013-06-07 is the date of the wholly amended Act read; earlier periods were not read",
+    "not_confirmed": "The business registration number's check digit is not described by the Act read: the number is checked for its shape (10 digits) only. The return's layout is ERP's own sums, not the National Tax Service form's numbering."
+  },
+  "country": "KR",
+  "rows": [{"label": "VAT", "sales": "2131", "purchases": "1151", "self_assessed": "5292"}],
+  "rates": [{"category": "Standard", "row": 0, "from": "2013-06-07", "rate": "10"}],
+  "category_field": "kr_vat_category",
+  "default_category": "Standard",
+  "kind_field": "kr_kind",
+  "number_field": "kr_brn",
+  "number": {"strip": " .-/", "drop": [], "prefix": null, "shapes": ["9999999999"], "checks": []},
+  "number_hint": "a 10-digit business registration number (its shape is checked, not its check digit)",
+  "export_reason": "Export: VAT at 0% (Value-Added Tax Act, article 21)",
+  "exempt_reason": "Exempt from VAT (Value-Added Tax Act, article 26)",
+  "reverse_charge": {"when": "kr_proxy_payment"},
+  "simplified": null,
+  "accounts": [{"number": "5292", "name": "VAT Paid by Proxy", "parent": "Indirect Expenses", "root": "Expense"}]
+}

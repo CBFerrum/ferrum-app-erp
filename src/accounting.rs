@@ -68,15 +68,8 @@ impl DocHook for JournalEntryHook {
                 );
                 continue;
             }
-            match (s(l, "party_type"), typ) {
-                (Some("Customer"), t) if t != "Receivable" => {
-                    errors.push(FieldError::new("account", "a customer line must use a Receivable account").in_row("accounts", i))
-                }
-                (Some("Supplier"), t) if t != "Payable" => {
-                    errors.push(FieldError::new("account", "a supplier line must use a Payable account").in_row("accounts", i))
-                }
-                (None, "Receivable" | "Payable") => errors.push(FieldError::new("party_type", "receivable/payable lines need a party").in_row("accounts", i)),
-                _ => {}
+            if let Some((field, m)) = party_problem(s(l, "party_type"), typ) {
+                errors.push(FieldError::new(field, m).in_row("accounts", i));
             }
             if b(doc, "auto_reverse") && s(l, "party_type").is_some() {
                 errors.push(
@@ -843,5 +836,16 @@ impl DocHook for PaymentEntryHook {
         }
         let updated = hc.kernel.update_tx(hc.ctx, hc.tx, "PaymentEntry", pid, patch, None).await?;
         Ok(Some(Value::Object(updated)))
+    }
+}
+
+/// What is wrong with a ledger line's party for its account's type, as a journal entry checks it: the field and the
+/// words. A customer's line is on a Receivable account and a supplier's on a Payable one; those two need a party.
+pub(crate) fn party_problem(party_type: Option<&str>, account_type: &str) -> Option<(&'static str, &'static str)> {
+    match (party_type, account_type) {
+        (Some("Customer"), t) if t != "Receivable" => Some(("account", "a customer line must use a Receivable account")),
+        (Some("Supplier"), t) if t != "Payable" => Some(("account", "a supplier line must use a Payable account")),
+        (None, "Receivable" | "Payable") => Some(("party_type", "receivable/payable lines need a party")),
+        _ => None,
     }
 }

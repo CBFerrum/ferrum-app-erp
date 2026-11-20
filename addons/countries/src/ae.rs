@@ -16,7 +16,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "ae_kind",
     number_field: "ae_trn",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a Tax Registration Number of 15 digits",
     export_reason: "Zero-rated export",
     exempt_reason: "Exempt supply",

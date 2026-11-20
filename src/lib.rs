@@ -15,18 +15,22 @@
 //! taken from the UTC clock.
 
 pub mod accounting;
+pub mod agreement;
 pub mod bad_debt;
 pub mod change;
 pub mod credit;
 pub mod deferred;
 pub mod dimensions;
+pub mod drop_ship;
 pub mod flow;
+pub mod forecast;
 pub mod instruments;
 pub mod journal_template;
 mod keys;
 pub mod ledger;
 pub mod localization;
 pub mod manufacturing;
+pub mod offered;
 pub mod opening;
 pub mod periods;
 pub mod planning;
@@ -85,6 +89,7 @@ pub fn register(h: &mut HookRegistry) {
     h.scoped(&only("accounting"), |h| {
         h.register("NumberSeries", Arc::new(series::SeriesRecordHook))
             .register("Company", Arc::new(setup::CompanyHook))
+            .register("ChartTemplate", Arc::new(setup::ChartTemplateHook))
             .register("FiscalYear", Arc::new(setup::FiscalYearHook))
             .register("JournalEntry", Arc::new(accounting::JournalEntryHook))
             .register("PaymentEntry", Arc::new(accounting::PaymentEntryHook))
@@ -96,7 +101,8 @@ pub fn register(h: &mut HookRegistry) {
             .register("AccountingDimension", Arc::new(dimensions::DimensionHook))
             .register("StoredValueKind", Arc::new(stored_value::KindHook))
             .register("StoredValueAccount", Arc::new(stored_value::AccountHook))
-            .register("TaxTemplate", Arc::new(pricing::ConditionHook));
+            .register("TaxTemplate", Arc::new(pricing::ConditionHook))
+            .register("Company", Arc::new(offered::LedgerOps));
         for numbered in ["JournalEntry", "PaymentEntry"] {
             h.register(numbered, Arc::new(series::SeriesHook));
         }
@@ -105,29 +111,33 @@ pub fn register(h: &mut HookRegistry) {
         h.register("StockEntry", Arc::new(series::SeriesHook))
             .register("StockEntry", Arc::new(stock_entry::StockEntryHook))
             .register("CarrierConnection", Arc::new(shipping::CarrierHook))
+            .register("CarrierTemplate", Arc::new(shipping::TemplateHook))
             .register("CarrierShipment", Arc::new(shipping::ShipmentHook))
             .register("Company", Arc::new(scan::ScanHook));
     });
     h.scoped(&only("manufacturing"), |h| {
         h.register("Bom", Arc::new(manufacturing::BomHook))
             .register("WorkOrder", Arc::new(manufacturing::WorkOrderHook))
-            .register("MrpRun", Arc::new(manufacturing::MrpRunHook));
+            .register("MrpRun", Arc::new(manufacturing::MrpRunHook))
+            .register("DemandForecast", Arc::new(forecast::ForecastHook));
     });
     h.scoped(&only("selling"), |h| {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))
             .register("PricingRule", Arc::new(pricing::ConditionHook))
             .register("Company", Arc::new(promotion::PriceLinesHook))
-            .register("Company", Arc::new(reservation::AvailabilityHook));
+            .register("Company", Arc::new(reservation::AvailabilityHook))
+            .register("Company", Arc::new(offered::PartyOps));
     });
-    for (side, package, order, shipment, invoice) in [
-        (Side::Selling, "selling", "SalesOrder", "DeliveryNote", "SalesInvoice"),
-        (Side::Buying, "buying", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
+    for (side, package, agreement, order, shipment, invoice) in [
+        (Side::Selling, "selling", "SalesAgreement", "SalesOrder", "DeliveryNote", "SalesInvoice"),
+        (Side::Buying, "buying", "PurchaseAgreement", "PurchaseOrder", "PurchaseReceipt", "PurchaseInvoice"),
     ] {
         h.scoped(&only(package), |h| {
             h.register(order, Arc::new(series::SeriesHook))
                 .register(shipment, Arc::new(series::SeriesHook))
                 .register(invoice, Arc::new(series::SeriesHook))
                 .register(order, Arc::new(trade::OrderHook(side)))
+                .register(agreement, Arc::new(agreement::AgreementHook(side)))
                 .register(shipment, Arc::new(trade::ShipmentHook(side)))
                 .register(invoice, Arc::new(trade::InvoiceHook(side)));
         });

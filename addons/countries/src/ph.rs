@@ -14,7 +14,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "ph_kind",
     number_field: "ph_tin",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a TIN of nine digits, with its branch code (e.g. 123-456-789-000)",
     export_reason: "Zero-rated export sale",
     exempt_reason: "VAT-exempt sale",

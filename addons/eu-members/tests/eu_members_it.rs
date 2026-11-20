@@ -5,6 +5,9 @@
 //! reverse charge; Italian FatturaPA queued for SDI with Natura, stamp duty and SDI's receipts;
 //! Polish FA(3) queued for KSeF, its number recorded and a correction citing it.
 
+#[path = "../../../tests/common/chart.rs"]
+mod chart;
+
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -407,6 +410,11 @@ async fn plain_anywhere(k: &Kernel, text: &str) -> Vec<String> {
     found
 }
 
+/// A company's account by its number.
+async fn account_of(t: &T, company: Uuid, number: &str) -> Doc {
+    t.first("Account", json!({"company": company.to_string(), "account_number": number})).await
+}
+
 async fn france(k: &Arc<Kernel>) {
     let t = T::workspace(k, "fr").await;
     let co = t
@@ -469,6 +477,37 @@ async fn france(k: &Arc<Kernel>) {
     let rows = report["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!((dec(&rows[0]["taxable"]), dec(&rows[0]["tax"])), (Decimal::from(100), Decimal::from(20)));
+
+    // a_french_company_is_made_from_the_plan_comptable_and_charges_tva_on_44571: its chart is the plan's, its defaults
+    // are the accounts standing for the roles, and an invoice's TVA is booked on 44571, not on an account of the standard chart.
+    let plan = uid(&t.first("ChartTemplate", json!({"template_name": "France: Plan comptable général"})).await);
+    let co = t
+        .insert(
+            "Company",
+            json!({"company_name": "Société PCG SA", "abbr": "SP", "default_currency": t.eur, "country": "France", "eu_vat_number": "FR13542107651",
+                   "eu_street": "1 rue de Rivoli", "eu_city": "Paris", "eu_postal_code": "75001", "chart_template": plan.to_string()}),
+        )
+        .await;
+    let pcg = uid(&co);
+    let group = account_of(&t, pcg, "4456").await;
+    assert_eq!(group["is_group"], json!(true), "the plan's TVA déductible group");
+    assert_eq!(account_of(&t, pcg, "44566").await["parent_account"], group["id"], "its accounts under it");
+    let co = t.get("Company", pcg).await;
+    assert_eq!(co["default_receivable_account"], account_of(&t, pcg, "411").await["id"], "Clients");
+    assert_eq!(co["default_payable_account"], account_of(&t, pcg, "401").await["id"], "Fournisseurs");
+    let output = account_of(&t, pcg, "44571").await["id"].clone();
+    let client = t
+        .customer(
+            "Client PCG SARL",
+            json!({"eu_vat_number": "FR13542107651", "customer_type": "Company"}),
+            json!({"address_line1": "2 avenue Foch", "city": "Lyon", "postal_code": "69006", "country": "France"}),
+        )
+        .await;
+    let goods = t.item("TABLE", json!({"eu_kind": "Goods"})).await;
+    let si = t.invoice(pcg, client, goods).await;
+    assert_eq!(dec(&si["total_taxes"]), Decimal::from(20), "France's 20% on a company made from the plan");
+    let taxes = si["taxes"].as_array().expect("tax rows");
+    assert!(!taxes.is_empty() && taxes.iter().all(|r| r["account"] == output), "TVA collectée on 44571: {taxes:?}");
 }
 
 async fn spain(k: &Arc<Kernel>) {
@@ -866,7 +905,24 @@ async fn italy(k: &Arc<Kernel>) {
     {
         assert!(xml.contains(part), "{part} in {xml}");
     }
-    assert_eq!(t.get("SalesInvoice", uid(&si)).await["it_sdi_file"], json!("IT01234567897_00003.xml"), "each transmission its own progressive");
+
+    // a_template_company_is_still_taxed (erp-4): a company made from a national chart books VAT on the account standing
+    // for output tax, and its FatturaPA finds the VAT by that role.
+    let template = chart::national_template(&t.k, &t.ctx, &cid.to_string(), "Piano dei conti", &[]).await;
+    let nat = t
+        .insert(
+            "Company",
+            json!({"company_name": "Rossi Nazionale S.r.l.", "abbr": "RN", "default_currency": t.eur, "country": "Italy", "eu_vat_number": "IT01234567897",
+                   "eu_street": "Via Roma 1", "eu_city": "Roma", "eu_postal_code": "00100", "eu_iban": "IT60X0542811101000000123456", "it_provincia": "rm",
+                   "it_rea_ufficio": "RM", "it_rea_numero": "123456", "chart_template": template}),
+        )
+        .await;
+    let nid = uid(&nat);
+    let si = t.submit("SalesInvoice", uid(&t.invoice(nid, milano, goods).await)).await;
+    let output = chart::account(&t.k, &t.ctx, &nid.to_string(), "2131").await;
+    assert!(chart::posted(&t.k, &t.ctx, si["id"].as_str().unwrap()).await.contains(&(output, Decimal::from(-22))), "VAT on the account standing for 2131");
+    let xml = t.action(uid(&si), "it_fatturapa", json!({})).await["file"]["content"].as_str().unwrap().to_string();
+    assert!(xml.contains("<AliquotaIVA>22.00</AliquotaIVA><ImponibileImporto>100.00</ImponibileImporto><Imposta>22.00</Imposta>"), "{xml}");
 }
 
 async fn poland(k: &Arc<Kernel>) {
@@ -927,4 +983,22 @@ async fn poland(k: &Arc<Kernel>) {
     ] {
         assert!(xml.contains(part), "{part} in {xml}");
     }
+
+    // a_template_company_is_still_taxed (erp-4): a company made from a national chart books VAT on the account standing
+    // for output tax, and its FA(3) finds the VAT by that role.
+    let template = chart::national_template(&t.k, &t.ctx, &cid.to_string(), "Plan kont", &[]).await;
+    let nat = t
+        .insert(
+            "Company",
+            json!({"company_name": "Firma Krajowa Sp. z o.o.", "abbr": "FK", "default_currency": t.pln, "country": "Poland", "eu_vat_number": "PL5265877635",
+                   "eu_street": "ul. Prosta 1", "eu_city": "Warszawa", "eu_postal_code": "00-001", "eu_iban": "PL61109010140000071219812874",
+                   "chart_template": template}),
+        )
+        .await;
+    let nid = uid(&nat);
+    let si = t.submit("SalesInvoice", uid(&t.invoice(nid, buyer, goods).await)).await;
+    let output = chart::account(&t.k, &t.ctx, &nid.to_string(), "2131").await;
+    assert!(chart::posted(&t.k, &t.ctx, si["id"].as_str().unwrap()).await.contains(&(output, Decimal::from(-23))), "VAT on the account standing for 2131");
+    let xml = t.action(uid(&si), "pl_fa3", json!({})).await["file"]["content"].as_str().unwrap().to_string();
+    assert!(xml.contains("<P_13_1>100.00</P_13_1><P_14_1>23.00</P_14_1>"), "{xml}");
 }

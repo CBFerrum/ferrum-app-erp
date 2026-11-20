@@ -357,6 +357,23 @@ pub fn statement_hash(bank_account: Uuid, date: NaiveDate, amount: Decimal, desc
     Sha256::digest(key.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Identity of a statement line that carries the bank's own id of it: the same id on the same
+/// account is the same line, whatever else the file says about it.
+pub fn reference_hash(bank_account: Uuid, bank_reference: &str) -> String {
+    let key = format!("{bank_account}|ref|{}", squash(bank_reference));
+    Sha256::digest(key.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether a statement's account and a bank account's number are one account: letters and digits
+/// only, any case; equal, or the longer ends with the shorter when that has at least 6 characters
+/// (an IBAN holds the account number; a statement may write a bank code before it).
+pub fn same_account(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_uppercase();
+    let (a, b) = (norm(a), norm(b));
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    !short.is_empty() && (short == long || (short.len() >= 6 && long.ends_with(&short)))
+}
+
 /// ISO 13616 check: country code, check digits, BBAN, remainder 1 modulo 97.
 pub fn iban_valid(iban: &str) -> bool {
     let s: String = iban.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
@@ -520,5 +537,10 @@ mod tests {
         assert!(!iban_valid("1234"));
         assert_eq!(mask("GB82 WEST 1234 5698 7654 32"), "•••• 5432");
         assert_eq!(mask(""), "");
+        assert!(same_account("37040044/0532013000", "DE89 3704 0044 0532 0130 00"));
+        assert!(same_account("0532013000", "de89370400440532013000"));
+        assert!(!same_account("13000", "DE89370400440532013000"), "a short tail is not enough");
+        assert!(!same_account("GB82WEST12345698765432", "DE89370400440532013000"));
+        assert!(!same_account("", ""));
     }
 }

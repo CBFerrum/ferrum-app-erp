@@ -710,6 +710,13 @@ async fn scenario() {
     let none: Value = serde_json::from_slice(&ask(stranger.clone(), "/portal/invoices".into()).await.unwrap().body).unwrap();
     assert_eq!(none["invoices"], json!([]));
     assert!(matches!(ask(stranger, format!("/portal/invoices/{si_id}")).await, Err(Error::NotFound(_))), "another customer's invoice");
+    // The links the portal reaches documents by decide who reaches them (K0-2): a merge moving them is an administrator's.
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    for (entity, link) in [("SalesInvoice", "customer"), ("PurchaseOrder", "supplier"), ("PurchaseInvoice", "supplier")] {
+        let fields = ferrum_kernel::reach::fields(&t.ctx, &mut tx, t.ctx.schema.entity(entity).unwrap()).await.unwrap();
+        assert!(fields.contains(link), "{entity}.{link} decides who reaches it");
+    }
+    tx.rollback().await.unwrap();
 
     // A supplier's orders and the bills ERP holds from them, through a contact of theirs.
     let draft_po = uid(&t
@@ -1832,10 +1839,7 @@ async fn scenario() {
     .await;
     let completed = t.action("Company", older, "setup_chart_of_accounts", json!({})).await;
     assert_eq!(completed["added"], json!(["Prepaid Expenses", "Accrued Income", "Deferred Revenue", "Accrued Expenses"]), "{completed}");
-    assert_eq!(
-        completed["message"],
-        json!("Added Prepaid Expenses, Accrued Income, Deferred Revenue, Accrued Expenses from the standard chart; 2 default accounts set")
-    );
+    assert_eq!(completed["message"], json!("Added Prepaid Expenses, Accrued Income, Deferred Revenue, Accrued Expenses to the chart; 2 default accounts set"));
     let deferred = older_account("Deferred Revenue").await;
     assert_eq!(
         (deferred["parent_account"].clone(), deferred["account_number"].clone()),
@@ -1845,7 +1849,7 @@ async fn scenario() {
     assert_eq!(t.get("Company", older).await["default_deferred_revenue_account"], deferred["id"]);
     assert_eq!(
         t.action("Company", older, "setup_chart_of_accounts", json!({})).await["message"],
-        json!("This company's chart already has every standard account")
+        json!("This company's chart already has every account of its chart")
     );
 
     // ───────────── revenue and expense over a service period (FERRUM-ERP-006) ─────────────

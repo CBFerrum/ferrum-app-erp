@@ -21,7 +21,10 @@ overlays:
           read_only: true, no_copy: true, in_filter: true}}
       - {op: add_field, column: true, after: pl_ksef_status, field: {name: pl_ksef_number, type: data, label: KSeF Number, max_length: 40, read_only: true, no_copy: true}}
       - {op: add_field, after: pl_ksef_number, field: {name: pl_ksef_error, type: text, label: KSeF Message, read_only: true, no_copy: true}}
-      - {op: add_action, action: {name: pl_fa3, group: e-Invoice, label: Download FA(3), docstatus: [1], permission: read, read_only: true}}
-      - {op: add_action, action: {name: pl_send_ksef, group: e-Invoice, label: Send to KSeF, docstatus: [1], permission: submit, condition: "doc.pl_ksef_status != 'Accepted'"}}
+      - {op: add_action, action: {name: pl_fa3, group: e-Invoice, label: Download FA(3), docstatus: [1], permission: read, read_only: true,
+           contract: {effect: query, returns: {type: object, properties: {file: {type: object, properties: {name: {type: string}, type: {type: string}, content: {type: string}}}}}, completion: "The FA(3) invoice is built from the submitted invoice as a file and nothing is changed or sent"}}}
+      - {op: add_action, action: {name: pl_send_ksef, group: e-Invoice, label: Send to KSeF, docstatus: [1], permission: submit, condition: "doc.pl_ksef_status != 'Accepted'",
+           contract: {effect: external_effect, unknown_outcome: manual, returns: {type: object, properties: {status: {type: string}}}, completion: "The invoice is marked Pending and the request to KSeF is queued with this receipt, to be sent by the company's connector once it commits; the answer is recorded on the invoice (Sent or Failed), and until then a person can record it by hand"}}}
       - {op: add_action, action: {name: pl_record_ksef, group: e-Invoice, label: Record KSeF Answer, docstatus: [1], permission: submit,
-          params: [{name: ksef_number, label: KSeF Number (empty when refused), type: data}, {name: message, label: KSeF's Message, type: text}]}}
+          params: [{name: ksef_number, label: KSeF Number (empty when refused), type: data}, {name: message, label: KSeF's Message, type: text}],
+           contract: {effect: transactional_action, returns: {type: object, properties: {status: {type: string}}}, completion: "KSeF's answer for the invoice that waits for it is recorded on it: Accepted with the KSeF number given (its check characters verified), or Rejected with the message, committed with this receipt"}}}

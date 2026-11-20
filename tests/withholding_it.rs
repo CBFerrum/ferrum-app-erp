@@ -7,6 +7,9 @@
 //! proportion to the bill's net; an advance and then its bill, withheld once; a credit note; a
 //! cancellation; collection on a sale; and the report. Every document's postings balance.
 
+#[path = "common/chart.rs"]
+mod chart;
+
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, HookRegistry, Kernel, KernelSettings, ListQuery};
 use ferrum_meta::Catalog;
@@ -298,4 +301,14 @@ async fn scenario() {
     let s3 = uid(&t.insert("Supplier", json!({"supplier_name": "Seeded Co", "withholding_category": seeded})).await).to_string();
     let b = t.post("PurchaseInvoice", bill(&s3, "100")).await;
     assert_eq!(t.posted(uid(&b)).await.get("Withholding Tax Payable").copied(), Some(n("-10")));
+
+    // ───────────── a_template_company_is_still_taxed (erp-4): the seeded category's account found by role ─────────────
+    let template = chart::national_template(&t.k, &t.ctx, &c, "National", &[]).await;
+    let nat = uid(&t.insert("Company", json!({"company_name": "National Co", "abbr": "NC", "default_currency": inr["id"], "chart_template": template})).await)
+        .to_string();
+    let mut on_nat = bill(&s3, "100");
+    on_nat["company"] = json!(nat);
+    let b = t.post("PurchaseInvoice", on_nat).await;
+    let payable = chart::account(&t.k, &t.ctx, &nat, "2132").await;
+    assert!(chart::posted(&t.k, &t.ctx, b["id"].as_str().unwrap()).await.contains(&(payable, n("-10"))), "withheld on the account standing for 2132");
 }
