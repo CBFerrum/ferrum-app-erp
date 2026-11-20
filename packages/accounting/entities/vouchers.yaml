@@ -17,6 +17,8 @@
        description: "Line currency → company currency. A bank or cash line without one takes the day's rate; a customer's or supplier's line needs one"}
     - {name: debit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Debit (Party Currency)}
     - {name: credit_in_currency, type: currency, currency: currency, min: "0", default: 0, visible_if: "doc.currency != null", label: Credit (Party Currency)}
+    - {name: day_rate, type: decimal, read_only: true, no_copy: true, label: Day's Rate, visible_if: "doc.day_rate > 0.0",
+       description: "Taken for the entry's day at each save where a line needs a rate and none is given: a bank or cash line in another currency, or a line in the company's currency on an account kept in another"}
     - {name: cost_center, type: link, to: CostCenter, link_filters: {company: {from: parent.company}, is_group: false}}
     - {name: project, type: link, to: Project}
     - {name: dimensions, type: json, description: "Its accounting dimensions by code, e.g. {\"department\": \"Sales\"}"}

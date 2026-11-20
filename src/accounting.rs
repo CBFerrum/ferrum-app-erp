@@ -20,43 +20,81 @@ impl DocHook for JournalEntryHook {
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let mut lines = rows(doc, "accounts");
         // A party's line in their currency, or a bank or cash account's in the currency it is kept in (as a payment's
-        // bank line is): its debit or credit is the amount in it at its rate; a bank or cash line without a rate takes
-        // the day's.
+        // bank line is): its debit or credit is the amount in it at its rate. A line given in the company's currency on
+        // an account kept in another is posted with that currency's amount at the day's rate, so every caller keeps
+        // working and the account's own balance moves; an exchange revaluation's lines change the company's figure
+        // alone. Where a line needs a rate and none is given, the day's is taken for the entry's day at each save and
+        // shown as `day_rate`, never copied. Amounts finer than their currency are refused.
+        let on = date(doc, "posting_date").ok();
+        let revaluation = s(doc, "entry_type") == Some("Exchange Revaluation");
         let mut errors = Vec::new();
         for (i, l) in lines.iter_mut().enumerate() {
-            let Some(cur) = id(l, "currency").filter(|c| *c != co.currency_id) else { continue };
-            let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
             let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
-            let mut rate = d(l, "exchange_rate");
-            if s(l, "party_type").is_none() {
-                let kept = match id(l, "account") {
-                    Some(a) => {
-                        let a = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
-                        matches!(s(&a, "account_type"), Some("Bank" | "Cash")) && id(&a, "account_currency") == Some(cur)
-                    }
-                    None => false,
-                };
-                if !kept {
-                    errors.push(at(
-                        "currency",
-                        format!(
-                            "only a customer's or supplier's line is carried in another currency, or a line on a bank or cash account kept in it; book {code} to an account kept in {code}, or in the company's currency"
-                        ),
-                    ));
-                    continue;
+            for f in ["debit", "credit"] {
+                if d(l, f).normalize().scale() > co.precision {
+                    errors.push(at(f, format!("{} has more decimals than {} has ({})", d(l, f).normalize(), co.currency_code, co.precision)));
                 }
-                if rate <= Decimal::ZERO {
-                    rate = exchange_rate(hc.kernel, hc.ctx, hc.tx, cur, co.currency_id, date(doc, "posting_date")?).await?;
-                    set(l, "exchange_rate", money(rate));
+            }
+            set(l, "day_rate", Value::Null);
+            let party = s(l, "party_type").is_some();
+            let given = id(l, "currency").filter(|c| *c != co.currency_id);
+            // The account's own currency, when a line without a party is on one kept in another, and whether it is a
+            // bank or cash account.
+            let kept = match (party, id(l, "account")) {
+                (false, Some(a)) => {
+                    let a = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
+                    id(&a, "account_currency").filter(|c| *c != co.currency_id).map(|c| (c, matches!(s(&a, "account_type"), Some("Bank" | "Cash"))))
+                }
+                _ => None,
+            };
+            let Some(cur) = given.or(kept.filter(|_| !revaluation).map(|k| k.0)) else { continue };
+            let (code, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+            if given.is_some() && !party && kept != Some((cur, true)) {
+                errors.push(at(
+                    "currency",
+                    format!(
+                        "only a customer's or supplier's line is carried in another currency, or a line on a bank or cash account kept in it; book {code} to an account kept in {code}, or in the company's currency"
+                    ),
+                ));
+                continue;
+            }
+            // A line given in the company's currency takes the day's rate, whatever else it carries.
+            let mut rate = if given.is_some() { d(l, "exchange_rate") } else { Decimal::ZERO };
+            if rate <= Decimal::ZERO && !party {
+                let Some(on) = on else { continue };
+                match exchange_rate(hc.kernel, hc.ctx, hc.tx, cur, co.currency_id, on).await {
+                    Ok(r) if r > Decimal::ZERO => {
+                        rate = r;
+                        set(l, "day_rate", money(r));
+                    }
+                    _ => {
+                        errors.push(at("exchange_rate", format!("there is no rate from {code} to {} on {on}: give the rate", co.currency_code)));
+                        continue;
+                    }
                 }
             }
             if rate <= Decimal::ZERO {
                 errors.push(at("exchange_rate", format!("the rate {code} is carried at is needed")));
-            } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
+                continue;
+            }
+            if given.is_none() {
+                let amount = (d(l, "debit") - d(l, "credit")).abs();
+                if !amount.is_zero() && ledger::round_as(amount / rate, precision, co.rounding).is_zero() {
+                    let f = if d(l, "debit") > Decimal::ZERO { "debit" } else { "credit" };
+                    errors.push(at(f, format!("{amount} {} is less than the smallest amount of {code} at {rate}", co.currency_code)));
+                }
+                continue;
+            }
+            let (dr, cr) = (d(l, "debit_in_currency"), d(l, "credit_in_currency"));
+            if let Some(f) =
+                [("debit_in_currency", dr), ("credit_in_currency", cr)].into_iter().find(|(_, v)| v.normalize().scale() > precision).map(|(f, _)| f)
+            {
+                errors.push(at(f, format!("{} has more decimals than {code} has ({precision})", d(l, f).normalize())));
+            } else if (dr > Decimal::ZERO) == (cr > Decimal::ZERO) {
                 errors.push(at("debit_in_currency", format!("a debit or a credit in {code}, one of the two")));
             } else {
-                set(l, "debit", money(ledger::round_as(d(l, "debit_in_currency") * rate, co.precision, co.rounding)));
-                set(l, "credit", money(ledger::round_as(d(l, "credit_in_currency") * rate, co.precision, co.rounding)));
+                set(l, "debit", money(ledger::round_as(dr * rate, co.precision, co.rounding)));
+                set(l, "credit", money(ledger::round_as(cr * rate, co.precision, co.rounding)));
             }
         }
         // One line in the company's currency may take what balances the entry once the others are rounded, on the side
@@ -187,9 +225,19 @@ impl DocHook for JournalEntryHook {
                 )
                 .await?;
             } else if let Some(cur) = id(&l, "currency").filter(|c| *c != co.currency_id) {
-                // A bank or cash line in the currency its account is kept in (checked when it was saved).
+                // A bank or cash line in the currency its account is kept in (checked when it was saved), at its rate or
+                // the day's.
                 let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
-                line = line.txn(d(&l, "debit_in_currency") - d(&l, "credit_in_currency"), &code, d(&l, "exchange_rate"));
+                let rate = Some(d(&l, "exchange_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or_else(|| d(&l, "day_rate"));
+                line = line.txn(d(&l, "debit_in_currency") - d(&l, "credit_in_currency"), &code, rate);
+            } else if d(&l, "day_rate") > Decimal::ZERO {
+                // Given in the company's currency on an account kept in another: that currency's amount at the day's rate.
+                let a = get(hc.kernel, hc.ctx, hc.tx, "Account", line.account).await?;
+                if let Some(cur) = id(&a, "account_currency") {
+                    let (code, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+                    let rate = d(&l, "day_rate");
+                    line = line.txn(ledger::round_as(amount / rate, precision, co.rounding), &code, rate);
+                }
             }
             entry.lines.push(line);
         }
