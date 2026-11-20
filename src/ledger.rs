@@ -555,15 +555,18 @@ pub async fn unallocate(k: &Kernel, tx: &mut Tx, ctx: &Ctx, payment_entity: &str
 
 /// Cancels an open item; refused when payments are still allocated to it.
 pub async fn cancel_open_item(tx: &mut Tx, ctx: &Ctx, id: Uuid) -> Result<()> {
-    let live: i64 = sqlx::query_scalar(
-        "select count(*) from allocation a where a.tenant_id = $1 and a.open_item_id = $2 and a.reversal_of is null \
-         and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id) \
+    let (live, by_journal): (i64, Option<bool>) = sqlx::query_as(
+        "select count(*), bool_or(a.payment_entity = 'JournalEntry') from allocation a where a.tenant_id = $1 and a.open_item_id = $2 \
+         and a.reversal_of is null and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id) \
          and not (a.payment_entity in ('SalesInvoice', 'PurchaseInvoice') and a.payment_id = $2)",
     )
     .bind(ctx.tenant)
     .bind(id)
     .fetch_one(&mut **tx)
     .await?;
+    if by_journal == Some(true) {
+        return Err(settled_by_journal());
+    }
     if live > 0 {
         return Err(Error::invalid("payments are allocated to this document; cancel those payments first"));
     }
@@ -573,4 +576,12 @@ pub async fn cancel_open_item(tx: &mut Tx, ctx: &Ctx, id: Uuid) -> Result<()> {
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+/// The refusal to cancel what a journal entry settled against (`settle_line`): that journal is never cancelled, so
+/// "cancel those payments first" has no way through; the way back is a reversing journal.
+pub(crate) fn settled_by_journal() -> Error {
+    Error::invalid(
+        "a journal entry settled what was owed against this, so it cannot be cancelled: book a reversing journal (its lines the other way round) instead",
+    )
 }

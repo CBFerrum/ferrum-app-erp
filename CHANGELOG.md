@@ -19,10 +19,15 @@ for `accounting.journal_entry.create`, `accounting.payment_entry.create` and `ac
 - Lines on one account in another currency at different rates or on different sides are posted apart, each with its own
   amount in that currency. Any account kept in another currency takes lines in it, not only bank and cash. A line given
   in the company's currency on an account kept in another is posted with that currency's amount at the rate given on
-  the line, else the day's; with no rate at all it posts as before, marked **Posted Without a Rate**, and the accounts
-  managers are told; an exchange revaluation's lines stay in the company's currency.
-- A recurring journal or a reversal that cannot be made tells the accounts managers why. A settled journal's cancel is
-  refused with what to do instead (a reversing journal); a settle dated in no accounting period is refused.
+  the line, else the day's; with no rate at all, or when it is less than that currency's smallest amount at the rate,
+  it posts as before, marked **Posted Without a Rate**, and the accounts managers are told which lines and the Exchange
+  Revaluation journal that corrects the account's own balance; an exchange revaluation's lines stay in the company's
+  currency.
+- A recurring journal or a reversal that cannot be made tells the accounts managers why, once: again only when the reason
+  changes or the template or entry is changed. Notices go to the Accounts Managers of the record's company whose grant
+  is current and who are members (not service or support accounts), or to the administrators when there is none. A
+  settled journal's cancel, and the cancel of what it settled against, are refused with what to do instead (a reversing
+  journal); a settle dated in no accounting period is refused.
 - Where a line needs a rate and none is given, the day's is taken for the entry's day at each save and shown as **Day's
   Rate** (never copied); no rate is refused on the line's own rate. Amounts finer than their currency are refused when
   the entry is saved.

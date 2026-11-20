@@ -85,10 +85,10 @@ impl DocHook for JournalEntryHook {
                 continue;
             }
             if given.is_none() {
+                // Less than the smallest amount of the account's currency at its rate: posted as before 0.4.1, marked.
                 let amount = (d(l, "debit") - d(l, "credit")).abs();
                 if !amount.is_zero() && ledger::round_as(amount / rate, precision, co.rounding).is_zero() {
-                    let f = if d(l, "debit") > Decimal::ZERO { "debit" } else { "credit" };
-                    errors.push(at(f, format!("{amount} {} is less than the smallest amount of {code} at {rate}", co.currency_code)));
+                    set(l, "without_rate", true);
                 }
                 continue;
             }
@@ -239,7 +239,16 @@ impl DocHook for JournalEntryHook {
                 let rate = Some(d(&l, "exchange_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or_else(|| d(&l, "day_rate"));
                 line = line.txn(d(&l, "debit_in_currency") - d(&l, "credit_in_currency"), &code, rate);
             } else if b(&l, "without_rate") {
-                lacking.push(format!("{} {}", amount.abs(), co.currency_code));
+                // Posted as before 0.4.1: no rate for its account's currency, or less than that currency's smallest amount.
+                let a = get(hc.kernel, hc.ctx, hc.tx, "Account", line.account).await?;
+                let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(&a, "account_currency").unwrap_or(co.currency_id)).await?;
+                let rate = Some(d(&l, "exchange_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or_else(|| d(&l, "day_rate"));
+                let why = if rate > Decimal::ZERO {
+                    format!("less than the smallest amount of {code} at {rate}")
+                } else {
+                    format!("no rate from {code} to {} on {on}", co.currency_code)
+                };
+                lacking.push(format!("{} {} on {} ({why})", amount.abs(), co.currency_code, s(&a, "account_name").unwrap_or_default()));
             } else if s(doc, "entry_type") != Some("Exchange Revaluation") && (d(&l, "exchange_rate") > Decimal::ZERO || d(&l, "day_rate") > Decimal::ZERO) {
                 // Given in the company's currency on an account kept in another: that currency's amount at the rate given
                 // on the line, else the day's.
@@ -255,11 +264,17 @@ impl DocHook for JournalEntryHook {
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
         if !lacking.is_empty() {
             let number = s(doc, "number").unwrap_or_default().to_string();
+            // A journal in the company's currency on the account would itself be converted: an Exchange Revaluation's
+            // line in the company's currency is not, so it moves the account's own balance alone.
             let body = format!(
-                "{number} posted {} without the amount in its account's own currency: no rate was given and there is none for {on}. Add the rate for that day and correct the account's own balance with a journal in its currency.",
+                "{number} posted {} without the amount in the account's own currency, so that account's own balance lacks it. \
+                 Add the rate where there is none, then book a journal entry of type Exchange Revaluation with two lines on the account: \
+                 the missing amount in its currency, and the same value in the company's currency the other way round (an Exchange \
+                 Revaluation leaves that line unconverted), so that only the account's own balance moves.",
                 lacking.join("; ")
             );
-            tell_accounts_managers(hc.tx, hc.ctx.tenant, &format!("Journal {number} posted without a rate"), &body, "JournalEntry", Some(jid)).await?;
+            tell_accounts_managers(hc.tx, hc.ctx.tenant, Some(co.id), &format!("Journal {number} posted without a rate"), &body, "JournalEntry", Some(jid))
+                .await?;
         }
         if b(doc, "auto_reverse") {
             reverse_from(hc, "JournalEntry", doc, on, co.precision).await?;
@@ -304,18 +319,66 @@ impl DocHook for JournalEntryHook {
     }
 }
 
-/// Tells each active Accounts Manager `title` and `body`, linked to `entity` `record`.
-pub(crate) async fn tell_accounts_managers(tx: &mut Tx, tenant: Uuid, title: &str, body: &str, entity: &str, record: Option<Uuid>) -> Result<()> {
-    let managers: Vec<Uuid> = sqlx::query_scalar(
-        "select u.id from app_user u join user_role r on r.tenant_id = u.tenant_id and r.user_id = u.id \
-         where u.tenant_id = $1 and r.role = 'Accounts Manager' and u.is_active",
+/// Tells `title` and `body`, linked to `entity` `record`, to the Accounts Managers of `company` as the platform counts
+/// role holders (a current grant; an active member, not a service, support, portal or guest account), each kept to that
+/// company or to none; to the workspace's administrators when there is none.
+pub(crate) async fn tell_accounts_managers(
+    tx: &mut Tx,
+    tenant: Uuid,
+    company: Option<Uuid>,
+    title: &str,
+    body: &str,
+    entity: &str,
+    record: Option<Uuid>,
+) -> Result<()> {
+    let mut people: Vec<Uuid> = sqlx::query_scalar(
+        "select r.user_id from user_role r join app_user u on u.tenant_id = r.tenant_id and u.id = r.user_id \
+         where r.tenant_id = $1 and r.role = 'Accounts Manager' and (r.expires_at is null or r.expires_at > now()) \
+         and u.is_active and u.kind = 'member' \
+         and (not exists (select 1 from user_scope c where c.tenant_id = r.tenant_id and c.user_id = r.user_id and c.entity = 'Company') \
+              or exists (select 1 from user_scope c where c.tenant_id = r.tenant_id and c.user_id = r.user_id and c.entity = 'Company' and c.value = $2)) \
+         order by 1",
     )
     .bind(tenant)
+    .bind(company)
     .fetch_all(&mut **tx)
     .await?;
-    for user in managers {
+    if people.is_empty() {
+        people = sqlx::query_scalar("select id from app_user where tenant_id = $1 and is_admin and is_active and kind = 'member' order by 1")
+            .bind(tenant)
+            .fetch_all(&mut **tx)
+            .await?;
+    }
+    for user in people {
         ferrum_kernel::notify::send(tx, tenant, user, title, Some(body), Some(entity), record).await?;
     }
+    Ok(())
+}
+
+/// Tells the accounts managers of `company` ([`tell_accounts_managers`]) that the upkeep could not do its work on
+/// `record` of `entity`, and why, once: the upkeep runs about once a minute, and a round that fails the same way on the
+/// record as it stands tells nobody. The reason and the record's version are kept (`upkeep_told`, a row a record,
+/// written in the transaction that tells), so two rounds at once tell once, and people are told again only when the
+/// reason changes or the record was changed since.
+pub(crate) async fn tell_once(k: &Kernel, ctx: &Ctx, entity: &str, record: Uuid, company: Option<Uuid>, title: &str, reason: &str) -> Result<()> {
+    let table = ctx.schema.entity(entity).map(|e| ferrum_kernel::ddl::q(&e.table)).ok_or_else(|| Error::internal(format!("no entity {entity}")))?;
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let changed: Option<i32> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "insert into upkeep_told as t (tenant_id, entity, record_id, reason, version) \
+         values ($1, $2, $3, $4, (select version from {table} where tenant_id = $1 and id = $3)) \
+         on conflict (tenant_id, entity, record_id) do update set reason = excluded.reason, version = excluded.version, told_at = now() \
+         where t.reason is distinct from excluded.reason or t.version is distinct from excluded.version returning 1"
+    )))
+    .bind(ctx.tenant)
+    .bind(entity)
+    .bind(record)
+    .bind(reason)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if changed.is_some() {
+        tell_accounts_managers(&mut tx, ctx.tenant, company, title, reason, entity, Some(record)).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -457,18 +520,20 @@ async fn reverse_posted(k: &Kernel, ctx: &Ctx, tx: &mut Tx, doc: &Doc) -> Result
 }
 
 /// The entries whose reversal day has come: each in a transaction of its own, so one that cannot
-/// be reversed (its period closed) waits for the next round without holding up the others.
+/// be reversed (its period closed) waits for the next round without holding up the others; its
+/// company's accounts managers are told once ([`tell_once`]).
 pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let due: Vec<Uuid> = sqlx::query_scalar(
-        "select id from e_journal_entry where tenant_id = $1 and docstatus = 1 and auto_reverse and reversed_on is null and reversal_date <= $2 order by reversal_date, id",
+    let due: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "select id, company from e_journal_entry where tenant_id = $1 and docstatus = 1 and auto_reverse and reversed_on is null and reversal_date <= $2 \
+         order by reversal_date, id",
     )
     .bind(ctx.tenant)
     .bind(ctx.today())
     .fetch_all(&mut *tx)
     .await?;
     tx.rollback().await?;
-    for jid in due {
+    for (jid, company) in due {
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
         let done = async {
             // Locked: run on two replicas at once, the second finds it reversed.
@@ -484,9 +549,7 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
             Err(e) => {
                 tx.rollback().await?;
                 tracing::warn!(tenant = %ctx.tenant, entry = %jid, "journal entry not reversed: {e}");
-                let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-                tell_accounts_managers(&mut tx, ctx.tenant, "A journal entry was not reversed on its day", &e.to_string(), "JournalEntry", Some(jid)).await?;
-                tx.commit().await?;
+                tell_once(k, ctx, "JournalEntry", jid, company, "A journal entry was not reversed on its day", &e.to_string()).await?;
             }
         }
     }

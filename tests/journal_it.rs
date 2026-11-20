@@ -475,9 +475,10 @@ async fn scenario() {
         let e =
             s.je(json!([{"account": s.usd_bank, "credit": "83.10"}, {"account": s.rent, "debit": "83.10"}])).await.unwrap_or_else(|e| panic!("posted: {e}"));
         assert_eq!(line_of(&s.posted(uid(&e)).await, &s.usd_bank), (n("0"), n("83.10"), n("0"), n("1"), "USD".to_string(), n("83.10")));
-        // Less than a cent at that rate is refused, never posted without dollars.
-        let e = err(s.draft(json!([{"account": s.usd_bank, "credit": "0.40"}, {"account": s.rent, "debit": "0.40"}])).await);
-        assert!(e.contains("less than"), "{e}");
+        // Less than a cent at that rate is kept as before 0.4.1, marked (DECISIONS "ERP S1-E1, second read" 1: the old
+        // caller wins and people are told); it posts in the part an_amount_under_a_cent_posts_as_before_and_is_marked.
+        let e = s.draft(json!([{"account": s.usd_bank, "credit": "0.40"}, {"account": s.rent, "debit": "0.40"}])).await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(e["accounts"][0]["without_rate"], json!(true), "marked: {e:?}");
         // An exchange revaluation changes what the account is worth in rupees alone.
         let e = s
             .t
