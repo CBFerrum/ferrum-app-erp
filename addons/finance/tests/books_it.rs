@@ -996,12 +996,12 @@ async fn revaluation(t: &mut T) {
     let small =
         t.make(&am, "JournalEntry", json!({"company": cid, "posting_date": "2026-05-20", "accounts": [dr(charges, "0.40"), cr(eur_bank, "0.40")]})).await;
     let seen = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2026-05-31"}))).await.expect("a preview");
-    let listed: Vec<(Value, Value, Decimal)> = seen
+    let listed: Vec<(Value, Value, Value, Decimal)> = seen
         .get("without_rate")
         .and_then(Value::as_array)
-        .map(|rows| rows.iter().map(|r| (r["journal_entry"].clone(), r["account"].clone(), dec(&r["amount"]))).collect())
+        .map(|rows| rows.iter().map(|r| (r["voucher_type"].clone(), r["voucher_id"].clone(), r["account"].clone(), dec(&r["amount"]))).collect())
         .unwrap_or_default();
-    assert_eq!(listed, vec![(json!(uid(&small).to_string()), json!(eur_bank.to_string()), n("-0.4"))], "{seen:?}");
+    assert_eq!(listed, vec![(json!("JournalEntry"), json!(uid(&small).to_string()), json!(eur_bank.to_string()), n("-0.4"))], "{seen:?}");
 }
 
 // ───────────────────────────── what needs attention ─────────────────────────────

@@ -322,4 +322,101 @@ async fn scenario() {
         sqlx::query_scalar("select count(*) from e_sales_order where tenant_id = $1").bind(tenant).fetch_one(&mut *tx).await.unwrap()
     };
     assert_eq!(orders, 0, "nothing is saved");
+
+    // ── N6: a line given in the company's currency on an account kept in another, as a journal entry's ──
+    // At the day's 83.10 it carries its dollars and its reversal mirrors them; with no rate it posts as before and the
+    // accounts managers are told once; an amount finer than its currency is refused.
+    let usd = find("Currency", json!({"code": "USD"})).await;
+    let banks = find("Account", json!({"company": cid.to_string(), "account_name": "Bank Accounts"})).await;
+    let usd_bank = uid(&k
+        .insert(
+            &admin,
+            "Account",
+            obj(json!({"account_name": "USD Bank", "company": cid.to_string(), "parent_account": banks["id"], "root_type": "Asset", "account_type": "Bank",
+                       "account_currency": usd["id"]})),
+        )
+        .await
+        .unwrap()["id"]);
+    let yesterday = (Utc::now().date_naive() - chrono::Days::new(1)).to_string();
+    k.insert(&admin, "ExchangeRate", obj(json!({"from_currency": usd["id"], "to_currency": inr["id"], "valid_from": yesterday, "rate": "83.10"})))
+        .await
+        .unwrap();
+    let books = k.create_user(&admin, "books@off.test", "Books", Some("Correct-Horse-9"), &["Accounts Manager".into()], false).await.unwrap();
+    let on_day = |day: &str, lines: Value, source: Uuid| {
+        Invocation::new(
+            "accounting.company.post_entry",
+            json!({"id": cid.to_string(), "params": {"posting_date": day, "source_entity": "CallerVoucher", "source_id": source.to_string(), "lines": lines.to_string()}}),
+        )
+    };
+    let fresh = async || uid(&k.insert(&admin, "CallerVoucher", obj(json!({"title": "V-N6"}))).await.unwrap()["id"]);
+    // Each ledger line `source` put on the dollar bank: currency, amount in it, company figure (debit positive), rate.
+    let on_usd_bank = async |source: Uuid| {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        let rows: Vec<(String, Decimal, Decimal, Decimal)> = sqlx::query_as(
+            "select trim(l.currency), l.debit_txn - l.credit_txn, l.debit - l.credit, l.exchange_rate from journal_line l \
+             join journal_entry e on e.tenant_id = l.tenant_id and e.id = l.entry_id where e.tenant_id = $1 and e.source_id = $2 and l.account_id = $3 \
+             order by e.created_at",
+        )
+        .bind(tenant)
+        .bind(source)
+        .bind(usd_bank)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        rows
+    };
+    let v1 = fresh().await;
+    call(&k, &vault, &admin, on_day(&today, json!([{"account": usd_bank, "credit": "831"}, {"account": bank, "debit": "831"}]), v1).key("n6-1"))
+        .await
+        .expect("posted at the day's rate");
+    assert_eq!(on_usd_bank(v1).await, vec![("USD".to_string(), n("-10"), n("-831"), n("83.10"))], "ten dollars out at 83.10");
+    call(
+        &k,
+        &vault,
+        &admin,
+        Invocation::new(
+            "accounting.company.reverse_entries",
+            json!({"id": cid.to_string(), "params": {"source_entity": "CallerVoucher", "source_id": v1.to_string()}}),
+        )
+        .key("n6-2"),
+    )
+    .await
+    .expect("reversed");
+    assert_eq!(
+        on_usd_bank(v1).await,
+        vec![("USD".to_string(), n("-10"), n("-831"), n("83.10")), ("USD".to_string(), n("10"), n("831"), n("83.10"))],
+        "the reversal mirrors it"
+    );
+    let early = (Utc::now().date_naive() - chrono::Days::new(30)).to_string();
+    let v2 = fresh().await;
+    call(&k, &vault, &admin, on_day(&early, json!([{"account": usd_bank, "credit": "500"}, {"account": bank, "debit": "500"}]), v2).key("n6-3"))
+        .await
+        .expect("posts as before with no rate");
+    assert_eq!(on_usd_bank(v2).await, vec![("INR".to_string(), n("-500"), n("-500"), n("1"))]);
+    let told: i64 = {
+        let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+        sqlx::query_scalar("select count(*) from notification where tenant_id = $1 and user_id = $2 and record_id = $3")
+            .bind(tenant)
+            .bind(books)
+            .bind(v2)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap()
+    };
+    assert_eq!(told, 1, "the accounts manager is told once");
+    let v3 = fresh().await;
+    let e = call(
+        &k,
+        &vault,
+        &admin,
+        on_day(
+            &today,
+            json!([{"account": usd_bank, "debit": "8.31", "currency": "USD", "amount_txn": "0.105", "exchange_rate": "79.14"}, {"account": bank, "credit": "8.31"}]),
+            v3,
+        )
+        .key("n6-4"),
+    )
+    .await
+    .unwrap_err();
+    assert!(refused(&e, "decimals"), "a fraction of a cent of USD is refused: {e:?}");
 }
