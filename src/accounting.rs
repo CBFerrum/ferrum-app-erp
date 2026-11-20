@@ -19,25 +19,68 @@ impl DocHook for JournalEntryHook {
         let Some(cid) = id(doc, "company") else { return Ok(()) };
         let co = company(hc.kernel, hc.ctx, hc.tx, cid).await?;
         let mut lines = rows(doc, "accounts");
-        // A party's line in their currency: its debit or credit is the amount in it at its rate.
+        // A party's line in their currency, or a bank or cash account's in the currency it is kept in (as a payment's
+        // bank line is): its debit or credit is the amount in it at its rate; a bank or cash line without a rate takes
+        // the day's.
         let mut errors = Vec::new();
         for (i, l) in lines.iter_mut().enumerate() {
             let Some(cur) = id(l, "currency").filter(|c| *c != co.currency_id) else { continue };
             let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
             let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
-            let rate = d(l, "exchange_rate");
+            let mut rate = d(l, "exchange_rate");
             if s(l, "party_type").is_none() {
-                errors.push(at(
-                    "currency",
-                    format!("only a customer's or supplier's line is carried in another currency; book {code} to an account in the company's"),
-                ));
-            } else if rate <= Decimal::ZERO {
+                let kept = match id(l, "account") {
+                    Some(a) => {
+                        let a = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
+                        matches!(s(&a, "account_type"), Some("Bank" | "Cash")) && id(&a, "account_currency") == Some(cur)
+                    }
+                    None => false,
+                };
+                if !kept {
+                    errors.push(at(
+                        "currency",
+                        format!(
+                            "only a customer's or supplier's line is carried in another currency, or a line on a bank or cash account kept in it; book {code} to an account kept in {code}, or in the company's currency"
+                        ),
+                    ));
+                    continue;
+                }
+                if rate <= Decimal::ZERO {
+                    rate = exchange_rate(hc.kernel, hc.ctx, hc.tx, cur, co.currency_id, date(doc, "posting_date")?).await?;
+                    set(l, "exchange_rate", money(rate));
+                }
+            }
+            if rate <= Decimal::ZERO {
                 errors.push(at("exchange_rate", format!("the rate {code} is carried at is needed")));
             } else if (d(l, "debit_in_currency") > Decimal::ZERO) == (d(l, "credit_in_currency") > Decimal::ZERO) {
                 errors.push(at("debit_in_currency", format!("a debit or a credit in {code}, one of the two")));
             } else {
                 set(l, "debit", money(ledger::round_as(d(l, "debit_in_currency") * rate, co.precision, co.rounding)));
                 set(l, "credit", money(ledger::round_as(d(l, "credit_in_currency") * rate, co.precision, co.rounding)));
+            }
+        }
+        // One line in the company's currency may take what balances the entry once the others are rounded, on the side
+        // it is given (any amount there is replaced): a journal with lines in another currency then balances to the
+        // last unit without its maker rounding anything.
+        let balancing: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| b(l, "balances")).map(|(i, _)| i).collect();
+        if let Some(&i) = balancing.get(1) {
+            errors.push(FieldError::new("balances", "one line balances the entry").in_row("accounts", i));
+        } else if let Some(&i) = balancing.first() {
+            let at = |m: String| FieldError::new("balances", m).in_row("accounts", i);
+            let (dr, cr) = (d(&lines[i], "debit") > Decimal::ZERO, d(&lines[i], "credit") > Decimal::ZERO);
+            if id(&lines[i], "currency").is_some_and(|c| c != co.currency_id) {
+                errors.push(at("the line that balances the entry is in the company's currency".into()));
+            } else if dr == cr {
+                errors.push(at("give the side the line that balances the entry is on: a debit or a credit, any amount".into()));
+            } else {
+                let others = |f: &str| lines.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, l)| round(d(l, f), co.precision)).sum::<Decimal>();
+                let figure = if dr { others("credit") - others("debit") } else { others("debit") - others("credit") };
+                if figure <= Decimal::ZERO {
+                    let side = if dr { "debit" } else { "credit" };
+                    errors.push(at(format!("its {side} would be {figure}: the other lines leave nothing on that side to balance")));
+                } else {
+                    set(&mut lines[i], if dr { "debit" } else { "credit" }, money(figure));
+                }
             }
         }
         if !errors.is_empty() {
@@ -143,6 +186,10 @@ impl DocHook for JournalEntryHook {
                     },
                 )
                 .await?;
+            } else if let Some(cur) = id(&l, "currency").filter(|c| *c != co.currency_id) {
+                // A bank or cash line in the currency its account is kept in (checked when it was saved).
+                let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
+                line = line.txn(d(&l, "debit_in_currency") - d(&l, "credit_in_currency"), &code, d(&l, "exchange_rate"));
             }
             entry.lines.push(line);
         }
@@ -156,6 +203,8 @@ impl DocHook for JournalEntryHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let jid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        // What settle_line paired is given back to both sides first; its exchange difference reverses with the entry.
+        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, "JournalEntry", jid, hc.ctx.today()).await?;
         for l in rows(doc, "accounts") {
             if s(&l, "party_type").is_some()
                 && let Some(lid) = id(&l, "id")
@@ -168,6 +217,85 @@ impl DocHook for JournalEntryHook {
         ledger::reverse(hc.tx, hc.ctx, "JournalEntry", jid, hc.ctx.today(), co.precision).await?;
         Ok(())
     }
+
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        if name != "settle_line" {
+            return Ok(None);
+        }
+        settle_line(hc, doc, params).await.map(Some)
+    }
+}
+
+/// `settle_line`: a customer's or supplier's line of this submitted entry settled against another open item of the
+/// same party, account and currency on the other side (an invoice, a credit note, a payment, another entry's line), as
+/// far as both are open or `amount` (in the line's currency) says. Each side gives up its own value in the company's
+/// currency. Both items are locked in id order and an allocation never takes more than is open (`ledger::allocate`),
+/// so two settles at once take what is open once; the gate's key answers a repeat without settling again. Answers
+/// what was settled and what is left open on the line.
+async fn settle_line(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
+    let jid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
+    let p = params.as_object().cloned().unwrap_or_default();
+    let line = id(&p, "line")
+        .filter(|l| rows(doc, "accounts").iter().any(|r| id(r, "id") == Some(*l) && s(r, "party_type").is_some()))
+        .ok_or_else(|| Error::field("line", "settle_line takes a customer's or supplier's line of this entry"))?;
+    let against = id(&p, "against").ok_or_else(|| Error::field("against", "what it is settled against is not open"))?;
+    let cap = d(&p, "amount");
+    if cap < Decimal::ZERO {
+        return Err(Error::field("amount", "the amount to settle is more than zero"));
+    }
+    let (first, second) = if line <= against { (line, against) } else { (against, line) };
+    let a = ledger::load_open_item(hc.tx, hc.ctx.tenant, first, true).await?;
+    let b = ledger::load_open_item(hc.tx, hc.ctx.tenant, second, true).await?;
+    let (mine, other) = if first == line { (a, b) } else { (b, a) };
+    let open = |o: Option<ledger::OpenItemRow>| o.filter(|o| o.status != "cancelled" && !o.outstanding.is_zero());
+    let mine = open(mine).ok_or_else(|| Error::field("line", "this line is not open: nothing of it is left to settle"))?;
+    let other = open(other).ok_or_else(|| Error::field("against", "what it is settled against is not open"))?;
+    if (mine.customer_id, mine.supplier_id) != (other.customer_id, other.supplier_id) {
+        return Err(Error::field("against", "what it is settled against is another customer's or supplier's"));
+    }
+    if mine.currency != other.currency {
+        return Err(Error::field(
+            "against",
+            format!("what it is settled against is in another currency ({}; this line is in {})", other.currency, mine.currency),
+        ));
+    }
+    // Accounts belong to one company: the same account is the same company, and each account's open items keep
+    // agreeing with its balance.
+    if mine.account_id != other.account_id {
+        return Err(Error::field("against", "what it is settled against is on another account"));
+    }
+    if (mine.outstanding > Decimal::ZERO) == (other.outstanding > Decimal::ZERO) {
+        return Err(Error::field("against", "what it is settled against is on the same side: settle what is owed against what is due"));
+    }
+    let mut x = mine.outstanding.abs().min(other.outstanding.abs());
+    if cap > Decimal::ZERO {
+        x = x.min(cap);
+    }
+    let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+    let on = hc.ctx.today();
+    let (pos, neg) = if mine.outstanding > Decimal::ZERO { (&mine, &other) } else { (&other, &mine) };
+    let at = |r: Decimal| ledger::round_as(x * r, co.precision, co.rounding);
+    let given = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, pos.id, "JournalEntry", jid, on, x, at(pos.exchange_rate)).await?;
+    let taken = -ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, neg.id, "JournalEntry", jid, on, -x, -at(neg.exchange_rate)).await?;
+    let diff = given - taken;
+    if !diff.is_zero() {
+        // Each side gave up its own value in the company's currency: what they differ by (two rates, or what each
+        // document's rounding left) is an exchange difference, cleared from the party's account.
+        let sign = if pos.customer_id.is_some() { -Decimal::ONE } else { Decimal::ONE };
+        let gl = co.require("exchange_gain_loss_account", "exchange gain/loss account")?;
+        let mut e = Entry::new(co.id, on, "JournalEntry", jid, s(doc, "number").map(str::to_string));
+        e.memo = Some(format!("Exchange difference on settling {}", other.number.clone().unwrap_or_default()));
+        e.lines.push(
+            Line::new(pos.account_id, sign * diff, &co.currency_code)
+                .txn(Decimal::ZERO, &pos.currency, Decimal::ONE)
+                .customer(pos.customer_id)
+                .supplier(pos.supplier_id)
+                .against(&pos.entity, pos.id),
+        );
+        e.lines.push(Line::new(gl, -sign * diff, &co.currency_code).remarks("Exchange difference"));
+        ledger::post(hc.tx, hc.ctx, e, co.precision).await?;
+    }
+    Ok(json!({"settled": money(x), "left": money(mine.outstanding.abs() - x)}))
 }
 
 /// On submitting a document that reverses itself (a journal entry, an exchange revaluation): its

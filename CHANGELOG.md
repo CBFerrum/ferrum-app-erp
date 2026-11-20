@@ -1,5 +1,24 @@
 # Changelog
 
+## ERP 0.41.0 and accounting 0.4.1: journal lines in a bank account's currency, a balancing line, settling a party line
+
+Additive, so accounting takes a patch: every caller declaring `^0.4` keeps working. Payments declares `>=0.4.1, <0.5`
+for `accounting.journal_entry.create`, `accounting.payment_entry.create` and `accounting.journal_entry.settle_line`.
+- A journal line on a bank or cash account kept in another currency is booked in it, as a payment's bank line is: the
+  amount in that currency and its rate (the day's when none is given) are kept beside the company's figure. Any other
+  line in another currency than a customer's or supplier's is refused, as before.
+- **Balances the Entry** on one line in the company's currency: its debit or credit, on the side given, becomes what
+  balances the entry once the other lines are rounded. Two such lines, one in another currency, or a figure of zero or
+  less are refused.
+- `accounting.journal_entry.settle_line` (hidden; submit right; a contract): a customer's or supplier's line of a
+  submitted entry is settled against another open item of the same party, account and currency on the other side, as
+  far as both are open or the amount given, answering `{settled, left}`. Each side gives up its own value in the
+  company's currency; what two rates leave between them goes to the exchange gain or loss account. Both items are
+  locked in id order: two at once settle what is open once; the caller's key answers a repeat without settling again.
+- Cancelling a journal entry first gives back what `settle_line` paired.
+- Upgrading: a process step calling an accounting operation waits after the upgrade, as after every ERP release; see
+  Install in the README.
+
 ## ERP 0.40.0 and South Korea 0.1.0: a country described as a data file
 
 A country whose VAT works the common way can now be three files and no Rust (docs/countries.md): a description
