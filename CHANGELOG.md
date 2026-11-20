@@ -1,6 +1,6 @@
 # Changelog
 
-## ERP 0.37.0 (selling 0.4.0, buying 0.3.0): drop shipment
+## ERP 0.37.0 (selling 0.2.2, buying 0.1.2): drop shipment
 
 A sales order line marked **Supplier Delivers**, with its supplier, is sent by the supplier straight to the customer
 (docs/drop-shipment.md). **Order from Supplier** makes a draft purchase order per supplier for what is not yet ordered,
@@ -14,7 +14,7 @@ of reservations, promises, both requirements runs, production plans (Manufacturi
 (Procurement), pick waves (Warehouse Management) and pick lists (Stock Operations); a delivery note may not deliver one. Add-on patches: Procurement 0.2.2, Warehouse
 Management 0.4.1, Stock Operations 0.3.1, Manufacturing Operations 0.3.1.
 
-## ERP 0.36.0 (selling 0.3.0, buying 0.2.0): purchase and sales agreements
+## ERP 0.36.0 (selling 0.2.1, buying 0.1.1): purchase and sales agreements
 
 A **Purchase Agreement** (Buying) or **Sales Agreement** (Selling) records items with an agreed quantity and price per
 stock unit, valid between two dates (docs/agreements.md). An order line that names one takes its price (times the

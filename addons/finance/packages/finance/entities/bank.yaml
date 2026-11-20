@@ -138,7 +138,7 @@
     - {name: unallocated_amount, type: currency, currency: currency, read_only: true, no_copy: true, in_list: true}
     - {name: status, type: select, options: [Unreconciled, Partially Reconciled, Reconciled, Cancelled], default: Unreconciled, read_only: true, no_copy: true,
        in_list: true, in_filter: true}
-    - {name: rule, type: link, to: BankRule, read_only: true, no_copy: true, label: Booked by Rule}
+    - {name: rule, type: link, to: BankRule, link_filters: {company: {from: company}}, read_only: true, no_copy: true, label: Booked by Rule}
     - {name: transaction_hash, type: data, read_only: true, no_copy: true, hidden: true}
     - {name: allocations, type: table, of: BankTransactionPayment, read_only: true, label: Reconciled Vouchers}
   unique: [[bank_account, transaction_hash]]

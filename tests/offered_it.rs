@@ -303,11 +303,14 @@ async fn scenario() {
         .insert(
             &admin,
             "Item",
-            obj(json!({"item_code": "SVC", "item_name": "Service", "item_group": group_of_items["id"], "stock_uom": nos["id"], "is_stock_item": false})),
+            obj(json!({"item_code": "SVC", "item_name": "Service", "item_group": group_of_items["id"], "stock_uom": nos["id"], "is_stock_item": false,
+                       "standard_rate": "250.50"})),
         )
         .await
         .unwrap();
-    let document = json!({"customer": made.result["customer"], "items": [{"item": item["id"], "qty": "2", "price_list_rate": "250.50"}]}).to_string();
+    // A query through the gate answers as its caller (Ferrum #314), so a price typed on an item line is a person's and is
+    // dropped as on any order of theirs (`pricing::guards_typed_price`): the item's own price fills it.
+    let document = json!({"customer": made.result["customer"], "items": [{"item": item["id"], "qty": "2", "price_list_rate": "999"}]}).to_string();
     let priced = call(&k, &vault, &admin, Invocation::new("selling.company.price_document", json!({"id": cid.to_string(), "params": {"document": document}})))
         .await
         .expect("price_document");

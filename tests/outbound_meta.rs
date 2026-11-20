@@ -34,6 +34,8 @@ fn no_source_builds_its_own_http_client() {
     let mut found = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();
+        // A file's own unit tests (after `#[cfg(test)]`) call nothing outside: a local socket stands in for a service.
+        let text = text.split("#[cfg(test)]").next().unwrap_or_default();
         for (i, line) in text.lines().enumerate() {
             if needles.iter().any(|n| line.contains(n.as_str())) {
                 found.push(format!("{}:{}: {}", f.strip_prefix(root).unwrap().display(), i + 1, line.trim()));
