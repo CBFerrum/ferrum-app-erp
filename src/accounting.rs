@@ -203,8 +203,6 @@ impl DocHook for JournalEntryHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let jid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
-        // What settle_line paired is given back to both sides first; its exchange difference reverses with the entry.
-        ledger::unallocate(hc.kernel, hc.tx, hc.ctx, "JournalEntry", jid, hc.ctx.today()).await?;
         for l in rows(doc, "accounts") {
             if s(&l, "party_type").is_some()
                 && let Some(lid) = id(&l, "id")
