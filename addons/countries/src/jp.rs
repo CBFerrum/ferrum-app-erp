@@ -31,7 +31,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "jp_kind",
     number_field: "jp_registration_number",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a qualified invoice issuer's registration number: T and 13 digits",
     export_reason: "Export sale: exempt from consumption tax (zero-rated)",
     exempt_reason: "Non-taxable sale",

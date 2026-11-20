@@ -17,7 +17,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Taxable",
     kind_field: "au_kind",
     number_field: "au_abn",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "an ABN: 11 digits whose check holds",
     export_reason: "GST-free export",
     exempt_reason: "Input-taxed supply",

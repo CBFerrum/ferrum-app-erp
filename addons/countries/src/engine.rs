@@ -96,7 +96,7 @@ pub struct Country {
     /// charges the tax needs the company's), its normal form or `None` when it is not one, and
     /// what a valid one looks like.
     pub number_field: &'static str,
-    pub number: fn(&str) -> Option<String>,
+    pub number: Number,
     pub number_hint: &'static str,
     /// What exports and exempt supplies say on the invoice.
     pub export_reason: &'static str,
@@ -107,6 +107,247 @@ pub struct Country {
     pub simplified: Option<(&'static str, &'static str)>,
     /// Accounts a new company of the country gets: (number, name, parent group, root type).
     pub accounts: &'static [(&'static str, &'static str, &'static str, &'static str)],
+}
+
+/// How a registration number is checked: a function (the coded countries) or a description (a data file's).
+#[derive(Debug)]
+pub enum Number {
+    Code(fn(&str) -> Option<String>),
+    Rule(&'static NumberRule),
+}
+
+impl Number {
+    /// The number's normal form, or `None` when it is not one.
+    pub fn normal(&self, raw: &str) -> Option<String> {
+        match self {
+            Number::Code(f) => f(raw),
+            Number::Rule(r) => r.normal(raw),
+        }
+    }
+}
+
+/// A registration number described as data: characters stripped, suffixes dropped, an optional prefix, the shapes the
+/// rest may take (`9` a digit, `A` a letter, `X` either, any other character itself) and weighted-sum checks.
+#[derive(Debug, Default)]
+pub struct NumberRule {
+    pub strip: String,
+    pub drop: Vec<String>,
+    pub prefix: Option<String>,
+    pub shapes: Vec<String>,
+    pub checks: Vec<Check>,
+}
+
+/// A check character: the weighted sum of the other characters (left to right or right to left), each product's
+/// digits summed when `fold`, modulo `modulus`, as the remainder or its complement, mapped (`"10": "K"`) or as a digit.
+#[derive(Debug)]
+pub struct Check {
+    pub weights: Vec<u32>,
+    pub from_right: bool,
+    pub modulus: u32,
+    pub complement: bool,
+    pub fold: bool,
+    pub map: Vec<(String, String)>,
+    /// The check character's position; negative counts from the end.
+    pub at: i32,
+}
+
+impl NumberRule {
+    pub fn normal(&self, raw: &str) -> Option<String> {
+        let mut t: String = raw.chars().filter(|c| !self.strip.contains(*c)).collect::<String>().to_uppercase();
+        for d in &self.drop {
+            if let Some(cut) = t.strip_suffix(d.as_str()) {
+                t = cut.to_string();
+            }
+        }
+        let body = match &self.prefix {
+            Some(p) => t.strip_prefix(p.as_str()).unwrap_or(&t).to_string(),
+            None => t.clone(),
+        };
+        let chars: Vec<char> = body.chars().collect();
+        let fits = |mask: &str| {
+            mask.chars().count() == chars.len()
+                && mask.chars().zip(&chars).all(|(m, c)| match m {
+                    '9' => c.is_ascii_digit(),
+                    'A' => c.is_ascii_alphabetic(),
+                    'X' => c.is_ascii_alphanumeric(),
+                    other => other == *c,
+                })
+        };
+        if !self.shapes.iter().any(|m| fits(m)) {
+            return None;
+        }
+        for c in &self.checks {
+            let k = if c.at >= 0 { c.at as usize } else { chars.len().checked_sub(c.at.unsigned_abs() as usize)? };
+            let mut others: Vec<char> = chars.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, ch)| *ch).collect();
+            if c.from_right {
+                others.reverse();
+            }
+            if others.len() > c.weights.len() {
+                return None;
+            }
+            let mut sum = 0u32;
+            for (ch, w) in others.iter().zip(&c.weights) {
+                let p = ch.to_digit(10)? * w;
+                sum += if c.fold { p.to_string().chars().filter_map(|d| d.to_digit(10)).sum() } else { p };
+            }
+            let r = sum % c.modulus;
+            let v = if c.complement { c.modulus - r } else { r };
+            let expected = match c.map.iter().find(|(from, _)| *from == v.to_string()) {
+                Some((_, to)) => to.clone(),
+                None if v < 10 => v.to_string(),
+                None => return None,
+            };
+            if expected != chars.get(k)?.to_string() {
+                return None;
+            }
+        }
+        Some(match &self.prefix {
+            Some(p) => format!("{p}{body}"),
+            None => body,
+        })
+    }
+}
+
+/// A string kept for the life of the process: a data country's text is read once (`LazyLock`), so the strings leaked
+/// are bounded by the files compiled in.
+fn keep(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
+}
+
+impl Country {
+    /// A country described as a data file (`data/<code>.json`, docs/countries.md), checked as it is read: an unknown key,
+    /// a rate on a row that does not exist, a date or rate that is not one, or a default category without a rate is
+    /// refused naming the key.
+    pub fn from_json(package: &'static str, text: &str) -> std::result::Result<&'static Country, String> {
+        use serde_json::Value;
+        let v: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
+        let o = v.as_object().ok_or("not an object")?;
+        const KEYS: &[&str] = &[
+            "country",
+            "rows",
+            "rates",
+            "category_field",
+            "default_category",
+            "kind_field",
+            "number_field",
+            "number",
+            "number_hint",
+            "export_reason",
+            "exempt_reason",
+            "reverse_charge",
+            "simplified",
+            "accounts",
+            "sources",
+        ];
+        if let Some(k) = o.keys().find(|k| !KEYS.contains(&k.as_str())) {
+            return Err(format!("unknown key {k}"));
+        }
+        let text_of = |o: &serde_json::Map<String, Value>, k: &str| -> std::result::Result<&'static str, String> {
+            o.get(k).and_then(Value::as_str).map(keep).ok_or_else(|| format!("{k} must be text"))
+        };
+        let opt_text = |o: &serde_json::Map<String, Value>, k: &str| -> Option<&'static str> { o.get(k).and_then(Value::as_str).map(keep) };
+        let list =
+            |k: &str| -> std::result::Result<Vec<Value>, String> { o.get(k).and_then(Value::as_array).cloned().ok_or_else(|| format!("{k} must be a list")) };
+        let mut rows = Vec::new();
+        for (i, r) in list("rows")?.iter().enumerate() {
+            let r = r.as_object().ok_or_else(|| format!("rows[{i}] must be an object"))?;
+            rows.push(Row {
+                label: text_of(r, "label")?,
+                sales: text_of(r, "sales")?,
+                purchases: opt_text(r, "purchases"),
+                self_assessed: opt_text(r, "self_assessed"),
+            });
+        }
+        let mut rates = Vec::new();
+        for (i, r) in list("rates")?.iter().enumerate() {
+            let r = r.as_object().ok_or_else(|| format!("rates[{i}] must be an object"))?;
+            let row = r.get("row").and_then(Value::as_u64).ok_or_else(|| format!("rates[{i}].row must be a number"))? as usize;
+            if row >= rows.len() {
+                return Err(format!("rates[{i}].row: there is no row {row}"));
+            }
+            let from = text_of(r, "from")?;
+            chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d").map_err(|_| format!("rates[{i}].from is not a date: {from}"))?;
+            let rate = text_of(r, "rate")?;
+            rate.parse::<Decimal>().map_err(|_| format!("rates[{i}].rate is not a decimal: {rate}"))?;
+            rates.push(Rate { category: text_of(r, "category")?, row, from, rate });
+        }
+        let n = o.get("number").and_then(Value::as_object).ok_or("number must be an object")?;
+        let mut checks = Vec::new();
+        for (i, c) in n.get("checks").and_then(Value::as_array).cloned().unwrap_or_default().iter().enumerate() {
+            let c = c.as_object().ok_or_else(|| format!("number.checks[{i}] must be an object"))?;
+            let num = |k: &str| c.get(k).and_then(Value::as_i64).ok_or_else(|| format!("number.checks[{i}].{k} must be a number"));
+            checks.push(Check {
+                weights: c
+                    .get("weights")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| format!("number.checks[{i}].weights must be a list"))?
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .map(|w| w as u32)
+                    .collect(),
+                from_right: c.get("from").and_then(Value::as_str) == Some("right"),
+                modulus: num("modulus")? as u32,
+                complement: c.get("result").and_then(Value::as_str) == Some("complement"),
+                fold: c.get("fold").and_then(Value::as_bool).unwrap_or(false),
+                map: c
+                    .get("map")
+                    .and_then(Value::as_object)
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string())).collect())
+                    .unwrap_or_default(),
+                at: num("at")? as i32,
+            });
+        }
+        let strings = |k: &str| -> Vec<String> {
+            n.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+        };
+        let rule = NumberRule {
+            strip: n.get("strip").and_then(Value::as_str).unwrap_or_default().to_string(),
+            drop: strings("drop"),
+            prefix: n.get("prefix").and_then(Value::as_str).map(str::to_string),
+            shapes: strings("shapes"),
+            checks,
+        };
+        if rule.shapes.is_empty() {
+            return Err("number.shapes must name at least one shape".into());
+        }
+        let reverse_charge = match o.get("reverse_charge") {
+            Some(Value::String(w)) if w == "never" => ReverseCharge::Never,
+            Some(Value::String(w)) if w == "always" => ReverseCharge::Always,
+            Some(Value::Object(m)) => ReverseCharge::When(m.get("when").and_then(Value::as_str).map(keep).ok_or("reverse_charge.when must be text")?),
+            _ => return Err("reverse_charge must be \"never\", \"always\" or {\"when\": field}".into()),
+        };
+        let simplified = match o.get("simplified") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(m)) => Some((text_of(m, "field")?, text_of(m, "category")?)),
+            _ => return Err("simplified must be null or {field, category}".into()),
+        };
+        let mut accounts = Vec::new();
+        for (i, a) in list("accounts")?.iter().enumerate() {
+            let a = a.as_object().ok_or_else(|| format!("accounts[{i}] must be an object"))?;
+            accounts.push((text_of(a, "number")?, text_of(a, "name")?, text_of(a, "parent")?, text_of(a, "root")?));
+        }
+        let country = Country {
+            package,
+            country: text_of(o, "country")?,
+            rows: Box::leak(rows.into_boxed_slice()),
+            rates: Box::leak(rates.into_boxed_slice()),
+            category_field: text_of(o, "category_field")?,
+            default_category: text_of(o, "default_category")?,
+            kind_field: text_of(o, "kind_field")?,
+            number_field: text_of(o, "number_field")?,
+            number: Number::Rule(Box::leak(Box::new(rule))),
+            number_hint: text_of(o, "number_hint")?,
+            export_reason: text_of(o, "export_reason")?,
+            exempt_reason: text_of(o, "exempt_reason")?,
+            reverse_charge,
+            simplified,
+            accounts: Box::leak(accounts.into_boxed_slice()),
+        };
+        if country.default_category != OUT_OF_SCOPE && country.rates.iter().all(|r| r.category != country.default_category) {
+            return Err(format!("default_category {} has no rate", country.default_category));
+        }
+        Ok(Box::leak(Box::new(country)))
+    }
 }
 
 /// How a line is taxed on one row.
@@ -488,7 +729,8 @@ impl DocHook for NumberHook {
         if hc.entity.def.name != "Company" && s(doc, "country_code").is_some_and(|cc| cc != c.country) {
             return Ok(());
         }
-        let normal = (c.number)(&raw).ok_or_else(|| Error::Validation(vec![FieldError::new(c.number_field, format!("is not valid: {}", c.number_hint))]))?;
+        let normal =
+            c.number.normal(&raw).ok_or_else(|| Error::Validation(vec![FieldError::new(c.number_field, format!("is not valid: {}", c.number_hint))]))?;
         set(doc, c.number_field, normal);
         Ok(())
     }
@@ -661,7 +903,7 @@ mod tests {
         default_category: "Goods 10%",
         kind_field: "xx_kind",
         number_field: "xx_number",
-        number: |v| Some(v.to_string()),
+        number: Number::Code(|v: &str| Some(v.to_string())),
         number_hint: "anything",
         export_reason: "Export",
         exempt_reason: "Exempt",
@@ -730,5 +972,92 @@ mod tests {
             (figures.sales_net(&["Goods 10%", EXPORT]), figures.sales_tax(&["Goods 10%"]), figures.all_sales()),
             (n("150"), n("10"), (n("150"), n("10")))
         );
+    }
+}
+
+#[cfg(test)]
+mod described {
+    use super::*;
+
+    fn check(weights: &[u32], from_right: bool, modulus: u32, fold: bool, map: &[(&str, &str)]) -> Check {
+        Check {
+            weights: weights.to_vec(),
+            from_right,
+            modulus,
+            complement: true,
+            fold,
+            map: map.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            at: -1,
+        }
+    }
+
+    #[test]
+    fn a_described_number_is_checked_by_shape_and_weighted_sums() {
+        // Weights 5,4,3,2,7,6,5,4,3,2 from the left, modulus 11, complement, 11 -> 0. 20-12345678-?: 2·5 + 0·4 + 1·3 + 2·2 +
+        // 3·7 + 4·6 + 5·5 + 6·4 + 7·3 + 8·2 = 148; 148 mod 11 = 5; 11 - 5 = 6.
+        let eleven = NumberRule {
+            strip: " .-".into(),
+            shapes: vec!["99999999999".into()],
+            checks: vec![check(&[5, 4, 3, 2, 7, 6, 5, 4, 3, 2], false, 11, false, &[("11", "0")])],
+            ..Default::default()
+        };
+        assert_eq!(eleven.normal("20-12345678-6").as_deref(), Some("20123456786"));
+        // 20-00000001-?: 2·5 + 1·2 = 12; 12 mod 11 = 1; 11 - 1 = 10, not a digit and not mapped: no such number.
+        assert_eq!(eleven.normal("20-00000001-0"), None);
+        // 30-00000000-?: 3·5 = 15; 15 mod 11 = 4; 11 - 4 = 7.
+        assert_eq!(eleven.normal("30-00000000-7").as_deref(), Some("30000000007"));
+        assert_eq!(eleven.normal("20-12345678-5"), None, "a wrong check digit");
+        assert_eq!(eleven.normal("20-1234567-6"), None, "a wrong shape");
+
+        // Weights 2..7 from the right, modulus 11, 11 -> 0, 10 -> K; seven or eight digits and a check.
+        let k = NumberRule {
+            strip: ".-".into(),
+            shapes: vec!["99999999X".into(), "9999999X".into()],
+            checks: vec![check(&[2, 3, 4, 5, 6, 7, 2, 3], true, 11, false, &[("11", "0"), ("10", "K")])],
+            ..Default::default()
+        };
+        // 12.345.678-?: from the right 8·2 + 7·3 + 6·4 + 5·5 + 4·6 + 3·7 + 2·2 + 1·3 = 138; 138 mod 11 = 6; 11 - 6 = 5.
+        assert_eq!(k.normal("12.345.678-5").as_deref(), Some("123456785"));
+        // 1.000.006-?: 6·2 + 1·2 (the eighth weight is 3 only for an eighth digit: here 1 is the seventh, weight 2) = 14; 14 mod 11 = 3; 8.
+        assert_eq!(k.normal("1.000.006-8").as_deref(), Some("10000068"));
+        // 10.000.004-?: 4·2 + 1·3 = 11; 11 mod 11 = 0; 11 - 0 = 11 -> 0.
+        assert_eq!(k.normal("10.000.004-0").as_deref(), Some("100000040"));
+        // 10.000.005-?: 5·2 + 1·3 = 13; 13 mod 11 = 2; 9. And a sum giving 10 -> K: 10.000.003: 3·2 + 1·3 = 9; 11 - 9 = 2.
+        assert_eq!(k.normal("10.000.005-9").as_deref(), Some("100000059"));
+        // 1.000.000-?: 1·2 = 2; 11 - 2 = 9. 7.000.000-?: 7·2 = 14; 3; 8. 6.000.000-?: 12; 1; 10 -> K.
+        assert_eq!(k.normal("6.000.000-k").as_deref(), Some("6000000K"));
+        assert_eq!(k.normal("6.000.000-1"), None);
+
+        // Weights 1,2,1,2,… from the left, each product's digits summed, modulus 10, complement, 10 -> 0 (a Luhn sum).
+        let luhn = NumberRule {
+            strip: " ".into(),
+            shapes: vec!["999999999".into()],
+            checks: vec![check(&[1, 2, 1, 2, 1, 2, 1, 2], false, 10, true, &[("10", "0")])],
+            ..Default::default()
+        };
+        // 1234 5678 ?: 1 + 4 + 3 + (8→8) + 5 + (12→3) + 7 + (16→7) = 38; 38 mod 10 = 8; 10 - 8 = 2.
+        assert_eq!(luhn.normal("1234 5678 2").as_deref(), Some("123456782"));
+        assert_eq!(luhn.normal("1234 5678 3"), None);
+
+        // A prefix kept in the normal form, a suffix dropped, a shape with letters.
+        let vat = NumberRule { strip: " ".into(), drop: vec!["MVA".into()], prefix: Some("NO".into()), shapes: vec!["AA99".into()], checks: vec![] };
+        assert_eq!(vat.normal("no ab12 mva").as_deref(), Some("NOAB12"));
+        assert_eq!(vat.normal("AB12").as_deref(), Some("NOAB12"));
+        assert_eq!(vat.normal("A112"), None);
+    }
+
+    #[test]
+    fn a_description_with_a_mistake_is_refused_by_name() {
+        let good = include_str!("../data/kr.json");
+        assert!(Country::from_json("kr", good).is_ok());
+        let edit = |f: &dyn Fn(&mut serde_json::Value)| {
+            let mut v: serde_json::Value = serde_json::from_str(good).unwrap();
+            f(&mut v);
+            Country::from_json("kr", &v.to_string()).unwrap_err()
+        };
+        assert!(edit(&|v| v["vat_rate"] = serde_json::json!("10")).contains("unknown key vat_rate"));
+        assert!(edit(&|v| v["rates"][0]["row"] = serde_json::json!(3)).contains("rates[0].row"));
+        assert!(edit(&|v| v["rates"][0]["from"] = serde_json::json!("July 1977")).contains("rates[0].from"));
+        assert!(edit(&|v| v["default_category"] = serde_json::json!("Reduced")).contains("default_category Reduced has no rate"));
     }
 }

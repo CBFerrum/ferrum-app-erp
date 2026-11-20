@@ -22,7 +22,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "sg_kind",
     number_field: "sg_gst_number",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a GST registration number: the UEN (e.g. 201912345K) or the M-number (e.g. M90312345A)",
     export_reason: "Zero-rated: export of goods or international services (section 21(3), GST Act)",
     exempt_reason: "Exempt supply (Fourth Schedule, GST Act)",

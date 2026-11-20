@@ -24,7 +24,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "vn_kind",
     number_field: "vn_tax_code",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a tax code of 10 digits, or 10 and a 3-digit branch (0101234567-001)",
     export_reason: "Exported: VAT at 0%",
     exempt_reason: "Not subject to VAT (Article 5, Law on VAT)",

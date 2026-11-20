@@ -15,7 +15,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "th_kind",
     number_field: "th_tax_id",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a 13-digit tax identification number whose check digit holds",
     export_reason: "Export: VAT at 0%",
     exempt_reason: "Exempt from VAT (section 81, Revenue Code)",

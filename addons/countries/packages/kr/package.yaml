@@ -1,0 +1,47 @@
+package: kr
+version: 0.1.0
+label: "South Korea"
+description: "South Korea's VAT for ERP, described as data (data/kr.json). 10%, exports at 0%, exempt supplies, VAT paid by proxy on services from abroad, and a VAT return."
+depends: [selling, buying]
+field_prefix: kr_
+
+overlays:
+  - entity: Company
+    ops:
+      - {op: add_field, after: tax_id, field: {name: kr_brn, type: data, label: "Business Registration Number (Korea)", max_length: 30, description: "10 digits: on the invoices that charge VAT"}}
+      - {op: add_field, after: kr_brn, field: {name: kr_proxy_payment, type: check, label: "Pays VAT on services bought from abroad",
+          description: "A business with exempt supplies pays the VAT on services from a supplier abroad itself (Value-Added Tax Act, article 52)"}}
+      - {op: add_section, after: tax_id, section: {label: "Korea VAT", collapsible: true, fields: [kr_brn, kr_proxy_payment]}}
+  - entity: Customer
+    ops:
+      - {op: add_field, after: tax_id, field: {name: kr_brn, type: data, label: "Business Registration Number (Korea)", max_length: 30}}
+  - entity: Supplier
+    ops:
+      - {op: add_field, after: tax_id, field: {name: kr_brn, type: data, label: "Business Registration Number (Korea)", max_length: 30}}
+  - entity: Item
+    ops:
+      - {op: add_field, after: tax_rates, field: {name: kr_vat_category, type: select, label: "VAT Category", options: ["Standard", "Zero Rated", "Exempt", "Out of Scope"], default: "Standard",
+          description: "Zero Rated, Exempt or Out of Scope where VAT is not charged"}}
+      - {op: add_field, after: kr_vat_category, field: {name: kr_kind, type: select, label: "Goods or Services (Korea)", options: [Goods, Services],
+          description: "Goods are taxed by where they go, services by where the customer is. Empty: goods when it is a stock item"}}
+
+seed:
+  - entity: TaxReturnDefinition
+    key: [definition_name]
+    records:
+      - definition_name: "South Korea VAT Return"
+        country: KR
+        frequency: Quarterly
+        notes: "ERP's sums for a VAT return from the tax ledger, not the National Tax Service form's numbering. Set the frequency to the period the company files for."
+        boxes:
+          - {code: "STD", label: "Standard-rated sales", kind: Sum, measure: Base, direction: Output, category: "Standard"}
+          - {code: "ZR", label: "Zero-rated sales", kind: Sum, measure: Base, direction: Output, category: "Zero Rated"}
+          - {code: "EXP", label: "Exports", kind: Sum, measure: Base, direction: Output, category: "Export"}
+          - {code: "EXM", label: "Exempt sales", kind: Sum, measure: Base, direction: Output, category: "Exempt"}
+          - {code: "OUT_TAX", label: "Output tax", kind: Sum, measure: Tax, direction: Output, category: "Standard"}
+          - {code: "IN_BASE", label: "Standard-rated purchases", kind: Sum, measure: Base, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "RC", label: "Services from abroad, VAT paid by proxy", kind: Sum, measure: Base, direction: Input, reverse_charge: "Yes"}
+          - {code: "IN_TAX", label: "Input tax on standard-rated purchases", kind: Sum, measure: Tax, direction: Input, category: "Standard", reverse_charge: "No"}
+          - {code: "RC_TAX", label: "VAT paid by proxy", kind: Sum, measure: Tax, direction: Input, reverse_charge: "Yes"}
+          - {code: "PAYABLE", label: "Tax payable", kind: Formula, formula: "max(OUT_TAX - IN_TAX, 0)"}
+          - {code: "REFUNDABLE", label: "Tax refundable", kind: Formula, formula: "max(IN_TAX - OUT_TAX, 0)"}

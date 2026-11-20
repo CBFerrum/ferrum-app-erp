@@ -19,7 +19,7 @@ pub static COUNTRY: Country = Country {
     default_category: "Standard",
     kind_field: "nz_kind",
     number_field: "nz_gst_number",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "a GST (IRD) number of 8 or 9 digits whose check digit holds",
     export_reason: "Zero-rated export",
     exempt_reason: "Exempt supply",

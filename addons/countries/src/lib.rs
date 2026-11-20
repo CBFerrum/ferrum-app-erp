@@ -28,6 +28,8 @@ pub mod vn;
 pub(crate) use ferrum_domain::util;
 
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
+// The countries described as data (`data/<code>.json`): a module each, written by build.rs.
+include!(concat!(env!("OUT_DIR"), "/data_apps.rs"));
 
 /// One country's package.
 pub(crate) fn packages_of(name: &str) -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta::MetaError> {
@@ -83,7 +85,7 @@ pub(crate) use app;
 
 /// The countries' rules and returns, for tests and tools.
 pub fn all() -> Vec<(&'static str, &'static engine::Country)> {
-    vec![
+    let mut all = vec![
         ("ae", &ae::COUNTRY),
         ("au", &au::COUNTRY),
         ("cn", &cn::COUNTRY),
@@ -97,11 +99,33 @@ pub fn all() -> Vec<(&'static str, &'static engine::Country)> {
         ("sg", &sg::COUNTRY),
         ("th", &th::COUNTRY),
         ("vn", &vn::COUNTRY),
-    ]
+    ];
+    all.extend(data_countries());
+    all
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_data_country_loads() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (code, country) in super::data_countries() {
+            assert_eq!(country.package, code);
+            assert!(dir.join(format!("apps/{code}.yaml")).is_file(), "{code}: its manifest");
+            assert!(dir.join(format!("packages/{code}/package.yaml")).is_file(), "{code}: its package");
+        }
+        let files = std::fs::read_dir(dir.join("data")).unwrap().count();
+        assert_eq!(super::data_countries().len(), files, "every data file is a country");
+    }
+
+    #[test]
+    fn korea_rates_and_numbers() {
+        let kr = *super::r#kr::COUNTRY;
+        assert_eq!(kr.rate("Standard", "2026-10-31").map(|(_, r)| r.to_string()).as_deref(), Some("10"));
+        assert_eq!(kr.number.normal("123-45-67890").as_deref(), Some("1234567890"));
+        assert_eq!(kr.number.normal("123-45-6789"), None);
+    }
+
     #[test]
     fn every_package_fits_erp_and_offers_its_categories() {
         for (code, country) in super::all() {

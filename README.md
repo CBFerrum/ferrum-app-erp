@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.39.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.40.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -37,7 +37,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 - 🔗 **One data set with the rest of Ferrum.** Customers, suppliers and items are the platform's shared
   records. The till, the web shop, payroll, fixed assets, CRM quotations and field jobs post through ERP's
   engine, so there is nothing to sync and one set of books.
-- 🌍 **Every country is an add-on.** The engine names no country. 26 countries plug into one localization
+- 🌍 **Every country is an add-on.** The engine names no country. 27 countries plug into one localization
   seam (taxes, e-invoices, returns, registrations, numbering), only for the companies of that country, so one
   workspace can keep companies in India, Germany and the United States side by side.
 - 🧩 **Grows by add-ons and configuration.** Finance, Procurement, Stock Operations, Manufacturing Operations,
@@ -56,10 +56,10 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.39.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.40.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
-| ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
+| ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 27 country add-ons, all in this repository |
 | 🔗 **Depends on** | Ferrum platform `>=0.4.0, <0.5` (its shared core, parties, products and project records) |
 | 🤝 **Works with** | Point of Sale, Commerce, CRM, HR, Assets, Field Service and Bookings, which post through its engine; Operations, which carries the warehouse's and shop floor's devices |
 | 🗣️ **Languages** | English, Arabic and Hindi; pages mirror right to left |
@@ -607,6 +607,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | 🇦🇺 | Australia | `ferrum-countries` 0.3.1 | GST 10%, GST-free and input-taxed supplies, ABN check | BAS GST labels | PINT A-NZ |
 | 🇳🇿 | New Zealand | `ferrum-countries` 0.4.1 | GST 15%, IRD number check | GST101A as a return definition | PINT A-NZ |
 | 🇯🇵 | Japan | `ferrum-countries` 0.4.1 | Consumption tax 10% and 8%, qualified invoices, T-number | Consumption tax return as a return definition | JP PINT |
+| 🇰🇷 | South Korea | `ferrum-countries` 0.1.0 (data file) | VAT 10%, exports at 0%, VAT paid by proxy on services from abroad | VAT return as a return definition | — |
 | 🇲🇽 | Mexico | `ferrum-countries` 0.3.1 | IVA 16%, 8% in the border regions, 0%, exempt; RFC | Cash-basis IVA return | — |
 | 🇨🇳 | China | `ferrum-countries` 0.4.1 | VAT 13%, 9% and 6%, small-scale taxpayers | VAT return as a return definition | — |
 
@@ -662,7 +663,7 @@ flowchart TD
     UI["ERP screens at /erp/"] --> API["Ferrum REST, MCP and records frame"]
     API --> ENG
     ENG --> SEAM{"Localization seam"}
-    SEAM --> CTRY["26 country add-ons"]
+    SEAM --> CTRY["27 country add-ons"]
     ENG --> ADD["Finance, Procurement, Stock and Manufacturing Operations"]
     ADD --> EXEC["Quality, Warehouse, Shop Floor"]
     EXEC --> OPS["Operations: devices and robots"]
@@ -886,7 +887,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Open source | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 | No per-user licence fee | ✅ | ❌ | ❌ | ❌ | 🟡 | ✅ |
 
-<sub>¹ Files in five formats, and a feed you describe as a connection; no bank is built in. ² 26 countries, each an add-on; the leaders
+<sub>¹ Files in five formats, and a feed you describe as a connection; no bank is built in. ² 27 countries, each an add-on; the leaders
 cover many more. ³ Revenue is deferred and recognised by the day, without allocation across performance
 obligations. ⁴ Done in the Ferrum Assets app, which posts to this ledger. ⁵ Done in the Ferrum CRM app, which
 makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You describe each carrier's calls; none
@@ -920,6 +921,7 @@ app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoo
 
 ### ✅ Recently shipped
 
+- [x] **0.40.0** A country described as a data file, with no Rust; South Korea the first.
 - [x] **0.39.0** Carrier templates, and one shipment's rates from several carriers side by side.
 - [x] **0.38.0** Demand forecasts worked out from what was sold, planned for less what open orders already ask.
 - [x] **0.37.0** Drop shipment: the supplier delivers to the customer; the receipt books cost of sales and moves no stock.

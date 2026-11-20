@@ -69,6 +69,9 @@ another app's operations*). Each is an action on the company (`id` is the compan
 | `selling.company.customers_of` (selling ^0.2) | `email` | `{customers}` |
 | `selling.company.price_document` (selling ^0.2) | `document`: JSON of a sales order's fields (a purchase order's with `side: Buying`), its `items` 1 to 500 | `{document}` with prices, taxes and totals |
 
+* **Pricing answers as its caller.** `price_document` is a query, so it runs with the caller's own rights: a list
+  price typed on an item line is a person's and is dropped, and the item's own price (price list, last purchase or
+  standard rate, pricing rules) is used, as on any order that person makes.
 * **Posting is an app's.** `post_entry` and `reverse_entries` run only for an app's call (which runs as the system)
   or ERP's own code: a person or an agent asking is refused, and posts journal entries instead. The record must
   exist; every account must be a ledger (not group) account of the company; amounts are the company currency's,

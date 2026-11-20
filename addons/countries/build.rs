@@ -38,4 +38,58 @@ fn main() {
     }
     code.push_str("];\n");
     std::fs::write(Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("packages.rs"), code).expect("write packages.rs");
+    data_apps();
+}
+
+/// A module per country described as data (`data/<code>.json`, docs/countries.md): the same entry points a coded country's
+/// `app!` gives, around a `COUNTRY` read from the file once; and `data_countries()` listing them.
+fn data_apps() {
+    println!("cargo:rerun-if-changed=data");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
+    let mut codes: Vec<String> = std::fs::read_dir(&dir)
+        .map(|r| r.filter_map(|e| e.ok()).filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".json").map(str::to_string)).collect())
+        .unwrap_or_default();
+    codes.sort();
+    let mut code = String::new();
+    for c in &codes {
+        assert!(c.len() == 2 && c.chars().all(|ch| ch.is_ascii_lowercase()), "data/{c}.json: a country's file is its two lower-case letters");
+        writeln!(
+            code,
+            r#"pub mod r#{c} {{
+    /// The app's `app.yaml`.
+    pub const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/apps/{c}.yaml"));
+    /// The app's package.
+    pub const PACKAGE: &str = "{c}";
+    /// The country as its data file describes it, read once.
+    pub static COUNTRY: std::sync::LazyLock<&'static crate::engine::Country> = std::sync::LazyLock::new(|| {{
+        crate::engine::Country::from_json("{c}", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/{c}.json")))
+            .unwrap_or_else(|e| panic!("data/{c}.json: {{e}}"))
+    }});
+    pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta::MetaError> {{
+        crate::packages_of(PACKAGE)
+    }}
+    pub fn register(h: &mut ferrum_kernel::HookRegistry) {{
+        ferrum_app_erp::localization::add(std::sync::Arc::new(crate::engine::National(*COUNTRY)));
+        h.scoped(&[PACKAGE.to_string()], |h| {{
+            for entity in ["Company", "Customer", "Supplier"] {{
+                h.register(entity, std::sync::Arc::new(crate::engine::NumberHook(*COUNTRY)));
+            }}
+        }});
+    }}
+    pub fn reports() -> Vec<std::sync::Arc<dyn ferrum_domain::reports::ReportSource>> {{
+        Vec::new()
+    }}
+    pub async fn maintenance(_k: &ferrum_kernel::Kernel, _tenant: uuid::Uuid) -> ferrum_kernel::Result<()> {{
+        Ok(())
+    }}
+}}"#
+        )
+        .expect("write");
+    }
+    code.push_str("\n/// The countries described as data files.\npub fn data_countries() -> Vec<(&'static str, &'static engine::Country)> {\n    vec![");
+    for c in &codes {
+        write!(code, "(\"{c}\", *r#{c}::COUNTRY), ").expect("write");
+    }
+    code.push_str("]\n}\n");
+    std::fs::write(Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("data_apps.rs"), code).expect("write data_apps.rs");
 }

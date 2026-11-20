@@ -27,7 +27,7 @@ pub static COUNTRY: Country = Country {
     default_category: OUT_OF_SCOPE,
     kind_field: "my_kind",
     number_field: "my_sst_number",
-    number,
+    number: crate::engine::Number::Code(number),
     number_hint: "an SST registration number, e.g. W10-1808-32000001",
     export_reason: "Exported: no sales or service tax",
     exempt_reason: "Exempted from sales tax (Sales Tax (Goods Exempted From Tax) Order)",

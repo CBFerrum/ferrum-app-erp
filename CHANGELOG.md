@@ -1,5 +1,17 @@
 # Changelog
 
+## ERP 0.40.0 and South Korea 0.1.0: a country described as a data file
+
+A country whose VAT works the common way can now be three files and no Rust (docs/countries.md): a description
+(`addons/countries/data/<code>.json`: rows, rates from a day, categories, reasons, who reverse-charges, accounts, and
+the registration number as shapes and weighted-sum checks), a manifest and a package. `build.rs` makes a module for
+each, and `ferrum_countries::all()` lists them; the thirteen coded countries are unchanged (their number check is now
+`Number::Code`). **South Korea** is the first: VAT at 10% (Value-Added Tax Act article 30), exports at 0% (article 21),
+exempt supplies (article 26), VAT paid by proxy on services from abroad by a company that ticks it (article 52), booked
+as an expense; a ten-digit business registration number (shape only: the Act read gives no check digit); a VAT return
+definition of ERP's own sums. Each fact cites the text read on 20 Nov 2026. The platform must list the `kr` module
+when it pins this release.
+
 ## European Union 0.6.0 (eu 0.1.1): Intrastat figures
 
 Items gain **Net Mass (kg)**, **Supplementary Units per Stock Unit** and **Country of Origin** (two capital letters).
