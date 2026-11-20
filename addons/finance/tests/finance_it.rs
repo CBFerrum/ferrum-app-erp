@@ -1219,8 +1219,6 @@ async fn scenario() {
     t.books_balance().await;
 }
 
-/// Statement files read with the formats Finance ships and with a format of the account's own: a trial run
-/// that writes nothing, an import that stores each line once, the gate's repeat, another account's statement.
 /// A bank kept in another currency (S1-E1-fix M6): its journals are offered for matching and listed by the
 /// reconciliation statement in its own currency, and a journal made from one of its statement lines is booked in it.
 async fn foreign_bank(t: &T, am: &Ctx, bank_charges: Uuid) {
@@ -1265,6 +1263,8 @@ async fn foreign_bank(t: &T, am: &Ctx, bank_charges: Uuid) {
     assert_eq!((dec(&st["totals"]["book_balance"]), dec(&st["totals"]["difference"])), (n("-3.5"), Decimal::ZERO), "{st}");
 }
 
+/// Statement files read with the formats Finance ships and with a format of the account's own: a trial run
+/// that writes nothing, an import that stores each line once, the gate's repeat, another account's statement.
 async fn statement_files(t: &T, am: &Ctx, au: &Ctx, bank_gl: Uuid) {
     let cid = t.company.to_string();
     let fixture = |name: &str| std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();

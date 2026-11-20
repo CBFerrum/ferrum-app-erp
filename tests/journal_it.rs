@@ -198,7 +198,7 @@ async fn scenario() {
             let e = err(s
                 .draft(json!([{"account": account, "currency": cur, "exchange_rate": "90", "debit_in_currency": "10"}, {"account": s.rent, "credit": "900"}]))
                 .await);
-            assert!(e.contains("or a line on a bank or cash account kept in it"), "{e}");
+            assert!(e.contains("or a line on an account kept in it"), "{e}");
         }
     });
 
@@ -315,12 +315,14 @@ async fn scenario() {
         let (je, line) = s.refund(&s.globex, "20").await;
         let dollars = s.credit_note(&s.globex, "20", Some("82")).await;
         assert!(err(s.settle(je, line, dollars, None, "s10b").await).contains("in another currency"));
+        assert_eq!((s.open(line).await, s.open(dollars).await), (n("20"), n("-20")), "nothing settled");
     });
 
     part!("settle_line_refuses_the_same_side", |s| {
         let (je, line) = s.refund(&s.globex, "20").await;
         let (_, other_debit) = s.refund(&s.globex, "5").await;
         assert!(err(s.settle(je, line, other_debit, None, "s10c").await).contains("on the same side"));
+        assert_eq!((s.open(line).await, s.open(other_debit).await), (n("20"), n("5")), "nothing settled");
     });
 
     part!("settle_line_refuses_a_line_that_is_not_a_partys", |s| {
@@ -432,7 +434,7 @@ async fn scenario() {
         let (je, line) = s.refund(&s.globex, "70").await;
         s.settle(je, line, cn, None, "s14").await.unwrap_or_else(|e| panic!("settled: {e}"));
         let e = err(s.t.k.cancel(&s.t.ctx, "JournalEntry", je, None).await.map_err(|e| format!("{e:?}")));
-        assert!(e.contains("payments are allocated to this document"), "{e}");
+        assert!(e.contains("book a reversing journal"), "{e}");
         assert_eq!((s.open(cn).await, s.open(line).await), (n("0"), n("0")), "still settled");
     });
 
@@ -652,6 +654,14 @@ async fn scenario() {
                 .await
                 .map_err(|e| format!("{e:?}")));
             assert!(e.contains("field: \"debit\""), "{code}: {e}");
+            s.t.try_post(
+                "JournalEntry",
+                json!({"company": co, "accounts": [
+                {"account": bank, "currency": s.usd, "exchange_rate": rate, "debit_in_currency": "2.5", "debit": "2.5"},
+                {"account": fees, "credit": "2.5", "balances": true}]}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{code}: the stand-ins are worked out, not refused: {e}"));
         }
     });
 
@@ -665,6 +675,75 @@ async fn scenario() {
         assert_eq!(s.open(cn).await, n("-5"));
         s.settle(je, line, cn, None, "s15b").await.unwrap_or_else(|e| panic!("an Accounts Manager settles it: {e}"));
         assert_eq!(s.open(cn).await, n("0"));
+    });
+
+    part!("a_line_in_rupees_without_any_rate_posts_as_before_and_is_marked", |s| {
+        // No USD rate 30 days ago: 500 rupees out of the USD bank posts as before 0.4.1, marked, and the accounts
+        // managers are told; a rate typed on the line is used.
+        let user = s.t.k.create_user(&s.t.ctx, "books@fin.test", "Books", Some("Correct-Horse-9"), &["Accounts Manager".into()], false).await.expect("user");
+        let early = (s.t.ctx.today() - chrono::Days::new(30)).to_string();
+        let post = |lines: Value| {
+            let s = s.clone();
+            let early = early.clone();
+            async move { s.t.try_post("JournalEntry", json!({"company": s.c, "posting_date": early, "accounts": lines})).await }
+        };
+        let e = post(json!([{"account": s.usd_bank, "credit": "500"}, {"account": s.fees, "debit": "500"}]))
+            .await
+            .unwrap_or_else(|e| panic!("posts as before: {e}"));
+        assert_eq!(e["accounts"][0]["without_rate"], json!(true));
+        assert_eq!(line_of(&s.posted(uid(&e)).await, &s.usd_bank).4, "INR");
+        let told = s.t.sql::<(i64,)>("select count(*) from notification where user_id = $1", user).await[0].0;
+        assert_eq!(told, 1, "the accounts manager is told once");
+        let e = post(json!([{"account": s.usd_bank, "credit": "831", "exchange_rate": "83.10"}, {"account": s.fees, "debit": "831"}]))
+            .await
+            .unwrap_or_else(|e| panic!("the rate given: {e}"));
+        assert_eq!(line_of(&s.posted(uid(&e)).await, &s.usd_bank), (n("0"), n("831"), n("0"), n("10"), "USD".to_string(), n("83.10")));
+    });
+
+    part!("an_account_kept_in_dollars_takes_its_own_currency_whatever_its_type", |s| {
+        // 1,000 USD of a dollar loan repaid at the bank's 83.25: the loan's dollars move 1,000.
+        let group = s.t.account("Current Liabilities").await;
+        let loan = uid(&s
+            .t
+            .insert(
+                "Account",
+                json!({"account_name": "USD Loan", "company": s.c, "parent_account": group, "root_type": "Liability", "account_currency": s.usd}),
+            )
+            .await)
+        .to_string();
+        let e = s
+            .je(json!([{"account": loan, "currency": s.usd, "exchange_rate": "83.25", "debit_in_currency": "1000"}, {"account": s.inr_bank, "credit": "83250"}]))
+            .await
+            .unwrap_or_else(|e| panic!("a loan line in dollars: {e}"));
+        assert_eq!(s.dollars(uid(&e), &loan).await, (n("1000"), 1));
+    });
+
+    part!("a_settle_dated_in_no_accounting_period_is_refused", |s| {
+        let cn = s.credit_note(&s.globex, "9", None).await;
+        let (je, line) = s.refund(&s.globex, "9").await;
+        let company: Uuid = s.c.parse().unwrap();
+        let today = s.t.ctx.today();
+        let (start, end) =
+            s.t.sql::<(chrono::NaiveDate, chrono::NaiveDate)>(
+                &format!(
+                    "select period_start, period_end from accounting_period where company_id = $1 and '{today}'::date between period_start and period_end"
+                ),
+                company,
+            )
+            .await[0];
+        let sql = |q: &'static str| {
+            let s = s.clone();
+            async move {
+                let mut tx = s.t.k.db.tenant_tx(s.t.ctx.tenant).await.unwrap();
+                sqlx::query(q).bind(s.t.ctx.tenant).bind(company).bind(start).bind(end).execute(&mut *tx).await.unwrap();
+                tx.commit().await.unwrap();
+            }
+        };
+        sql("delete from accounting_period where tenant_id = $1 and company_id = $2 and period_start = $3 and period_end = $4").await;
+        let e = err(s.settle(je, line, cn, None, "s27").await);
+        sql("insert into accounting_period (tenant_id, company_id, period_start, period_end) values ($1, $2, $3, $4)").await;
+        assert!(e.contains("no accounting period"), "{e}");
+        assert_eq!(s.open(cn).await, n("-9"));
     });
 
     assert!(failed.is_empty(), "parts that failed: {failed:#?}");

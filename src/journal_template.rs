@@ -101,6 +101,17 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx, today: NaiveDate) -> Result<usize> {
                 Err(e) => {
                     tx.rollback().await?;
                     tracing::warn!(tenant = %ctx.tenant, template = %tid, "recurring journal not made: {e}");
+                    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+                    crate::accounting::tell_accounts_managers(
+                        &mut tx,
+                        ctx.tenant,
+                        "A recurring journal was not made",
+                        &e.to_string(),
+                        "JournalTemplate",
+                        Some(tid),
+                    )
+                    .await?;
+                    tx.commit().await?;
                     break;
                 }
             }

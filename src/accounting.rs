@@ -30,42 +30,49 @@ impl DocHook for JournalEntryHook {
         let mut errors = Vec::new();
         for (i, l) in lines.iter_mut().enumerate() {
             let at = |f: &str, m: String| FieldError::new(f, m).in_row("accounts", i);
-            for f in ["debit", "credit"] {
-                if d(l, f).normalize().scale() > co.precision {
-                    errors.push(at(f, format!("{} has more decimals than {} has ({})", d(l, f).normalize(), co.currency_code, co.precision)));
-                }
-            }
             set(l, "day_rate", Value::Null);
+            set(l, "without_rate", false);
             let party = s(l, "party_type").is_some();
             let given = id(l, "currency").filter(|c| *c != co.currency_id);
-            // The account's own currency, when a line without a party is on one kept in another, and whether it is a
-            // bank or cash account.
-            let kept = match (party, id(l, "account")) {
-                (false, Some(a)) => {
-                    let a = get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?;
-                    id(&a, "account_currency").filter(|c| *c != co.currency_id).map(|c| (c, matches!(s(&a, "account_type"), Some("Bank" | "Cash"))))
+            // What will be posted is checked: a line the journal works out (in another currency, or the balancing one)
+            // is not checked before it is worked out.
+            if given.is_none() && !b(l, "balances") {
+                for f in ["debit", "credit"] {
+                    if d(l, f).normalize().scale() > co.precision {
+                        errors.push(at(f, format!("{} has more decimals than {} has ({})", d(l, f).normalize(), co.currency_code, co.precision)));
+                    }
                 }
+            }
+            // The account's own currency, when a line without a party is on one kept in another.
+            let kept = match (party, id(l, "account")) {
+                (false, Some(a)) => id(&get(hc.kernel, hc.ctx, hc.tx, "Account", a).await?, "account_currency").filter(|c| *c != co.currency_id),
                 _ => None,
             };
-            let Some(cur) = given.or(kept.filter(|_| !revaluation).map(|k| k.0)) else { continue };
+            let Some(cur) = given.or(kept.filter(|_| !revaluation)) else { continue };
             let (code, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
-            if given.is_some() && !party && kept != Some((cur, true)) {
+            if given.is_some() && !party && kept != Some(cur) {
                 errors.push(at(
                     "currency",
                     format!(
-                        "only a customer's or supplier's line is carried in another currency, or a line on a bank or cash account kept in it; book {code} to an account kept in {code}, or in the company's currency"
+                        "only a customer's or supplier's line is carried in another currency, or a line on an account kept in it; book {code} to an account kept in {code}, or in the company's currency"
                     ),
                 ));
                 continue;
             }
-            // A line given in the company's currency takes the day's rate, whatever else it carries.
-            let mut rate = if given.is_some() { d(l, "exchange_rate") } else { Decimal::ZERO };
+            // A rate given on the line is used; else the day's. A line given in the company's currency with no rate
+            // anywhere posts as before 0.4.1, its account's currency left out, and is marked (the accounts managers are
+            // told when it is posted).
+            let mut rate = d(l, "exchange_rate");
             if rate <= Decimal::ZERO && !party {
                 let Some(on) = on else { continue };
                 match exchange_rate(hc.kernel, hc.ctx, hc.tx, cur, co.currency_id, on).await {
                     Ok(r) if r > Decimal::ZERO => {
                         rate = r;
                         set(l, "day_rate", money(r));
+                    }
+                    _ if given.is_none() => {
+                        set(l, "without_rate", true);
+                        continue;
                     }
                     _ => {
                         errors.push(at("exchange_rate", format!("there is no rate from {code} to {} on {on}: give the rate", co.currency_code)));
@@ -178,6 +185,7 @@ impl DocHook for JournalEntryHook {
         let mut entry = Entry::new(co.id, on, "JournalEntry", jid, s(doc, "number").map(str::to_string));
         entry.memo = s(doc, "remark").map(str::to_string);
         entry.finance_book = id(doc, "finance_book");
+        let mut lacking: Vec<String> = Vec::new();
         for l in rows(doc, "accounts") {
             let amount = d(&l, "debit") - d(&l, "credit");
             let line_id = id(&l, "id").ok_or_else(|| Error::internal("line without id"))?;
@@ -230,18 +238,29 @@ impl DocHook for JournalEntryHook {
                 let (code, _) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
                 let rate = Some(d(&l, "exchange_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or_else(|| d(&l, "day_rate"));
                 line = line.txn(d(&l, "debit_in_currency") - d(&l, "credit_in_currency"), &code, rate);
-            } else if d(&l, "day_rate") > Decimal::ZERO {
-                // Given in the company's currency on an account kept in another: that currency's amount at the day's rate.
+            } else if b(&l, "without_rate") {
+                lacking.push(format!("{} {}", amount.abs(), co.currency_code));
+            } else if s(doc, "entry_type") != Some("Exchange Revaluation") && (d(&l, "exchange_rate") > Decimal::ZERO || d(&l, "day_rate") > Decimal::ZERO) {
+                // Given in the company's currency on an account kept in another: that currency's amount at the rate given
+                // on the line, else the day's.
                 let a = get(hc.kernel, hc.ctx, hc.tx, "Account", line.account).await?;
-                if let Some(cur) = id(&a, "account_currency") {
+                if let Some(cur) = id(&a, "account_currency").filter(|c| *c != co.currency_id) {
                     let (code, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, cur).await?;
-                    let rate = d(&l, "day_rate");
+                    let rate = Some(d(&l, "exchange_rate")).filter(|r| *r > Decimal::ZERO).unwrap_or_else(|| d(&l, "day_rate"));
                     line = line.txn(ledger::round_as(amount / rate, precision, co.rounding), &code, rate);
                 }
             }
             entry.lines.push(line);
         }
         ledger::post(hc.tx, hc.ctx, entry, co.precision).await?;
+        if !lacking.is_empty() {
+            let number = s(doc, "number").unwrap_or_default().to_string();
+            let body = format!(
+                "{number} posted {} without the amount in its account's own currency: no rate was given and there is none for {on}. Add the rate for that day and correct the account's own balance with a journal in its currency.",
+                lacking.join("; ")
+            );
+            tell_accounts_managers(hc.tx, hc.ctx.tenant, &format!("Journal {number} posted without a rate"), &body, "JournalEntry", Some(jid)).await?;
+        }
         if b(doc, "auto_reverse") {
             reverse_from(hc, "JournalEntry", doc, on, co.precision).await?;
         }
@@ -251,6 +270,19 @@ impl DocHook for JournalEntryHook {
     async fn on_cancel(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let jid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+        let settled: bool = sqlx::query_scalar(
+            "select exists(select 1 from allocation a where a.tenant_id = $1 and a.payment_entity = 'JournalEntry' and a.payment_id = $2 \
+             and a.reversal_of is null and not exists (select 1 from allocation r where r.tenant_id = a.tenant_id and r.reversal_of = a.id))",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(jid)
+        .fetch_one(&mut **hc.tx)
+        .await?;
+        if settled {
+            return Err(Error::invalid(
+                "this entry settled what was owed against it, so it cannot be cancelled: book a reversing journal (its lines the other way round) instead",
+            ));
+        }
         for l in rows(doc, "accounts") {
             if s(&l, "party_type").is_some()
                 && let Some(lid) = id(&l, "id")
@@ -270,6 +302,21 @@ impl DocHook for JournalEntryHook {
         }
         settle_line(hc, doc, params).await.map(Some)
     }
+}
+
+/// Tells each active Accounts Manager `title` and `body`, linked to `entity` `record`.
+pub(crate) async fn tell_accounts_managers(tx: &mut Tx, tenant: Uuid, title: &str, body: &str, entity: &str, record: Option<Uuid>) -> Result<()> {
+    let managers: Vec<Uuid> = sqlx::query_scalar(
+        "select u.id from app_user u join user_role r on r.tenant_id = u.tenant_id and r.user_id = u.id \
+         where u.tenant_id = $1 and r.role = 'Accounts Manager' and u.is_active",
+    )
+    .bind(tenant)
+    .fetch_all(&mut **tx)
+    .await?;
+    for user in managers {
+        ferrum_kernel::notify::send(tx, tenant, user, title, Some(body), Some(entity), record).await?;
+    }
+    Ok(())
 }
 
 /// `settle_line`: a customer's or supplier's line of this submitted entry settled against another open item of the
@@ -344,6 +391,16 @@ async fn settle_line(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<
         .fetch_all(&mut **hc.tx)
         .await?;
     let on = days.into_iter().map(|d| d.0).chain([hc.ctx.today()]).max().unwrap_or_else(|| hc.ctx.today());
+    let period: Option<String> =
+        sqlx::query_scalar("select status from accounting_period where tenant_id = $1 and company_id = $2 and $3 between period_start and period_end")
+            .bind(hc.ctx.tenant)
+            .bind(co.id)
+            .bind(on)
+            .fetch_optional(&mut **hc.tx)
+            .await?;
+    if period.is_none() {
+        return Err(Error::invalid(format!("no accounting period holds {on}: make the year's periods first")));
+    }
     if !ledger::period_open(hc.tx, hc.ctx.tenant, co.id, on).await? {
         return Err(Error::invalid(format!("the books are closed on {on}: settle it on a day of an open period")));
     }
@@ -427,6 +484,9 @@ pub async fn upkeep(k: &Kernel, ctx: &Ctx) -> Result<()> {
             Err(e) => {
                 tx.rollback().await?;
                 tracing::warn!(tenant = %ctx.tenant, entry = %jid, "journal entry not reversed: {e}");
+                let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+                tell_accounts_managers(&mut tx, ctx.tenant, "A journal entry was not reversed on its day", &e.to_string(), "JournalEntry", Some(jid)).await?;
+                tx.commit().await?;
             }
         }
     }
