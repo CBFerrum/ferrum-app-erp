@@ -285,10 +285,29 @@ async fn settle_line(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<
         .filter(|l| rows(doc, "accounts").iter().any(|r| id(r, "id") == Some(*l) && s(r, "party_type").is_some()))
         .ok_or_else(|| Error::field("line", "settle_line takes a customer's or supplier's line of this entry"))?;
     let against = id(&p, "against").ok_or_else(|| Error::field("against", "what it is settled against is not open"))?;
-    let cap = d(&p, "amount");
-    if cap < Decimal::ZERO {
-        return Err(Error::field("amount", "the amount to settle is more than zero"));
-    }
+    // `amount` is absent (all that is open) or a positive amount of the line's currency at its precision; anything else
+    // is refused, never read as "all".
+    let row = rows(doc, "accounts").into_iter().find(|r| id(r, "id") == Some(line)).unwrap_or_default();
+    let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
+    let (code, precision) = crate::util::currency(hc.kernel, hc.ctx, hc.tx, id(&row, "currency").unwrap_or(co.currency_id)).await?;
+    let cap = match p.get("amount") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(v)) if v.trim().is_empty() => None,
+        Some(v) => {
+            let text = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+            match text.trim().parse::<Decimal>() {
+                Ok(a) if a > Decimal::ZERO && a.normalize().scale() <= precision => Some(a),
+                _ => {
+                    return Err(Error::field(
+                        "amount",
+                        format!(
+                            "{text} is not an amount of {code} to settle: give one more than zero with at most {precision} decimals, or none for all that is open"
+                        ),
+                    ));
+                }
+            }
+        }
+    };
     let (first, second) = if line <= against { (line, against) } else { (against, line) };
     let a = ledger::load_open_item(hc.tx, hc.ctx.tenant, first, true).await?;
     let b = ledger::load_open_item(hc.tx, hc.ctx.tenant, second, true).await?;
@@ -314,10 +333,9 @@ async fn settle_line(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<
         return Err(Error::field("against", "what it is settled against is on the same side: settle what is owed against what is due"));
     }
     let mut x = mine.outstanding.abs().min(other.outstanding.abs());
-    if cap > Decimal::ZERO {
+    if let Some(cap) = cap {
         x = x.min(cap);
     }
-    let co = company(hc.kernel, hc.ctx, hc.tx, id(doc, "company").unwrap_or_default()).await?;
     let on = hc.ctx.today();
     let (pos, neg) = if mine.outstanding > Decimal::ZERO { (&mine, &other) } else { (&other, &mine) };
     let at = |r: Decimal| ledger::round_as(x * r, co.precision, co.rounding);
