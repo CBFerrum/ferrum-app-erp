@@ -81,6 +81,23 @@ async fn scenario() {
     assert_eq!([a.is_ok(), b.is_ok()].iter().filter(|x| **x).count(), 1, "70 left: one of two orders of 40 ({a:?}, {b:?})");
     let raced = a.or(b).unwrap();
     assert_eq!(left(pa_id).await, [n("70"), n("0")]);
+    // Two submits also wait on the order number's counter (numbered on submit), so they cannot show the agreement's row
+    // lock. An Update Items that starts while another order's submit is not yet committed can: it must wait for the
+    // agreement and then count that order. 80 drawn; an order of 15, then 15 more on another.
+    let small = uid(&t.post("PurchaseOrder", po(json!([{"item": bolt, "qty": "10", "agreement": pa_id.to_string()}]))).await);
+    let draft = uid(&t.insert("PurchaseOrder", po(json!([{"item": bolt, "qty": "15", "agreement": pa_id.to_string()}]))).await);
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    t.k.submit_tx(&t.ctx, &mut tx, "PurchaseOrder", draft, None).await.expect("submitted, not yet committed");
+    let (k, ctx) = (t.k.clone(), t.ctx.clone());
+    let change = tokio::spawn(async move { k.run_action(&ctx, "PurchaseOrder", small, "update_items", json!({"line": 1, "qty": "25"})).await });
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tx.commit().await.unwrap();
+    let changed = change.await.unwrap().map_err(|e| format!("{e:?}"));
+    assert!(changed.as_ref().is_err_and(|e| e.contains("this would bring what is ordered to 110")), "it counts the order it waited for: {changed:?}");
+    for o in [small, draft] {
+        t.k.cancel(&t.ctx, "PurchaseOrder", o, None).await.expect("cancel");
+    }
+    assert_eq!(left(pa_id).await, [n("70"), n("0")]);
 
     // an_order_outside_the_dates_or_for_another_party_is_refused.
     let late = (today + chrono::Days::new(31)).to_string();

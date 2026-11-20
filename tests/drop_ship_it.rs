@@ -126,6 +126,46 @@ async fn scenario() {
     assert_eq!(dec(&so_now["items"][1]["drop_ship_ordered_qty"]), n("2"));
     let e = t.action("SalesOrder", so_id, "make_drop_ship_order", json!({})).await.unwrap_err();
     assert!(e.contains("no line the supplier delivers is left to order"), "{e}");
+    // Two submits also wait on the order number's counter (numbered on submit), so they cannot show the sales order's
+    // row lock. An Update Items that starts while another order's submit is not yet committed can: it must wait for the
+    // sales order and then count that order. A second sale of two sofas: one ordered, then one more twice.
+    let so2 = uid(&t
+        .post(
+            "SalesOrder",
+            json!({"company": c, "customer": customer, "ship_to": address, "items": [
+                {"item": sofa, "qty": "2", "rate": "500", "price_list_rate": "500", "drop_ship": true, "drop_ship_supplier": maker}]}),
+        )
+        .await);
+    let order_one = async || {
+        let made = t.action("SalesOrder", so2, "make_drop_ship_order", json!({})).await.expect("order from the supplier");
+        let po_id: Uuid = made["orders"][0]["id"].as_str().unwrap().parse().unwrap();
+        let po = t.get("PurchaseOrder", po_id).await;
+        t.k.update(
+            &t.ctx,
+            "PurchaseOrder",
+            po_id,
+            common::obj(json!({"items": [{"id": po["items"][0]["id"], "item": sofa, "qty": "1", "price_list_rate": "300"}]})),
+            None,
+        )
+        .await
+        .expect("one sofa");
+        po_id
+    };
+    let p1 = order_one().await;
+    t.submit("PurchaseOrder", p1).await;
+    let p2 = order_one().await;
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    t.k.submit_tx(&t.ctx, &mut tx, "PurchaseOrder", p2, None).await.expect("submitted, not yet committed");
+    let (k, ctx) = (t.k.clone(), t.ctx.clone());
+    let change = tokio::spawn(async move { k.run_action(&ctx, "PurchaseOrder", p1, "update_items", json!({"line": 1, "qty": "2"})).await });
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tx.commit().await.unwrap();
+    let changed = change.await.unwrap().map_err(|e| format!("{e:?}"));
+    assert!(changed.as_ref().is_err_and(|e| e.contains("this would order 3 from suppliers")), "it counts the order it waited for: {changed:?}");
+    for o in [p1, p2] {
+        t.k.cancel(&t.ctx, "PurchaseOrder", o, None).await.expect("cancel");
+    }
+    t.k.cancel(&t.ctx, "SalesOrder", so2, None).await.expect("cancel the second sale");
 
     // a_delivery_note_for_a_drop_ship_line_is_refused; a mixed order delivers its stock line from the warehouse.
     let dn = t.action("SalesOrder", so_id, "make_delivery_note", json!({})).await.expect("delivery note");
@@ -136,12 +176,27 @@ async fn scenario() {
     // there too (crate::drop_ship::refuse_delivery).
     let e = t.action("SalesOrder", so_id, "make_delivery_note", json!({})).await.unwrap_err();
     assert!(e.contains("order them from the supplier"), "{e}");
+    let hand = uid(&t.insert("DeliveryNote", json!({"company": c, "customer": customer, "items": [{"item": sofa, "qty": "1", "warehouse": stores}]})).await);
+    let sofa_line = so_now["items"][1]["id"].as_str().unwrap().to_string();
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("update e_delivery_note__items set sales_order = '{so_id}', so_line = '{sofa_line}' where parent_id = '{hand}'")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let e = format!("{:?}", t.k.submit(&t.ctx, "DeliveryNote", hand, None).await.unwrap_err());
+    assert!(e.contains("the supplier delivers this line"), "a line set to the drop-ship line by code: {e}");
 
     // the_receipt_marks_the_sale_delivered_and_books_cost_of_sales; cancelling it undoes both.
     let pr = t.action("PurchaseOrder", po_id, "make_purchase_receipt", json!({})).await.expect("receipt");
     let pr_id: Uuid = pr["id"].as_str().unwrap().parse().unwrap();
     assert_eq!(t.get("PurchaseReceipt", pr_id).await["items"][0]["drop_ship"], json!(true), "travels from the order");
+    // A warehouse typed on the drop-ship line changes nothing: it moves no stock.
+    let mut typed = t.get("PurchaseReceipt", pr_id).await["items"][0].clone();
+    typed["warehouse"] = json!(stores);
+    t.k.update(&t.ctx, "PurchaseReceipt", pr_id, common::obj(json!({"items": [typed]})), None).await.expect("a warehouse typed");
     t.submit("PurchaseReceipt", pr_id).await;
+    assert_eq!(moves(sofa.clone()).await, 0, "a drop-ship receipt moves no stock, warehouse or not");
     let posted = |source: Uuid| {
         let t = &t;
         async move {
@@ -173,7 +228,9 @@ async fn scenario() {
     let billed = posted(bill_id).await;
     assert_eq!((billed["Stock Received But Not Billed"], billed["Cost of Goods Sold"], billed["Creditors"]), (n("600"), n("20"), n("-620")));
 
-    // The customer's invoice: revenue as always, no stock and no second delivery.
+    // The customer's invoice: revenue as always, no stock and no second delivery, even where the item lets twice what
+    // was ordered be delivered.
+    t.k.update(&t.ctx, "Item", sofa.parse().unwrap(), common::obj(json!({"over_delivery_allowance": "100"})), None).await.expect("an allowance");
     let si = t.action("SalesOrder", so_id, "make_sales_invoice", json!({})).await.expect("invoice");
     let si_id: Uuid = si["id"].as_str().unwrap().parse().unwrap();
     // The sofas alone (the lamp went on the delivery note), with Update Stock.
@@ -191,8 +248,14 @@ async fn scenario() {
     // a_return_from_the_customer_to_the_supplier: the receipt's return takes cost of sales back and reopens the line.
     let ret = t.action("PurchaseReceipt", pr_id, "make_purchase_return", json!({})).await.expect("return");
     let ret_id: Uuid = ret["id"].as_str().unwrap().parse().unwrap();
+    // A second return drafted before the first is submitted...
+    let again = t.action("PurchaseReceipt", pr_id, "make_purchase_return", json!({})).await.expect("a second draft");
+    let again: Uuid = again["id"].as_str().unwrap().parse().unwrap();
     t.submit("PurchaseReceipt", ret_id).await;
     assert_eq!(posted(ret_id).await["Cost of Goods Sold"], n("-600"));
     assert_eq!(dec(&t.get("SalesOrder", so_id).await["items"][1]["delivered_qty"]), n("0"));
     assert_eq!(moves(sofa).await, 0);
+    // ...comes back no more.
+    let e = format!("{:?}", t.k.submit(&t.ctx, "PurchaseReceipt", again, None).await.unwrap_err());
+    assert!(e.contains("can still be returned"), "a second return of the same sofas: {e}");
 }
