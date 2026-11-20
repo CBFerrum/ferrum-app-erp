@@ -15,7 +15,19 @@ for `accounting.journal_entry.create`, `accounting.payment_entry.create` and `ac
   far as both are open or the amount given, answering `{settled, left}`. Each side gives up its own value in the
   company's currency; what two rates leave between them goes to the exchange gain or loss account. Both items are
   locked in id order: two at once settle what is open once; the caller's key answers a repeat without settling again.
-- Cancelling a journal entry first gives back what `settle_line` paired.
+- A journal entry `settle_line` paired cannot be cancelled, as before: money that came back is a new journal.
+- Lines on one account in another currency at different rates or on different sides are posted apart, each with its own
+  amount in that currency. A line given in the company's currency on an account kept in another is posted with that
+  currency's amount at the day's rate (refused when there is no rate, or when it is less than that currency's smallest
+  amount); an exchange revaluation's lines stay in the company's currency.
+- Where a line needs a rate and none is given, the day's is taken for the entry's day at each save and shown as **Day's
+  Rate** (never copied); no rate is refused on the line's own rate. Amounts finer than their currency are refused when
+  the entry is saved.
+- `settle_line`'s `amount` is absent (all that is open) or a positive amount of the line's currency at its precision; a
+  settle is dated the later of the two items' days, or today when later, and is refused in a closed period.
+- Finance 0.11.1: a bank kept in another currency is matched against its journals, and lists them on its reconciliation
+  statement, in its own currency; Make Journal Entry books a statement line on it in that currency, the other account
+  balancing it.
 - Upgrading: a process step calling an accounting operation waits after the upgrade, as after every ERP release; see
   Install in the README.
 

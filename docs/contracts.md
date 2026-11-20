@@ -71,7 +71,8 @@ another app's operations*). Each is an action on the company (`id` is the compan
 
 * **Journals in another currency, and settling a party line** (accounting >=0.4.1). Through
   `accounting.journal_entry.create`, a line on a bank or cash account kept in another currency is booked in it:
-  `currency` (the account's), `debit_in_currency` or `credit_in_currency`, and `exchange_rate` (the day's when empty);
+  `currency` (the account's), `debit_in_currency` or `credit_in_currency`, and `exchange_rate` (when empty, the day's for the entry's day, shown as `day_rate`); a line given only in the company's
+  currency on an account kept in another is posted with that currency's amount at the day's rate;
   the ledger keeps the amount in that currency beside the company's figure. `balances: true` on one line in the
   company's currency, given on its side with any amount, makes it what balances the entry once the other lines are
   rounded (refused for two such lines, one in another currency, or a figure of zero or less), so a journal with lines
@@ -81,8 +82,10 @@ another app's operations*). Each is an action on the company (`id` is the compan
   invoice, a credit note, a payment, another entry's line), `amount?` (in the line's currency; empty, as far as both are
   open) answer `{settled, left}`. Each side gives up its own value in the company's currency and what two rates leave
   between them is booked to the exchange gain or loss account; both items are locked in id order, so two at once
-  settle what is open once, and the caller's key answers a repeat without settling again. Cancelling the entry gives
-  both sides back. `tests/journal_it.rs`.
+  settle what is open once, and the caller's key answers a repeat without settling again. `amount` is more than zero
+  with at most the currency's decimals. A settle is dated the later of the two items' days, or today when later, and is
+  refused in a closed period. An entry it settled cannot be cancelled (money that came back is a new journal).
+  `tests/journal_it.rs`.
 * **Pricing answers as its caller.** `price_document` is a query, so it runs with the caller's own rights: a list
   price typed on an item line is a person's and is dropped, and the item's own price (price list, last purchase or
   standard rate, pricing rules) is used, as on any order that person makes.
