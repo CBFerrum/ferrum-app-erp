@@ -108,7 +108,7 @@ impl Entry {
     }
 }
 
-type MergeKey = (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<(String, Uuid)>, String, crate::dimensions::Dims);
+type MergeKey = (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<(String, Uuid)>, String, crate::dimensions::Dims, String, i8);
 
 /// `v` at `precision` places, rounded as a company rounds (`Company::rounding`: half up, or half to
 /// even), as the calculation rounds a document's base figures. Every conversion into the company's
@@ -134,7 +134,23 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
     }
     let mut merged: BTreeMap<MergeKey, Line> = BTreeMap::new();
     for l in entry.lines {
-        let key = (l.account, l.customer, l.supplier, l.cost_center, l.project, l.against.clone(), l.currency.clone(), l.dims.clone());
+        // A line in another currency than the company's keeps its own rate and side: merged across them, its amount in
+        // that currency would take the side of the company figure, or be dropped with a company figure of nothing.
+        let (rate, side) = if l.exchange_rate != Decimal::ONE || l.amount_txn != l.amount {
+            (
+                l.exchange_rate.normalize().to_string(),
+                if l.amount_txn > Decimal::ZERO {
+                    1
+                } else if l.amount_txn < Decimal::ZERO {
+                    -1
+                } else {
+                    0
+                },
+            )
+        } else {
+            (String::new(), 0)
+        };
+        let key = (l.account, l.customer, l.supplier, l.cost_center, l.project, l.against.clone(), l.currency.clone(), l.dims.clone(), rate, side);
         match merged.get_mut(&key) {
             Some(m) => {
                 m.amount += l.amount;
@@ -171,7 +187,7 @@ pub async fn post(tx: &mut Tx, ctx: &Ctx, mut entry: Entry, precision: u32) -> R
         .enumerate()
         .map(|(i, l)| {
             let (dr, cr) = if l.amount > Decimal::ZERO { (l.amount, Decimal::ZERO) } else { (Decimal::ZERO, -l.amount) };
-            let (drt, crt) = if l.amount > Decimal::ZERO { (l.amount_txn.abs(), Decimal::ZERO) } else { (Decimal::ZERO, l.amount_txn.abs()) };
+            let (drt, crt) = if l.amount_txn > Decimal::ZERO { (l.amount_txn, Decimal::ZERO) } else { (Decimal::ZERO, -l.amount_txn) };
             json!({
                 "tenant_id": ctx.tenant, "entry_id": entry_id, "line_no": i, "company_id": entry.company,
                 "posting_date": entry.posting_date, "account_id": l.account, "customer_id": l.customer, "supplier_id": l.supplier,
