@@ -94,6 +94,71 @@ async fn balances(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDat
     Ok(out)
 }
 
+/// A line posted in the company's currency on an account kept in another, without its amount in that one: in neither the
+/// account's own balance nor its book value, so a revaluation does not revalue it and a reconciliation statement does not
+/// count it. A journal entry's is marked Posted Without a Rate (no rate, or less than that currency's smallest amount);
+/// another caller's posting is converted wherever a rate exists (`ledger::post`), so one of its lines still in the
+/// company's currency there is one.
+pub(crate) struct WithoutRate {
+    /// What posted it: a journal entry, or another app's record.
+    pub entity: String,
+    pub id: Uuid,
+    pub number: Option<String>,
+    pub on: NaiveDate,
+    pub account: Uuid,
+    /// In the company's currency; debit positive.
+    pub amount: Decimal,
+}
+
+/// The lines [`WithoutRate`] of `company` posted by `on`, on `account` or on any, apart from those reversed by then (an
+/// entry that reverses itself, a cancelled record) and an exchange revaluation's own: listed where a balance leaves them
+/// out, never silently.
+pub(crate) async fn without_rate(tx: &mut Tx, tenant: Uuid, company: Uuid, account: Option<Uuid>, on: NaiveDate) -> Result<Vec<WithoutRate>> {
+    let found: Vec<(String, Uuid, Option<String>, NaiveDate, Uuid, Decimal)> = sqlx::query_as(
+        "select 'JournalEntry', j.id, j.number, j.posting_date, a.account, coalesce(a.debit, 0) - coalesce(a.credit, 0) \
+         from e_journal_entry j join e_journal_entry__accounts a on a.tenant_id = j.tenant_id and a.parent_id = j.id \
+         where j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and j.posting_date <= $3 and a.without_rate \
+         and ($4::uuid is null or a.account = $4) and (j.reversed_on is null or j.reversed_on > $3) \
+         union all \
+         select e.source_entity, e.source_id, e.source_number, e.posting_date, l.account_id, l.debit - l.credit \
+         from journal_entry e join journal_line l on l.tenant_id = e.tenant_id and l.entry_id = e.id \
+         join e_account a on a.tenant_id = l.tenant_id and a.id = l.account_id \
+         join e_company co on co.tenant_id = e.tenant_id and co.id = e.company_id \
+         join e_currency k on k.tenant_id = co.tenant_id and k.id = co.default_currency \
+         where e.tenant_id = $1 and e.company_id = $2 and e.posting_date <= $3 and e.reversal_of is null and e.finance_book_id is null \
+         and e.source_entity not in ('JournalEntry', 'ExchangeRevaluation') and a.account_currency <> co.default_currency \
+         and trim(l.currency) = k.code and ($4::uuid is null or l.account_id = $4) \
+         and not exists (select 1 from journal_entry r where r.tenant_id = e.tenant_id and r.reversal_of = e.id and r.posting_date <= $3) \
+         order by 4, 3, 2",
+    )
+    .bind(tenant)
+    .bind(company)
+    .bind(on)
+    .bind(account)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(found.into_iter().map(|(entity, id, number, on, account, amount)| WithoutRate { entity, id, number, on, account, amount }).collect())
+}
+
+/// The lines posted without a rate as the document lists them.
+fn without_rows(found: &[WithoutRate]) -> Value {
+    child_rows(
+        found
+            .iter()
+            .map(|w| {
+                let mut r = Doc::new();
+                r.insert("voucher_type".into(), json!(w.entity));
+                r.insert("voucher_id".into(), json!(w.id.to_string()));
+                r.insert("voucher_no".into(), json!(w.number));
+                r.insert("posting_date".into(), json!(w.on.to_string()));
+                r.insert("account".into(), json!(w.account.to_string()));
+                r.insert("amount".into(), money(w.amount));
+                r
+            })
+            .collect(),
+    )
+}
+
 /// The rows of a revaluation as the document keeps them.
 fn rows_of(found: &[Balance]) -> Value {
     child_rows(
@@ -147,6 +212,7 @@ impl DocHook for RevaluationHook {
         let found = balances(hc.kernel, hc.ctx, hc.tx, &co, on).await?;
         set(doc, "rows", rows_of(&found));
         set(doc, "total_gain_loss", money(found.iter().map(Balance::gain).sum()));
+        set(doc, "without_rate", without_rows(&without_rate(hc.tx, hc.ctx.tenant, co.id, None, on).await?));
         Ok(())
     }
 
@@ -181,6 +247,7 @@ impl DocHook for RevaluationHook {
         }
         set(doc, "rows", rows_of(&found));
         set(doc, "total_gain_loss", money(found.iter().map(Balance::gain).sum()));
+        set(doc, "without_rate", without_rows(&without_rate(hc.tx, hc.ctx.tenant, co.id, None, on).await?));
         Ok(())
     }
 

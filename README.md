@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.41.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.41.1-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.41.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.41.1`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 27 country add-ons, all in this repository |
@@ -398,7 +398,7 @@ add-on brings it.
   orders. Create Orders makes the purchase orders, work orders and transfers.
 - **Planning desk** to take planned orders in bulk, see action messages and check promise dates.
 
-### 💼 Finance add-on (0.11.0)
+### 💼 Finance add-on (0.11.2)
 
 - **Bank accounts** tied to their ledger accounts (IBAN checked), statements imported from CAMT.053, CAMT.052,
   MT940, OFX and QFX files, or a CSV whose columns are guessed or saved once as the bank's **statement format**
@@ -422,7 +422,9 @@ add-on brings it.
   discounts, and **dunning** by level with fees, yearly interest and a letter.
 - **Budgets** per account for a cost centre, project or dimension value, phased by month (monthly
   distributions), with Stop, Warn or Ignore on actuals, orders and requests.
-- **Exchange revaluation** of bank, receivable and payable balances at a period's end, reversed the day after.
+- **Exchange revaluation** of bank, receivable and payable balances at a period's end, reversed the day after. Lines
+  posted in the company's currency without their amount in their account's own (Posted Without a Rate) are listed
+  by the revaluation and by a foreign bank's reconciliation statement, which neither counts.
 - **Period closing voucher** that moves the year's income and expenses to the closing account and locks the
   year.
 - **Subscriptions** with plans, trials, billing anchors, proration on plan changes and cancellation; revenue
@@ -921,6 +923,8 @@ app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoo
 
 ### ✅ Recently shipped
 
+- [x] **0.41.1** Every posting straight to the ledger converts a company-currency line on an account kept in another
+  currency at the day's rate, or tells the accounts managers; Finance 0.11.2 lists the lines left without a rate.
 - [x] **0.41.0** Journal lines in a bank account's own currency, a line that balances the entry, and settling a party
   line against another open item: accounting 0.4.1, the floor Payments declares.
 - [x] **0.40.0** A country described as a data file, with no Rust; South Korea the first.

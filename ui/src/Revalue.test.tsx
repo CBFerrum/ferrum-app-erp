@@ -46,6 +46,16 @@ describe("the revaluation screen", () => {
     expect(text(screen(draft))).toContain("The gain is unrealised");
   });
 
+  it("lists the lines posted without a rate, which no balance holds, even when nothing is to be revalued", () => {
+    const without_rate = [{ voucher_type: "JournalEntry", voucher_id: "j1", voucher_no: "JV-2026-00009", posting_date: "2026-04-20", account: "a1", amount: "-0.40" }];
+    const shown = text(screen({ ...draft, without_rate }));
+    expect(shown).toContain("Posted without a rate: not revalued");
+    expect(shown).toContain("-0.40");
+    expect(shown).toContain("JV-2026-00009");
+    expect(text(screen({ ...draft, rows: [], total_gain_loss: "0", without_rate }))).toContain("Posted without a rate: not revalued");
+    expect(text(screen(draft))).not.toContain("Posted without a rate");
+  });
+
   it("says when there is nothing to revalue", () => {
     expect(text(screen({ ...draft, rows: [], total_gain_loss: "0" }))).toContain("Nothing to revalue on this day");
   });

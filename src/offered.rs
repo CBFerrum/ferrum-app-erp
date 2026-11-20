@@ -108,7 +108,9 @@ struct Given {
 
 /// `post_entry {posting_date, source_entity, source_id, source_number?, memo?, lines}`: one balanced entry for the
 /// app's record. Each line: `account`, `debit` or `credit` in the company's currency, and as needed `currency`,
-/// `amount_txn` (signed, debit positive) and `exchange_rate` for another currency, `customer`, `supplier`,
+/// `amount_txn` (signed, debit positive, at most its currency's decimals) and `exchange_rate` for another currency (a
+/// line in the company's currency on an account kept in another takes that one's amount at the day's rate:
+/// `ledger::post`), `customer`, `supplier`,
 /// `cost_center`, `project`, `against_entity` with `against_id`, `remarks`. Every id must name a record that is there
 /// (the company's own, for accounts and cost centers): the ledger keeps a line for ever, so it never points at nothing.
 async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<Value> {
@@ -144,6 +146,17 @@ async fn post_entry(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<V
                 };
                 if txn.is_zero() || (txn > Decimal::ZERO) != (dr > cr) {
                     return Err(bad("amount_txn", "is the line's amount in its currency, with the same sign"));
+                }
+                // As a journal entry's: an amount finer than its currency is refused, never posted.
+                let places: Option<i32> = sqlx::query_scalar("select coalesce(precision, 2)::int4 from e_currency where tenant_id = $1 and code = $2")
+                    .bind(hc.ctx.tenant)
+                    .bind(cur)
+                    .fetch_optional(&mut **hc.tx)
+                    .await?;
+                if let Some(p) = places
+                    && txn.normalize().scale() > p.max(0) as u32
+                {
+                    return Err(bad("amount_txn", &format!("has more than {cur}'s {p} decimals")));
                 }
                 Some((txn, cur.to_string(), rate))
             }

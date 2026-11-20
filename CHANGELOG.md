@@ -1,5 +1,20 @@
 # Changelog
 
+## ERP 0.41.1 and Finance 0.11.2: lines posted without a rate, from every caller, told and listed
+
+- Every posting straight to the ledger (`ledger::post`: another app's own postings, and `accounting.company.post_entry`)
+  follows a journal entry's rule: a line given in the company's currency on an account kept in another takes that
+  currency's amount at the day's rate, so the account's own balance moves and no caller changes; with no rate, or when
+  it is less than that currency's smallest amount, it posts as before and the company's accounts managers are told,
+  naming the Exchange Revaluation journal that corrects the account's own balance. A reversal mirrors what it reverses.
+  `post_entry` refuses an `amount_txn` finer than its currency.
+- A line posted in the company's currency without its amount in its account's own (a journal line marked **Posted
+  Without a Rate**, or such a line another app posted) is in neither the account's own balance nor its book value. An
+  exchange revaluation now lists such lines up to its day (**Posted Without a Rate**: what posted it, its day, the
+  account, the amount in the company's currency), and a foreign bank's reconciliation statement lists its own beneath
+  the difference (`meta.posted_without_rate` counts them); neither counts them, as before. Lines reversed by the day
+  are left out.
+
 ## ERP 0.41.0 and accounting 0.4.1: journal lines in a bank account's currency, a balancing line, settling a party line
 
 Additive, so accounting takes a patch: every caller declaring `^0.4` keeps working. Payments declares `>=0.4.1, <0.5`

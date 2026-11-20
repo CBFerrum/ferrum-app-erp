@@ -989,6 +989,19 @@ async fn revaluation(t: &mut T) {
     assert_eq!((dec(&may["total_gain_loss"]), may["reversal_date"].clone(), may["reversed_on"].clone()), (n("-300"), json!("2026-06-01"), json!("2026-06-01")));
     assert_eq!(t.gl("Exchange Gain or Loss").await, Decimal::ZERO, "posted and taken out again");
     t.books_balance().await;
+
+    // 0.40 rupees out of the euro bank on 20 May is less than a cent at 89, so it is posted without its euros (Posted Without a
+    // Rate): in neither the bank's balance nor its book value, it is listed by a revaluation rather than left out silently.
+    let charges = t.account("Bank Charges").await;
+    let small =
+        t.make(&am, "JournalEntry", json!({"company": cid, "posting_date": "2026-05-20", "accounts": [dr(charges, "0.40"), cr(eur_bank, "0.40")]})).await;
+    let seen = t.k.preview(&am, "ExchangeRevaluation", obj(json!({"company": cid, "posting_date": "2026-05-31"}))).await.expect("a preview");
+    let listed: Vec<(Value, Value, Value, Decimal)> = seen
+        .get("without_rate")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().map(|r| (r["voucher_type"].clone(), r["voucher_id"].clone(), r["account"].clone(), dec(&r["amount"]))).collect())
+        .unwrap_or_default();
+    assert_eq!(listed, vec![(json!("JournalEntry"), json!(uid(&small).to_string()), json!(eur_bank.to_string()), n("-0.4"))], "{seen:?}");
 }
 
 // ───────────────────────────── what needs attention ─────────────────────────────

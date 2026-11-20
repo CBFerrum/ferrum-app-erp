@@ -1258,9 +1258,37 @@ async fn foreign_bank(t: &T, am: &Ctx, bank_charges: Uuid) {
     let je = t.get("JournalEntry", vid(&made)).await;
     let bank_line = je["accounts"].as_array().unwrap().iter().find(|l| l["account"] == json!(gl.to_string())).unwrap().clone();
     assert_eq!((bank_line["currency"].clone(), dec(&bank_line["credit_in_currency"])), (json!(usd), n("1")), "{je:?}");
+    // 0.40 rupees out of it is less than a cent at 83.10: posted without its dollars (Posted Without a Rate), it is in
+    // neither the balance per books nor the vouchers, and is listed beneath them rather than left out silently.
+    let small = uid(&t
+        .make(
+            am,
+            "JournalEntry",
+            json!({"company": cid, "posting_date": "2026-06-15", "accounts": [{"account": bank_charges.to_string(), "debit": "0.40"}, {"account": gl.to_string(), "credit": "0.40"}]}),
+        )
+        .await);
+    // The same left by an app posting straight through the ledger (an expense claim's 0.40 rupees on 16 June) is listed too.
+    let claim = Uuid::now_v7();
+    {
+        let mut tx = t.k.db.tenant_tx(t.tenant).await.unwrap();
+        let on = chrono::NaiveDate::from_ymd_opt(2026, 6, 16).unwrap();
+        let mut e = ferrum_app_erp::ledger::Entry::new(t.company, on, "ExpenseClaim", claim, Some("EXP-1".into()));
+        e.lines = vec![ferrum_app_erp::ledger::Line::new(gl, n("-0.40"), "INR"), ferrum_app_erp::ledger::Line::new(bank_charges, n("0.40"), "INR")];
+        ferrum_app_erp::ledger::post(&mut tx, am, e, 2).await.expect("posted straight through the ledger");
+        tx.commit().await.unwrap();
+    }
     // The statement in dollars: both journals in the books, nothing unexplained.
     let st = t.report(am, "bank_reconciliation_statement", &[("bank_account", ba.to_string()), ("as_of", "2026-06-30".into())]).await;
     assert_eq!((dec(&st["totals"]["book_balance"]), dec(&st["totals"]["difference"])), (n("-3.5"), Decimal::ZERO), "{st}");
+    let listed: Vec<&Value> = st["rows"].as_array().unwrap().iter().filter(|r| r["voucher_id"] == json!(small.to_string())).collect();
+    assert!(
+        listed.len() == 1 && listed[0]["description"].as_str().is_some_and(|d| d.contains("-0.4") && d.contains("INR")),
+        "the line without its dollars is listed: {st}"
+    );
+    assert!(
+        st["rows"].as_array().unwrap().iter().any(|r| r["voucher_id"] == json!(claim.to_string()) && r["voucher_type"] == json!("ExpenseClaim")),
+        "the app's line without its dollars is listed: {st}"
+    );
 }
 
 /// Statement files read with the formats Finance ships and with a format of the account's own: a trial run

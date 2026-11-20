@@ -560,7 +560,7 @@ async fn scenario() {
             .expect("the first, not yet committed");
         let s2 = s.clone();
         let second = tokio::spawn(async move { s2.settle(je2, l2, cn, None, "s24").await });
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert!(common::holds_up(&s.t.k, &mut tx, &second).await, "the second waits for the credit note");
         tx.commit().await.unwrap();
         let r = second.await.unwrap().unwrap_or_else(|e| panic!("the second waits and takes what is left: {e}"));
         assert_eq!((dec(&r["settled"]), dec(&r["left"]), s.open(cn).await), (n("30"), n("20"), n("0")));
