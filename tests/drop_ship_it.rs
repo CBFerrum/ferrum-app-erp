@@ -158,7 +158,7 @@ async fn scenario() {
     t.k.submit_tx(&t.ctx, &mut tx, "PurchaseOrder", p2, None).await.expect("submitted, not yet committed");
     let (k, ctx) = (t.k.clone(), t.ctx.clone());
     let change = tokio::spawn(async move { k.run_action(&ctx, "PurchaseOrder", p1, "update_items", json!({"line": 1, "qty": "2"})).await });
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(common::holds_up(&t.k, &mut tx, &change).await, "the change waits for the sale");
     tx.commit().await.unwrap();
     let changed = change.await.unwrap().map_err(|e| format!("{e:?}"));
     assert!(changed.as_ref().is_err_and(|e| e.contains("this would order 3 from suppliers")), "it counts the order it waited for: {changed:?}");

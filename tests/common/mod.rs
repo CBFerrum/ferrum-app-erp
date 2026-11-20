@@ -173,6 +173,24 @@ impl T {
     }
 }
 
+/// Whether `first`'s transaction holds `other` up before `other` is done: one or the other comes, however loaded the
+/// machine (without a lock `other` is just done). A race test waits on this, never on a sleep.
+pub async fn holds_up<R>(k: &Kernel, first: &mut ferrum_kernel::Tx, other: &tokio::task::JoinHandle<R>) -> bool {
+    let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut **first).await.unwrap();
+    for _ in 0..2400 {
+        let waits: bool = sqlx::query_scalar("select exists (select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))")
+            .bind(pid)
+            .fetch_one(&k.db.pool)
+            .await
+            .unwrap();
+        if waits || other.is_finished() {
+            return waits;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
+}
+
 /// What opens the test's vault: the database password of `url`, with Argon2id kept cheap for tests.
 fn opener(url: &str) -> ferrum_kernel::vault::Opener {
     ferrum_kernel::vault::Opener {
