@@ -336,7 +336,17 @@ async fn settle_line(hc: &mut HookCtx<'_>, doc: &Doc, params: &Value) -> Result<
     if let Some(cap) = cap {
         x = x.min(cap);
     }
-    let on = hc.ctx.today();
+    // Dated where the books can carry it: the later of the two items' days, or today when that is later; never in a
+    // closed period, whether or not a difference is posted.
+    let days: Vec<(chrono::NaiveDate,)> = sqlx::query_as("select posting_date from open_item where tenant_id = $1 and id = any($2)")
+        .bind(hc.ctx.tenant)
+        .bind(vec![mine.id, other.id])
+        .fetch_all(&mut **hc.tx)
+        .await?;
+    let on = days.into_iter().map(|d| d.0).chain([hc.ctx.today()]).max().unwrap_or_else(|| hc.ctx.today());
+    if !ledger::period_open(hc.tx, hc.ctx.tenant, co.id, on).await? {
+        return Err(Error::invalid(format!("the books are closed on {on}: settle it on a day of an open period")));
+    }
     let (pos, neg) = if mine.outstanding > Decimal::ZERO { (&mine, &other) } else { (&other, &mine) };
     let at = |r: Decimal| ledger::round_as(x * r, co.precision, co.rounding);
     let given = ledger::allocate(hc.kernel, hc.tx, hc.ctx, co.id, pos.id, "JournalEntry", jid, on, x, at(pos.exchange_rate)).await?;
