@@ -13,6 +13,15 @@
     - {name: revalued, type: currency, read_only: true, label: Revalued}
     - {name: gain_loss, type: currency, read_only: true, in_list: true, label: Gain (Loss)}
 
+- name: ExchangeRevaluationWithoutRate
+  label: Posted Without a Rate
+  kind: child
+  fields:
+    - {name: journal_entry, type: link, to: JournalEntry, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
+    - {name: posting_date, type: date, read_only: true, in_list: true}
+    - {name: account, type: link, to: Account, link_filters: {company: {from: parent.company}}, read_only: true, in_list: true}
+    - {name: amount, type: currency, read_only: true, in_list: true, label: In the Company's Currency, description: "Debit positive, credit negative"}
+
 - name: ExchangeRevaluation
   label: Exchange Revaluation
   module: finance
@@ -29,6 +38,7 @@
     - {name: reversal_date, type: date, visible_if: "doc.auto_reverse", description: "The day after, when empty"}
     - {name: rows, type: table, of: ExchangeRevaluationRow, read_only: true, label: Balances to Revalue}
     - {name: total_gain_loss, type: currency, read_only: true, in_list: true, label: Net Gain (Loss)}
+    - {name: without_rate, type: table, of: ExchangeRevaluationWithoutRate, read_only: true, label: Posted Without a Rate, description: "Lines on accounts kept in another currency posted in the company's currency without their amount in it (no rate, or less than its smallest amount): in no balance above, so not revalued. Correct an account's own balance with a journal entry of type Exchange Revaluation."}
     - {name: reversed_on, type: date, read_only: true, no_copy: true, in_list: true}
     - {name: remarks, type: text}
   list: {columns: [number, posting_date, total_gain_loss, reversed_on], sort: posting_date desc}

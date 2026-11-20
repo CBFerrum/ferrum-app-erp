@@ -1,5 +1,14 @@
 # Changelog
 
+## Finance 0.11.2: lines posted without a rate listed
+
+A line on an account kept in another currency posted in the company's currency without its amount in that currency
+(marked **Posted Without a Rate**: no rate, or less than its smallest amount) is in neither the account's own balance
+nor its book value. An exchange revaluation now lists such lines up to its day (**Posted Without a Rate**: the journal,
+its day, the account, the amount in the company's currency), and a foreign bank's reconciliation statement lists its
+own beneath the difference (`meta.posted_without_rate` counts them); neither counts them, as before. Lines an entry that
+reverses itself has taken out by the day are left out.
+
 ## ERP 0.41.0 and accounting 0.4.1: journal lines in a bank account's currency, a balancing line, settling a party line
 
 Additive, so accounting takes a patch: every caller declaring `^0.4` keeps working. Payments declares `>=0.4.1, <0.5`

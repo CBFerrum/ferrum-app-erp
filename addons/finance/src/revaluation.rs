@@ -94,6 +94,54 @@ async fn balances(k: &Kernel, ctx: &Ctx, tx: &mut Tx, co: &Company, on: NaiveDat
     Ok(out)
 }
 
+/// A journal line posted in the company's currency on an account kept in another, without its amount in that one
+/// (marked Posted Without a Rate: no rate, or less than that currency's smallest amount): in neither the account's own
+/// balance nor its book value, so a revaluation does not revalue it and a reconciliation statement does not count it.
+pub(crate) struct WithoutRate {
+    pub journal: Uuid,
+    pub number: Option<String>,
+    pub on: NaiveDate,
+    pub account: Uuid,
+    /// In the company's currency; debit positive.
+    pub amount: Decimal,
+}
+
+/// The lines [`WithoutRate`] of `company`'s submitted journals posted by `on`, on `account` or on any, apart from those an
+/// entry that reverses itself has taken out by then: listed where a balance leaves them out, never silently.
+pub(crate) async fn without_rate(tx: &mut Tx, tenant: Uuid, company: Uuid, account: Option<Uuid>, on: NaiveDate) -> Result<Vec<WithoutRate>> {
+    let found: Vec<(Uuid, Option<String>, NaiveDate, Uuid, Decimal)> = sqlx::query_as(
+        "select j.id, j.number, j.posting_date, a.account, coalesce(a.debit, 0) - coalesce(a.credit, 0) \
+         from e_journal_entry j join e_journal_entry__accounts a on a.tenant_id = j.tenant_id and a.parent_id = j.id \
+         where j.tenant_id = $1 and j.company = $2 and j.docstatus = 1 and j.posting_date <= $3 and a.without_rate \
+         and ($4::uuid is null or a.account = $4) and (j.reversed_on is null or j.reversed_on > $3) \
+         order by j.posting_date, j.number, a.idx",
+    )
+    .bind(tenant)
+    .bind(company)
+    .bind(on)
+    .bind(account)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(found.into_iter().map(|(journal, number, on, account, amount)| WithoutRate { journal, number, on, account, amount }).collect())
+}
+
+/// The lines posted without a rate as the document lists them.
+fn without_rows(found: &[WithoutRate]) -> Value {
+    child_rows(
+        found
+            .iter()
+            .map(|w| {
+                let mut r = Doc::new();
+                r.insert("journal_entry".into(), json!(w.journal.to_string()));
+                r.insert("posting_date".into(), json!(w.on.to_string()));
+                r.insert("account".into(), json!(w.account.to_string()));
+                r.insert("amount".into(), money(w.amount));
+                r
+            })
+            .collect(),
+    )
+}
+
 /// The rows of a revaluation as the document keeps them.
 fn rows_of(found: &[Balance]) -> Value {
     child_rows(
@@ -147,6 +195,7 @@ impl DocHook for RevaluationHook {
         let found = balances(hc.kernel, hc.ctx, hc.tx, &co, on).await?;
         set(doc, "rows", rows_of(&found));
         set(doc, "total_gain_loss", money(found.iter().map(Balance::gain).sum()));
+        set(doc, "without_rate", without_rows(&without_rate(hc.tx, hc.ctx.tenant, co.id, None, on).await?));
         Ok(())
     }
 
@@ -181,6 +230,7 @@ impl DocHook for RevaluationHook {
         }
         set(doc, "rows", rows_of(&found));
         set(doc, "total_gain_loss", money(found.iter().map(Balance::gain).sum()));
+        set(doc, "without_rate", without_rows(&without_rate(hc.tx, hc.ctx.tenant, co.id, None, on).await?));
         Ok(())
     }
 

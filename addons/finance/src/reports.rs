@@ -337,13 +337,24 @@ pub(crate) async fn bank_statement(ctx: &Ctx, tx: &mut Tx, p: &Params<'_>) -> Re
     let statement = if opening_date.is_some_and(|o| o > as_of) { Decimal::ZERO } else { opening.unwrap_or_default() } + statement_moves;
     rows.push(json!({"description": "Balance per imported bank statement", "amount": money(statement), "_bold": true}));
     rows.push(json!({"description": "Difference", "amount": money(statement - expected), "_bold": true}));
+    // A bank kept in another currency: its lines posted in the company's currency without their amount in the bank's
+    // (Posted Without a Rate) are in neither the balance per books nor the vouchers, so they are listed beneath.
+    let missing = if base { Vec::new() } else { crate::revaluation::without_rate(tx, ctx.tenant, company, Some(gl), as_of).await? };
+    if !missing.is_empty() {
+        rows.push(json!({"description": format!("Not in the balance above: posted in {} without the amount in {code}", co.currency), "_bold": true}));
+        for w in &missing {
+            rows.push(json!({"date": w.on, "voucher_type": "JournalEntry", "voucher_id": w.journal, "voucher_no": w.number,
+                "description": format!("{} {}", w.amount, co.currency), "_indent": 1}));
+        }
+    }
     Ok(json!({
         "columns": [col("date", "Date", "date"), col("voucher_type", "Type", "data"), col("voucher_no", "Voucher", "data"), col("description", "Description", "data"),
             col("amount", "Amount", "currency")],
         "rows": rows,
         "totals": {"book_balance": money(book), "uncleared_deposits": money(deposits), "uncleared_payments": money(payments), "unrecorded": money(unrecorded),
             "expected_bank_balance": money(expected), "statement_balance": money(statement), "difference": money(statement - expected)},
-        "meta": {"bank_account": name, "as_of": as_of, "currency": code, "precision": precision, "company": co.name, "reconciled": statement == expected},
+        "meta": {"bank_account": name, "as_of": as_of, "currency": code, "precision": precision, "company": co.name, "reconciled": statement == expected,
+            "posted_without_rate": missing.len()},
     }))
 }
 

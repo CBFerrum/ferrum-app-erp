@@ -185,6 +185,44 @@ export function Revalue() {
       </form>
       {problem && <Alert tone="error">{isolate(problem)}</Alert>}
       {table}
+      {d && (d.without_rate?.length ?? 0) > 0 && (
+        <section className="erp-statement" aria-labelledby="rv-without-rate">
+          <h2 id="rv-without-rate">{t("Posted without a rate: not revalued")}</h2>
+          <p className="muted">
+            {t(
+              "These lines on accounts kept in another currency were posted in the company's currency without their amount in that currency, so no balance above holds them. Correct an account's own balance with a journal entry of type Exchange Revaluation.",
+            )}
+          </p>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("Journal entry")}</th>
+                  <th scope="col">{t("Date")}</th>
+                  <th scope="col">{t("Account")}</th>
+                  <th scope="col" className="num">
+                    {t("In the company's currency")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.without_rate?.map((r, i) => (
+                  <tr key={i}>
+                    <td>
+                      <LinkTitle to="JournalEntry" id={r.journal_entry} />
+                    </td>
+                    <td>{formatDate(r.posting_date)}</td>
+                    <td>
+                      <LinkTitle to="Account" id={r.account} />
+                    </td>
+                    <td className="num">{isolate(show(r.amount))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <div className="erp-sticky-foot">
         <span className="muted" aria-live="polite">
           {!mayPost

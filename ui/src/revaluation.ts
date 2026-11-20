@@ -23,6 +23,16 @@ export interface Draft {
   total_gain_loss: string;
   gain_loss_account?: string | null;
   reversal_date?: string | null;
+  /** Lines on accounts kept in another currency posted in the company's currency without their amount in it: in no
+   *  balance above, so not revalued. */
+  without_rate?: WithoutRate[];
+}
+
+export interface WithoutRate {
+  journal_entry: string;
+  posting_date: string;
+  account: string;
+  amount: string;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
