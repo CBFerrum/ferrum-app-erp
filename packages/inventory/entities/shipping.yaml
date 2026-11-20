@@ -1,6 +1,20 @@
 # Carriers behind one interface (src/shipping.rs): a connection describes four HTTP calls (rates, label, tracking,
 # cancellation) as templates over the shipment and pointers into the answers, so no carrier's name or format is in the
 # code; a shipment holds its parcels, the rates offered, the label bought and where tracking says the goods are.
+- name: CarrierTemplate
+  label: Carrier Template
+  kind: master
+  module: inventory
+  title_field: template_name
+  description: "A ready-made description of a carrier's or a multi-carrier service's calls, to fill a new Carrier Connection from."
+  fields:
+    - {name: template_name, type: data, required: true, unique: true, in_list: true}
+    - {name: description, type: json, required: true, label: Calls, description: "As a Carrier Connection's Calls"}
+    - {name: needs, type: text, label: What It Needs, description: "Which keys to type on the connection (API Key, API Secret, Inbound Secret) and where the service gives them"}
+    - {name: proven, type: select, options: [Recorded Answers, Provider's Sandbox, Live], default: Recorded Answers, in_list: true, description: "What it was last tried against"}
+    - {name: disabled, type: check, in_filter: true}
+  list: {columns: [template_name, proven, disabled], sort: template_name asc}
+
 - name: CarrierConnection
   label: Carrier Connection
   kind: master
@@ -14,6 +28,7 @@
     - {name: enabled, type: check, default: true, in_list: true}
     - {name: test, type: check, label: Test Carrier, in_list: true,
        description: "Answers each call from the fixtures below and calls nobody: for trying the flow and for tests"}
+    - {name: template, type: link, to: CarrierTemplate, link_filters: {disabled: false}, label: Template, description: "Fills the Calls below when they are empty; change them freely afterwards"}
     - {name: description, type: json, required: true, label: Calls,
        description: "{rate, label, track, cancel, tracking_link, inbound}: each call a url, method, headers and a body or form as templates over the shipment, and JSON pointers to what the answer says. The README has two worked examples"}
     - {name: fixtures, type: json, visible_if: "doc.test", label: Fixtures, description: "For a test carrier: the answer to each call, {rate: …, label: …, track: …, cancel: …}"}
@@ -78,10 +93,12 @@
     - {name: delivered_at, type: datetime, read_only: true, no_copy: true}
   actions:
     - {name: get_rates, label: Get Rates, permission: write, condition: "doc.tracking_number == null && doc.status != 'Cancelled'",
-       contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {rates: {type: array, items: {type: object, properties: {service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}}}}, completion: "The carrier was asked for rates for the shipment's parcels and the rates it offered are on the shipment, which is Rated with no service chosen; an answer lost on the way is asked for again"}}
+       params: [{name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "Ask this carrier; empty: the shipment's"}],
+       contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {rates: {type: array, items: {type: object, properties: {carrier: {type: string, format: uuid}, carrier_name: {type: [string, "null"]}, service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}}}}, completion: "The carrier was asked for rates for the shipment's parcels and its offers are on the shipment beside the other carriers', which is Rated; a service chosen from this carrier is cleared; an answer lost on the way is asked for again"}}
     - {name: choose_rate, label: Choose Rate, permission: write, condition: "doc.status == 'Rated'",
-       params: [{name: service, label: Service, required: true, description: "One of the rates offered, by its service"}],
-       contract: {effect: transactional_action, returns: {type: object, properties: {service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}, completion: "The shipment holds the chosen service, rate and transit days; no label is bought, committed with this receipt"}}
+       params: [{name: service, label: Service, required: true, description: "One of the rates offered, by its service"},
+                {name: carrier, type: link, to: CarrierConnection, label: Carrier, description: "Whose offer; empty: the shipment's carrier"}],
+       contract: {effect: transactional_action, returns: {type: object, properties: {carrier: {type: string, format: uuid}, carrier_name: {type: [string, "null"]}, service: {type: string}, amount: {type: string}, currency: {type: [string, "null"]}, days: {type: [integer, "null"]}, id: {type: [string, "null"]}}}, completion: "The shipment's carrier, service, rate and transit days are the chosen offer's; no label is bought, committed with this receipt"}}
     - {name: buy_label, label: Buy Label, permission: write, condition: "doc.status == 'Rated' && doc.service != null",
        confirm: "Buy the label? The carrier charges for it.",
        contract: {effect: external_effect, unknown_outcome: reconcile, returns: {type: object, properties: {tracking_number: {type: string}, tracking_url: {type: [string, "null"]}, file: {type: [string, "null"], format: uuid}, cost: {type: string}, already: {type: boolean}}}, completion: "The label is bought from the carrier under the shipment's key, stored and attached to the shipment with its tracking number, and its cost booked as freight where the connection says; a second press finds the label already bought", compensate_with: cancel_label}}

@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.38.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.39.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.38.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.39.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -734,6 +734,7 @@ outside service and a retry never sends twice.
 | Warehouse | A place stock is kept | holds Stock, Transit or Rejected; parent |
 | Stock Entry | A stock movement | purpose; In Transit, Partly Received, Received |
 | Carrier Connection | A carrier described as calls | rates, label, track, cancel; connection |
+| Carrier Template | A ready-made carrier description to fill a connection from | no secrets |
 | Carrier Shipment | Parcels going by a carrier | Draft, Rated, Label Bought, In Transit, Delivered, Exception, Cancelled |
 | Bill of Materials | How an item is made | revision, items, by- and co-products, cost |
 | Work Order | Making an item | Not Started, In Process, Completed, Stopped |
@@ -919,6 +920,7 @@ app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoo
 
 ### ✅ Recently shipped
 
+- [x] **0.39.0** Carrier templates, and one shipment's rates from several carriers side by side.
 - [x] **0.38.0** Demand forecasts worked out from what was sold, planned for less what open orders already ask.
 - [x] **0.37.0** Drop shipment: the supplier delivers to the customer; the receipt books cost of sales and moves no stock.
 - [x] **0.36.0** Purchase and sales agreements: orders take the agreed price and never draw past the agreed quantity.

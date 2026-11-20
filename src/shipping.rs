@@ -460,6 +460,20 @@ pub struct CarrierHook;
 
 #[async_trait]
 impl DocHook for CarrierHook {
+    /// Calls left empty are filled once from the chosen template; a person's edits afterwards stay.
+    async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+        let empty = doc.get("description").is_none_or(|d| d.is_null() || d.as_object().is_some_and(|o| o.is_empty()));
+        if let (true, Some(t)) = (empty, id(doc, "template")) {
+            let template =
+                hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "CarrierTemplate", t, false).await.map_err(|_| Error::field("template", "is not a carrier template"))?;
+            if crate::util::b(&template, "disabled") {
+                return Err(Error::field("template", "is turned off"));
+            }
+            doc.insert("description".into(), template.get("description").cloned().unwrap_or(Value::Null));
+        }
+        Ok(())
+    }
+
     async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
         let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
             .map_err(|e| Error::field("description", format!("is not a carrier description: {e}")))?;
@@ -494,6 +508,21 @@ impl DocHook for CarrierHook {
     }
 }
 
+/// A carrier template's calls are checked as a connection's are.
+pub struct TemplateHook;
+
+#[async_trait]
+impl DocHook for TemplateHook {
+    async fn validate(&self, _hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        let desc: Description = serde_json::from_value(doc.get("description").cloned().unwrap_or(Value::Null))
+            .map_err(|e| Error::field("description", format!("is not a carrier description: {e}")))?;
+        match desc.problem(false) {
+            Some(p) => Err(Error::field("description", p)),
+            None => Ok(()),
+        }
+    }
+}
+
 pub struct ShipmentHook;
 
 #[async_trait]
@@ -522,10 +551,10 @@ impl DocHook for ShipmentHook {
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         let sid = id(doc, "id").ok_or_else(|| Error::internal("no id"))?;
         let out = match name {
-            "get_rates" => rates(hc, sid).await?,
+            "get_rates" => rates(hc, sid, carrier_param(params)?).await?,
             "choose_rate" => {
                 let service = params.get("service").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
-                choose(hc, sid, service.ok_or_else(|| Error::field("service", "is required"))?).await?
+                choose(hc, sid, service.ok_or_else(|| Error::field("service", "is required"))?, carrier_param(params)?).await?
             }
             "buy_label" => buy_label(hc, sid).await?,
             "track" => track(hc.kernel, hc.ctx, hc.tx, sid).await?,
@@ -543,8 +572,31 @@ async fn locked(k: &Kernel, ctx: &Ctx, tx: &mut Tx, sid: Uuid) -> Result<(Doc, C
     Ok((ship, conn))
 }
 
-async fn rates(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
-    let (ship, conn) = locked(hc.kernel, hc.ctx, hc.tx, sid).await?;
+/// The `carrier` an action names, if any.
+fn carrier_param(params: &Value) -> Result<Option<Uuid>> {
+    match params.get("carrier").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()) {
+        Some(c) => c.parse().map(Some).map_err(|_| Error::field("carrier", "is not a carrier connection")),
+        None => Ok(None),
+    }
+}
+
+/// Whose an offer is: its own `carrier`, or (stored before offers were marked) the shipment's.
+fn offer_carrier(offer: &Value, ship: &Doc) -> Option<String> {
+    offer.get("carrier").and_then(Value::as_str).map(str::to_string).or_else(|| s(ship, "carrier").map(str::to_string))
+}
+
+/// Asks one carrier (the one named, else the shipment's) for rates; its offers replace only its own earlier ones, so
+/// several carriers' offers sit side by side. One call per request: comparing carriers is one request per carrier.
+async fn rates(hc: &mut HookCtx<'_>, sid: Uuid, carrier: Option<Uuid>) -> Result<Value> {
+    let ship = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "CarrierShipment", sid, true).await?;
+    let cid = carrier.or(id(&ship, "carrier")).ok_or_else(|| Error::field("carrier", "is required"))?;
+    let conn = connection(hc.kernel, hc.ctx, hc.tx, cid).await.map_err(|e| match e {
+        Error::NotFound(_) => Error::field("carrier", "is not a carrier connection"),
+        e => e,
+    })?;
+    if id(&conn.doc, "company") != id(&ship, "company") {
+        return Err(Error::field("carrier", "is another company's carrier"));
+    }
     if s(&ship, "tracking_number").is_some() {
         return Err(Error::invalid("a label is bought: cancel it to ship another way"));
     }
@@ -560,32 +612,51 @@ async fn rates(hc: &mut HookCtx<'_>, sid: Uuid) -> Result<Value> {
         let (Some(service), Some(amount)) = (at(r, c.service_at.as_deref()), at(r, c.amount_at.as_deref())) else { continue };
         let Ok(amount) = amount.trim().parse::<Decimal>() else { continue };
         let days = at(r, c.days_at.as_deref()).and_then(|d| d.parse::<f64>().ok()).map(|d| d.round() as i64);
-        offered.push(json!({"service": service, "amount": money(amount), "currency": at(r, c.currency_at.as_deref()), "days": days, "id": at(r, c.rate_id_at.as_deref())}));
+        offered.push(json!({"carrier": cid.to_string(), "carrier_name": conn.doc.get("connection_name"), "service": service, "amount": money(amount),
+                            "currency": at(r, c.currency_at.as_deref()), "days": days, "id": at(r, c.rate_id_at.as_deref())}));
     }
     if offered.is_empty() {
         return Err(Error::invalid("the carrier offered no rate for these parcels"));
     }
-    save(
-        hc,
-        sid,
-        json!({"rates": offered, "status": "Rated", "service": null, "rate_id": null, "rate_amount": null, "rate_currency": null, "transit_days": null}),
-    )
-    .await?;
+    let mine = cid.to_string();
+    let mut all: Vec<Value> = ship
+        .get("rates")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|o| offer_carrier(o, &ship).as_deref() != Some(mine.as_str()))
+        .collect();
+    all.extend(offered.iter().cloned());
+    let mut v = json!({"rates": all, "status": "Rated"});
+    // A service chosen from this carrier may no longer be offered.
+    if s(&ship, "service").is_some() && s(&ship, "carrier") == Some(mine.as_str()) {
+        for f in ["service", "rate_id", "rate_amount", "rate_currency", "transit_days"] {
+            v[f] = Value::Null;
+        }
+    }
+    save(hc, sid, v).await?;
     Ok(json!({"rates": offered}))
 }
 
-async fn choose(hc: &mut HookCtx<'_>, sid: Uuid, service: &str) -> Result<Value> {
+async fn choose(hc: &mut HookCtx<'_>, sid: Uuid, service: &str, carrier: Option<Uuid>) -> Result<Value> {
     let ship = hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "CarrierShipment", sid, true).await?;
     if s(&ship, "tracking_number").is_some() {
         return Err(Error::invalid("a label is bought already"));
     }
     let offered = ship.get("rates").and_then(Value::as_array).cloned().unwrap_or_default();
+    let whose = carrier.map(|c| c.to_string()).or_else(|| s(&ship, "carrier").map(str::to_string));
     let r = offered
         .iter()
-        .find(|r| r["service"].as_str() == Some(service))
+        .find(|r| r["service"].as_str() == Some(service) && offer_carrier(r, &ship) == whose)
         .ok_or_else(|| Error::field("service", format!("{service} is not among the rates offered: get rates again")))?;
-    save(hc, sid, json!({"service": r["service"], "rate_id": r["id"], "rate_amount": r["amount"], "rate_currency": r["currency"], "transit_days": r["days"]}))
-        .await?;
+    // Choosing another carrier's offer moves the shipment to that carrier; the label is then bought from it.
+    save(
+        hc,
+        sid,
+        json!({"carrier": whose, "service": r["service"], "rate_id": r["id"], "rate_amount": r["amount"], "rate_currency": r["currency"], "transit_days": r["days"]}),
+    )
+    .await?;
     Ok(r.clone())
 }
 

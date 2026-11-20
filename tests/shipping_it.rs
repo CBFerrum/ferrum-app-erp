@@ -272,6 +272,105 @@ async fn scenario() {
     assert_eq!(moved, vec![(dec(&json!("8.4")), dec(&json!("8.4")))], "booked, then taken back");
     assert_eq!(t.get("CarrierShipment", rid).await["status"], "Cancelled");
 
+    // ───────────── carrier templates and comparing carriers (erp-13) ─────────────
+    // a_template_with_a_wrong_description_is_refused; a_connection_is_filled_from_its_template_once.
+    assert!(t.k.insert(&t.ctx, "CarrierTemplate", obj(json!({"template_name": "Bad", "description": {"rate": 1}}))).await.is_err());
+    let template = uid(&t.insert("CarrierTemplate", json!({"template_name": "Test Courier", "description": desc, "needs": "No key: a test carrier"})).await);
+    let user = t.k.create_user(&t.ctx, "stock@fin.test", "Stock", Some("Correct-Horse-9"), &["Stock User".into()], false).await.expect("user");
+    let stock_user = t.k.load_ctx(t.ctx.tenant, user, None, "it".into()).await.unwrap();
+    assert!(
+        t.k.insert(&stock_user, "CarrierTemplate", obj(json!({"template_name": "Mine", "description": desc}))).await.is_err(),
+        "a Stock User only reads templates"
+    );
+    let offers = |ground: &str, express: Option<&str>, tracking: &str| {
+        let mut rates = vec![json!({"name": "Ground", "price": {"value": ground, "currency": "INR"}, "eta_days": 3, "ref": "g2"})];
+        if let Some(e) = express {
+            rates.push(json!({"name": "Express", "price": {"value": e, "currency": "INR"}, "eta_days": 1, "ref": "e2"}));
+        }
+        json!({"rate": {"result": {"rates": rates}}, "label": {"label": {"tracking": tracking, "file": "UERG", "id": "F2"}}, "cancel": {"ok": true}})
+    };
+    let carrier = |name: &'static str, company: String, fixtures: Value| {
+        let t = &t;
+        async move {
+            uid(&t
+                .insert(
+                    "CarrierConnection",
+                    json!({"connection_name": name, "company": company, "test": true, "template": template.to_string(), "fixtures": fixtures}),
+                )
+                .await)
+        }
+    };
+    let second = carrier("Second", c.clone(), offers("9.10", Some("12"), "FIX2")).await;
+    assert_eq!(t.get("CarrierConnection", second).await["description"], desc, "the template's calls");
+    t.k.update(&t.ctx, "CarrierConnection", second, obj(json!({"connection_name": "Second Courier"})), None).await.expect("renamed");
+    assert_eq!(t.get("CarrierConnection", second).await["description"], desc);
+    let empty = carrier("Empty", c.clone(), json!({"rate": {"result": {"rates": []}}})).await;
+    let inr = t.find_one("Currency", json!({"code": "INR"})).await;
+    let other_co = uid(&t.insert("Company", json!({"company_name": "Other Co", "abbr": "OC", "default_currency": inr["id"]})).await).to_string();
+    let elsewhere = carrier("Elsewhere", other_co, offers("1", None, "X")).await;
+
+    let pr = t
+        .post("PurchaseReceipt", json!({"company": c, "supplier": acme, "supplier_address": depot, "set_warehouse": wh, "items": [{"item": widget, "qty": "2", "price_list_rate": "40"}]}))
+        .await;
+    let back = t.action("PurchaseReceipt", uid(&pr), "make_purchase_return", json!({})).await.expect("a return");
+    let back = t.submit("PurchaseReceipt", back["id"].as_str().unwrap().parse().unwrap()).await;
+    let made =
+        t.action("PurchaseReceipt", uid(&back), "make_carrier_shipment", json!({"weight": "2", "carrier": test_conn.to_string()})).await.expect("a shipment");
+    let sid2: uuid::Uuid = made["id"].as_str().unwrap().parse().unwrap();
+    // two_carriers_offers_sit_side_by_side (the first through the gate), then asking_a_carrier_again_replaces_only_its_offers.
+    let ask = |carrier: Option<uuid::Uuid>, key: &str| {
+        ferrum_kernel::capability::Invocation::new(
+            "inventory.carrier_shipment.get_rates",
+            json!({"id": sid2.to_string(), "params": {"carrier": carrier.map(|c| c.to_string())}}),
+        )
+        .key(key)
+    };
+    t.k.invoke(&t.ctx, ask(None, "r1")).await.expect("the shipment's carrier");
+    t.action("CarrierShipment", sid2, "get_rates", json!({"carrier": second.to_string()})).await.expect("the second");
+    t.action("CarrierShipment", sid2, "get_rates", json!({"carrier": second.to_string()})).await.expect("the second again");
+    let held = || {
+        let t = &t;
+        async move {
+            let mut v: Vec<(String, String)> = t.get("CarrierShipment", sid2).await["rates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (r["carrier"].as_str().unwrap().to_string(), r["service"].as_str().unwrap().to_string()))
+                .collect();
+            v.sort();
+            v
+        }
+    };
+    let mut want = vec![(test_conn.to_string(), "Ground".to_string()), (second.to_string(), "Ground".to_string()), (second.to_string(), "Express".to_string())];
+    want.sort();
+    assert_eq!(held().await, want);
+    // a_carrier_that_offers_nothing_leaves_the_others_offers; a_carrier_of_another_company_is_refused; rates_need_write_on_the_shipment.
+    let e = t.action("CarrierShipment", sid2, "get_rates", json!({"carrier": empty.to_string()})).await.unwrap_err();
+    assert!(e.contains("offered no rate"), "{e}");
+    let e = t.action("CarrierShipment", sid2, "get_rates", json!({"carrier": elsewhere.to_string()})).await.unwrap_err();
+    assert!(e.contains("another company's carrier"), "{e}");
+    assert_eq!(held().await, want);
+    let user = t.k.create_user(&t.ctx, "books@fin.test", "Books", Some("Correct-Horse-9"), &["Accounts User".into()], false).await.expect("user");
+    let books = t.k.load_ctx(t.ctx.tenant, user, None, "it".into()).await.unwrap();
+    assert!(t.k.run_action(&books, "CarrierShipment", sid2, "get_rates", json!({})).await.is_err());
+    // choosing_another_carriers_offer_moves_the_shipment_to_it (through the gate), and the label comes from it.
+    let chosen =
+        t.k.invoke(
+            &t.ctx,
+            ferrum_kernel::capability::Invocation::new(
+                "inventory.carrier_shipment.choose_rate",
+                json!({"id": sid2.to_string(), "params": {"service": "Express", "carrier": second.to_string()}}),
+            )
+            .key("c1"),
+        )
+        .await
+        .expect("chosen");
+    assert_eq!(chosen.result["amount"], json!("12"));
+    let ship = t.get("CarrierShipment", sid2).await;
+    assert_eq!((ship["carrier"].clone(), ship["service"].clone()), (json!(second.to_string()), json!("Express")));
+    let bought = t.action("CarrierShipment", sid2, "buy_label", json!({})).await.expect("bought");
+    assert_eq!(bought["tracking_number"], json!("FIX2"), "from the chosen carrier");
+
     // The carrier's secrets are in no log, audit row, job or call record, nor any other table but sealed.
     for table in ["audit_event", "job", "conn_call", "conn_inbound", "e_carrier_connection", "e_carrier_shipment"] {
         let n: Vec<(i64,)> =

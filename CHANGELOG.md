@@ -1,5 +1,16 @@
 # Changelog
 
+## ERP 0.39.0 (inventory 0.1.1): carrier templates, and comparing carriers on one shipment
+
+A **Carrier Template** (Inventory) holds a ready-made description of a carrier's calls and says which keys the
+connection needs; it holds no secret. A new Carrier Connection that names a template and has no calls takes the
+template's once; a person's edits afterwards stay. Get Rates takes an optional **carrier**: each carrier is asked on its
+own request (one call, as before) and its offers replace only its own earlier ones, so a shipment holds several
+carriers' offers side by side, each naming its carrier. Choose Rate takes the carrier too: choosing another carrier's
+offer moves the shipment to that carrier, and the label is bought from it. The shipment desk has **Compare carriers**
+(each enabled carrier of the company asked independently, its refusal shown beside the others' offers) and marks the
+cheapest offer per currency. No carrier template ships in this release.
+
 ## ERP 0.38.0 (manufacturing 0.1.1): demand forecasts into planning
 
 A **Demand Forecast** (Manufacturing) works out each item's expected monthly demand in a warehouse from what left it on

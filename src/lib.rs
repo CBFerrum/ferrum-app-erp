@@ -111,6 +111,7 @@ pub fn register(h: &mut HookRegistry) {
         h.register("StockEntry", Arc::new(series::SeriesHook))
             .register("StockEntry", Arc::new(stock_entry::StockEntryHook))
             .register("CarrierConnection", Arc::new(shipping::CarrierHook))
+            .register("CarrierTemplate", Arc::new(shipping::TemplateHook))
             .register("CarrierShipment", Arc::new(shipping::ShipmentHook))
             .register("Company", Arc::new(scan::ScanHook));
     });
