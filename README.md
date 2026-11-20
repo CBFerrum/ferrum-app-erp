@@ -584,7 +584,7 @@ as a prefix (`in_gstin`), and its rules plug into the seam described in [How it 
 | | Country | Add-on | Taxes and rules | Returns | E-invoices and filing |
 |---|---|---|---|---|---|
 | 🇮🇳 | India | `ferrum-india` 0.9.2 | GSTIN, place of supply, CGST and SGST or IGST, HSN/SAC, reverse charge on purchases, TDS categories with dated rates | GSTR-3B and GSTR-1 as return definitions, with JSON and CSV exports | E-invoices (IRN, signed QR) and e-way bills through the IRP or a GSP |
-| 🇪🇺 | European Union | `ferrum-eu` 0.5.2 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
+| 🇪🇺 | European Union | `ferrum-eu` 0.6.0 | Rates from TEDB, intra-Community supplies with VIES checks, One-Stop Shop, exports, acquisitions | EC sales list, OSS return, Intrastat figures, Ireland's VAT3 | EN 16931 (Peppol BIS 3.0) to the company's Peppol access point |
 | 🇩🇪 | Germany | `ferrum-de` 0.2.0 | Small businesses (§ 19 UStG), domestic reverse charge (§ 13b) | — | XRechnung 3.0 checked against KoSIT's rules |
 | 🇧🇪 | Belgium | `ferrum-eu-members` 0.2.0 | Small business franchise, contractors' reverse charge, KBO/BCE numbers | — | Peppol between Belgian businesses |
 | 🇫🇷 | France | `ferrum-eu-members` 0.2.0 | Franchise en base, construction reverse charge, mandatory mentions, SIREN and SIRET | E-reporting of other sales | EN 16931 to the company's plateforme agréée |
@@ -853,7 +853,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | Supplier e-invoices received into bills | ❌ | ✅ | 🟡 | 🟡 | ✅ | 🟡 |
 | Country charts of accounts to pick at set-up | 🟡 ⁹ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Countries covered by tax localisation | 🟡 ² | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Audit and statistical files (SAF-T, Intrastat, DATEV) | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
+| Audit and statistical files (SAF-T, Intrastat, DATEV) | 🟡 ¹¹ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | Deferred revenue and expense | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Revenue recognition by performance obligation (IFRS 15) | 🟡 ³ | ✅ | ✅ | 🟡 | ❌ | ❌ |
 | Subscriptions billed by period, with MRR | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
@@ -893,7 +893,7 @@ makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You
 ships built in. ⁸ Customers see their invoices; suppliers see requests for
 quotation, orders and bills. ⁹ Four statutory charts (France, Spain, Portugal, Romania), not yet reviewed by an
 accountant; other countries use the standard chart. For the leaders, 🟡 means partly, or through another edition, module or partner
-app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoothing, seasonal index).</sub>
+app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoothing, seasonal index). ¹¹ Intrastat figures as a report (European Union add-on); SAF-T, JPK, FEC, DATEV and national Intrastat files are not built.</sub>
 
 ### 🏆 Where Ferrum ERP stands out
 
@@ -908,7 +908,7 @@ app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoo
 ### 🚧 Where the leaders are still ahead
 
 - 🏦 Bank feeds.
-- 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
+- 📑 A financial report designer, country charts of accounts, SAF-T, national Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
 - 🛒 Standard costing; demand forecasts beyond three classical monthly methods.
 - 🌍 The number of countries localised, and partner ecosystems around each product.
@@ -951,7 +951,7 @@ app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoo
 - [ ] Domestic VAT returns as definitions for Germany, France, Italy, Spain, Poland, Romania, Belgium and Portugal.
 - [ ] Supplier e-invoices received into draft bills (Peppol, SDI, KSeF).
 - [ ] Saudi Arabia's ZATCA e-invoices and Mexico's CFDI.
-- [ ] SAF-T, JPK, FEC and DATEV exports, and Intrastat.
+- [ ] SAF-T, JPK, FEC and DATEV exports, and national Intrastat files (the figures are a report).
 - [ ] India's GSTR-2B matching and TDS returns.
 
 **Selling and buying**

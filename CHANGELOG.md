@@ -1,5 +1,16 @@
 # Changelog
 
+## European Union 0.6.0 (eu 0.1.1): Intrastat figures
+
+Items gain **Net Mass (kg)**, **Supplementary Units per Stock Unit** and **Country of Origin** (two capital letters).
+The report **Intrastat** gives a company in a member state its dispatches and arrivals of goods with other member
+states for a period: by partner country, commodity code, origin, nature of transaction (11, or 21 for a return) and,
+on dispatches, the customer's VAT number, with invoiced value in the company's currency, net mass and supplementary
+units, and the lines a declaration would lack (no code, no mass or units, no partner country). Delivery notes and
+purchase receipts count, and invoices only when they update stock; services and cancelled documents do not. Whoever
+may read delivery notes may run it. The national declaration files are not built (they wait for the platform's
+documents over an app's rows).
+
 ## ERP 0.39.0 (inventory 0.1.1): carrier templates, and comparing carriers on one shipment
 
 A **Carrier Template** (Inventory) holds a ready-made description of a carrier's calls and says which keys the

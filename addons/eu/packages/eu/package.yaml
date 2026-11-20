@@ -1,5 +1,5 @@
 package: eu
-version: 0.1.0
+version: 0.1.1
 label: European Union
 description: EU VAT for ERP. VAT numbers checked in VIES, supplies within the EU (reverse charge, intra-Community, the One-Stop Shop), exports, the member states' rates from the Commission's TEDB, EN 16931 (Peppol BIS Billing 3.0) e-invoices, the EC sales list and the OSS return.
 depends: [selling, buying]
@@ -114,6 +114,12 @@ overlays:
       - {op: add_field, after: eu_vat_category, field: {name: eu_kind, type: select, label: Goods or Services (EU), options: [Goods, Services, Digital Services],
           description: "Digital services (telecommunications, broadcasting, electronic) are taxed where the consumer is. Empty: goods when it is a stock item, else services"}}
       - {op: add_field, after: eu_kind, field: {name: eu_cn_code, type: data, label: CN Code, max_length: 10, description: "Its Combined Nomenclature code (8 digits)"}}
+      - {op: add_field, after: eu_cn_code, field: {name: eu_net_mass, type: decimal, min: "0", label: Net Mass (kg), description: "Of one stock unit, without packaging: Intrastat adds it up"}}
+      - {op: add_field, after: eu_net_mass, field: {name: eu_supplementary_factor, type: decimal, min: "0", label: Supplementary Units per Stock Unit,
+          description: "For commodity codes that are declared in another unit (pieces, litres, pairs); empty: none"}}
+      - {op: add_field, after: eu_supplementary_factor, field: {name: eu_origin_country, type: data, max_length: 2, label: Country of Origin,
+          description: "Where it was made (ISO code); empty: the company's country on dispatches, the supplier's on arrivals"}}
+      - {op: add_rule, rule: {name: eu_origin_country_code, check: "isEmpty(doc.eu_origin_country) || doc.eu_origin_country.matches('^[A-Z]{2}$')", message: "The country of origin is its two capital letters (ISO 3166-1), e.g. DE"}}
       - {op: add_field, after: eu_cn_code, field: {name: eu_exemption_reason, type: data, label: EU Exemption Reason, max_length: 120, description: "Exempt or zero-rated: a VATEX code (VATEX-EU-132-1E) or the law's words"}}
       - {op: add_field, after: eu_exemption_reason, field: {name: eu_rates, type: table, of: EuItemRate, label: EU Rates by Country}}
       - {op: add_action, action: {name: eu_suggest_rates, label: Suggest EU Rates (TEDB), permission: write, condition: "doc.eu_cn_code != null",

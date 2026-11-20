@@ -535,4 +535,156 @@ async fn scenario() {
     let sent = t.get("SalesInvoice", uid(&b2b)).await;
     assert_eq!((sent["eu_peppol_status"].clone(), sent["eu_peppol_message_id"].clone()), (json!("Sent"), json!("AP-42")));
     let _ = (today, export);
+
+    // ───────────── Intrastat (erp-17) ─────────────
+    let stores = t.list("Warehouse", json!({"company": cid.to_string(), "warehouse_name": "Stores"})).await.remove(0)["id"].clone();
+    let goods = |code: &'static str, rate: &'static str, more: Value| {
+        item(code, rate, {
+            let mut m = more;
+            m["is_stock_item"] = json!(true);
+            m["eu_kind"] = json!("Goods");
+            m
+        })
+    };
+    let machine = goods("MACHINE", "100", json!({"eu_cn_code": "84713000", "eu_net_mass": "2.5", "eu_origin_country": "CN"})).await;
+    let wine = goods("WINE", "20", json!({"eu_cn_code": "22042110", "eu_net_mass": "1.2", "eu_supplementary_factor": "0.75"})).await;
+    let cable = goods("CABLE", "5", json!({})).await;
+    let bad =
+        t.k.insert(
+            &t.ctx,
+            "Item",
+            obj(json!({"item_code": "BAD", "item_name": "BAD", "item_group": group["id"], "stock_uom": nos["id"], "eu_origin_country": "cn"})),
+        )
+        .await;
+    assert!(bad.is_err(), "an origin that is not two capital letters");
+    t.submit(
+        "StockEntry",
+        uid(&t
+            .insert(
+                "StockEntry",
+                json!({"company": cid.to_string(), "purpose": "Material Receipt", "items": [
+                    {"item": machine.to_string(), "qty": "20", "basic_rate": "40", "target_warehouse": stores},
+                    {"item": wine.to_string(), "qty": "20", "basic_rate": "5", "target_warehouse": stores},
+                    {"item": cable.to_string(), "qty": "20", "basic_rate": "1", "target_warehouse": stores}]}),
+            )
+            .await),
+    )
+    .await;
+    let cliente = customer("Cliente SpA", Some("IT09876543217"), "Italia", json!({"customer_type": "Company"})).await;
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    t.k.set_values_tx(
+        &ferrum_domain::util::sys(&t.ctx),
+        &mut tx,
+        "Customer",
+        cliente,
+        obj(json!({"eu_vies_valid": true, "eu_vies_consultation": "WAPIAAAAW9"})),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let swiss = customer("Kunde Schweiz AG", None, "Schweiz", json!({"customer_type": "Company"})).await;
+    let deliver = |customer: Uuid, country: &'static str, lines: Vec<(Uuid, &'static str)>| {
+        let items: Vec<Value> = lines.iter().map(|(i, q)| json!({"item": i.to_string(), "qty": q, "warehouse": stores})).collect();
+        json!({"company": cid.to_string(), "customer": customer.to_string(), "delivery_country": country, "items": items})
+    };
+    // dispatches_and_arrivals_add_up_by_partner_and_code
+    let dn1 = t.insert("DeliveryNote", deliver(client, "FR", vec![(machine, "2")])).await;
+    let dn1 = t.submit("DeliveryNote", uid(&dn1)).await;
+    let dn = t.insert("DeliveryNote", deliver(cliente, "IT", vec![(wine, "1")])).await;
+    t.submit("DeliveryNote", uid(&dn)).await;
+    for (who, country) in [(kunde, "DE"), (swiss, "CH")] {
+        let dn = t.insert("DeliveryNote", deliver(who, country, vec![(machine, "1")])).await;
+        t.submit("DeliveryNote", uid(&dn)).await;
+    }
+    // lines_without_a_code_or_mass_are_listed_as_incomplete
+    let dn = t.insert("DeliveryNote", deliver(client, "FR", vec![(cable, "3")])).await;
+    t.submit("DeliveryNote", uid(&dn)).await;
+    // services_are_left_out: a plain invoice of advice to France (no goods line).
+    // an_invoice_that_updates_stock_counts_and_a_plain_invoice_does_not
+    let mut si = deliver(client, "FR", vec![(machine, "1")]);
+    si["update_stock"] = json!(true);
+    let si = t.insert("SalesInvoice", si).await;
+    t.submit("SalesInvoice", uid(&si)).await;
+    let plain = t.insert("SalesInvoice", json!({"company": cid.to_string(), "customer": client.to_string(), "delivery_country": "FR", "items": [{"item": machine.to_string(), "qty": "1"}, {"item": advice.to_string(), "qty": "1"}]})).await;
+    t.submit("SalesInvoice", uid(&plain)).await;
+    let polski = uid(&t.insert("Supplier", json!({"supplier_name": "Dostawca Sp. z o.o.", "eu_vat_number": "PL5260250995"})).await);
+    let warsaw = uid(&t
+        .insert("Address", json!({"address_type": "Billing", "address_line1": "ul. Prosta 1", "city": "Warszawa", "postal_code": "00-001", "country": "Polska", "is_primary": true, "supplier": polski.to_string()}))
+        .await);
+    let pr = t
+        .insert(
+            "PurchaseReceipt",
+            json!({"company": cid.to_string(), "supplier": polski.to_string(), "supplier_address": warsaw.to_string(), "items": [{"item": machine.to_string(), "qty": "4", "price_list_rate": "50", "warehouse": stores}]}),
+        )
+        .await;
+    t.submit("PurchaseReceipt", uid(&pr)).await;
+    // a_return_is_the_other_flow: one machine back from France, nature 21.
+    let back = t.action("DeliveryNote", uid(&dn1), "make_sales_return", json!({})).await;
+    let back = t.get("DeliveryNote", back["id"].as_str().unwrap().parse().unwrap()).await;
+    t.k.update(
+        &t.ctx,
+        "DeliveryNote",
+        uid(&back),
+        obj(json!({"delivery_country": "FR", "items": [{"id": back["items"][0]["id"], "item": machine.to_string(), "qty": "1", "warehouse": stores}]})),
+        None,
+    )
+    .await
+    .expect("one back");
+    t.submit("DeliveryNote", uid(&back)).await;
+    let intrastat = |flow: &'static str| {
+        let (k, ctx) = (t.k.clone(), t.ctx.clone());
+        async move {
+            let p: HashMap<String, String> =
+                [("company", cid.to_string()), ("from_date", "2000-01-01".to_string()), ("to_date", "2100-12-31".to_string()), ("flow", flow.to_string())]
+                    .into_iter()
+                    .map(|(a, b)| (a.to_string(), b))
+                    .collect();
+            ferrum_domain::reports::run(&k, &ctx, "eu_intrastat", &p).await
+        }
+    };
+    let all = intrastat("").await.expect("intrastat");
+    let rows: Vec<(String, String, String, String, String, String, Decimal, Decimal, Option<Decimal>)> = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let txt = |k: &str| r[k].as_str().unwrap_or_default().to_string();
+            (
+                txt("flow"),
+                txt("partner"),
+                txt("cn_code"),
+                txt("origin"),
+                txt("nature"),
+                txt("partner_vat"),
+                dec(&r["value"]),
+                dec(&r["net_mass"]),
+                r["supplementary"].as_str().map(n),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("Arrivals".into(), "FR".into(), "84713000".into(), "CN".into(), "21".into(), "".into(), n("100"), n("2.5"), None),
+            ("Arrivals".into(), "PL".into(), "84713000".into(), "CN".into(), "11".into(), "".into(), n("200"), n("10"), None),
+            ("Dispatches".into(), "FR".into(), "84713000".into(), "CN".into(), "11".into(), "FR12345678901".into(), n("300"), n("7.5"), None),
+            ("Dispatches".into(), "IT".into(), "22042110".into(), "DE".into(), "11".into(), "IT09876543217".into(), n("20"), n("1.2"), Some(n("0.75"))),
+        ],
+        "{all}"
+    );
+    let incomplete = all["incomplete"].as_array().unwrap();
+    assert_eq!(incomplete.len(), 1, "{incomplete:?}");
+    assert!(incomplete[0]["missing"].as_str().unwrap().contains("commodity code"));
+    assert_eq!(intrastat("Arrivals").await.unwrap()["rows"].as_array().unwrap().len(), 2, "one flow");
+    // the_report_needs_read_on_delivery_notes
+    let user = t.k.create_user(&t.ctx, "vat@mg.test", "VAT", Some("Correct-Horse-9"), &["Accounts User".into()], false).await.expect("user");
+    let clerk = t.k.load_ctx(t.ctx.tenant, user, None, "it".into()).await.unwrap();
+    let p: HashMap<String, String> = [("company", cid.to_string())].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    assert!(ferrum_domain::reports::run(&t.k, &clerk, "eu_intrastat", &p).await.is_err(), "no read on delivery notes");
+    // a_company_outside_the_union_is_refused
+    let chf = t.insert("Currency", json!({"code": "CHF", "currency_name": "Swiss Franc", "symbol": "CHF", "precision": 2})).await;
+    let ch = t.insert("Company", json!({"company_name": "Swiss AG", "abbr": "SAG", "default_currency": chf["id"], "country": "Switzerland"})).await;
+    let p: HashMap<String, String> = [("company", uid(&ch).to_string())].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    let e = format!("{:?}", ferrum_domain::reports::run(&t.k, &t.ctx, "eu_intrastat", &p).await.unwrap_err());
+    assert!(e.contains("EU member state"), "{e}");
 }
