@@ -111,6 +111,20 @@ impl S {
     async fn open(&self, item: Uuid) -> Decimal {
         self.t.sql::<(Decimal,)>("select outstanding from open_item where id = $1", item).await[0].0
     }
+    /// A new person holding Accounts Manager.
+    async fn manager(&self, email: &str) -> Uuid {
+        self.t.k.create_user(&self.t.ctx, email, "Books", Some("Correct-Horse-9"), &["Accounts Manager".into()], false).await.expect("user")
+    }
+    /// How many notices `user` has about `record`.
+    async fn told(&self, user: Uuid, record: Uuid) -> i64 {
+        self.t.sql::<(i64,)>(&format!("select count(*) from notification where record_id = '{record}' and user_id = $1"), user).await[0].0
+    }
+    /// Runs `q` with the workspace as $1 and `ids` as $2, and commits.
+    async fn exec(&self, q: String, ids: &[Uuid]) {
+        let mut tx = self.t.k.db.tenant_tx(self.t.ctx.tenant).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(q)).bind(self.t.ctx.tenant).bind(ids.to_vec()).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
     /// The ledger lines `source` posted: account, debit, credit, debit and credit in the line's currency, currency, rate.
     async fn posted(&self, source: Uuid) -> Vec<(Uuid, Decimal, Decimal, Decimal, Decimal, String, Decimal)> {
         self.t
@@ -744,6 +758,165 @@ async fn scenario() {
         sql("insert into accounting_period (tenant_id, company_id, period_start, period_end) values ($1, $2, $3, $4)").await;
         assert!(e.contains("no accounting period"), "{e}");
         assert_eq!(s.open(cn).await, n("-9"));
+    });
+
+    part!("the_other_side_of_a_settled_pair_says_to_book_a_reversing_journal", |s| {
+        // A credit note and another journal's line that refund journals were settled against: their cancels are refused
+        // naming the way that exists (a settling journal is never cancelled), not "cancel those payments first".
+        let umbrella = s.customer("Umbrella").await;
+        let cn = s.credit_note(&umbrella, "11", None).await;
+        let (je, line) = s.refund(&umbrella, "11").await;
+        s.settle(je, line, cn, None, "s31a").await.unwrap_or_else(|e| panic!("settled: {e}"));
+        let e = err(s.t.k.cancel(&s.t.ctx, "SalesInvoice", cn, None).await.map_err(|e| format!("{e:?}")));
+        assert!(e.contains("book a reversing journal"), "the credit note: {e}");
+        let received = s
+            .je(json!([{"account": s.debtors, "party_type": "Customer", "customer": umbrella, "credit": "12"}, {"account": s.inr_bank, "debit": "12"}]))
+            .await
+            .unwrap_or_else(|e| panic!("received by journal: {e}"));
+        let held: Uuid = received["accounts"][0]["id"].as_str().unwrap().parse().unwrap();
+        let (je, line) = s.refund(&umbrella, "12").await;
+        s.settle(je, line, held, None, "s31b").await.unwrap_or_else(|e| panic!("settled: {e}"));
+        let e = err(s.t.k.cancel(&s.t.ctx, "JournalEntry", uid(&received), None).await.map_err(|e| format!("{e:?}")));
+        assert!(e.contains("book a reversing journal"), "the journal: {e}");
+    });
+
+    part!("an_amount_under_a_cent_posts_as_before_and_is_marked", |s| {
+        // 0.40 rupees out of the USD bank at the day's 83.10 is less than a cent: posted as before 0.4.1, marked.
+        let e = s
+            .je(json!([{"account": s.usd_bank, "credit": "0.40"}, {"account": s.fees, "debit": "0.40"}]))
+            .await
+            .unwrap_or_else(|e| panic!("posts as before: {e}"));
+        assert_eq!(e["accounts"][0]["without_rate"], json!(true));
+        let l = line_of(&s.posted(uid(&e)).await, &s.usd_bank);
+        assert_eq!((l.1, l.4.as_str()), (n("0.40"), "INR"), "in rupees alone: {l:?}");
+    });
+
+    part!("the_notice_names_the_step_that_moves_the_accounts_own_balance", |s| {
+        // The notice of a line posted without its account's currency names an Exchange Revaluation journal, and that
+        // journal moves the account's dollars alone: 6.02 out, the rupees net to nothing.
+        let early = (s.t.ctx.today() - chrono::Days::new(30)).to_string();
+        let e =
+            s.t.try_post(
+                "JournalEntry",
+                json!({"company": s.c, "posting_date": early, "accounts": [{"account": s.usd_bank, "credit": "500"}, {"account": s.fees, "debit": "500"}]}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("posts as before: {e}"));
+        let body = s.t.sql::<(Option<String>,)>("select body from notification where record_id = $1", uid(&e)).await;
+        assert!(!body.is_empty() && body.iter().all(|b| b.0.as_deref().is_some_and(|b| b.contains("Exchange Revaluation"))), "{body:?}");
+        let r =
+            s.t.try_post(
+                "JournalEntry",
+                json!({"company": s.c, "entry_type": "Exchange Revaluation", "accounts": [
+                    {"account": s.usd_bank, "currency": s.usd, "exchange_rate": "83.10", "credit_in_currency": "6.02"},
+                    {"account": s.usd_bank, "debit": "1", "balances": true}]}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("the step it names: {e}"));
+        let posted = s.posted(uid(&r)).await;
+        let rupees: Decimal = posted.iter().map(|l| l.1 - l.2).sum();
+        let dollars: Decimal = posted.iter().filter(|l| l.5 == "USD").map(|l| l.3 - l.4).sum();
+        assert_eq!((rupees, dollars), (n("0"), n("-6.02")), "{posted:?}");
+    });
+
+    part!("a_refused_recurring_journal_is_told_once", |s| {
+        // A template whose line holds 1,234.567 rupees is refused at every round of the upkeep (about once a minute): its
+        // company's accounts managers are told once, again when the template is changed, and not once it is mended.
+        let m = s.manager("templates@fin.test").await;
+        let today = s.t.ctx.today();
+        let tid = uid(&s
+            .t
+            .insert(
+                "JournalTemplate",
+                json!({"template_name": "Finer rent", "company": s.c, "repeat": true, "frequency": "Monthly", "start_date": today.to_string(),
+                       "occurrences": 1, "submit": true, "accounts": [{"account": s.rent, "debit": "1234.567"}, {"account": s.cash, "credit": "1234.567"}]}),
+            )
+            .await);
+        let round = || ferrum_app_erp::journal_template::upkeep(&s.t.k, &s.t.ctx, today);
+        assert_eq!(round().await.unwrap(), 0, "refused");
+        assert_eq!(round().await.unwrap(), 0, "refused again");
+        assert_eq!(s.told(m, tid).await, 1, "told once, not at every round");
+        s.t.k.update(&s.t.ctx, "JournalTemplate", tid, obj(json!({"remark": "looked at"})), None).await.expect("changed");
+        round().await.unwrap();
+        assert_eq!(s.told(m, tid).await, 2, "told again once the template was changed");
+        let mended = json!({"accounts": [{"account": s.rent, "debit": "1234.57"}, {"account": s.cash, "credit": "1234.57"}]});
+        s.t.k.update(&s.t.ctx, "JournalTemplate", tid, obj(mended), None).await.expect("mended");
+        assert_eq!(round().await.unwrap(), 1, "made once mended");
+        assert_eq!(s.told(m, tid).await, 2);
+    });
+
+    part!("an_entry_not_reversed_on_its_day_is_told_once", |s| {
+        // An accrual whose reversal day is in no accounting period cannot be reversed: two rounds at once and a third tell
+        // its company's accounts managers once; another reason tells them again; once it can be, it is reversed.
+        let m = s.manager("accruals@fin.test").await;
+        let e = s
+            .t
+            .try_post(
+                "JournalEntry",
+                json!({"company": s.c, "auto_reverse": true, "reversal_date": "2999-01-01", "accounts": [{"account": s.rent, "debit": "3"}, {"account": s.cash, "credit": "3"}]}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("the accrual: {e}"));
+        let jid = [uid(&e)];
+        let back_on = |day: String| s.exec(format!("update e_journal_entry set reversal_date = '{day}' where tenant_id = $1 and id = any($2)"), &jid);
+        let jid = jid[0];
+        back_on("2001-01-01".into()).await;
+        let round = || ferrum_app_erp::accounting::upkeep(&s.t.k, &s.t.ctx);
+        let (a, b) = tokio::join!(round(), round());
+        a.unwrap();
+        b.unwrap();
+        round().await.unwrap();
+        assert_eq!(s.told(m, jid).await, 1, "told once, not at every round");
+        back_on("2001-02-01".into()).await;
+        round().await.unwrap();
+        assert_eq!(s.told(m, jid).await, 2, "told again for another reason");
+        let today = s.t.ctx.today().to_string();
+        back_on(today.clone()).await;
+        round().await.unwrap();
+        assert_eq!(s.t.get("JournalEntry", jid).await["reversed_on"], json!(today));
+        assert_eq!(s.told(m, jid).await, 2);
+    });
+
+    part!("the_notice_goes_to_the_companys_managers_with_a_current_grant_else_the_administrators", |s| {
+        // Four hold Accounts Manager: one as the platform counts role holders, one whose grant has run out, a service
+        // account, one kept to another company. A journal of this company posted without a rate tells the first alone;
+        // with no Accounts Manager left to the company, its administrators are told.
+        let (current, lapsed, robot, elsewhere) =
+            (s.manager("current@fin.test").await, s.manager("lapsed@fin.test").await, s.manager("robot@fin.test").await, s.manager("elsewhere@fin.test").await);
+        s.exec("update user_role set expires_at = now() - interval '1 minute' where tenant_id = $1 and user_id = any($2)".into(), &[lapsed]).await;
+        s.exec("update app_user set kind = 'service' where tenant_id = $1 and id = any($2)".into(), &[robot]).await;
+        s.exec(
+            format!(
+                "insert into user_scope (tenant_id, user_id, entity, value, is_default) select $1, u, 'Company', '{}', true from unnest($2::uuid[]) u",
+                Uuid::now_v7()
+            ),
+            &[elsewhere],
+        )
+        .await;
+        let early = (s.t.ctx.today() - chrono::Days::new(30)).to_string();
+        let post = || {
+            s.t.try_post(
+                "JournalEntry",
+                json!({"company": s.c, "posting_date": early, "accounts": [{"account": s.usd_bank, "credit": "7"}, {"account": s.fees, "debit": "7"}]}),
+            )
+        };
+        let e = uid(&post().await.unwrap_or_else(|e| panic!("posts: {e}")));
+        let told = [s.told(current, e).await, s.told(lapsed, e).await, s.told(robot, e).await, s.told(elsewhere, e).await];
+        assert_eq!(told, [1, 0, 0, 0], "current, lapsed, service, another company's");
+        let mut tx = s.t.k.db.tenant_tx(s.t.ctx.tenant).await.unwrap();
+        let held: Vec<Uuid> = sqlx::query_scalar(
+            "update user_role set expires_at = now() - interval '1 minute' where tenant_id = $1 and role = 'Accounts Manager' \
+             and (expires_at is null or expires_at > now()) returning user_id",
+        )
+        .bind(s.t.ctx.tenant)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let none = post().await;
+        s.exec("update user_role set expires_at = null where tenant_id = $1 and role = 'Accounts Manager' and user_id = any($2)".into(), &held).await;
+        let e = uid(&none.unwrap_or_else(|e| panic!("posts: {e}")));
+        assert_eq!((s.told(s.t.ctx.user, e).await, s.told(current, e).await), (1, 0), "the administrators");
     });
 
     assert!(failed.is_empty(), "parts that failed: {failed:#?}");
