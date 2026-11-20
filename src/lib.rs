@@ -23,6 +23,7 @@ pub mod deferred;
 pub mod dimensions;
 pub mod drop_ship;
 pub mod flow;
+pub mod forecast;
 pub mod instruments;
 pub mod journal_template;
 mod keys;
@@ -116,7 +117,8 @@ pub fn register(h: &mut HookRegistry) {
     h.scoped(&only("manufacturing"), |h| {
         h.register("Bom", Arc::new(manufacturing::BomHook))
             .register("WorkOrder", Arc::new(manufacturing::WorkOrderHook))
-            .register("MrpRun", Arc::new(manufacturing::MrpRunHook));
+            .register("MrpRun", Arc::new(manufacturing::MrpRunHook))
+            .register("DemandForecast", Arc::new(forecast::ForecastHook));
     });
     h.scoped(&only("selling"), |h| {
         h.register("PromotionCode", Arc::new(promotion::CodeHook))

@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.37.0-2f5bea?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.38.0-2f5bea?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -56,7 +56,7 @@ and it is the engine Ferrum's Point of Sale, Commerce, Assets, HR, CRM and Field
 
 | | |
 |---|---|
-| 📦 **Version** | `0.37.0`; each add-on carries its own version, given in [Features](#-features) |
+| 📦 **Version** | `0.38.0`; each add-on carries its own version, given in [Features](#-features) |
 | 🖥️ **Kind** | Own interface at `/erp/` (home, accountant's screens and eight desks); every other record in Ferrum's records frame; two portal pages |
 | 🧱 **What it adds** | 5 packages (accounting, selling, buying, inventory, manufacturing) with 40 entities and 37 line tables, 10 roles, 22 reports, 9 print layouts, 5 document templates, 7 menus and 2 events |
 | ➕ **Add-ons** | 7 for operations and finance (60 more entities, 23 more reports) and 26 country add-ons, all in this repository |
@@ -876,7 +876,7 @@ leaders a mid-sized company usually looks at, and the best-known open-source opt
 | BOMs, work orders, routings and subcontracting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | By-products and co-products | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 |
 | MRP by period with action messages | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| Demand forecasting into planning | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Demand forecasting into planning | ✅ ¹⁰ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Shop floor execution with genealogy and OEE | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
 | Quality holds, nonconformance and corrective action | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ |
 | Customer and supplier portal | 🟡 ⁸ | 🟡 | ✅ | 🟡 | ✅ | ✅ |
@@ -892,7 +892,7 @@ makes ERP's sales orders. ⁶ FIFO and moving average; no standard cost. ⁷ You
 ships built in. ⁸ Customers see their invoices; suppliers see requests for
 quotation, orders and bills. ⁹ Four statutory charts (France, Spain, Portugal, Romania), not yet reviewed by an
 accountant; other countries use the standard chart. For the leaders, 🟡 means partly, or through another edition, module or partner
-app.</sub>
+app. ¹⁰ Monthly, by three classical methods (moving average, exponential smoothing, seasonal index).</sub>
 
 ### 🏆 Where Ferrum ERP stands out
 
@@ -909,7 +909,7 @@ app.</sub>
 - 🏦 Bank feeds.
 - 📑 A financial report designer, country charts of accounts, SAF-T, Intrastat and DATEV files.
 - 📥 Receiving supplier e-invoices; Saudi Arabia's ZATCA and Mexico's CFDI e-invoices.
-- 🛒 Standard costing and demand forecasting.
+- 🛒 Standard costing; demand forecasts beyond three classical monthly methods.
 - 🌍 The number of countries localised, and partner ecosystems around each product.
 
 > [!NOTE]
@@ -919,6 +919,7 @@ app.</sub>
 
 ### ✅ Recently shipped
 
+- [x] **0.38.0** Demand forecasts worked out from what was sold, planned for less what open orders already ask.
 - [x] **0.37.0** Drop shipment: the supplier delivers to the customer; the receipt books cost of sales and moves no stock.
 - [x] **0.36.0** Purchase and sales agreements: orders take the agreed price and never draw past the agreed quantity.
 - [x] **0.35.0** A company's chart can come from a template, and every add-on finds its accounts by the role they play.
@@ -969,7 +970,7 @@ app.</sub>
 - [ ] A pay-now link on portal invoices.
 
 **Operations**
-- [ ] Demand forecasts and a master production schedule.
+- [ ] A master production schedule.
 - [ ] Standard cost with variances, and production variance reports.
 - [ ] Phantom assemblies and alternative components in a BOM.
 - [ ] Substitute items, several barcodes per item, customer part numbers.

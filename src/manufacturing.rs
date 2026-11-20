@@ -444,6 +444,22 @@ impl MrpRunHook {
                 add(&mut gross, &mut need_by, item, qty, by);
             }
         }
+        // A forecast: each item's months up to the demand date, less what its open sales orders already ask for.
+        if let Some((_, planned)) = crate::forecast::planned(hc, doc, Some(wh)).await? {
+            let until = s(doc, "demand_until").and_then(|u| u.parse::<NaiveDate>().ok());
+            let mut forecast: HashMap<Uuid, (Decimal, NaiveDate)> = HashMap::new();
+            for ((item, month), qty) in planned.into_iter().filter(|((_, m), _)| until.is_none_or(|u| *m <= u)) {
+                let e = forecast.entry(item).or_insert((Decimal::ZERO, month));
+                e.0 += qty;
+                e.1 = e.1.min(month);
+            }
+            for (item, (qty, first)) in forecast {
+                let extra = crate::forecast::net_forecast(qty, gross.get(&item).copied().unwrap_or_default());
+                if extra > Decimal::ZERO {
+                    add(&mut gross, &mut need_by, item, extra, first.max(today));
+                }
+            }
+        }
         // Materials still to be consumed by open work orders are demand too.
         let open_wos: Vec<(Uuid, Decimal, NaiveDate)> = sqlx::query_as(
             "select bom, qty - coalesce(produced_qty, 0), planned_start_date from e_work_order where tenant_id = $1 and company = $2 \
@@ -723,6 +739,20 @@ async fn bucketed(hc: &mut HookCtx<'_>, doc: &Doc, bucket: crate::planning::Buck
         .await?;
         for (item, wh, qty, day) in rows_ {
             demand.entry((item, wh)).or_default().push((day, qty));
+        }
+    }
+    // A forecast of one of the run's warehouses: each month's figure less that month's open order demand.
+    if let Some((fwh, planned)) = crate::forecast::planned(hc, doc, None).await?
+        && whs.contains(&fwh)
+    {
+        for ((item, month), qty) in planned.into_iter().filter(|((_, m), _)| *m <= until) {
+            let next = month + chrono::Months::new(1);
+            let ordered: Decimal =
+                demand.get(&(item, fwh)).map(|v| v.iter().filter(|(d, _)| *d >= month && *d < next).map(|(_, q)| *q).sum()).unwrap_or_default();
+            let extra = crate::forecast::net_forecast(qty, ordered);
+            if extra > Decimal::ZERO {
+                demand.entry((item, fwh)).or_default().push((month.max(today), extra));
+            }
         }
     }
     let open_wos: Vec<(Uuid, Uuid, Option<String>, Uuid, Decimal, Uuid, Uuid, NaiveDate, Option<NaiveDate>)> = sqlx::query_as(

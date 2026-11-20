@@ -1,5 +1,14 @@
 # Changelog
 
+## ERP 0.38.0 (manufacturing 0.1.1): demand forecasts into planning
+
+A **Demand Forecast** (Manufacturing) works out each item's expected monthly demand in a warehouse from what left it on
+deliveries and stock-updating invoices (net of cancellations and returns), by a moving average, simple exponential
+smoothing or a seasonal index on a level, in exact decimals (docs/forecast.md). Work Out the Forecast replaces its
+lines and keeps any figure a person changed. A requirements run that names a computed forecast plans for each month's
+figure less what open sales orders of that month already ask for, by item (unbucketed) or by month (bucketed, when the
+forecast's warehouse is one of the run's); a forecast of another warehouse than an unbucketed run's is refused.
+
 ## ERP 0.37.0 (selling 0.2.2, buying 0.1.2): drop shipment
 
 A sales order line marked **Supplier Delivers**, with its supplier, is sent by the supplier straight to the customer

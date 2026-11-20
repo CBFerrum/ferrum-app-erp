@@ -1,5 +1,5 @@
 package: manufacturing
-version: 0.1.0
+version: 0.1.1
 label: Manufacturing
 description: Multi-level bills of materials with revisions, work orders with actual costing, and an MRP run that proposes purchases and production.
 depends: [inventory, accounting, buying, selling]
@@ -25,13 +25,14 @@ modules:
     label: Manufacturing
     icon: factory
     order: 60
-    items: [Bom, WorkOrder, MrpRun, Item, report:stock_balance]
+    items: [Bom, WorkOrder, DemandForecast, MrpRun, Item, report:stock_balance]
 
 roles:
   - name: Manufacturing Manager
     permissions:
       - {entity: Bom, read: true, write: true, create: true, delete: true, submit: true, cancel: true, export: true}
       - {entity: WorkOrder, read: true, write: true, create: true, delete: true, submit: true, cancel: true}
+      - {entity: DemandForecast, read: true, write: true, create: true, delete: true}
       - {entity: MrpRun, read: true, write: true, create: true, delete: true}
       - {entity: Item, read: true}
       - {entity: Warehouse, read: true}
