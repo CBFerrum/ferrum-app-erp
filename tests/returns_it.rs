@@ -363,6 +363,24 @@ async fn scenario() {
     t.k.delete(&t.ctx, "SalesInvoice", more, None).await.unwrap();
     refused(t.k.cancel(&t.ctx, "SalesInvoice", si5, None).await, "returns are made against this document");
 
+    // ───────────── an order's line invoiced for 5, credited for 2 and then 2 more (erp-return-links) ─────────────
+    // A credit note leaves the order line's billed quantity as it was (another app reads it as invoiced, returns not
+    // netted); what came back is the invoice line's returned quantity.
+    let so5 = t.insert("SalesOrder", json!({"company": c, "customer": globex.to_string(), "items": [{"item": advice.to_string(), "qty": "5"}]})).await;
+    t.submit("SalesOrder", uid(&so5)).await;
+    let si_so = t.action("SalesOrder", uid(&so5), "make_sales_invoice", json!({})).await;
+    t.submit("SalesInvoice", si_so).await;
+    for round in 0..2 {
+        let cn = t.action("SalesInvoice", si_so, "make_credit_note", json!({})).await;
+        let line = t.line(&t.get("SalesInvoice", cn).await, 0);
+        t.update("SalesInvoice", cn, json!({"items": [{"id": line["id"], "qty": "-2"}]})).await;
+        let done = t.k.submit(&t.ctx, "SalesInvoice", cn, None).await;
+        assert!(done.is_ok(), "credit note {} of 2: {done:?}", round + 1);
+    }
+    let so_line = t.line(&t.get("SalesOrder", uid(&so5)).await, 0);
+    let si_line = t.line(&t.get("SalesInvoice", si_so).await, 0);
+    assert_eq!((dec(&so_line["billed_qty"]), dec(&si_line["returned_qty"])), (n("5"), n("4")), "5 invoiced, 4 returned");
+
     // ───────────── a credit of price alone ─────────────
     let si10 = uid(&t
         .insert(

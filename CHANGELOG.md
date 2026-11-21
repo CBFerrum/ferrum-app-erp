@@ -1,5 +1,12 @@
 # Changelog
 
+## ERP 0.41.2: a credit note leaves its order line as invoiced
+
+- A credit note no longer lowers its sales order line's billed quantity (since 0.37.0 every line of a return invoice
+  carried its order link, not only drop-ship lines): `billed_qty` on the order line is what was invoiced, returns not
+  netted, and the invoice line's `returned_qty` what came back, as Commerce's refunds read them. Drop-ship lines keep
+  their sales order link.
+
 ## ERP 0.41.1 and Finance 0.11.2: lines posted without a rate, from every caller, told and listed
 
 - Every posting straight to the ledger (`ledger::post`: another app's own postings, and `accounting.company.post_entry`)
