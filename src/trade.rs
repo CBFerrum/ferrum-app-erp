@@ -548,6 +548,16 @@ fn return_input(hc: &HookCtx<'_>, side: Side, entity: &str, doc: &Doc, percent: 
             }
             if invoice {
                 m.insert("qty".into(), money(-q));
+                // A credit note leaves its order's billed quantity as it was (invoiced, returns not netted: the
+                // invoice line's returned_qty says what came back); only a drop-ship line keeps its sales order, which
+                // its delivery from the supplier goes back through (crate::drop_ship).
+                if !matches!(m.get("drop_ship"), Some(Value::Bool(true))) {
+                    for f in ["sales_order", "so_line"] {
+                        if n.order_link == f || n.order_line == f {
+                            m.remove(f);
+                        }
+                    }
+                }
             }
         }
     }
